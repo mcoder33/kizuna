@@ -1,4 +1,4 @@
-import { renderMarkdown } from "./markdown.js";
+import { renderMarkdown, renderInlineMarkdown } from "./markdown.js";
 
 const $ = (selector) => document.querySelector(selector);
 const typeNames = {
@@ -104,6 +104,46 @@ function node(tag, text, className) {
 }
 function clear(element) {
   element.replaceChildren();
+}
+// Markdown живёт во всём интерфейсе, а не только в заметке карточки. Разметка
+// разбирается нашим рендерером (public/markdown.js): HTML экранируется до
+// разбора, поэтому пользовательский текст не может внести теги.
+function markdownNode(tag, text, className, { inline = false, links = true } = {}) {
+  const element = node(tag, undefined, className);
+  const source = String(text ?? "");
+  element.innerHTML = inline
+    ? renderInlineMarkdown(source, { links })
+    : renderMarkdown(source);
+  if (inline) element.classList.add("md-inline");
+  else element.classList.add("md-block");
+  return element;
+}
+// «Онлайн» предпросмотр: разметка перерисовывается по мере набора, а не после
+// сохранения. Перерисовка привязана к кадру — на длинном тексте ввод остаётся
+// плавным.
+function attachLivePreview(editor, preview, { inline = false, onEmpty } = {}) {
+  let frame = 0;
+  const paint = () => {
+    frame = 0;
+    const source = editor.value;
+    if (!source.trim()) {
+      preview.replaceChildren();
+      if (onEmpty) onEmpty(preview);
+      preview.hidden = Boolean(onEmpty) ? false : true;
+      return;
+    }
+    preview.hidden = false;
+    preview.innerHTML = inline
+      ? renderInlineMarkdown(source)
+      : renderMarkdown(source);
+  };
+  const schedule = () => {
+    if (frame) return;
+    frame = requestAnimationFrame(paint);
+  };
+  editor.addEventListener("input", schedule);
+  paint();
+  return { paint, schedule };
 }
 function toast(text) {
   const element = $("#toast");
@@ -333,7 +373,7 @@ function entryCard(entry, { overdue = false, compact = false } = {}) {
     );
     card.append(complete);
   }
-  const title = node("button", c.summary, "entry-title");
+  const title = markdownNode("button", c.summary, "entry-title", { inline: true, links: false });
   title.type = "button";
   title.addEventListener("click", () => {
     // Если у записи есть свой вопрос от модели, он и показывается; иначе
@@ -558,9 +598,9 @@ function propertyRow(label, control) {
 // на сервере со ссылкой supersedes.
 function cardBody(entry) {
   const wrap = node("section", undefined, "card-body"),
-    view = node("div", undefined, "card-markdown"),
+    view = node("div", undefined, "card-markdown md-block"),
     editor = document.createElement("textarea"),
-    hint = node("p", "Markdown · ⌘/Ctrl + Enter — сохранить, Esc — отменить", "card-body-hint"),
+    hint = node("p", "Markdown · разметка видна сразу · ⌘/Ctrl + Enter — сохранить, Esc — отменить", "card-body-hint"),
     label = node("p", "Заметки", "prop-section"),
     origin = node("span", " · из исходной записи", "prop-origin");
   // Пока своей заметки нет, тело начинается с текста записи: дописывать проще,
@@ -579,6 +619,12 @@ function cardBody(entry) {
   editor.placeholder = "Добавьте заметки в Markdown…";
   editor.hidden = true;
   hint.hidden = true;
+  // Предпросмотр под полем перерисовывается по мере набора: разметку видно
+  // до сохранения, а не после.
+  const preview = node("div", undefined, "md-block live-preview");
+  preview.id = "card-body-preview";
+  preview.hidden = true;
+  const live = attachLivePreview(editor, preview);
   const paint = () => {
     view.replaceChildren();
     if (body.trim()) view.innerHTML = renderMarkdown(body);
@@ -589,11 +635,13 @@ function cardBody(entry) {
     view.hidden = true;
     editor.hidden = false;
     hint.hidden = false;
+    live.paint();
     editor.focus();
   };
   const stopEditing = () => {
     editor.hidden = true;
     hint.hidden = true;
+    preview.hidden = true;
     view.hidden = false;
     paint();
   };
@@ -639,7 +687,7 @@ function cardBody(entry) {
   });
   editor.addEventListener("blur", save);
   paint();
-  wrap.append(label, view, editor, hint);
+  wrap.append(label, view, editor, preview, hint);
   return wrap;
 }
 // Карточка открывается модальным окном, а не панелью внутри страницы: панель
@@ -654,7 +702,7 @@ function showReview(entry, review, undoGroupId, provenance) {
     closeCard();
     return;
   }
-  area.append(node("h2", c.summary));
+  area.append(markdownNode("h2", c.summary, undefined, { inline: true }));
   if (review.question)
     area.append(node("p", review.question, "review-question"));
 
@@ -773,8 +821,8 @@ function showReview(entry, review, undoGroupId, provenance) {
 
   const source = node("details", undefined, "card-source");
   source.append(node("summary", "Источник и версия"));
-  const raw = node("p", undefined, "review-raw");
-  raw.append(node("strong", "Исходная запись: "), node("span", entry.raw));
+  const raw = node("div", undefined, "review-raw");
+  raw.append(node("p", "Исходная запись:", "source-label"), markdownNode("div", entry.raw, undefined));
   const provider = provenance?.usedProvider || entry.interpretation.provider;
   source.append(
     raw,
@@ -1051,6 +1099,7 @@ async function retryCapture(job, record, button) {
 // ── Карточка ввода: тип, срок, важность, теги ─────────────────────────────
 // UI говорит на языке трёх типов; сервер отображает их на внутренние типы
 // журнала (todo→task, outcome→outcome_decision, note→note).
+let capturePreviewPaint = () => {};
 const captureTypes = [
   { value: "auto", label: "Авто", cssVar: "auto", placeholder: "Запишите мысль, план, встречу или итог дня" },
   { value: "todo", label: "ТУДУ", cssVar: "todo", placeholder: "Что нужно сделать — и когда" },
@@ -1287,6 +1336,30 @@ tagsHost.append(tagInput, tagSuggest);
 renderCaptureControls();
 refreshKnownTags();
 
+// Предпросмотр записи: появляется, только когда в тексте есть разметка —
+// обычная запись остаётся просто текстом, карточка не растёт без причины.
+{
+  const editor = $("#capture-input");
+  const preview = $("#capture-preview");
+  const markdownish =
+    /(?:^|\n)\s*(?:#{1,4}\s|[-*+]\s|\d{1,3}[.)]\s|>\s|```)|\*\*[^*\n]+\*\*|~~[^~\n]+~~|`[^`\n]+`|\[[^\]\n]+\]\(https?:\/\//;
+  let frame = 0;
+  const paint = () => {
+    frame = 0;
+    const source = editor.value;
+    const show = source.trim().length > 0 && markdownish.test(source);
+    preview.hidden = !show;
+    if (show) preview.innerHTML = renderMarkdown(source);
+    else preview.replaceChildren();
+  };
+  editor.addEventListener("input", () => {
+    if (frame) return;
+    frame = requestAnimationFrame(paint);
+  });
+  capturePreviewPaint = paint;
+  paint();
+}
+
 function idempotencyKey() {
   return `capture-${crypto.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`}`;
 }
@@ -1314,6 +1387,7 @@ $("#capture-form").addEventListener("submit", async (event) => {
     if (result.response.status !== 202 || !safeCaptureEnvelope(result.data))
       throw new Error("Сервер не подтвердил асинхронное сохранение.");
     input.value = "";
+    capturePreviewPaint();
     // Параметры действуют на одну запись: залипший тип или «важно» молча
     // испортили бы следующие записи.
     resetComposerOverrides();
@@ -1357,7 +1431,7 @@ $("#memory-form").addEventListener("submit", async (event) => {
           ? "Поиск по памяти"
           : "Ответ памяти",
       ),
-      node("p", result.answer),
+      markdownNode("div", result.answer, undefined),
     );
     area.append(box);
     const sources = node("div", undefined, "sources");
@@ -1365,7 +1439,7 @@ $("#memory-form").addEventListener("submit", async (event) => {
       result.citationIds.includes(source.captureId),
     )) {
       const card = node("div", undefined, "source");
-      card.append(node("strong", "Источник"), node("div", source.snippet));
+      card.append(node("strong", "Источник"), markdownNode("div", source.snippet, undefined, { inline: true }));
       sources.append(card);
     }
     area.append(sources);

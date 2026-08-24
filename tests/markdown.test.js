@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderMarkdown } from '../public/markdown.js';
+import { renderMarkdown, renderInlineMarkdown } from '../public/markdown.js';
 
 test('html in user text is escaped, never rendered', () => {
   assert.equal(renderMarkdown('<script>alert(1)</script>'), '<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>');
@@ -55,4 +55,27 @@ test('a real capture with a numbered list renders as a list', () => {
   const html = renderMarkdown(source);
   assert.match(html, /<p>Отзывы как работает Хаб<\/p>/);
   assert.equal(html.includes('<li>'), false, 'без точки после цифры это не список');
+});
+
+test('inline rendering keeps a line a line: blocks are stripped, formatting survives', () => {
+  assert.equal(renderInlineMarkdown('# Заголовок'), 'Заголовок');
+  assert.equal(renderInlineMarkdown('- **срочно** позвонить'), '<strong>срочно</strong> позвонить');
+  assert.equal(renderInlineMarkdown('1. первый\n2. второй'), 'первый второй');
+  assert.equal(renderInlineMarkdown('> цитата'), 'цитата');
+  assert.equal(renderInlineMarkdown('`код` и ~~вычеркнутое~~'), '<code>код</code> и <del>вычеркнутое</del>');
+});
+
+test('inline rendering escapes html and can render links without anchors', () => {
+  assert.equal(renderInlineMarkdown('<img src=x onerror=alert(1)>'), '&lt;img src=x onerror=alert(1)&gt;');
+  assert.match(renderInlineMarkdown('[док](https://example.com/a)'), /<a href="https:\/\/example\.com\/a"/);
+  const noLinks = renderInlineMarkdown('[док](https://example.com/a)', { links: false });
+  assert.equal(noLinks, '<span class="md-link" title="https://example.com/a">док</span>');
+  assert.doesNotMatch(noLinks, /<a /);
+  assert.equal(renderInlineMarkdown('[док](javascript:alert(1))', { links: false }), '[док](javascript:alert(1))');
+});
+
+test('inline rendering tolerates empty and non-string sources', () => {
+  assert.equal(renderInlineMarkdown(''), '');
+  assert.equal(renderInlineMarkdown(null), '');
+  assert.equal(renderInlineMarkdown(undefined), '');
 });

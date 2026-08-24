@@ -1349,68 +1349,137 @@ dialog form > div {
   padding-top: 14px;
   border-top: 1px solid var(--line);
 }
-.card-markdown {
-  min-height: 190px;
+.source-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: #96918e;
+  margin: 0 0 4px;
+}
+.md-block {
   padding: 8px 10px;
   border-radius: 10px;
-  cursor: text;
   font-size: 15px;
+}
+.card-body > .card-markdown {
+  min-height: 190px;
+  cursor: text;
+}
+.review-raw .md-block,
+.answer .md-block,
+.source .md-block {
+  padding: 0;
 }
 .card-markdown:hover {
   background: var(--wash);
 }
-.card-markdown .empty {
+.md-block .empty {
   margin: 0;
 }
-.card-markdown > :first-child {
+/* ── онлайн-разметка во всём интерфейсе ── */
+/* Инлайновая строка: заголовок записи, пункт отчёта, уведомление. Блочные
+   элементы внутри неё не появляются — рендерер возвращает только фразу. */
+.md-inline strong {
+  font-weight: 750;
+}
+.md-inline code,
+.md-block code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.88em;
+  background: var(--hairline);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+.md-block a {
+  color: var(--focus);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md-inline .md-link,
+.md-block .md-link {
+  color: var(--focus);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md-inline del,
+.md-block del {
+  opacity: 0.6;
+}
+/* Живой предпросмотр: разметка видна по мере набора. */
+.live-preview {
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: #fcfbfa;
+  animation: preview-enter 0.16s ease-out;
+}
+@keyframes preview-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+}
+.capture-preview {
+  margin-top: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+#card-body-preview {
+  margin-top: 8px;
+  padding: 10px 12px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.md-block > :first-child {
   margin-top: 0;
 }
-.card-markdown > :last-child {
+.md-block > :last-child {
   margin-bottom: 0;
 }
-.card-markdown h3,
-.card-markdown h4,
-.card-markdown h5,
-.card-markdown h6 {
+.md-block h3,
+.md-block h4,
+.md-block h5,
+.md-block h6 {
   margin: 14px 0 6px;
   font-size: 15px;
 }
-.card-markdown p {
+.md-block p {
   margin: 8px 0;
 }
-.card-markdown ul,
-.card-markdown ol {
+.md-block ul,
+.md-block ol {
   margin: 8px 0;
   padding-left: 22px;
 }
-.card-markdown li {
+.md-block li {
   margin: 3px 0;
 }
-.card-markdown code {
+.md-block code {
   padding: 1px 5px;
   border-radius: 5px;
   background: var(--pink);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
 }
-.card-markdown pre {
+.md-block pre {
   margin: 10px 0;
   padding: 11px 12px;
   overflow-x: auto;
   border-radius: 10px;
   background: #f7f7f6;
 }
-.card-markdown pre code {
+.md-block pre code {
   padding: 0;
   background: none;
 }
-.card-markdown blockquote {
+.md-block blockquote {
   margin: 10px 0;
   padding-left: 12px;
   border-left: 2px solid var(--line);
   color: var(--muted);
 }
-.card-markdown hr {
+.md-block hr {
   margin: 14px 0;
   border: 0;
   border-top: 1px solid var(--line);

@@ -196,3 +196,38 @@ test("the done toggle overrides the model and moves the entry into reported work
   await expect(page.locator("#journal")).toContainText(raw);
   await expect(page.locator("#todo")).not.toContainText(raw);
 });
+
+test("markdown renders live everywhere: capture preview, entry titles and the note editor", async ({ page }) => {
+  await page.goto("/");
+  const input = page.locator("#capture-input");
+  const preview = page.locator("#capture-preview");
+
+  // Обычная запись не поднимает предпросмотр: карточка остаётся тихой.
+  await input.fill("обычная запись без разметки");
+  await expect(preview).toBeHidden();
+
+  // Разметка отображается по мере набора, до сохранения.
+  await input.fill("Нужно **срочно** проверить `deploy.sh`");
+  await expect(preview).toBeVisible();
+  await expect(preview.locator("strong")).toHaveText("срочно");
+  await expect(preview.locator("code")).toHaveText("deploy.sh");
+
+  await page.getByRole("button", { name: "Сохранить запись" }).click();
+  const card = page.locator(".entry").filter({ hasText: "deploy.sh" }).first();
+  await expect(card).toBeVisible({ timeout: 15000 });
+  const title = card.locator(".entry-title");
+  await expect(title.locator("strong")).toHaveText("срочно");
+  await expect(preview).toBeHidden();
+
+  // Заголовок записи — сам по себе кнопка, ссылка внутри неё остаётся текстом.
+  await title.click();
+  await expect(page.locator("#review h2 code")).toHaveText("deploy.sh");
+
+  await page.locator(".card-markdown").click();
+  const editor = page.locator("#card-body-editor");
+  await editor.fill("## Итог\n- сделал **раз**");
+  const notePreview = page.locator("#card-body-preview");
+  await expect(notePreview).toBeVisible();
+  await expect(notePreview.locator("h4")).toHaveText("Итог");
+  await expect(notePreview.locator("li strong")).toHaveText("раз");
+});
