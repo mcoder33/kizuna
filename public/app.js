@@ -1,4 +1,5 @@
 import { renderMarkdown, renderInlineMarkdown } from "./markdown.js";
+import { createMarkdownField } from "./markdown-live.js";
 
 const $ = (selector) => document.querySelector(selector);
 const typeNames = {
@@ -1099,7 +1100,14 @@ async function retryCapture(job, record, button) {
 // ── Карточка ввода: тип, срок, важность, теги ─────────────────────────────
 // UI говорит на языке трёх типов; сервер отображает их на внутренние типы
 // журнала (todo→task, outcome→outcome_decision, note→note).
-let capturePreviewPaint = () => {};
+// Поле записи: Markdown оформляется прямо в нём, по мере набора.
+const captureField = createMarkdownField({
+  id: "capture-input",
+  ariaLabel: "Новая запись",
+  placeholder: "Запишите мысль, план, встречу или итог дня",
+  onSubmit: () => $("#capture-form").requestSubmit(),
+});
+$("#capture-form").prepend(captureField.element);
 const captureTypes = [
   { value: "auto", label: "Авто", cssVar: "auto", placeholder: "Запишите мысль, план, встречу или итог дня" },
   { value: "todo", label: "ТУДУ", cssVar: "todo", placeholder: "Что нужно сделать — и когда" },
@@ -1297,9 +1305,7 @@ function renderCaptureControls() {
   const type = captureTypes.find((item) => item.value === composerState.type);
   for (const button of typeDotsHost.querySelectorAll("button"))
     button.setAttribute("aria-selected", String(button.dataset.value === composerState.type));
-  const input = $("#capture-input");
-  if (!input.value) input.placeholder = type.placeholder;
-  else input.placeholder = type.placeholder;
+  captureField.setPlaceholder(type.placeholder);
   todoLineHost.hidden = composerState.type !== "todo";
   for (const button of quickButtons)
     button.setAttribute("aria-pressed", String(captureIso(Number(button.dataset.shift)) === composerState.date));
@@ -1336,42 +1342,17 @@ tagsHost.append(tagInput, tagSuggest);
 renderCaptureControls();
 refreshKnownTags();
 
-// Предпросмотр записи: появляется, только когда в тексте есть разметка —
-// обычная запись остаётся просто текстом, карточка не растёт без причины.
-{
-  const editor = $("#capture-input");
-  const preview = $("#capture-preview");
-  const markdownish =
-    /(?:^|\n)\s*(?:#{1,4}\s|[-*+]\s|\d{1,3}[.)]\s|>\s|```)|\*\*[^*\n]+\*\*|~~[^~\n]+~~|`[^`\n]+`|\[[^\]\n]+\]\(https?:\/\//;
-  let frame = 0;
-  const paint = () => {
-    frame = 0;
-    const source = editor.value;
-    const show = source.trim().length > 0 && markdownish.test(source);
-    preview.hidden = !show;
-    if (show) preview.innerHTML = renderMarkdown(source);
-    else preview.replaceChildren();
-  };
-  editor.addEventListener("input", () => {
-    if (frame) return;
-    frame = requestAnimationFrame(paint);
-  });
-  capturePreviewPaint = paint;
-  paint();
-}
-
 function idempotencyKey() {
   return `capture-${crypto.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`}`;
 }
 function setCaptureBusy(isBusy) {
   $("#capture-submit").disabled = isBusy;
-  $("#capture-input").disabled = isBusy;
+  captureField.setDisabled(isBusy);
 }
 $("#capture-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if ($("#capture-submit").disabled) return;
-  const input = $("#capture-input"),
-    raw = input.value.trim();
+  const raw = captureField.getValue().trim();
   if (!raw) return;
   setCaptureBusy(true);
   try {
@@ -1386,8 +1367,7 @@ $("#capture-form").addEventListener("submit", async (event) => {
       });
     if (result.response.status !== 202 || !safeCaptureEnvelope(result.data))
       throw new Error("Сервер не подтвердил асинхронное сохранение.");
-    input.value = "";
-    capturePreviewPaint();
+    captureField.clear();
     // Параметры действуют на одну запись: залипший тип или «важно» молча
     // испортили бы следующие записи.
     resetComposerOverrides();
@@ -1398,10 +1378,7 @@ $("#capture-form").addEventListener("submit", async (event) => {
     setCaptureBusy(false);
   }
 });
-$("#capture-input").addEventListener("keydown", (event) => {
-  if ((event.metaKey || event.ctrlKey) && event.key === "Enter")
-    $("#capture-form").requestSubmit();
-});
+
 $("#memory-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (memoryController) return;

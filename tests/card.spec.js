@@ -197,35 +197,48 @@ test("the done toggle overrides the model and moves the entry into reported work
   await expect(page.locator("#todo")).not.toContainText(raw);
 });
 
-test("markdown renders live everywhere: capture preview, entry titles and the note editor", async ({ page }) => {
+test("markdown is decorated inside the capture field as it is typed", async ({ page }) => {
   await page.goto("/");
-  const input = page.locator("#capture-input");
-  const preview = page.locator("#capture-preview");
+  const field = page.getByLabel("Новая запись");
+  await field.click();
+  // Печатаем посимвольно: разметка должна оформляться прямо во время набора.
+  await page.keyboard.type("--зачёркнуто-- и **жирный** с `кодом`");
 
-  // Обычная запись не поднимает предпросмотр: карточка остаётся тихой.
-  await input.fill("обычная запись без разметки");
-  await expect(preview).toBeHidden();
+  await expect(field.locator("del")).toHaveText("зачёркнуто");
+  await expect(field.locator("strong")).toHaveText("жирный");
+  await expect(field.locator("code")).toHaveText("кодом");
+  // Ни один символ не удалён: маркеры остаются в тексте, лишь приглушены.
+  await expect(field).toHaveText("--зачёркнуто-- и **жирный** с `кодом`");
+  await expect(field.locator(".md-mark").first()).toHaveText("--");
 
-  // Разметка отображается по мере набора, до сохранения.
-  await input.fill("Нужно **срочно** проверить `deploy.sh`");
-  await expect(preview).toBeVisible();
-  await expect(preview.locator("strong")).toHaveText("срочно");
-  await expect(preview.locator("code")).toHaveText("deploy.sh");
+  // Перенос строки и блочная разметка.
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("# Заголовок");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("- пункт");
+  await expect(field.locator(".md-heading")).toHaveText("Заголовок");
+  await expect(field.locator(".md-bullet")).toHaveText("- ");
+  await expect(field.locator(".md-line")).toHaveCount(3);
 
+  // Исходная разметка уходит на сервер целиком, поле очищается.
+  const posted = page.waitForRequest(
+    (request) => request.url().endsWith("/api/captures") && request.method() === "POST",
+  );
   await page.getByRole("button", { name: "Сохранить запись" }).click();
-  const card = page.locator(".entry").filter({ hasText: "deploy.sh" }).first();
+  const sent = JSON.parse((await posted).postData() || "{}");
+  expect(sent.raw).toBe("--зачёркнуто-- и **жирный** с `кодом`\n# Заголовок\n- пункт");
+  await expect(field).toHaveText("");
+
+  // Сохранённая запись показывается с разметкой в списке и в карточке.
+  const card = page.locator(".entry").filter({ hasText: "жирный" }).first();
   await expect(card).toBeVisible({ timeout: 15000 });
-  const title = card.locator(".entry-title");
-  await expect(title.locator("strong")).toHaveText("срочно");
-  await expect(preview).toBeHidden();
+  await expect(card.locator(".entry-title strong")).toHaveText("жирный");
+  await card.locator(".entry-title").click();
+  await expect(page.locator("#review h2 code")).toHaveText("кодом");
 
-  // Заголовок записи — сам по себе кнопка, ссылка внутри неё остаётся текстом.
-  await title.click();
-  await expect(page.locator("#review h2 code")).toHaveText("deploy.sh");
-
+  // Живой предпросмотр в редакторе заметки.
   await page.locator(".card-markdown").click();
-  const editor = page.locator("#card-body-editor");
-  await editor.fill("## Итог\n- сделал **раз**");
+  await page.locator("#card-body-editor").fill("## Итог\n- сделал **раз**");
   const notePreview = page.locator("#card-body-preview");
   await expect(notePreview).toBeVisible();
   await expect(notePreview.locator("h4")).toHaveText("Итог");

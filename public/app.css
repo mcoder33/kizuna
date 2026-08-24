@@ -219,15 +219,68 @@ main {
   box-shadow: 0 18px 42px rgba(34, 34, 34, 0.08);
   text-align: left;
 }
-.capture textarea {
+/* ── поле ввода с живой разметкой ── */
+.md-field {
   width: 100%;
   min-height: 128px;
-  resize: vertical;
   border: 0;
   outline: 0;
   font: inherit;
   font-size: 15px;
   padding: 5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: text;
+}
+.md-field[data-empty="true"]::before {
+  content: attr(data-placeholder);
+  color: #b3b0ad;
+  pointer-events: none;
+}
+.md-field[data-disabled="true"] {
+  opacity: 0.6;
+}
+.md-line {
+  min-height: 1.45em;
+}
+/* Маркеры разметки остаются в тексте — иначе в них некуда поставить каретку —
+   но приглушены, чтобы читалось оформление, а не синтаксис. */
+.md-mark {
+  color: #c9c4be;
+  font-weight: 400;
+}
+.md-field .md-heading {
+  font-weight: 750;
+}
+.md-field .md-h1 { font-size: 1.32em; }
+.md-field .md-h2 { font-size: 1.2em; }
+.md-field .md-h3 { font-size: 1.09em; }
+.md-field .md-h4 { font-size: 1em; }
+.md-field .md-quote {
+  color: var(--muted);
+  font-style: italic;
+}
+.md-field .md-bullet .md-mark {
+  color: var(--type-todo);
+}
+.md-field code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+  background: var(--hairline);
+  border-radius: 4px;
+  padding: 0 2px;
+}
+.md-field .md-link {
+  color: var(--focus);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md-field del {
+  opacity: 0.65;
+}
+.md-field .md-rule,
+.md-field .md-fence {
+  color: #b3b0ad;
 }
 .capture-foot {
   display: flex;
@@ -902,7 +955,7 @@ dialog form > div {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
-.capture textarea:focus-visible {
+.md-field:focus-visible {
   outline: 0;
 }
 .capture:focus-within {
@@ -1267,7 +1320,7 @@ dialog form > div {
 .today-page .capture {
   padding: 16px;
 }
-.today-page .capture textarea {
+.today-page .md-field {
   min-height: 128px;
   font-size: 17px;
 }
@@ -1306,7 +1359,7 @@ dialog form > div {
     left: 0;
     transform: none;
   }
-  .today-page .capture textarea {
+  .today-page .md-field {
     min-height: 112px;
   }
   .today-page .dashboard {
@@ -1417,13 +1470,6 @@ dialog form > div {
     opacity: 0;
     transform: translateY(-2px);
   }
-}
-.capture-preview {
-  margin-top: 10px;
-  padding: 10px 12px;
-  font-size: 14px;
-  max-height: 260px;
-  overflow-y: auto;
 }
 #card-body-preview {
   margin-top: 8px;
