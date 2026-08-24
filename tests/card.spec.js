@@ -338,3 +338,44 @@ test("lists continue on enter and checkboxes are clickable", async ({ page, requ
   await page.getByRole("button", { name: "Сохранить запись" }).click();
   expect(JSON.parse((await posted).postData() || "{}").raw).toContain("- [x] первая задача");
 });
+
+test("the card body is the same live field as the capture card, and the title stays a title", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  const raw = ["# Разбор недели", "- [ ] отчёт", "| Что | Когда |", "| --- | ---: |", "| созвон | завтра |"].join("\n");
+  await page.getByLabel("Новая запись").click();
+  await page.keyboard.insertText(raw);
+  await page.getByRole("button", { name: "Сохранить запись" }).click();
+
+  // Заголовок — первая значимая строка с многоточием, а не склейка таблицы.
+  const card = page.locator("#today .entry").filter({ hasText: "Разбор недели" }).first();
+  await expect(card).toBeVisible({ timeout: 15000 });
+  await expect(card.locator(".entry-title")).toHaveText("Разбор недели …");
+  await card.locator(".entry-title").click();
+  await expect(page.locator("#review h2")).toHaveText("Разбор недели …");
+
+  // Тело карточки ведёт себя ровно как поле ввода: живая разметка,
+  // продолжение списка по Enter и кликабельный чекбокс.
+  const body = page.locator("#card-body-editor");
+  await expect(body.locator(".md-heading")).toHaveText("Разбор недели");
+  await expect(body.locator(".md-checkbox")).toHaveCount(1);
+  await body.locator(".md-line").nth(1).click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("вторая задача");
+  await expect(body.locator(".md-line").nth(2)).toHaveText("- [ ] вторая задача");
+  await body.locator(".md-line").nth(2).locator(".md-checkbox").click();
+  await expect(body.locator(".md-line").nth(2)).toHaveText("- [x] вторая задача");
+
+  // Правка сохраняется как новая версия заметки, raw не меняется.
+  const saved = page.waitForResponse(
+    (response) => response.url().includes("/notes") && response.request().method() === "POST",
+  );
+  await body.press("ControlOrMeta+Enter");
+  expect((await saved).status()).toBe(200);
+  await expect(page.locator(".card-body .prop-section")).toContainText("версия 1");
+  const entries = await (await page.request.get("/api/entries?limit=100")).json();
+  const entry = entries.entries.find((item) => item.raw === raw);
+  expect(entry.raw).toBe(raw);
+  expect(entry.note.body).toContain("- [x] вторая задача");
+});

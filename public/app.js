@@ -109,11 +109,11 @@ function clear(element) {
 // Markdown живёт во всём интерфейсе, а не только в заметке карточки. Разметка
 // разбирается нашим рендерером (public/markdown.js): HTML экранируется до
 // разбора, поэтому пользовательский текст не может внести теги.
-function markdownNode(tag, text, className, { inline = false, links = true } = {}) {
+function markdownNode(tag, text, className, { inline = false, links = true, firstLine = false } = {}) {
   const element = node(tag, undefined, className);
   const source = String(text ?? "");
   element.innerHTML = inline
-    ? renderInlineMarkdown(source, { links })
+    ? renderInlineMarkdown(source, { links, firstLine })
     : renderMarkdown(source);
   if (inline) element.classList.add("md-inline");
   else element.classList.add("md-block");
@@ -347,7 +347,7 @@ function entryCard(entry, { overdue = false, compact = false } = {}) {
     );
     card.append(complete);
   }
-  const title = markdownNode("button", c.summary, "entry-title", { inline: true, links: false });
+  const title = markdownNode("button", c.summary, "entry-title", { inline: true, links: false, firstLine: true });
   title.type = "button";
   title.addEventListener("click", () => {
     // Если у записи есть свой вопрос от модели, он и показывается; иначе
@@ -661,7 +661,7 @@ function showReview(entry, review, undoGroupId, provenance) {
     closeCard();
     return;
   }
-  area.append(markdownNode("h2", c.summary, undefined, { inline: true }));
+  area.append(markdownNode("h2", c.summary, undefined, { inline: true, firstLine: true }));
   if (review.question)
     area.append(node("p", review.question, "review-question"));
 

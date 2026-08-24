@@ -168,3 +168,19 @@ test('obsidian markup survives inline rendering of a single line', () => {
   assert.equal(renderInlineMarkdown('> [!note] Заголовок callout'), 'Заголовок callout');
   assert.match(renderInlineMarkdown('про [[Проект]]', { links: false }), /<span class="md-wikilink">Проект<\/span>/);
 });
+
+test('a title takes the first meaningful line, not everything glued together', () => {
+  const raw = '# Разбор недели\n- [x] созвон ==сделан==\n| Что | Когда |\n| --- | ---: |\n| созвон | завтра |\nсноска[^1]\n\n[^1]: пояснение';
+  const title = renderInlineMarkdown(raw, { firstLine: true });
+  assert.equal(title, 'Разбор недели …');
+  // Служебные строки в заголовок не попадают даже при обычной склейке.
+  const joined = renderInlineMarkdown(raw);
+  assert.doesNotMatch(joined, /---/);
+  assert.doesNotMatch(joined, /\[\^1\]:/);
+});
+
+test('a single-line title keeps its formatting and gains no ellipsis', () => {
+  assert.equal(renderInlineMarkdown('обычная **запись**', { firstLine: true }), 'обычная <strong>запись</strong>');
+  assert.equal(renderInlineMarkdown('- [ ] купить хлеб', { firstLine: true }), 'купить хлеб');
+  assert.equal(renderInlineMarkdown('', { firstLine: true }), '');
+});
