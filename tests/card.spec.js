@@ -274,7 +274,7 @@ test("obsidian markup works end to end: typed in the field, rendered in the card
   await expect(field.locator(".md-heading")).toHaveText("Разбор недели");
   await expect(field.locator(".md-checkbox-done")).toBeVisible();
   await expect(field.locator("mark")).toHaveText("сделан");
-  await expect(field.locator(".md-callout-warning")).toBeVisible();
+  await expect(field.locator(".md-callout-warning").first()).toBeVisible();
   await expect(field.locator(".md-table-line").first()).toBeVisible();
   await expect(field.locator(".md-tag")).toHaveText("#hub");
 
@@ -478,4 +478,69 @@ test("a callout looks like one filled block, a plain quote stays a quote", async
   expect(filled).not.toBe(plain);
   // Обычная цитата блоком callout не притворяется.
   await expect(lines.last()).not.toHaveClass(/md-callout/);
+});
+
+test("the expand button opens a full page for writing and escape brings it back", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  const form = page.locator("#capture-form");
+  const field = page.getByLabel("Новая запись");
+  const expand = page.locator("#capture-expand");
+
+  // В покое кнопка тихая и не мешает: она рядом с отправкой.
+  await expect(expand).toBeVisible();
+  await expect(expand).toHaveAttribute("aria-pressed", "false");
+
+  await field.click();
+  await page.keyboard.type("# Длинная заметка");
+  await expand.click();
+  await expect(form).toHaveClass(/capture-page/);
+  await expect(page.locator("body")).toHaveClass(/capture-page-open/);
+  await expect(expand).toHaveAttribute("aria-pressed", "true");
+  // Текст и фокус остаются на месте: DOM не перестраивается.
+  await expect(field.locator(".md-heading")).toHaveText("Длинная заметка");
+  await expect(field).toBeFocused();
+
+  // Панель с типами, тегами и отправкой доезжает до низа экрана.
+  const foot = page.locator(".capture-foot");
+  const box = await foot.boundingBox();
+  const viewport = page.viewportSize();
+  expect(box.y + box.height).toBeGreaterThan(viewport.height * 0.6);
+
+  // Писать можно дальше, разметка живёт как обычно.
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("- [ ] пункт");
+  await expect(field.locator(".md-checkbox")).toHaveCount(1);
+
+  // Esc возвращает карточку, ничего не потеряв.
+  await page.keyboard.press("Escape");
+  await expect(form).not.toHaveClass(/capture-page/);
+  await expect(page.locator("body")).not.toHaveClass(/capture-page-open/);
+  await expect(field.locator(".md-heading")).toHaveText("Длинная заметка");
+
+  // Отправка из режима страницы закрывает его и очищает поле.
+  await expand.click();
+  await expect(form).toHaveClass(/capture-page/);
+  const posted = page.waitForRequest(
+    (request_) => request_.url().endsWith("/api/captures") && request_.method() === "POST",
+  );
+  await page.getByRole("button", { name: "Сохранить запись" }).click();
+  expect(JSON.parse((await posted).postData() || "{}").raw).toContain("# Длинная заметка");
+  await expect(form).not.toHaveClass(/capture-page/);
+  await expect(field).toHaveText("");
+});
+
+test("the writing page fits a phone without horizontal overflow", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.setViewportSize({ width: 390, height: 760 });
+  await page.goto("/");
+  await page.getByLabel("Новая запись").click();
+  await page.keyboard.type("# Заметка на телефоне");
+  await page.locator("#capture-expand").click();
+
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+  expect(overflow).toBe(false);
+  const foot = await page.locator(".capture-foot").boundingBox();
+  expect(Math.round(foot.width)).toBe(390);
+  expect(Math.round(foot.y + foot.height)).toBe(760);
 });

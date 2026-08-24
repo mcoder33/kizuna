@@ -1305,6 +1305,34 @@ tagsHost.append(tagInput, tagSuggest);
 renderCaptureControls();
 refreshKnownTags();
 
+// Режим большой страницы: поле разворачивается в лист во весь экран. DOM не
+// перестраивается — переключаются два класса, поэтому каретка, история отмены
+// и набранный текст остаются на месте.
+const expandButton = $("#capture-expand");
+function capturePageOpen() {
+  return $("#capture-form").classList.contains("capture-page");
+}
+function setCapturePage(open) {
+  const form = $("#capture-form");
+  form.classList.toggle("capture-page", open);
+  document.body.classList.toggle("capture-page-open", open);
+  expandButton.setAttribute("aria-pressed", String(open));
+  const label = open ? "Свернуть — Esc" : "Развернуть на всю страницу";
+  expandButton.setAttribute("aria-label", label);
+  expandButton.title = label;
+  captureField.focus();
+}
+expandButton.addEventListener("click", () => setCapturePage(!capturePageOpen()));
+// Esc выходит из режима. Слушатель на самом поле: там же обрабатываются
+// остальные клавиши ввода, и поповеры шапки перехватывать не приходится.
+captureField.element.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && capturePageOpen()) {
+    event.preventDefault();
+    event.stopPropagation();
+    setCapturePage(false);
+  }
+});
+
 function idempotencyKey() {
   return `capture-${crypto.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`}`;
 }
@@ -1331,6 +1359,7 @@ $("#capture-form").addEventListener("submit", async (event) => {
     if (result.response.status !== 202 || !safeCaptureEnvelope(result.data))
       throw new Error("Сервер не подтвердил асинхронное сохранение.");
     captureField.clear();
+    if (capturePageOpen()) setCapturePage(false);
     // Параметры действуют на одну запись: залипший тип или «важно» молча
     // испортили бы следующие записи.
     resetComposerOverrides();
