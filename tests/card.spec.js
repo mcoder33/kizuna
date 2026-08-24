@@ -250,3 +250,51 @@ test("markdown is decorated inside the capture field as it is typed", async ({ p
   await expect(noteField.locator("strong").last()).toHaveText("карточке");
   await expect(noteField.locator(".md-mark").first()).toBeVisible();
 });
+
+test("obsidian markup works end to end: typed in the field, rendered in the card", async ({ page, request }) => {
+  // Тест смотрит на превью «Сегодня», где помещаются три записи, поэтому
+  // начинаем с чистого журнала — иначе соседние тесты вытеснят нашу запись.
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  const field = page.getByLabel("Новая запись");
+  await field.click();
+  const raw = [
+    "# Разбор недели",
+    "- [x] созвон ==сделан==",
+    "- [ ] отчёт",
+    "> [!warning] Осторожно",
+    "| Что | Когда |",
+    "| --- | ---: |",
+    "| созвон | завтра |",
+    "хвост #hub",
+  ].join("\n");
+  await page.keyboard.insertText(raw);
+
+  // В поле разметка оформлена, но текст сохранён посимвольно.
+  await expect(field.locator(".md-heading")).toHaveText("Разбор недели");
+  await expect(field.locator(".md-checkbox-done")).toBeVisible();
+  await expect(field.locator("mark")).toHaveText("сделан");
+  await expect(field.locator(".md-callout-warning")).toBeVisible();
+  await expect(field.locator(".md-table-line").first()).toBeVisible();
+  await expect(field.locator(".md-tag")).toHaveText("#hub");
+
+  const posted = page.waitForRequest(
+    (request) => request.url().endsWith("/api/captures") && request.method() === "POST",
+  );
+  await page.getByRole("button", { name: "Сохранить запись" }).click();
+  expect(JSON.parse((await posted).postData() || "{}").raw).toBe(raw);
+
+  // В карточке та же разметка становится настоящими блоками. Ищем на «Сегодня»:
+  // соседние тесты могли оставить открытым другой раздел.
+  await page.evaluate(() => { location.hash = "#today"; });
+  const card = page.locator("#today .entry").filter({ hasText: "Разбор недели" }).first();
+  await expect(card).toBeVisible({ timeout: 15000 });
+  await card.locator(".entry-title").click();
+  await page.locator(".card-source summary").click();
+  const rendered = page.locator(".card-source .md-block");
+  await expect(rendered.locator("table.md-table th").last()).toHaveText("Когда");
+  await expect(rendered.locator("td").first()).toHaveText("созвон");
+  await expect(rendered.locator("li.md-task-done")).toContainText("созвон");
+  await expect(rendered.locator(".md-callout-warning .md-callout-title")).toHaveText("Осторожно");
+  await expect(rendered.locator(".md-tag")).toHaveText("#hub");
+});

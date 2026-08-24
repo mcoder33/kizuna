@@ -16,8 +16,10 @@ test('only http and https links become anchors', () => {
 });
 
 test('headings, emphasis, strikethrough and rules render', () => {
-  assert.equal(renderMarkdown('# Заголовок'), '<h3>Заголовок</h3>');
-  assert.equal(renderMarkdown('### Третий'), '<h5>Третий</h5>');
+  // Уровень заголовка несёт класс: в Obsidian их шесть, а тегов ниже h6 нет.
+  assert.equal(renderMarkdown('# Заголовок'), '<h3 class="md-h1">Заголовок</h3>');
+  assert.equal(renderMarkdown('### Третий'), '<h5 class="md-h3">Третий</h5>');
+  assert.equal(renderMarkdown('###### Шестой'), '<h6 class="md-h6">Шестой</h6>');
   assert.equal(renderMarkdown('*курсив* и _тоже_'), '<p><em>курсив</em> и <em>тоже</em></p>');
   assert.equal(renderMarkdown('~~зачёркнуто~~'), '<p><del>зачёркнуто</del></p>');
   assert.equal(renderMarkdown('---'), '<hr>');
@@ -40,8 +42,11 @@ test('fenced code keeps content verbatim and escaped', () => {
   assert.equal(renderMarkdown('```\nне закрыт'), '<pre><code>не закрыт</code></pre>', 'незакрытый блок не теряет текст');
 });
 
-test('blockquotes collect consecutive lines', () => {
-  assert.equal(renderMarkdown('> первая\n> вторая'), '<blockquote>первая<br>вторая</blockquote>');
+test('blockquotes collect consecutive lines and keep markup inside', () => {
+  // Внутри цитаты работает вся разметка — как в Obsidian, а не голый текст.
+  assert.equal(renderMarkdown('> первая\n> вторая'), '<blockquote><p>первая</p><p>вторая</p></blockquote>');
+  assert.match(renderMarkdown('> - пункт'), /<blockquote><ul><li>пункт<\/li><\/ul><\/blockquote>/);
+  assert.match(renderMarkdown('> > вложенная'), /<blockquote><blockquote><p>вложенная<\/p><\/blockquote><\/blockquote>/);
 });
 
 test('empty and missing input render nothing', () => {
@@ -78,4 +83,88 @@ test('inline rendering tolerates empty and non-string sources', () => {
   assert.equal(renderInlineMarkdown(''), '');
   assert.equal(renderInlineMarkdown(null), '');
   assert.equal(renderInlineMarkdown(undefined), '');
+});
+
+test('obsidian: highlight, wikilinks, embeds, tags, comments and anchors', () => {
+  assert.equal(renderMarkdown('==важное=='), '<p><mark>важное</mark></p>');
+  assert.match(renderMarkdown('[[Заметка]]'), /<a class="md-wikilink" href="#memory\?query=%D0%97[^"]*">Заметка<\/a>/);
+  assert.match(renderMarkdown('[[Заметка|как назвали]]'), />как назвали</);
+  assert.match(renderMarkdown('[[Заметка#Раздел]]'), /md-wikilink/);
+  assert.match(renderMarkdown('![[Встроенное]]'), /md-embed/);
+  assert.match(renderMarkdown('запись про #hub сегодня'), /<span class="md-tag">#hub<\/span>/);
+  assert.equal(renderMarkdown('видно %%а это нет%% дальше'), '<p>видно  дальше</p>');
+  assert.match(renderMarkdown('якорь ^block-42'), /<span class="md-anchor">\^block-42<\/span>/);
+});
+
+test('obsidian: tasks render as checkboxes and keep their state', () => {
+  const html = renderMarkdown('- [ ] не сделано\n- [x] сделано');
+  assert.match(html, /<li class="md-task"><span class="md-checkbox"[^>]*>☐<\/span>не сделано<\/li>/);
+  assert.match(html, /<li class="md-task md-task-done"><span class="md-checkbox"[^>]*>☑<\/span>сделано<\/li>/);
+  assert.match(html, /^<ul>/);
+});
+
+test('obsidian: nested lists nest instead of flattening', () => {
+  const html = renderMarkdown('- верх\n  - вложенный\n- снова верх');
+  assert.equal(html, '<ul><li>верх</li><ul><li>вложенный</li></ul><li>снова верх</li></ul>');
+});
+
+test('obsidian: tables render with alignment', () => {
+  const html = renderMarkdown('| Что | Когда |\n| --- | ---: |\n| созвон | завтра |');
+  assert.match(html, /<table class="md-table">/);
+  assert.match(html, /<th>Что<\/th>/);
+  assert.match(html, /<th style="text-align:right">Когда<\/th>/);
+  assert.match(html, /<td>созвон<\/td><td style="text-align:right">завтра<\/td>/);
+  // Одинокая строка с трубами таблицей не становится.
+  assert.doesNotMatch(renderMarkdown('| просто | текст |'), /<table/);
+});
+
+test('obsidian: callouts become titled blocks, unknown kinds fall back to a note', () => {
+  const html = renderMarkdown('> [!warning] Осторожно\n> тело предупреждения');
+  assert.match(html, /<div class="md-callout md-callout-warning">/);
+  assert.match(html, /<p class="md-callout-title">Осторожно<\/p>/);
+  assert.match(html, /<p>тело предупреждения<\/p>/);
+  assert.match(renderMarkdown('> [!tip]\n> совет'), /md-callout-tip/);
+  assert.match(renderMarkdown('> [!tip]\n> совет'), /<p class="md-callout-title">Совет<\/p>/);
+  assert.match(renderMarkdown('> [!выдумка] Что-то\n> текст'), /md-callout-note/);
+});
+
+test('obsidian: footnotes collect into a numbered list at the end', () => {
+  const html = renderMarkdown('текст со сноской[^1]\n\n[^1]: пояснение');
+  assert.match(html, /<sup class="md-footnote-ref"><a href="#fn-1">1<\/a><\/sup>/);
+  assert.match(html, /<div class="md-footnotes"><ol><li id="fn-1">/);
+  assert.match(html, /пояснение/);
+});
+
+test('obsidian: math and code fences keep their content verbatim', () => {
+  assert.match(renderMarkdown('формула $E = mc^2$ в строке'), /<code class="md-math">E = mc\^2<\/code>/);
+  assert.match(renderMarkdown('$$a + b$$'), /md-math-block/);
+  assert.match(renderMarkdown('```js\nconst a = 1;\n```'), /<pre class="md-code" data-language="js"><code>const a = 1;<\/code><\/pre>/);
+  assert.match(renderMarkdown('~~~\nтильды тоже\n~~~'), /<pre><code>тильды тоже<\/code><\/pre>/);
+});
+
+test('obsidian: escaping and bold-italic', () => {
+  assert.equal(renderMarkdown('\\*не курсив\\*'), '<p>*не курсив*</p>');
+  assert.equal(renderMarkdown('\\#не тег'), '<p>#не тег</p>');
+  assert.equal(renderMarkdown('***и жирный и курсив***'), '<p><strong><em>и жирный и курсив</em></strong></p>');
+});
+
+test('obsidian: bare and angled urls become links, dangerous schemes do not', () => {
+  assert.match(renderMarkdown('смотри https://example.com/a дальше'), /<a href="https:\/\/example\.com\/a"/);
+  assert.match(renderMarkdown('<https://example.com/b>'), /<a href="https:\/\/example\.com\/b"/);
+  assert.doesNotMatch(renderMarkdown('javascript:alert(1)'), /<a /);
+  // Точка в конце предложения не должна попадать в адрес.
+  assert.match(renderMarkdown('открой https://example.com/c.'), /href="https:\/\/example\.com\/c"/);
+});
+
+test('obsidian: images are shown as labelled links because CSP blocks remote images', () => {
+  const html = renderMarkdown('![схема](https://example.com/a.png)');
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /<a class="md-image" href="https:\/\/example\.com\/a\.png"[^>]*>🖼 схема<\/a>/);
+  assert.match(renderMarkdown('![](https://example.com/a.png)'), /🖼 изображение/);
+});
+
+test('obsidian markup survives inline rendering of a single line', () => {
+  assert.equal(renderInlineMarkdown('- [x] сделал ==важное=='), 'сделал <mark>важное</mark>');
+  assert.equal(renderInlineMarkdown('> [!note] Заголовок callout'), 'Заголовок callout');
+  assert.match(renderInlineMarkdown('про [[Проект]]', { links: false }), /<span class="md-wikilink">Проект<\/span>/);
 });

@@ -63,3 +63,46 @@ test('only http and https links are decorated as links', () => {
 test('an empty line keeps its height with a break', () => {
   assert.equal(decorateLine(''), '<br>');
 });
+
+test('obsidian syntax is decorated in the field without losing a character', () => {
+  const lines = [
+    '- [ ] задача не сделана',
+    '- [x] задача сделана',
+    '###### шестой уровень',
+    '> [!warning] Осторожно',
+    '| Что | Когда |',
+    'выделено ==важное== в строке',
+    'ссылка [[Заметка|алиас]] и встраивание ![[Файл]]',
+    'картинка ![схема](https://example.com/a.png)',
+    'сноска[^1] в тексте',
+    '[^1]: пояснение сноски',
+    'формула $E = mc^2$ и блок $$a+b$$',
+    'тег #проект/подпроект и якорь ^block-1',
+    'комментарий %%скрытый%% дальше',
+    '***жирный курсив***',
+    '~~~',
+  ];
+  for (const line of lines) assert.equal(textOf(decorateLine(line)), line, line);
+});
+
+test('obsidian constructs get their own decoration', () => {
+  assert.match(decorateLine('- [x] сделано'), /md-checkbox md-checkbox-done/);
+  assert.match(decorateLine('- [ ] не сделано'), /md-checkbox(?! md-checkbox-done)/);
+  assert.match(decorateLine('> [!warning] Осторожно'), /md-callout-warning/);
+  assert.match(decorateLine('> [!warning] Осторожно'), /md-callout-title/);
+  assert.match(decorateLine('==важное=='), /<mark>важное<\/mark>/);
+  assert.match(decorateLine('[[Заметка]]'), /md-wikilink/);
+  assert.match(decorateLine('![[Файл]]'), /md-wikilink/);
+  assert.match(decorateLine('#тег'), /<span class="md-tag">#тег<\/span>/);
+  assert.match(decorateLine('$E=mc^2$'), /md-math/);
+  assert.match(decorateLine('%%скрытое%%'), /md-comment/);
+  assert.match(decorateLine('| a | b |'), /md-table-line/);
+  assert.match(decorateLine('***оба***'), /<strong><em>оба<\/em><\/strong>/);
+  assert.match(decorateLine('###### шестой'), /md-h6/);
+});
+
+test('dangerous urls stay plain text in the field', () => {
+  const html = decorateLine('[клик](javascript:alert(1))');
+  assert.doesNotMatch(html, /md-link/);
+  assert.equal(textOf(html), '[клик](javascript:alert(1))');
+});
