@@ -56,16 +56,18 @@ test("markdown notes save, render and survive reopening without touching the raw
   await page.locator("#card-body-editor").press("ControlOrMeta+Enter");
   expect((await saved).status()).toBe(200);
 
+  // Тело карточки — живое поле: разметка оформлена прямо в тексте, отдельного
+  // отрендеренного вида больше нет.
   const rendered = page.locator(".card-markdown");
-  await expect(rendered.locator("h4")).toContainText("План");
-  await expect(rendered.locator("li strong")).toContainText("первый");
-  await expect(rendered.locator("li code")).toContainText("код");
-  await expect(rendered.locator("blockquote")).toContainText("цитата");
+  await expect(rendered.locator(".md-heading")).toContainText("План");
+  await expect(rendered.locator("strong")).toContainText("первый");
+  await expect(rendered.locator("code")).toContainText("код");
+  await expect(rendered.locator(".md-quote")).toContainText("цитата");
 
   await page.locator("#review-close").click();
   await expect(page.locator("#review-dialog")).toBeHidden();
   await openCard(page, "#todo", raw);
-  await expect(page.locator(".card-markdown h4")).toContainText("План");
+  await expect(page.locator(".card-markdown .md-heading")).toContainText("План");
   await expect(page.locator(".prop-section")).toContainText("версия 1");
 
   const entries = await (await page.request.get("/api/entries?limit=100")).json();
@@ -87,10 +89,11 @@ test("the note body starts from the original capture without creating a note", a
   expect(entries.entries.find((item) => item.raw === raw).note).toBeNull();
 
   await page.locator(".card-markdown").click();
-  await expect(page.locator("#card-body-editor")).toHaveValue(raw);
+  await expect(page.locator("#card-body-editor")).toHaveText(raw);
   await page.locator("#card-body-editor").fill(`${raw}\n\n- дописал пункт`);
   await page.locator("#card-body-editor").press("ControlOrMeta+Enter");
-  await expect(page.locator(".card-markdown li")).toContainText("дописал пункт");
+  await expect(page.locator(".card-markdown .md-bullet")).toBeVisible();
+  await expect(page.locator(".card-markdown")).toContainText("дописал пункт");
   await expect(page.locator(".prop-section")).toContainText("версия 1");
 
   const after = await (await page.request.get("/api/entries?limit=100")).json();
@@ -134,8 +137,10 @@ test("escape leaves the note unsaved and keeps the card open", async ({ page }) 
   await page.locator("#card-body-editor").fill("черновик, который не нужен");
   await page.locator("#card-body-editor").press("Escape");
   await expect(page.locator("#review-dialog")).toBeVisible();
-  await expect(page.locator("#card-body-editor")).toBeHidden();
+  // Поле никуда не прячется — Esc возвращает в него сохранённый текст.
+  await expect(page.locator("#card-body-editor")).toBeVisible();
   await expect(page.locator(".card-markdown")).not.toContainText("черновик");
+  await expect(page.locator(".card-markdown")).toContainText(raw);
 });
 
 test("closing a task removes it from today without filing it as reported work", async ({ page }) => {
@@ -236,11 +241,12 @@ test("markdown is decorated inside the capture field as it is typed", async ({ p
   await card.locator(".entry-title").click();
   await expect(page.locator("#review h2 code")).toHaveText("кодом");
 
-  // Живой предпросмотр в редакторе заметки.
-  await page.locator(".card-markdown").click();
-  await page.locator("#card-body-editor").fill("## Итог\n- сделал **раз**");
-  const notePreview = page.locator("#card-body-preview");
-  await expect(notePreview).toBeVisible();
-  await expect(notePreview.locator("h4")).toHaveText("Итог");
-  await expect(notePreview.locator("li strong")).toHaveText("раз");
+  // В карточке — то же живое поле: печатаем и разметка оформляется на месте.
+  const noteField = page.locator("#card-body-editor");
+  await noteField.click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.type(" --правка-- в **карточке**");
+  await expect(noteField.locator("del").last()).toHaveText("правка");
+  await expect(noteField.locator("strong").last()).toHaveText("карточке");
+  await expect(noteField.locator(".md-mark").first()).toBeVisible();
 });

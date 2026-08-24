@@ -119,33 +119,6 @@ function markdownNode(tag, text, className, { inline = false, links = true } = {
   else element.classList.add("md-block");
   return element;
 }
-// «Онлайн» предпросмотр: разметка перерисовывается по мере набора, а не после
-// сохранения. Перерисовка привязана к кадру — на длинном тексте ввод остаётся
-// плавным.
-function attachLivePreview(editor, preview, { inline = false, onEmpty } = {}) {
-  let frame = 0;
-  const paint = () => {
-    frame = 0;
-    const source = editor.value;
-    if (!source.trim()) {
-      preview.replaceChildren();
-      if (onEmpty) onEmpty(preview);
-      preview.hidden = Boolean(onEmpty) ? false : true;
-      return;
-    }
-    preview.hidden = false;
-    preview.innerHTML = inline
-      ? renderInlineMarkdown(source)
-      : renderMarkdown(source);
-  };
-  const schedule = () => {
-    if (frame) return;
-    frame = requestAnimationFrame(paint);
-  };
-  editor.addEventListener("input", schedule);
-  paint();
-  return { paint, schedule };
-}
 function toast(text) {
   const element = $("#toast");
   element.textContent = text;
@@ -599,9 +572,7 @@ function propertyRow(label, control) {
 // на сервере со ссылкой supersedes.
 function cardBody(entry) {
   const wrap = node("section", undefined, "card-body"),
-    view = node("div", undefined, "card-markdown md-block"),
-    editor = document.createElement("textarea"),
-    hint = node("p", "Markdown · разметка видна сразу · ⌘/Ctrl + Enter — сохранить, Esc — отменить", "card-body-hint"),
+    hint = node("p", "Markdown оформляется прямо в тексте · ⌘/Ctrl + Enter — сохранить, Esc — отменить", "card-body-hint"),
     label = node("p", "Заметки", "prop-section"),
     origin = node("span", " · из исходной записи", "prop-origin");
   // Пока своей заметки нет, тело начинается с текста записи: дописывать проще,
@@ -615,48 +586,30 @@ function cardBody(entry) {
   };
   paintLabel();
   label.append(origin);
-  editor.id = "card-body-editor";
-  editor.setAttribute("aria-label", "Заметки к записи");
-  editor.placeholder = "Добавьте заметки в Markdown…";
-  editor.hidden = true;
+  // Тело — то же живое поле, что и в карточке ввода: разметка оформляется
+  // прямо в тексте, поэтому отдельный режим просмотра и предпросмотр больше
+  // не нужны — читать и править можно в одном месте.
+  const field = createMarkdownField({
+    id: "card-body-editor",
+    ariaLabel: "Заметки к записи",
+    placeholder: "Добавьте заметки в Markdown…",
+    onSubmit: () => save(),
+  });
+  field.element.classList.add("card-markdown");
+  field.setValue(body);
   hint.hidden = true;
-  // Предпросмотр под полем перерисовывается по мере набора: разметку видно
-  // до сохранения, а не после.
-  const preview = node("div", undefined, "md-block live-preview");
-  preview.id = "card-body-preview";
-  preview.hidden = true;
-  const live = attachLivePreview(editor, preview);
-  const paint = () => {
-    view.replaceChildren();
-    if (body.trim()) view.innerHTML = renderMarkdown(body);
-    else view.append(node("p", "Добавьте заметки в Markdown…", "empty"));
-  };
-  const edit = () => {
-    editor.value = body;
-    view.hidden = true;
-    editor.hidden = false;
-    hint.hidden = false;
-    live.paint();
-    editor.focus();
-  };
-  const stopEditing = () => {
-    editor.hidden = true;
-    hint.hidden = true;
-    preview.hidden = true;
-    view.hidden = false;
-    paint();
-  };
-  // Скрытие или отключение поля снимает фокус и вызывает blur, а тот сохраняет:
-  // без этих флагов заметка сохранялась дважды, а Escape вместо отмены сохранял
+
+  // Отключение поля снимает фокус и вызывает blur, а тот сохраняет: без этих
+  // флагов заметка сохранялась дважды, а Escape вместо отмены сохранял
   // черновик.
   let saving = false;
   let cancelling = false;
   const save = async () => {
     if (saving || cancelling) return;
-    const next = editor.value;
-    if (next === body) return stopEditing();
+    const next = field.getValue();
+    if (next === body) return;
     saving = true;
-    editor.disabled = true;
+    field.setDisabled(true);
     try {
       const result = await request(`/api/captures/${entry.id}/notes`, {
         method: "POST",
@@ -664,31 +617,36 @@ function cardBody(entry) {
       });
       body = result.entry.note?.body || "";
       entry.note = result.entry.note;
+      field.setValue(body);
       paintLabel();
       toast("Заметка сохранена");
-      stopEditing();
       await load();
     } catch (error) {
       toast(error.message);
     } finally {
       saving = false;
-      editor.disabled = false;
+      field.setDisabled(false);
     }
   };
-  view.addEventListener("click", edit);
-  editor.addEventListener("keydown", (event) => {
-    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); save(); }
+  field.element.addEventListener("focus", () => {
+    hint.hidden = false;
+  });
+  field.element.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
       cancelling = true;
-      stopEditing();
+      field.setValue(body);
+      hint.hidden = true;
+      field.element.blur();
       cancelling = false;
     }
   });
-  editor.addEventListener("blur", save);
-  paint();
-  wrap.append(label, view, editor, preview, hint);
+  field.element.addEventListener("blur", () => {
+    hint.hidden = true;
+    save();
+  });
+  wrap.append(label, field.element, hint);
   return wrap;
 }
 // Карточка открывается модальным окном, а не панелью внутри страницы: панель

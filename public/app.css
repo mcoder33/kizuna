@@ -1418,6 +1418,18 @@ dialog form > div {
   min-height: 190px;
   cursor: text;
 }
+.card-body .md-field {
+  font-size: 15px;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+.card-body .md-field:hover {
+  background: var(--wash);
+}
+.card-body .md-field:focus {
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.16);
+}
 .review-raw .md-block,
 .answer .md-block,
 .source .md-block {
@@ -1457,25 +1469,6 @@ dialog form > div {
 .md-inline del,
 .md-block del {
   opacity: 0.6;
-}
-/* Живой предпросмотр: разметка видна по мере набора. */
-.live-preview {
-  border: 1px dashed var(--line);
-  border-radius: 12px;
-  background: #fcfbfa;
-  animation: preview-enter 0.16s ease-out;
-}
-@keyframes preview-enter {
-  from {
-    opacity: 0;
-    transform: translateY(-2px);
-  }
-}
-#card-body-preview {
-  margin-top: 8px;
-  padding: 10px 12px;
-  max-height: 320px;
-  overflow-y: auto;
 }
 .md-block > :first-child {
   margin-top: 0;
