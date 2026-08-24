@@ -6,12 +6,31 @@ import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server/index.js';
 import { createVoiceService, runVoiceTool, mockVoiceTurn, VOICE_TOOLS } from '../server/voice.js';
-import { openDatabase } from '../server/db.js';
+import { openDatabase, createLedger } from '../server/db.js';
+import { normalizeClassification } from '../server/classifier.js';
 import { fakeModelService } from './helpers/fake-model.js';
 
 function app(voiceService) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pagent-voice-'));
   return createApp({ aiService: fakeModelService(), voiceService, databasePath: path.join(dir, 'test.sqlite') });
+}
+// Разобранная запись: инструменты правки работают только с ней, поэтому
+// готовим её сразу с интерпретацией, а не через очередь.
+function parsedCapture(db, raw, overrides = {}) {
+  const classification = normalizeClassification(
+    {
+      primaryType: 'task',
+      entities: { projects: [], people: [], when: null, followUp: null },
+      additionalTypes: [],
+      summary: raw,
+      proposedActions: [],
+      completed: false,
+      ambiguity: null,
+      ...overrides,
+    },
+    raw,
+  );
+  return createLedger(db, { raw, classification, provider: 'manual' }).captureId;
 }
 function database() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pagent-voice-db-'));
@@ -215,4 +234,55 @@ test('an unavailable realtime API answers 503 instead of pretending', async () =
   const api = request(app(createVoiceService({ apiKey: 'sk-test', fetch: async () => ({ ok: false, status: 429 }) })));
   const failed = await api.post('/api/voice/session').expect(503);
   assert.equal(failed.body.error.code, 'unavailable');
+});
+
+test('update_capture changes the parse and refuses what is still being parsed', () => {
+  const db = database();
+  const queued = runVoiceTool(db, 'create_capture', { text: 'ещё не разобрано' });
+  // Пока разбор идёт, поправить нечего — и об этом говорится прямо.
+  assert.match(runVoiceTool(db, 'update_capture', { captureId: queued.captureId, done: true }).error, /разбирается/);
+  assert.match(runVoiceTool(db, 'update_capture', { captureId: 'нет-такой' }).error, /не найдена/i);
+
+  const captureId = parsedCapture(db, 'подготовить отчёт');
+  const created = { captureId };
+  const retyped = runVoiceTool(db, 'update_capture', { captureId, type: 'note' });
+  assert.equal(retyped.type, 'заметка');
+  const dated = runVoiceTool(db, 'update_capture', { captureId: created.captureId, type: 'todo', due: { date: '2026-08-27' } });
+  assert.match(dated.due, /2026-08-27/);
+  const done = runVoiceTool(db, 'update_capture', { captureId: created.captureId, done: true });
+  assert.equal(done.captureId, created.captureId);
+  const stored = JSON.parse(db.prepare("SELECT classification_json FROM interpretations WHERE capture_id=? AND status='active'").get(created.captureId).classification_json);
+  assert.equal(stored.completed, true);
+  // Исходный текст записи правки не трогают.
+  assert.equal(db.prepare('SELECT raw FROM captures WHERE id=?').get(created.captureId).raw, 'подготовить отчёт');
+});
+
+test('a spoken change reaches the journal: mark done, move, retype', () => {
+  const db = database();
+  const now = () => new Date('2026-08-25T09:00:00Z');
+  parsedCapture(db, 'позвонить в банк');
+
+  const moved = mockVoiceTurn(db, 'перенеси на завтра', { now });
+  assert.equal(moved.calls[0].name, 'update_capture');
+  assert.deepEqual(moved.calls[0].arguments.due, { date: '2026-08-26' });
+  assert.match(moved.reply, /Перенёс/);
+
+  const retyped = mockVoiceTurn(db, 'это заметка', { now });
+  assert.equal(retyped.calls[0].arguments.type, 'note');
+  assert.match(retyped.reply, /Теперь это заметка/);
+
+  const completed = mockVoiceTurn(db, 'отметь как сделанное', { now });
+  assert.equal(completed.calls[0].arguments.done, true);
+  assert.match(completed.reply, /Отметил сделанным/);
+});
+
+test('a question is a conversation, not a silent capture', () => {
+  const db = database();
+  runVoiceTool(db, 'create_capture', { text: 'решили переносить релиз на пятницу' });
+  const asked = mockVoiceTurn(db, 'стоит ли переносить релиз?');
+  // Вопрос не превращается в запись: заглушка ищет в журнале и честно
+  // говорит, что рассуждать без модели не берётся.
+  assert.equal(asked.calls[0].name, 'search_memory');
+  assert.ok(!asked.calls.some((call) => call.name === 'create_capture'));
+  assert.match(asked.reply, /Не берусь рассуждать|Без модели я не рассуждаю/);
 });

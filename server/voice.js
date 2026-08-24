@@ -100,6 +100,15 @@ export const VOICE_TOOLS = [
 
 // Последняя запись журнала — та, к которой относится «допиши». Смотрим сами
 // записи, а не разобранные: разбор может ещё идти.
+function latestParsedCapture(db) {
+  return (
+    db
+      .prepare(`SELECT c.id FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active'
+        WHERE c.deleted_at IS NULL ORDER BY c.created_at DESC LIMIT 1`)
+      .get() || null
+  );
+}
+
 function latestCapture(db) {
   return db.prepare('SELECT id, raw FROM captures WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 1').get() || null;
 }
@@ -231,6 +240,9 @@ export function runVoiceTool(db, name, args = {}, { now = () => new Date(), time
 // журнал — работал и проверялся до появления ключа.
 const RULES = [
   { intent: 'list_today', re: /(что\s+(у\s+меня\s+)?(сегодня|на\s+сегодня)|какие\s+(дела|задачи)|план\s+на\s+день)/i },
+  { intent: 'complete', re: /(отметь|пометь)\s+(как\s+)?(сделан|готов|выполнен)/i },
+  { intent: 'reschedule', re: /(перенеси|сдвинь|отложи)\s*(?<when>.+)?/i },
+  { intent: 'retype', re: /(это|сделай\s+это|поменяй\s+тип\s+на)\s+(?<kind>заметк\w*|задач\w*|туду|результат\w*|итог)/i },
   { intent: 'search_memory', re: /(найди|поищи|что\s+(я\s+)?(писал|говорил|решил)|напомни)\s*(про|о|об)?\s*(?<query>.+)?/i },
   { intent: 'append_note', re: /(допиши|добавь\s+к\s+записи|припиши)\s*(?<text>.+)?/i },
   { intent: 'create_capture', re: /^(запиши|заметь|сохрани|добавь)\s*(?<text>.+)?/i },
@@ -241,6 +253,9 @@ function detectIntent(text) {
     const match = String(text).match(rule.re);
     if (match) return { intent: rule.intent, groups: match.groups || {} };
   }
+  // Вопрос без команды — это размышление вслух, а не запись: молча положить
+  // его в журнал значило бы подменить разговор.
+  if (/\?\s*$/.test(String(text).trim())) return { intent: 'think', groups: { text } };
   return { intent: 'create_capture', groups: { text } };
 }
 
@@ -307,6 +322,48 @@ export function mockVoiceTurn(db, text, { now = () => new Date(), timeZone = 'Eu
         : `Записей за сегодня ${result.total}, открытых дел нет.`,
       calls,
     };
+  }
+
+  if (intent === 'think') {
+    // Заглушка не умеет рассуждать — и не притворяется. Она приносит то, что
+    // уже есть в журнале, и предлагает записать мысль.
+    const result = call('search_memory', { query: said.replace(/[?？]+\s*$/, '') });
+    if (result.found)
+      return {
+        reply: `Не берусь рассуждать без модели, но в журнале про это есть: ${result.results[0].snippet}. Записать мысль?`,
+        calls,
+      };
+    return { reply: 'Без модели я не рассуждаю. В журнале про это ничего нет — сказать «запиши», и сохраню мысль.', calls };
+  }
+
+  if (intent === 'complete') {
+    const recent = latestParsedCapture(db);
+    if (!recent) return { reply: 'Нечего отмечать: разобранных записей пока нет.', calls };
+    const result = call('update_capture', { captureId: recent.id, done: true });
+    if (result.error) return { reply: result.error, calls };
+    return { reply: `Отметил сделанным: ${result.summary}`, calls };
+  }
+
+  if (intent === 'reschedule') {
+    const recent = latestParsedCapture(db);
+    if (!recent) return { reply: 'Нечего переносить: разобранных записей пока нет.', calls };
+    const when = relativeDate(said, now());
+    if (!when) return { reply: 'На какой день перенести — сегодня, завтра или послезавтра?', calls };
+    const time = said.match(/\b(\d{1,2}):(\d{2})\b/);
+    const due = { date: when.toISOString().slice(0, 10), ...(time ? { time: `${time[1].padStart(2, '0')}:${time[2]}` } : {}) };
+    const result = call('update_capture', { captureId: recent.id, due });
+    if (result.error) return { reply: result.error, calls };
+    return { reply: `Перенёс на ${result.due || due.date}: ${result.summary}`, calls };
+  }
+
+  if (intent === 'retype') {
+    const recent = latestParsedCapture(db);
+    if (!recent) return { reply: 'Нечего менять: разобранных записей пока нет.', calls };
+    const kind = String(groups.kind || '').toLowerCase();
+    const type = /заметк/.test(kind) ? 'note' : /задач|туду/.test(kind) ? 'todo' : 'outcome';
+    const result = call('update_capture', { captureId: recent.id, type });
+    if (result.error) return { reply: result.error, calls };
+    return { reply: `Теперь это ${result.type}: ${result.summary}`, calls };
   }
 
   if (intent === 'search_memory') {
