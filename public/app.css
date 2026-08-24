@@ -351,6 +351,156 @@ main {
   padding-top: 11px;
   border-top: 1px solid var(--hairline);
 }
+/* ── кнопка разговора: такой же тихий значок, что и «развернуть» ── */
+.capture-voice {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: #c9c4be;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+.capture-voice svg {
+  width: 16px;
+  height: 16px;
+}
+.capture-voice:hover {
+  color: var(--muted);
+  background: var(--hairline);
+}
+.capture-voice[aria-pressed="true"] {
+  color: var(--type-auto);
+  background: var(--tint-auto);
+}
+.capture-voice:active {
+  transform: scale(0.92);
+}
+
+/* ── панель разговора: продолжение карточки, а не отдельное окно ── */
+.voice-panel {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: var(--shadow);
+  padding: 14px 16px 12px;
+  text-align: left;
+  animation: voice-enter 0.24s ease-out;
+}
+@keyframes voice-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.voice-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.voice-status {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--type-auto);
+}
+.voice-close {
+  border: 0;
+  background: none;
+  color: #c9c4be;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+.voice-close:hover {
+  color: var(--ink);
+  background: var(--hairline);
+}
+.voice-log {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 10px 0;
+  font-size: 13.5px;
+}
+.voice-log:empty {
+  display: none;
+}
+.voice-line {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 10px;
+}
+.voice-me {
+  background: var(--tint-todo);
+  color: var(--ink);
+  justify-self: end;
+  max-width: 85%;
+}
+.voice-bot {
+  background: var(--hairline);
+  color: var(--ink);
+  max-width: 92%;
+}
+.voice-tool {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 2px 8px;
+}
+.voice-say {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  border-top: 1px solid var(--hairline);
+  padding-top: 10px;
+}
+.voice-input {
+  flex: 1;
+  font: inherit;
+  font-size: 14px;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--ink);
+  padding: 6px 2px;
+}
+.voice-input::placeholder {
+  color: #bdbab7;
+}
+.voice-send {
+  border: 0;
+  background: var(--type-auto);
+  color: #fff;
+  border-radius: 99px;
+  font: inherit;
+  font-weight: 700;
+  padding: 7px 13px;
+  cursor: pointer;
+  line-height: 1;
+}
+.voice-hint {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.voice-hint:empty {
+  display: none;
+}
+
 /* ── кнопка «развернуть»: тихий кубик рядом с отправкой ── */
 .capture-expand {
   flex: none;

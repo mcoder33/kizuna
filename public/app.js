@@ -1,5 +1,6 @@
 import { renderMarkdown, renderInlineMarkdown } from "./markdown.js";
 import { createMarkdownField } from "./markdown-live.js";
+import { createVoiceDialog } from "./voice.js";
 
 const $ = (selector) => document.querySelector(selector);
 const typeNames = {
@@ -1405,6 +1406,23 @@ captureField.element.addEventListener("keydown", (event) => {
     event.stopPropagation();
     setCaptureLarge(false);
   }
+});
+
+// Голосовой диалог: кнопка рядом с «развернуть», панель — под карточкой.
+// Записи, сделанные голосом, сразу видны в журнале, поэтому после каждого
+// изменения перезагружаем списки.
+const voiceDialog = createVoiceDialog({ onJournalChanged: () => load() });
+$("#capture-form").after(voiceDialog.element);
+const voiceButton = $("#capture-voice");
+voiceButton.addEventListener("click", () => {
+  if (voiceDialog.isOpen()) {
+    voiceDialog.stop();
+    voiceButton.setAttribute("aria-pressed", "false");
+    captureField.focus();
+    return;
+  }
+  voiceButton.setAttribute("aria-pressed", "true");
+  voiceDialog.open();
 });
 
 function idempotencyKey() {
