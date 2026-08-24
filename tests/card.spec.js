@@ -379,3 +379,43 @@ test("the card body is the same live field as the capture card, and the title st
   expect(entry.raw).toBe(raw);
   expect(entry.note.body).toContain("- [x] вторая задача");
 });
+
+test("tab nests a list item and shift+tab pulls it back, outside a list tab still moves focus", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  const field = page.getByLabel("Новая запись");
+  await field.click();
+
+  await page.keyboard.type("- верхний пункт");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("подпункт");
+  await expect(field.locator(".md-line").nth(1)).toHaveText("  - подпункт");
+
+  // Каретка остаётся на месте: продолжаем печатать там же, где стояли.
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.type(" дописано");
+  await expect(field.locator(".md-line").nth(1)).toHaveText("- подпункт дописано");
+
+  // Вне списка Tab уводит фокус дальше по форме — с клавиатуры поле не ловушка.
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("обычная строка");
+  await page.keyboard.press("Tab");
+  await expect(field.locator(".md-line").last()).toHaveText("обычная строка");
+  await expect(field).not.toBeFocused();
+
+  // Вложенность доезжает до карточки настоящим вложенным списком.
+  await field.click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("- верх");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("вложенный");
+  const posted = page.waitForRequest(
+    (request_) => request_.url().endsWith("/api/captures") && request_.method() === "POST",
+  );
+  await page.getByRole("button", { name: "Сохранить запись" }).click();
+  expect(JSON.parse((await posted).postData() || "{}").raw).toContain("  - вложенный");
+});

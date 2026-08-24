@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { decorateLine, listContinuation, toggleTask } from '../public/markdown-live.js';
+import { decorateLine, listContinuation, toggleTask, indentLine } from '../public/markdown-live.js';
 
 // Главный инвариант поля: оформление ничего не удаляет из текста. Иначе
 // каретку невозможно восстановить по смещению, а разметку — отредактировать.
@@ -141,4 +141,25 @@ test('a task line shows a checkbox instead of a bullet', () => {
   assert.match(decorateLine('- [ ] задача'), /md-bullet md-bullet-task/);
   assert.doesNotMatch(decorateLine('- обычный'), /md-bullet-task/);
   assert.match(decorateLine('1. пункт'), /md-bullet md-ordered/);
+});
+
+test('tab indents a list item, shift+tab pulls it back', () => {
+  assert.deepEqual(indentLine('- пункт', 1), { line: '  - пункт', shift: 2 });
+  assert.deepEqual(indentLine('  - вложенный', 1), { line: '    - вложенный', shift: 2 });
+  assert.deepEqual(indentLine('  - вложенный', -1), { line: '- вложенный', shift: -2 });
+  assert.deepEqual(indentLine('1. первый', 1), { line: '  1. первый', shift: 2 });
+  assert.deepEqual(indentLine('- [ ] задача', 1), { line: '  - [ ] задача', shift: 2 });
+  // Табуляция считается за один уровень.
+  assert.deepEqual(indentLine('\t- пункт', -1), { line: '- пункт', shift: -1 });
+});
+
+test('shift+tab on a top-level item changes nothing', () => {
+  assert.deepEqual(indentLine('- пункт', -1), { line: '- пункт', shift: 0 });
+  assert.deepEqual(indentLine('обычная строка', -1), { line: 'обычная строка', shift: 0 });
+});
+
+test('an indented item is a nested list for the block renderer', async () => {
+  const { renderMarkdown } = await import('../public/markdown.js');
+  const indented = indentLine('- подпункт', 1).line;
+  assert.equal(renderMarkdown(`- верх\n${indented}`), '<ul><li>верх</li><ul><li>подпункт</li></ul></ul>');
 });

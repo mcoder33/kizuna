@@ -149,6 +149,19 @@ export function listContinuation(line) {
   return null;
 }
 
+// Уровень вложенности пункта — два пробела: столько же ждёт блочный рендер,
+// когда собирает вложенные списки.
+export const INDENT = "  ";
+
+// Сдвиг строки списка вправо (Tab) или влево (Shift+Tab). Возвращает новую
+// строку и то, насколько сместилась каретка.
+export function indentLine(line, direction) {
+  if (direction > 0) return { line: INDENT + line, shift: INDENT.length };
+  const leading = line.match(/^(\t| {1,2})/);
+  if (!leading) return { line, shift: 0 };
+  return { line: line.slice(leading[0].length), shift: -leading[0].length };
+}
+
 // Переключение состояния задачи в строке: `[ ]` ⇄ `[x]`.
 export function toggleTask(line) {
   const task = line.match(/^(\s*[-*+]\s+\[)([ xX/-])(\].*)$/);
@@ -181,19 +194,23 @@ export function createMarkdownField({ id, ariaLabel, placeholder = "", onInput, 
     return nodes.flatMap((node) => normalize(node.textContent).split("\n"));
   };
 
-  const readCaret = () => {
-    const selection = document.getSelection();
-    if (!selection || !selection.rangeCount || !root.contains(selection.anchorNode)) return null;
+  // Позиция (строка, смещение) для произвольного узла выделения.
+  const caretOf = (anchorNode, anchorOffset) => {
     const nodes = lineNodes();
-    const anchor = selection.anchorNode;
-    const host = anchor.nodeType === 1 ? anchor : anchor.parentElement;
+    const host = anchorNode.nodeType === 1 ? anchorNode : anchorNode.parentElement;
     const lineNode = host?.closest(`.${LINE}`);
     const index = lineNode ? nodes.indexOf(lineNode) : -1;
     if (index < 0) return null;
     const range = document.createRange();
     range.selectNodeContents(lineNode);
-    range.setEnd(selection.anchorNode, selection.anchorOffset);
+    range.setEnd(anchorNode, anchorOffset);
     return { line: index, offset: normalize(range.toString()).length };
+  };
+
+  const readCaret = () => {
+    const selection = document.getSelection();
+    if (!selection || !selection.rangeCount || !root.contains(selection.anchorNode)) return null;
+    return caretOf(selection.anchorNode, selection.anchorOffset);
   };
 
   const placeCaret = (position) => {
@@ -286,6 +303,30 @@ export function createMarkdownField({ id, ariaLabel, placeholder = "", onInput, 
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
       event.preventDefault();
       if (onSubmit) onSubmit(getValue());
+      return;
+    }
+    if (event.key === "Tab") {
+      const caret = readCaret();
+      const selection = document.getSelection();
+      // Границы выделения: Tab двигает все захваченные строки, а не одну.
+      const focus = selection && selection.focusNode ? caretOf(selection.focusNode, selection.focusOffset) : null;
+      const from = Math.min(caret?.line ?? 0, focus?.line ?? caret?.line ?? 0);
+      const to = Math.max(caret?.line ?? 0, focus?.line ?? caret?.line ?? 0);
+      if (caret === null) return;
+      // Вне списка Tab не перехватываем: он должен уводить фокус дальше по
+      // форме, иначе с клавиатуры из поля не выйти.
+      const touched = lines.slice(from, to + 1);
+      if (!touched.some((line) => listContinuation(line) !== null)) return;
+      event.preventDefault();
+      const direction = event.shiftKey ? -1 : 1;
+      let caretShift = 0;
+      for (let index = from; index <= to; index += 1) {
+        const result = indentLine(lines[index], direction);
+        lines[index] = result.line;
+        if (index === caret.line) caretShift = result.shift;
+      }
+      render({ line: caret.line, offset: Math.max(0, caret.offset + caretShift) });
+      if (onInput) onInput(getValue());
       return;
     }
     if (event.key === "Enter") {
