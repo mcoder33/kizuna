@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { decorateLine } from '../public/markdown-live.js';
+import { decorateLine, listContinuation, toggleTask } from '../public/markdown-live.js';
 
 // Главный инвариант поля: оформление ничего не удаляет из текста. Иначе
 // каретку невозможно восстановить по смещению, а разметку — отредактировать.
@@ -105,4 +105,40 @@ test('dangerous urls stay plain text in the field', () => {
   const html = decorateLine('[клик](javascript:alert(1))');
   assert.doesNotMatch(html, /md-link/);
   assert.equal(textOf(html), '[клик](javascript:alert(1))');
+});
+
+test('enter continues the list the line started', () => {
+  assert.deepEqual(listContinuation('- пункт'), { prefix: '- ' });
+  assert.deepEqual(listContinuation('* звёздочкой'), { prefix: '* ' });
+  assert.deepEqual(listContinuation('- [ ] задача'), { prefix: '- [ ] ' });
+  // Продолжение сделанной задачи начинается пустым, а не унаследованным [x].
+  assert.deepEqual(listContinuation('- [x] сделано'), { prefix: '- [ ] ' });
+  assert.deepEqual(listContinuation('3. третий'), { prefix: '4. ' });
+  assert.deepEqual(listContinuation('1) первый'), { prefix: '2) ' });
+  // Отступ вложенного пункта сохраняется.
+  assert.deepEqual(listContinuation('  - вложенный'), { prefix: '  - ' });
+  assert.equal(listContinuation('обычная строка'), null);
+  assert.equal(listContinuation(''), null);
+});
+
+test('enter on an empty item ends the list instead of adding a marker', () => {
+  assert.deepEqual(listContinuation('- '), { clear: true, keep: '' });
+  assert.deepEqual(listContinuation('1. '), { clear: true, keep: '' });
+  assert.deepEqual(listContinuation('- [ ] '), { clear: true, keep: '' });
+  assert.deepEqual(listContinuation('  - '), { clear: true, keep: '  ' });
+});
+
+test('clicking a checkbox flips the task state in the text', () => {
+  assert.equal(toggleTask('- [ ] задача'), '- [x] задача');
+  assert.equal(toggleTask('- [x] задача'), '- [ ] задача');
+  assert.equal(toggleTask('- [X] задача'), '- [ ] задача');
+  assert.equal(toggleTask('  * [ ] вложенная'), '  * [x] вложенная');
+  assert.equal(toggleTask('- обычный пункт'), null);
+  assert.equal(toggleTask('просто строка'), null);
+});
+
+test('a task line shows a checkbox instead of a bullet', () => {
+  assert.match(decorateLine('- [ ] задача'), /md-bullet md-bullet-task/);
+  assert.doesNotMatch(decorateLine('- обычный'), /md-bullet-task/);
+  assert.match(decorateLine('1. пункт'), /md-bullet md-ordered/);
 });

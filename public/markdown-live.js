@@ -99,7 +99,7 @@ export function decorateLine(line) {
   if (task) {
     const [, space, bullet, open, state, close, rest] = task;
     const done = state.toLowerCase() === "x";
-    return `${escapeHtml(space)}<span class="md-bullet">${mark(bullet)}</span><span class="md-checkbox${done ? " md-checkbox-done" : ""}">${mark(open)}${escapeHtml(state)}${mark(close)}</span><span class="${done ? "md-task-done" : "md-task"}">${inlineDecorate(rest)}</span>`;
+    return `${escapeHtml(space)}<span class="md-bullet md-bullet-task">${mark(bullet)}</span><span class="md-checkbox${done ? " md-checkbox-done" : ""}">${mark(open)}${escapeHtml(state)}${mark(close)}</span><span class="${done ? "md-task-done" : "md-task"}">${inlineDecorate(rest)}</span>`;
   }
   const bullet = line.match(/^(\s*)([-*+]\s+)(.*)$/);
   if (bullet) {
@@ -109,7 +109,7 @@ export function decorateLine(line) {
   const ordered = line.match(/^(\s*)(\d{1,3}[.)]\s+)(.*)$/);
   if (ordered) {
     const [, space, marker, rest] = ordered;
-    return `${escapeHtml(space)}<span class="md-bullet">${mark(marker)}</span>${inlineDecorate(rest)}`;
+    return `${escapeHtml(space)}<span class="md-bullet md-ordered">${mark(marker)}</span>${inlineDecorate(rest)}`;
   }
   if (/^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/.test(line)) return `<span class="md-rule">${escapeHtml(line)}</span>`;
   if (/^\s*(?:```|~~~)/.test(line)) return `<span class="md-fence">${escapeHtml(line)}</span>`;
@@ -122,6 +122,38 @@ export function decorateLine(line) {
     return `<span class="md-table-line">${decorated}</span>`;
   }
   return inlineDecorate(line);
+}
+
+// Продолжение списка по Enter, как в Obsidian. Возвращает:
+//   { prefix }  — чем начать следующую строку;
+//   { clear: true } — пункт пустой, список пора закончить;
+//   null — строка не список.
+export function listContinuation(line) {
+  const task = line.match(/^(\s*)([-*+]\s+)\[([ xX/-])\](\s+)(.*)$/);
+  if (task) {
+    const [, space, bullet, , gap, rest] = task;
+    return rest.trim() ? { prefix: `${space}${bullet}[ ]${gap}` } : { clear: true, keep: space };
+  }
+  const ordered = line.match(/^(\s*)(\d{1,3})([.)])(\s+)(.*)$/);
+  if (ordered) {
+    const [, space, number, dot, gap, rest] = ordered;
+    return rest.trim()
+      ? { prefix: `${space}${Number(number) + 1}${dot}${gap}` }
+      : { clear: true, keep: space };
+  }
+  const bullet = line.match(/^(\s*)([-*+])(\s+)(.*)$/);
+  if (bullet) {
+    const [, space, marker, gap, rest] = bullet;
+    return rest.trim() ? { prefix: `${space}${marker}${gap}` } : { clear: true, keep: space };
+  }
+  return null;
+}
+
+// Переключение состояния задачи в строке: `[ ]` ⇄ `[x]`.
+export function toggleTask(line) {
+  const task = line.match(/^(\s*[-*+]\s+\[)([ xX/-])(\].*)$/);
+  if (!task) return null;
+  return `${task[1]}${task[2].toLowerCase() === "x" ? " " : "x"}${task[3]}`;
 }
 
 const LINE = "md-line";
@@ -237,20 +269,45 @@ export function createMarkdownField({ id, ariaLabel, placeholder = "", onInput, 
     render({ line: caret.line + last, offset: caretOffset });
     if (onInput) onInput(getValue());
   });
+  root.addEventListener("click", (event) => {
+    const box = event.target.closest?.(".md-checkbox");
+    if (!box || !root.contains(box)) return;
+    const lineNode = box.closest(`.${LINE}`);
+    const index = lineNodes().indexOf(lineNode);
+    if (index < 0) return;
+    const toggled = toggleTask(lines[index]);
+    if (toggled === null) return;
+    event.preventDefault();
+    lines[index] = toggled;
+    render({ line: index, offset: lines[index].length });
+    if (onInput) onInput(getValue());
+  });
   root.addEventListener("keydown", (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
       event.preventDefault();
       if (onSubmit) onSubmit(getValue());
       return;
     }
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "Enter") {
       // Перенос строки контролируем сами: браузер иначе вставит свои <div>
       // и модель строк перестанет совпадать с разметкой.
       event.preventDefault();
       const caret = readCaret() || { line: lines.length - 1, offset: lines[lines.length - 1].length };
       const current = lines[caret.line] ?? "";
-      lines.splice(caret.line, 1, current.slice(0, caret.offset), current.slice(caret.offset));
-      render({ line: caret.line + 1, offset: 0 });
+      const head = current.slice(0, caret.offset);
+      const tail = current.slice(caret.offset);
+      // Shift+Enter — просто перенос: список не продолжаем.
+      const continuation = event.shiftKey ? null : listContinuation(head);
+      if (continuation?.clear) {
+        // Enter на пустом пункте заканчивает список, а не плодит маркеры.
+        lines.splice(caret.line, 1, continuation.keep + tail);
+        render({ line: caret.line, offset: continuation.keep.length });
+        if (onInput) onInput(getValue());
+        return;
+      }
+      const prefix = continuation?.prefix ?? "";
+      lines.splice(caret.line, 1, head, prefix + tail);
+      render({ line: caret.line + 1, offset: prefix.length });
       if (onInput) onInput(getValue());
     }
   });

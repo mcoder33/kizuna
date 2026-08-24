@@ -298,3 +298,43 @@ test("obsidian markup works end to end: typed in the field, rendered in the card
   await expect(rendered.locator(".md-callout-warning .md-callout-title")).toHaveText("Осторожно");
   await expect(rendered.locator(".md-tag")).toHaveText("#hub");
 });
+
+test("lists continue on enter and checkboxes are clickable", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  const field = page.getByLabel("Новая запись");
+  await field.click();
+
+  // Enter продолжает список тем же маркером.
+  await page.keyboard.type("- [ ] первая задача");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("вторая задача");
+  await expect(field.locator(".md-line").nth(1)).toHaveText("- [ ] вторая задача");
+
+  // Enter на пустом пункте заканчивает список, а не плодит маркеры.
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("1. первый пункт");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("второй пункт");
+  await expect(field.locator(".md-line").nth(3)).toHaveText("2. второй пункт");
+
+  // Обычный дефис даёт буллет, у задачи — чекбокс вместо буллета.
+  await expect(field.locator(".md-bullet-task").first()).toBeVisible();
+  await expect(field.locator(".md-ordered").first()).toBeVisible();
+
+  // Чекбокс переключается мышью, и это меняет сам текст записи.
+  await field.locator(".md-line").first().locator(".md-checkbox").click();
+  await expect(field.locator(".md-line").first()).toHaveText("- [x] первая задача");
+  await expect(field.locator(".md-checkbox-done")).toHaveCount(1);
+  await field.locator(".md-line").first().locator(".md-checkbox").click();
+  await expect(field.locator(".md-line").first()).toHaveText("- [ ] первая задача");
+
+  // Отмеченная задача уходит на сервер именно как [x].
+  await field.locator(".md-line").first().locator(".md-checkbox").click();
+  const posted = page.waitForRequest(
+    (request_) => request_.url().endsWith("/api/captures") && request_.method() === "POST",
+  );
+  await page.getByRole("button", { name: "Сохранить запись" }).click();
+  expect(JSON.parse((await posted).postData() || "{}").raw).toContain("- [x] первая задача");
+});

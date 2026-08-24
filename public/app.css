@@ -260,8 +260,32 @@ main {
   color: var(--muted);
   font-style: italic;
 }
-.md-field .md-bullet .md-mark {
+/* Маркер списка остаётся в тексте (иначе каретке некуда встать), но рисуется
+   как буллет: сам дефис прозрачен, а точку подставляет ::before. */
+.md-field .md-bullet {
+  position: relative;
   color: var(--type-todo);
+}
+.md-field .md-bullet .md-mark {
+  color: transparent;
+}
+.md-field .md-bullet::before {
+  content: "•";
+  position: absolute;
+  left: 0.1em;
+  color: var(--type-todo);
+  pointer-events: none;
+}
+/* У задачи свой знак — чекбокс, поэтому буллет ей не рисуем. */
+.md-field .md-bullet-task::before {
+  content: none;
+}
+/* Нумерованный список: цифра читается сама, приглушать её незачем. */
+.md-field .md-bullet.md-ordered .md-mark {
+  color: var(--type-todo);
+}
+.md-field .md-bullet.md-ordered::before {
+  content: none;
 }
 .md-field code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -1604,11 +1628,30 @@ dialog form > div {
 .md-field .md-h5,
 .md-field .md-h6 { font-size: 1em; }
 .md-field .md-h6 { color: var(--muted); }
+/* Чекбокс задачи: скобки со статусом остаются текстом, поверх рисуется
+   настоящая коробочка — по ней можно щёлкнуть мышью. */
 .md-field .md-checkbox {
-  color: var(--type-todo);
-  font-weight: 700;
+  position: relative;
+  cursor: pointer;
+  color: transparent;
 }
-.md-field .md-checkbox-done { color: var(--green); }
+.md-field .md-checkbox .md-mark {
+  color: transparent;
+}
+.md-field .md-checkbox::before {
+  content: "☐";
+  position: absolute;
+  left: 0;
+  color: var(--type-todo);
+  font-weight: 400;
+}
+.md-field .md-checkbox-done::before {
+  content: "☑";
+  color: var(--green);
+}
+.md-field .md-checkbox:hover::before {
+  color: var(--ink);
+}
 .md-field .md-task-done {
   color: var(--muted);
   text-decoration: line-through;
