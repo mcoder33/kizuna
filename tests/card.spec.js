@@ -575,7 +575,7 @@ test("the sheet and the entry card flow out of what was clicked", async ({ page,
     })),
   );
   expect(sheetFrames.length).toBe(1);
-  expect(sheetFrames[0].duration).toBe(540);
+  expect(sheetFrames[0].duration).toBe(680);
   await page.waitForTimeout(500);
   const sheet = await form.boundingBox();
   // Пропорция листа — чуть шире A4. Допуск на округление пикселей.
@@ -595,7 +595,7 @@ test("the sheet and the entry card flow out of what was clicked", async ({ page,
   const cardFrames = await dialog.evaluate((node) =>
     node.getAnimations().map((animation) => animation.effect.getTiming().duration),
   );
-  expect(cardFrames).toEqual([540]);
+  expect(cardFrames).toEqual([680]);
   await expect(dialog).toBeVisible();
 });
 
@@ -608,17 +608,17 @@ test("the entry card is the same sheet as the grown capture card", async ({ page
   await page.getByLabel("Новая запись").click();
   await page.keyboard.type("запись для сравнения листов");
   await page.locator("#capture-expand").click();
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(760);
   const sheet = await page.locator("#capture-form").boundingBox();
   await page.keyboard.press("Escape");
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(760);
 
   // Тот же размер у карточки записи.
   await page.getByRole("button", { name: "Сохранить запись" }).click();
   const entry = page.locator("#today .entry").filter({ hasText: "запись для сравнения" }).first();
   await expect(entry).toBeVisible({ timeout: 15000 });
   await entry.locator(".entry-title").click();
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(760);
   const card = await page.locator("#review-dialog").boundingBox();
 
   expect(Math.round(card.width)).toBe(Math.round(sheet.width));

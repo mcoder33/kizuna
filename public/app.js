@@ -560,14 +560,40 @@ async function load() {
 // щёлкнули. Один и тот же приём, что и у листа записи, — карточка вырастает
 // оттуда, куда смотрел человек, а не появляется из ниоткуда.
 let cardOrigin = null;
+// Куда карточка уезжает при закрытии — та же запись, из которой вышла.
+let cardReturn = null;
 function flowFrom(element, origin) {
   if (!origin) return;
   flowBetween(element, origin.getBoundingClientRect(), element.getBoundingClientRect());
 }
 function closeCard() {
   const dialog = $("#review-dialog");
-  if (dialog.open) dialog.close();
-  clear($("#review"));
+  if (!dialog.open) {
+    clear($("#review"));
+    return;
+  }
+  const finish = () => {
+    if (dialog.open) dialog.close();
+    clear($("#review"));
+    cardReturn = null;
+  };
+  const target = cardReturn?.isConnected ? cardReturn.getBoundingClientRect() : null;
+  const motionAllowed = !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  if (!target || !target.width || !motionAllowed) return finish();
+  // Обратный ход: карточка уезжает туда, откуда вышла, и только потом
+  // закрывается — иначе переход обрывается на середине.
+  const from = dialog.getBoundingClientRect();
+  const shiftX = target.left + target.width / 2 - (from.left + from.width / 2);
+  const shiftY = target.top + target.height / 2 - (from.top + from.height / 2);
+  const animation = dialog.animate(
+    [
+      { transform: "none", opacity: 1, offset: 0 },
+      { opacity: 1, offset: 0.5 },
+      { transform: `translate(${shiftX}px, ${shiftY}px) scale(0.94)`, opacity: 0, offset: 1 },
+    ],
+    { duration: SHEET_DURATION * 0.62, easing: SHEET_EASING, fill: "forwards" },
+  );
+  animation.finished.then(finish, finish);
 }
 // Карточка открывается модальным окном, а не панелью внутри страницы: панель
 // жила в разделе «Сегодня» и на страницах журнала строилась на скрытой
@@ -810,6 +836,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   if (!dialog.open) {
     dialog.showModal();
     flowFrom(dialog, cardOrigin);
+    cardReturn = cardOrigin;
     cardOrigin = null;
     // Фокус на самой карточке: иначе он уходит на крестик или на селектор
     // типа, хотя карточку открывают ради заметок.
@@ -1325,8 +1352,8 @@ function captureLarge() {
   return $("#capture-form").classList.contains("capture-large");
 }
 // Кривая в духе macOS: короткий разгон и длинное мягкое торможение.
-const SHEET_EASING = "cubic-bezier(0.16, 0.84, 0.24, 1)";
-const SHEET_DURATION = 540;
+const SHEET_EASING = "cubic-bezier(0.16, 1, 0.3, 1)";
+const SHEET_DURATION = 680;
 // Путь от прежнего прямоугольника к новому. Позицию считает раскладка,
 // анимация только показывает переход — поэтому её можно выключить целиком.
 function flowBetween(element, from, to, base = "") {
@@ -1342,15 +1369,12 @@ function flowBetween(element, from, to, base = "") {
   element.animate(
     [
       {
-        transform: `${base} translate(${shiftX}px, ${shiftY + nudgeY}px) scale(0.92)`,
+        transform: `${base} translate(${shiftX}px, ${shiftY + nudgeY}px) scale(0.94)`,
         opacity: 0,
         offset: 0,
       },
-      {
-        transform: `${base} translate(${shiftX * 0.22}px, ${(shiftY + nudgeY) * 0.22}px) scale(0.985)`,
-        opacity: 1,
-        offset: 0.55,
-      },
+      // Прозрачность набирается раньше движения: лист не мигает, а именно едет.
+      { opacity: 1, offset: 0.34 },
       { transform: base || "none", opacity: 1, offset: 1 },
     ],
     { duration: SHEET_DURATION, easing: SHEET_EASING },
