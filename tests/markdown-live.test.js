@@ -163,3 +163,25 @@ test('an indented item is a nested list for the block renderer', async () => {
   const indented = indentLine('- подпункт', 1).line;
   assert.equal(renderMarkdown(`- верх\n${indented}`), '<ul><li>верх</li><ul><li>подпункт</li></ul></ul>');
 });
+
+test('enter continues a quote and a callout body', () => {
+  assert.deepEqual(listContinuation('> цитата'), { prefix: '> ' });
+  // После строки с типом всегда идёт тело, даже если заголовок пуст.
+  assert.deepEqual(listContinuation('> [!info] Заголовок'), { prefix: '> ' });
+  assert.deepEqual(listContinuation('> [!info]'), { prefix: '> ' });
+  assert.deepEqual(listContinuation('> > вложенная'), { prefix: '> > ' });
+  assert.deepEqual(listContinuation('  > с отступом'), { prefix: '  > ' });
+  // Список внутри цитаты продолжается вместе с ней.
+  assert.deepEqual(listContinuation('> - пункт в цитате'), { prefix: '> - ' });
+  assert.deepEqual(listContinuation('> 2. второй'), { prefix: '> 3. ' });
+  // Пустой пункт внутри цитаты снимает маркер списка, но цитату оставляет.
+  assert.deepEqual(listContinuation('> - '), { prefix: '> ' });
+  // Пустая цитата заканчивается.
+  assert.deepEqual(listContinuation('> '), { clear: true, keep: '' });
+});
+
+test('inline footnotes are decorated in the field', () => {
+  const html = decorateLine('пояснение^[прямо здесь] дальше');
+  assert.match(html, /md-footnote-ref/);
+  assert.equal(textOf(html), 'пояснение^[прямо здесь] дальше');
+});

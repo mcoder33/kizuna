@@ -291,6 +291,25 @@ test("obsidian markup works end to end: typed in the field, rendered in the card
   await expect(card).toBeVisible({ timeout: 15000 });
   await card.locator(".entry-title").click();
   await page.locator(".card-source summary").click();
+
+  // Пока заметку не правили, её тело — копия записи, и текст не дублируется.
+  await expect(page.locator(".review-raw")).toContainText("совпадает с заметками");
+  await expect(page.locator(".card-source .md-block")).toHaveCount(0);
+
+  // После правки заметки источник показывает исходную запись готовым видом.
+  const body = page.locator("#card-body-editor");
+  await body.click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.type(" правка");
+  const saved = page.waitForResponse(
+    (response) => response.url().includes("/notes") && response.request().method() === "POST",
+  );
+  await body.press("ControlOrMeta+Enter");
+  expect((await saved).status()).toBe(200);
+  // Блок источника собирается при открытии карточки, поэтому переоткрываем её.
+  await page.locator("#review-close").click();
+  await card.locator(".entry-title").click();
+  await page.locator(".card-source summary").click();
   const rendered = page.locator(".card-source .md-block");
   await expect(rendered.locator("table.md-table th").last()).toHaveText("Когда");
   await expect(rendered.locator("td").first()).toHaveText("созвон");
@@ -418,4 +437,25 @@ test("tab nests a list item and shift+tab pulls it back, outside a list tab stil
   );
   await page.getByRole("button", { name: "Сохранить запись" }).click();
   expect(JSON.parse((await posted).postData() || "{}").raw).toContain("  - вложенный");
+});
+
+test("enter continues a callout body and the body keeps the callout colour", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  const field = page.getByLabel("Новая запись");
+  await field.click();
+
+  await page.keyboard.type("> [!warning] Осторожно");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("тело предупреждения");
+  await expect(field.locator(".md-line").nth(1)).toHaveText("> тело предупреждения");
+  // Полоса тела окрашена в цвет заголовка: блок читается целиком.
+  await expect(field.locator(".md-line").nth(1)).toHaveClass(/md-callout-warning/);
+
+  // Пустая цитата заканчивает блок, а не тянет «>» дальше.
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("обычный текст");
+  await expect(field.locator(".md-line").last()).toHaveText("обычный текст");
+  await expect(field.locator(".md-line").last()).not.toHaveClass(/md-callout/);
 });

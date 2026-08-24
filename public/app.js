@@ -780,8 +780,13 @@ function showReview(entry, review, undoGroupId, provenance) {
 
   const source = node("details", undefined, "card-source");
   source.append(node("summary", "Источник и версия"));
+  // Пока заметку не правили, её тело — копия исходной записи, и показывать
+  // один и тот же текст дважды незачем: остаётся только строка версии.
+  const noteBody = entry.note?.body ?? (entry.raw || "");
+  const sameAsRaw = noteBody.trim() === (entry.raw || "").trim();
   const raw = node("div", undefined, "review-raw");
-  raw.append(node("p", "Исходная запись:", "source-label"), markdownNode("div", entry.raw, undefined));
+  if (sameAsRaw) raw.append(node("p", "Исходная запись совпадает с заметками.", "entry-meta"));
+  else raw.append(node("p", "Исходная запись:", "source-label"), markdownNode("div", entry.raw, undefined));
   const provider = provenance?.usedProvider || entry.interpretation.provider;
   source.append(
     raw,

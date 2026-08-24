@@ -60,6 +60,8 @@ function inlineDecorate(text) {
   out = out.replace(/(^|[\s(])(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)])/g, (match, before, url) =>
     `${before}<span class="md-link">${url}</span>`);
   // Сноски, теги и якоря блоков.
+  out = out.replace(/(\^\[)([^\]\n]+)(\])/g, (match, open, body, close) =>
+    `${mark(open)}<span class="md-footnote-ref">${body}</span>${mark(close)}`);
   out = out.replace(/(\[\^)([^\]\s]+)(\])/g, (match, open, name, close) =>
     `${mark(open)}<span class="md-footnote-ref">${name}</span>${mark(close)}`);
   out = out.replace(/(^|\s)(#)([\p{L}\p{N}_/-]{1,60})(?=$|\s|[.,;:!?)])/gu, (match, before, hash, tag) =>
@@ -129,6 +131,19 @@ export function decorateLine(line) {
 //   { clear: true } — пункт пустой, список пора закончить;
 //   null — строка не список.
 export function listContinuation(line) {
+  // Цитата и callout продолжаются так же, как список: Enter повторяет «> »,
+  // иначе тело callout разваливается на отдельные строки. Вложенные «> > »
+  // сохраняются целиком, а список внутри цитаты продолжается вместе с ней.
+  const quote = line.match(/^(\s*)((?:>\s?)+)(.*)$/);
+  if (quote) {
+    const [, space, markers, rest] = quote;
+    const callout = rest.match(/^\[![\p{L}\p{N}_-]+\][+-]?\s*(.*)$/u);
+    // После строки с типом всегда идёт тело — даже если заголовок пуст.
+    if (callout) return { prefix: `${space}${markers}` };
+    const inner = listContinuation(rest);
+    if (inner) return { prefix: `${space}${markers}${inner.prefix ?? ""}` };
+    return rest.trim() ? { prefix: `${space}${markers}` } : { clear: true, keep: space };
+  }
   const task = line.match(/^(\s*)([-*+]\s+)\[([ xX/-])\](\s+)(.*)$/);
   if (task) {
     const [, space, bullet, , gap, rest] = task;
@@ -241,10 +256,17 @@ export function createMarkdownField({ id, ariaLabel, placeholder = "", onInput, 
   };
 
   const render = (caret) => {
+    // Тело callout — обычные строки цитаты, но полоса у них должна быть цвета
+    // заголовка: иначе блок распадается на разноцветную шапку и серый хвост.
+    let calloutKind = null;
     root.replaceChildren(
       ...lines.map((line) => {
         const node = document.createElement("div");
         node.className = LINE;
+        const callout = line.match(/^\s*(?:>\s?)+\[!([\p{L}\p{N}_-]+)\]/u);
+        if (callout) calloutKind = callout[1].toLowerCase();
+        else if (!/^\s*>/.test(line)) calloutKind = null;
+        else if (calloutKind) node.classList.add(`md-callout-${calloutKind}`);
         node.innerHTML = decorateLine(line);
         return node;
       }),

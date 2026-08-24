@@ -184,3 +184,17 @@ test('a single-line title keeps its formatting and gains no ellipsis', () => {
   assert.equal(renderInlineMarkdown('- [ ] купить хлеб', { firstLine: true }), 'купить хлеб');
   assert.equal(renderInlineMarkdown('', { firstLine: true }), '');
 });
+
+test('obsidian: inline footnotes and sized images follow the syntax reference', () => {
+  const inlineNote = renderMarkdown('текст с пояснением^[прямо здесь] дальше');
+  assert.match(inlineNote, /<sup class="md-footnote-ref"><a href="#fn-inline-1">1<\/a><\/sup>/);
+  assert.match(inlineNote, /<li id="fn-inline-1">.*прямо здесь/);
+  // Размер картинки в подпись не тащим: показать её CSP всё равно не даст.
+  assert.match(renderMarkdown('![схема|640x480](https://example.com/a.png)'), /🖼 схема<\/a>/);
+  assert.match(renderMarkdown('![схема|640](https://example.com/a.png)'), /🖼 схема<\/a>/);
+});
+
+test('obsidian: nested emphasis inside bold works as documented', () => {
+  assert.equal(renderMarkdown('**жирный и _вложенный курсив_**'), '<p><strong>жирный и <em>вложенный курсив</em></strong></p>');
+  assert.equal(renderMarkdown('***оба сразу***'), '<p><strong><em>оба сразу</em></strong></p>');
+});

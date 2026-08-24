@@ -256,6 +256,13 @@ main {
 .md-field .md-h2 { font-size: 1.2em; }
 .md-field .md-h3 { font-size: 1.09em; }
 .md-field .md-h4 { font-size: 1em; }
+.md-field .md-quote,
+.md-field .md-callout-line {
+  display: inline-block;
+  border-left: 3px solid var(--callout-line, #d7d3d0);
+  padding-left: 7px;
+  margin-left: -10px;
+}
 .md-field .md-quote {
   color: var(--muted);
   font-style: italic;
@@ -1656,12 +1663,6 @@ dialog form > div {
   color: var(--muted);
   text-decoration: line-through;
   text-decoration-color: #c9c4be;
-}
-.md-field .md-callout-line {
-  display: inline-block;
-  border-left: 3px solid var(--callout-line, var(--type-note));
-  padding-left: 7px;
-  margin-left: -10px;
 }
 .md-field .md-callout-kind,
 .md-field .md-callout-title {
