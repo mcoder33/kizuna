@@ -480,67 +480,147 @@ test("a callout looks like one filled block, a plain quote stays a quote", async
   await expect(lines.last()).not.toHaveClass(/md-callout/);
 });
 
-test("the expand button opens a full page for writing and escape brings it back", async ({ page, request }) => {
+test("the expand button lifts the card into a sheet fitted to the window", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
   const form = page.locator("#capture-form");
   const field = page.getByLabel("Новая запись");
   const expand = page.locator("#capture-expand");
 
-  // В покое кнопка тихая и не мешает: она рядом с отправкой.
-  await expect(expand).toBeVisible();
   await expect(expand).toHaveAttribute("aria-pressed", "false");
-
   await field.click();
-  await page.keyboard.type("# Длинная заметка");
+  await page.keyboard.type("# Заметка на листе");
+  const before = await form.boundingBox();
+
   await expand.click();
-  await expect(form).toHaveClass(/capture-page/);
-  await expect(page.locator("body")).toHaveClass(/capture-page-open/);
+  await expect(form).toHaveClass(/capture-large/);
+  await expect(page.locator("body")).toHaveClass(/capture-large-open/);
   await expect(expand).toHaveAttribute("aria-pressed", "true");
-  // Текст и фокус остаются на месте: DOM не перестраивается.
-  await expect(field.locator(".md-heading")).toHaveText("Длинная заметка");
-  await expect(field).toBeFocused();
+  await page.waitForTimeout(350);
 
-  // Панель с типами, тегами и отправкой доезжает до низа экрана.
-  const foot = page.locator(".capture-foot");
-  const box = await foot.boundingBox();
+  // Лист выходит на передний план и вписан в окно с большими отступами.
+  await expect(form).toHaveCSS("position", "fixed");
+  const sheet = await form.boundingBox();
   const viewport = page.viewportSize();
-  expect(box.y + box.height).toBeGreaterThan(viewport.height * 0.6);
+  expect(sheet.height).toBeGreaterThan(before.height * 2);
+  expect(sheet.height).toBeLessThan(viewport.height);
+  expect(sheet.y).toBeGreaterThan(20);
+  expect(sheet.x).toBeGreaterThan(100);
+  // Пропорция листа — чуть шире A4. Допуск на округление пикселей.
+  expect(sheet.height / sheet.width).toBeGreaterThan(1.26);
+  expect(sheet.height / sheet.width).toBeLessThan(1.34);
+  // Страница под листом не прокручивается.
+  await expect(page.locator("body")).toHaveCSS("overflow", "hidden");
 
-  // Писать можно дальше, разметка живёт как обычно.
+  // Текст, фокус и разметка на месте: DOM не перестраивался.
+  await expect(field.locator(".md-heading")).toHaveText("Заметка на листе");
+  await expect(field).toBeFocused();
   await page.keyboard.press("Enter");
   await page.keyboard.type("- [ ] пункт");
   await expect(field.locator(".md-checkbox")).toHaveCount(1);
 
-  // Esc возвращает карточку, ничего не потеряв.
+  // Esc возвращает карточку на место, ничего не потеряв.
   await page.keyboard.press("Escape");
-  await expect(form).not.toHaveClass(/capture-page/);
-  await expect(page.locator("body")).not.toHaveClass(/capture-page-open/);
-  await expect(field.locator(".md-heading")).toHaveText("Длинная заметка");
+  await expect(form).not.toHaveClass(/capture-large/);
+  await expect(page.locator("body")).not.toHaveClass(/capture-large-open/);
+  await expect(form).toHaveCSS("position", "static");
+  await expect(field.locator(".md-heading")).toHaveText("Заметка на листе");
 
-  // Отправка из режима страницы закрывает его и очищает поле.
+  // Отправка с листа возвращает карточку к обычному виду.
   await expand.click();
-  await expect(form).toHaveClass(/capture-page/);
   const posted = page.waitForRequest(
     (request_) => request_.url().endsWith("/api/captures") && request_.method() === "POST",
   );
   await page.getByRole("button", { name: "Сохранить запись" }).click();
-  expect(JSON.parse((await posted).postData() || "{}").raw).toContain("# Длинная заметка");
-  await expect(form).not.toHaveClass(/capture-page/);
+  expect(JSON.parse((await posted).postData() || "{}").raw).toContain("# Заметка на листе");
+  await expect(form).not.toHaveClass(/capture-large/);
   await expect(field).toHaveText("");
 });
 
-test("the writing page fits a phone without horizontal overflow", async ({ page, request }) => {
+test("on a phone the sheet fills the screen without overflow", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   await page.setViewportSize({ width: 390, height: 760 });
   await page.goto("/");
   await page.getByLabel("Новая запись").click();
   await page.keyboard.type("# Заметка на телефоне");
   await page.locator("#capture-expand").click();
+  await page.waitForTimeout(350);
 
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
   expect(overflow).toBe(false);
+  const sheet = await page.locator("#capture-form").boundingBox();
+  // Пропорция A4 на телефоне не выдерживается: важнее место под текст.
+  expect(sheet.width).toBeGreaterThan(340);
+  expect(sheet.height).toBeGreaterThan(690);
+  // Подвал остаётся внутри листа.
   const foot = await page.locator(".capture-foot").boundingBox();
-  expect(Math.round(foot.width)).toBe(390);
-  expect(Math.round(foot.y + foot.height)).toBe(760);
+  expect(foot.y + foot.height).toBeLessThanOrEqual(sheet.y + sheet.height + 1);
+});
+
+test("the sheet and the entry card flow out of what was clicked", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/");
+
+  // Лист вытекает из карточки ввода: анимация начинается от её размера.
+  const form = page.locator("#capture-form");
+  await page.getByLabel("Новая запись").click();
+  await page.keyboard.type("# Заметка на листе");
+  await page.locator("#capture-expand").click();
+  const sheetFrames = await form.evaluate((node) =>
+    node.getAnimations().map((animation) => ({
+      state: animation.playState,
+      duration: animation.effect.getTiming().duration,
+    })),
+  );
+  expect(sheetFrames.length).toBe(1);
+  expect(sheetFrames[0].duration).toBe(540);
+  await page.waitForTimeout(500);
+  const sheet = await form.boundingBox();
+  // Пропорция листа — чуть шире A4. Допуск на округление пикселей.
+  expect(sheet.height / sheet.width).toBeGreaterThan(1.26);
+  expect(sheet.height / sheet.width).toBeLessThan(1.34);
+  await page.keyboard.press("Escape");
+
+  // Карточка записи вытекает из записи, по которой щёлкнули.
+  await page.getByLabel("Новая запись").click();
+  await page.keyboard.type("запись для карточки");
+  await page.getByRole("button", { name: "Сохранить запись" }).click();
+  const entry = page.locator("#today .entry").filter({ hasText: "запись для карточки" }).first();
+  await expect(entry).toBeVisible({ timeout: 15000 });
+  await entry.locator(".entry-title").click();
+
+  const dialog = page.locator("#review-dialog");
+  const cardFrames = await dialog.evaluate((node) =>
+    node.getAnimations().map((animation) => animation.effect.getTiming().duration),
+  );
+  expect(cardFrames).toEqual([540]);
+  await expect(dialog).toBeVisible();
+});
+
+test("the entry card is the same sheet as the grown capture card", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/");
+
+  // Размер листа у поля ввода.
+  await page.getByLabel("Новая запись").click();
+  await page.keyboard.type("запись для сравнения листов");
+  await page.locator("#capture-expand").click();
+  await page.waitForTimeout(600);
+  const sheet = await page.locator("#capture-form").boundingBox();
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(600);
+
+  // Тот же размер у карточки записи.
+  await page.getByRole("button", { name: "Сохранить запись" }).click();
+  const entry = page.locator("#today .entry").filter({ hasText: "запись для сравнения" }).first();
+  await expect(entry).toBeVisible({ timeout: 15000 });
+  await entry.locator(".entry-title").click();
+  await page.waitForTimeout(600);
+  const card = await page.locator("#review-dialog").boundingBox();
+
+  expect(Math.round(card.width)).toBe(Math.round(sheet.width));
+  expect(Math.round(card.height)).toBe(Math.round(sheet.height));
 });
