@@ -351,6 +351,116 @@ main {
   padding-top: 11px;
   border-top: 1px solid var(--hairline);
 }
+/* ── кнопка «развернуть»: тихий кубик рядом с отправкой ── */
+.capture-expand {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: #c9c4be;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+.capture-expand svg {
+  width: 16px;
+  height: 16px;
+}
+.capture-expand:hover {
+  color: var(--muted);
+  background: var(--hairline);
+}
+.capture-expand:active {
+  transform: scale(0.92);
+}
+.capture-expand .ic-collapse {
+  display: none;
+}
+.capture-page .capture-expand {
+  color: var(--muted);
+}
+.capture-page .capture-expand .ic-expand {
+  display: none;
+}
+.capture-page .capture-expand .ic-collapse {
+  display: block;
+}
+
+/* ── режим большой страницы: поле разворачивается в лист во весь экран ── */
+body.capture-page-open {
+  overflow: hidden;
+}
+.capture.capture-page {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--wash);
+  overflow-y: auto;
+}
+.capture.capture-page:focus-within {
+  border: 0;
+  box-shadow: none;
+}
+.capture.capture-page .md-field {
+  max-width: 680px;
+  margin: 0 auto;
+  min-height: 60vh;
+  padding: 9vh 28px 160px;
+  font-size: 19px;
+  line-height: 1.65;
+}
+.capture.capture-page .todo-line {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 0 28px;
+}
+.capture.capture-page .capture-foot {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  width: min(680px, calc(100vw - 48px));
+  margin: 0;
+  padding: 8px 8px 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: #fff;
+  box-shadow: 0 18px 42px rgba(34, 34, 34, 0.12);
+}
+.capture.capture-page .tag-suggest {
+  bottom: calc(100% + 10px);
+}
+@media (max-width: 760px) {
+  .capture.capture-page .md-field {
+    padding: 40px 20px 150px;
+    font-size: 17px;
+    line-height: 1.6;
+  }
+  .capture.capture-page .capture-foot {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    transform: none;
+    width: 100%;
+    border-radius: 18px 18px 0 0;
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 0;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom)) 14px;
+    box-shadow: 0 -12px 32px rgba(34, 34, 34, 0.1);
+  }
+}
 .foot-sep {
   width: 1px;
   height: 18px;

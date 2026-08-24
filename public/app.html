@@ -79,6 +79,45 @@
               <span class="foot-sep" aria-hidden="true"></span>
               <div id="capture-tags" class="tags"></div>
               <button
+                id="capture-expand"
+                class="capture-expand"
+                type="button"
+                aria-label="Развернуть на всю страницу"
+                aria-pressed="false"
+                title="Развернуть на всю страницу"
+              >
+                <svg
+                  class="ic-expand"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M9 4.5H6.5a2 2 0 0 0-2 2V9" />
+                  <path d="M15 4.5h2.5a2 2 0 0 1 2 2V9" />
+                  <path d="M9 19.5H6.5a2 2 0 0 1-2-2V15" />
+                  <path d="M15 19.5h2.5a2 2 0 0 0 2-2V15" />
+                </svg>
+                <svg
+                  class="ic-collapse"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M4.5 9H7a2 2 0 0 0 2-2V4.5" />
+                  <path d="M19.5 9h-2.5a2 2 0 0 1-2-2V4.5" />
+                  <path d="M4.5 15H7a2 2 0 0 1 2 2v2.5" />
+                  <path d="M19.5 15h-2.5a2 2 0 0 0-2 2v2.5" />
+                </svg>
+              </button>
+              <button
                 id="capture-submit"
                 type="submit"
                 aria-label="Сохранить запись"
