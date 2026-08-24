@@ -43,17 +43,37 @@ export function createVoiceDialog({ onJournalChanged = () => {}, fetchImplementa
   input.className = "voice-input";
   input.placeholder = "Скажите или напишите…";
   input.setAttribute("aria-label", "Реплика");
+  const listen = element("button", "voice-listen");
+  listen.type = "button";
+  listen.setAttribute("aria-label", "Говорить");
+  listen.setAttribute("aria-pressed", "false");
+  listen.title = "Говорить";
+  listen.innerHTML =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"/><path d="M12 18v2.5"/></svg>';
   const send = element("button", "voice-send", "→");
   send.type = "submit";
   send.setAttribute("aria-label", "Отправить реплику");
-  form.append(input, send);
+  form.append(input, listen, send);
 
   const hint = element("p", "voice-hint", "");
   hint.id = "voice-hint";
 
   panel.append(head, log, form, hint);
 
-  let state = { mode: null, live: null, listening: false };
+  let state = { mode: null, live: null, listening: false, recognition: null };
+
+  // Без ключа речь узнаёт и озвучивает сам браузер: разговор голосом остаётся
+  // разговором, просто думает над ним сервер по правилам, а не модель.
+  const SpeechRecognitionApi = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const speak = (text) => {
+    if (!text || state.mode === "live" || !window.speechSynthesis) return;
+    try {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = "ru-RU";
+      window.speechSynthesis.speak(utterance);
+    } catch {}
+  };
 
   const say = (who, text) => {
     if (!text) return;
@@ -190,10 +210,65 @@ export function createVoiceDialog({ onJournalChanged = () => {}, fetchImplementa
     }
     for (const call of payload.calls || []) say("tool", call.name);
     say("bot", payload.reply);
+    speak(payload.reply);
     for (const call of payload.calls || []) if (call.result?.jobId) await waitForJob(call.result.jobId);
     if (payload.calls?.length) onJournalChanged();
     setStatus("Готов слушать");
   }
+
+  function stopListening() {
+    state.listening = false;
+    listen.setAttribute("aria-pressed", "false");
+    try {
+      state.recognition?.stop();
+    } catch {}
+    state.recognition = null;
+  }
+
+  listen.addEventListener("click", async () => {
+    // В живом режиме микрофон уже слушает модель — вторая запись не нужна.
+    if (state.mode === "live") return;
+    if (state.listening) {
+      stopListening();
+      setStatus("Готов слушать");
+      return;
+    }
+    if (!SpeechRecognitionApi) {
+      hint.textContent = "Браузер не умеет распознавать речь — пишите текстом.";
+      return;
+    }
+    const recognition = new SpeechRecognitionApi();
+    recognition.lang = "ru-RU";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.addEventListener("result", async (event) => {
+      const said = event.results?.[0]?.[0]?.transcript?.trim();
+      stopListening();
+      if (!said) {
+        setStatus("Готов слушать");
+        return;
+      }
+      say("me", said);
+      await mockTurn(said);
+    });
+    recognition.addEventListener("error", () => {
+      stopListening();
+      setStatus("Не расслышал");
+    });
+    recognition.addEventListener("end", () => {
+      if (state.listening) stopListening();
+    });
+    state.recognition = recognition;
+    state.listening = true;
+    listen.setAttribute("aria-pressed", "true");
+    setStatus("Говорите…");
+    try {
+      recognition.start();
+    } catch {
+      stopListening();
+      setStatus("Готов слушать");
+    }
+  });
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -218,6 +293,7 @@ export function createVoiceDialog({ onJournalChanged = () => {}, fetchImplementa
 
   async function open() {
     panel.hidden = false;
+    listen.hidden = false;
     input.focus();
     setStatus("Соединяюсь…");
     let session = null;
@@ -240,6 +316,7 @@ export function createVoiceDialog({ onJournalChanged = () => {}, fetchImplementa
     }
     try {
       await startLive(session);
+      listen.hidden = true;
       hint.textContent = "Говорите вслух — модель отвечает голосом.";
     } catch (error) {
       state.mode = "mock";
@@ -251,6 +328,10 @@ export function createVoiceDialog({ onJournalChanged = () => {}, fetchImplementa
 
   function stop() {
     panel.hidden = true;
+    stopListening();
+    try {
+      window.speechSynthesis?.cancel();
+    } catch {}
     if (state.live) {
       state.live.channel?.close?.();
       state.live.connection?.close?.();

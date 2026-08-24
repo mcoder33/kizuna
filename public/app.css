@@ -481,6 +481,40 @@ main {
 .voice-input::placeholder {
   color: #bdbab7;
 }
+.voice-listen {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 99px;
+  background: none;
+  color: #c9c4be;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+.voice-listen svg {
+  width: 16px;
+  height: 16px;
+}
+.voice-listen:hover {
+  color: var(--muted);
+  background: var(--hairline);
+}
+.voice-listen[aria-pressed="true"] {
+  color: #fff;
+  background: var(--type-auto);
+  animation: voice-pulse 1.4s ease-in-out infinite;
+}
+@keyframes voice-pulse {
+  50% {
+    opacity: 0.72;
+  }
+}
 .voice-send {
   border: 0;
   background: var(--type-auto);

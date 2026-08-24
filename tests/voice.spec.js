@@ -237,3 +237,68 @@ test("closing the dialog releases the microphone and the connection", async ({ p
   const closed = await page.evaluate(() => window.__voiceChannel.readyState);
   expect(closed).toBe("closed");
 });
+
+test("without a key the browser itself listens and speaks the answer", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  // Подставные распознавание и синтез: настоящий микрофон в тесте не нужен,
+  // проверяем свою часть — что услышанное становится репликой, а ответ
+  // проговаривается.
+  await page.addInitScript(() => {
+    window.__spoken = [];
+    class FakeRecognition {
+      constructor() {
+        this.listeners = {};
+        window.__recognition = this;
+      }
+      addEventListener(type, handler) {
+        (this.listeners[type] ||= []).push(handler);
+      }
+      start() {
+        window.__recognitionStarted = true;
+      }
+      stop() {}
+      emit(type, event) {
+        for (const handler of this.listeners[type] || []) handler(event);
+      }
+    }
+    window.SpeechRecognition = FakeRecognition;
+    window.SpeechSynthesisUtterance = class {
+      constructor(text) {
+        this.text = text;
+      }
+    };
+    Object.defineProperty(window, "speechSynthesis", {
+      configurable: true,
+      value: { speak: (utterance) => window.__spoken.push(utterance.text), cancel() {} },
+    });
+  });
+  await page.goto("/");
+  await page.locator("#capture-voice").click();
+
+  const listen = page.locator(".voice-listen");
+  await listen.click();
+  await expect(listen).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#voice-status")).toHaveText("Говорите…");
+
+  await page.evaluate(() => {
+    window.__recognition.emit("result", { results: [[{ transcript: "запиши задачу проверить микрофон" }]] });
+  });
+
+  await expect(page.locator(".voice-me").last()).toHaveText("запиши задачу проверить микрофон");
+  await expect(page.locator(".voice-bot").last()).toContainText("Записал");
+  // Ответ прозвучал, а не только появился текстом.
+  const spoken = await page.evaluate(() => window.__spoken);
+  expect(spoken.at(-1)).toContain("Записал");
+  await expect(listen).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#todo .entry").filter({ hasText: "проверить микрофон" }).first()).toBeVisible({ timeout: 15000 });
+});
+
+test("in the live mode the browser microphone button steps aside", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await installFakeRealtime(page);
+  await page.goto("/");
+  await page.locator("#capture-voice").click();
+  await expect(page.locator("#voice-hint")).toContainText("Говорите вслух");
+  // Микрофон уже открыт для модели — вторая запись была бы лишней.
+  await expect(page.locator(".voice-listen")).toBeHidden();
+});
