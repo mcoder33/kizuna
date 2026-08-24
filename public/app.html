@@ -66,12 +66,8 @@
             <h1>Освободи память</h1>
           </div>
           <form id="capture-form" class="capture">
-            <label class="sr-only" for="capture-input">Новая запись</label
-            ><textarea
-              id="capture-input"
-              maxlength="10000"
-              placeholder="Запишите мысль, план, встречу или итог дня"
-            ></textarea>
+            <!-- Поле ввода создаётся из public/markdown-live.js: разметка
+                 оформляется прямо во время набора, поэтому это не textarea. -->
             <div id="capture-todo-line" class="todo-line" hidden></div>
             <div class="capture-foot">
               <div

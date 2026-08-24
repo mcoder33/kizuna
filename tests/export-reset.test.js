@@ -11,7 +11,16 @@ import { openDatabase } from '../server/db.js';
 
 
 function fixture(options={}) { const directory=fs.mkdtempSync(path.join(os.tmpdir(),'pagent-export-')); const databasePath=path.join(directory,'test.sqlite'); const app=createApp({aiService:fakeModelService(),databasePath,...options}); return { app, api:request(app), databasePath }; }
-function nextDate() { return new Date(Date.now()+86_400_000).toISOString().slice(0,10); }
+// Завтрашний день в таймзоне приложения, а не в UTC: с полуночи до 4 утра по
+// Самаре UTC-дата отстаёт на сутки, и «завтра по UTC» оказывалось сегодняшним
+// днём — запись переставала быть «вчерашней» для отчёта, и тест падал.
+function nextDate(timeZone='Europe/Samara') {
+  const parts=new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
+  const value=type=>Number(parts.find(part=>part.type===type).value);
+  const day=new Date(Date.UTC(value('year'),value('month')-1,value('day')));
+  day.setUTCDate(day.getUTCDate()+1);
+  return day.toISOString().slice(0,10);
+}
 function tableCount(db, table) { return db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count; }
 
 test('legacy nullable ledger relations migrate without changing historical provenance', () => {

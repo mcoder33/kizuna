@@ -422,7 +422,9 @@ test("capture rejects legacy 201 and malformed 202 without starting a poller", a
     await expect(page.locator("#toast")).toContainText(
       "не подтвердил асинхронное сохранение",
     );
-    await expect(page.getByLabel("Новая запись")).toHaveValue(raw);
+    // Поле записи — не textarea, а редактируемая область с живой разметкой:
+    // текст читается как содержимое, а не как value.
+    await expect(page.getByLabel("Новая запись")).toHaveText(raw);
     expect(await page.locator("#capture-notifications .capture-notification").count()).toBe(0);
     expect(
       await page.evaluate(() => localStorage.getItem("pagent.active-captures")),

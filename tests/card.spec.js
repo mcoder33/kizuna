@@ -56,16 +56,18 @@ test("markdown notes save, render and survive reopening without touching the raw
   await page.locator("#card-body-editor").press("ControlOrMeta+Enter");
   expect((await saved).status()).toBe(200);
 
+  // Тело карточки — живое поле: разметка оформлена прямо в тексте, отдельного
+  // отрендеренного вида больше нет.
   const rendered = page.locator(".card-markdown");
-  await expect(rendered.locator("h4")).toContainText("План");
-  await expect(rendered.locator("li strong")).toContainText("первый");
-  await expect(rendered.locator("li code")).toContainText("код");
-  await expect(rendered.locator("blockquote")).toContainText("цитата");
+  await expect(rendered.locator(".md-heading")).toContainText("План");
+  await expect(rendered.locator("strong")).toContainText("первый");
+  await expect(rendered.locator("code")).toContainText("код");
+  await expect(rendered.locator(".md-quote")).toContainText("цитата");
 
   await page.locator("#review-close").click();
   await expect(page.locator("#review-dialog")).toBeHidden();
   await openCard(page, "#todo", raw);
-  await expect(page.locator(".card-markdown h4")).toContainText("План");
+  await expect(page.locator(".card-markdown .md-heading")).toContainText("План");
   await expect(page.locator(".prop-section")).toContainText("версия 1");
 
   const entries = await (await page.request.get("/api/entries?limit=100")).json();
@@ -87,10 +89,11 @@ test("the note body starts from the original capture without creating a note", a
   expect(entries.entries.find((item) => item.raw === raw).note).toBeNull();
 
   await page.locator(".card-markdown").click();
-  await expect(page.locator("#card-body-editor")).toHaveValue(raw);
+  await expect(page.locator("#card-body-editor")).toHaveText(raw);
   await page.locator("#card-body-editor").fill(`${raw}\n\n- дописал пункт`);
   await page.locator("#card-body-editor").press("ControlOrMeta+Enter");
-  await expect(page.locator(".card-markdown li")).toContainText("дописал пункт");
+  await expect(page.locator(".card-markdown .md-bullet")).toBeVisible();
+  await expect(page.locator(".card-markdown")).toContainText("дописал пункт");
   await expect(page.locator(".prop-section")).toContainText("версия 1");
 
   const after = await (await page.request.get("/api/entries?limit=100")).json();
@@ -134,8 +137,10 @@ test("escape leaves the note unsaved and keeps the card open", async ({ page }) 
   await page.locator("#card-body-editor").fill("черновик, который не нужен");
   await page.locator("#card-body-editor").press("Escape");
   await expect(page.locator("#review-dialog")).toBeVisible();
-  await expect(page.locator("#card-body-editor")).toBeHidden();
+  // Поле никуда не прячется — Esc возвращает в него сохранённый текст.
+  await expect(page.locator("#card-body-editor")).toBeVisible();
   await expect(page.locator(".card-markdown")).not.toContainText("черновик");
+  await expect(page.locator(".card-markdown")).toContainText(raw);
 });
 
 test("closing a task removes it from today without filing it as reported work", async ({ page }) => {
@@ -195,4 +200,262 @@ test("the done toggle overrides the model and moves the entry into reported work
   await page.getByRole("button", { name: "Сохранить уточнение" }).click();
   await expect(page.locator("#journal")).toContainText(raw);
   await expect(page.locator("#todo")).not.toContainText(raw);
+});
+
+test("markdown is decorated inside the capture field as it is typed", async ({ page }) => {
+  await page.goto("/");
+  const field = page.getByLabel("Новая запись");
+  await field.click();
+  // Печатаем посимвольно: разметка должна оформляться прямо во время набора.
+  await page.keyboard.type("--зачёркнуто-- и **жирный** с `кодом`");
+
+  await expect(field.locator("del")).toHaveText("зачёркнуто");
+  await expect(field.locator("strong")).toHaveText("жирный");
+  await expect(field.locator("code")).toHaveText("кодом");
+  // Ни один символ не удалён: маркеры остаются в тексте, лишь приглушены.
+  await expect(field).toHaveText("--зачёркнуто-- и **жирный** с `кодом`");
+  await expect(field.locator(".md-mark").first()).toHaveText("--");
+
+  // Перенос строки и блочная разметка.
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("# Заголовок");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("- пункт");
+  await expect(field.locator(".md-heading")).toHaveText("Заголовок");
+  await expect(field.locator(".md-bullet")).toHaveText("- ");
+  await expect(field.locator(".md-line")).toHaveCount(3);
+
+  // Исходная разметка уходит на сервер целиком, поле очищается.
+  const posted = page.waitForRequest(
+    (request) => request.url().endsWith("/api/captures") && request.method() === "POST",
+  );
+  await page.getByRole("button", { name: "Сохранить запись" }).click();
+  const sent = JSON.parse((await posted).postData() || "{}");
+  expect(sent.raw).toBe("--зачёркнуто-- и **жирный** с `кодом`\n# Заголовок\n- пункт");
+  await expect(field).toHaveText("");
+
+  // Сохранённая запись показывается с разметкой в списке и в карточке.
+  const card = page.locator(".entry").filter({ hasText: "жирный" }).first();
+  await expect(card).toBeVisible({ timeout: 15000 });
+  await expect(card.locator(".entry-title strong")).toHaveText("жирный");
+  await card.locator(".entry-title").click();
+  await expect(page.locator("#review h2 code")).toHaveText("кодом");
+
+  // В карточке — то же живое поле: печатаем и разметка оформляется на месте.
+  const noteField = page.locator("#card-body-editor");
+  await noteField.click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.type(" --правка-- в **карточке**");
+  await expect(noteField.locator("del").last()).toHaveText("правка");
+  await expect(noteField.locator("strong").last()).toHaveText("карточке");
+  await expect(noteField.locator(".md-mark").first()).toBeVisible();
+});
+
+test("obsidian markup works end to end: typed in the field, rendered in the card", async ({ page, request }) => {
+  // Тест смотрит на превью «Сегодня», где помещаются три записи, поэтому
+  // начинаем с чистого журнала — иначе соседние тесты вытеснят нашу запись.
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  const field = page.getByLabel("Новая запись");
+  await field.click();
+  const raw = [
+    "# Разбор недели",
+    "- [x] созвон ==сделан==",
+    "- [ ] отчёт",
+    "> [!warning] Осторожно",
+    "| Что | Когда |",
+    "| --- | ---: |",
+    "| созвон | завтра |",
+    "хвост #hub",
+  ].join("\n");
+  await page.keyboard.insertText(raw);
+
+  // В поле разметка оформлена, но текст сохранён посимвольно.
+  await expect(field.locator(".md-heading")).toHaveText("Разбор недели");
+  await expect(field.locator(".md-checkbox-done")).toBeVisible();
+  await expect(field.locator("mark")).toHaveText("сделан");
+  await expect(field.locator(".md-callout-warning")).toBeVisible();
+  await expect(field.locator(".md-table-line").first()).toBeVisible();
+  await expect(field.locator(".md-tag")).toHaveText("#hub");
+
+  const posted = page.waitForRequest(
+    (request) => request.url().endsWith("/api/captures") && request.method() === "POST",
+  );
+  await page.getByRole("button", { name: "Сохранить запись" }).click();
+  expect(JSON.parse((await posted).postData() || "{}").raw).toBe(raw);
+
+  // В карточке та же разметка становится настоящими блоками. Ищем на «Сегодня»:
+  // соседние тесты могли оставить открытым другой раздел.
+  await page.evaluate(() => { location.hash = "#today"; });
+  const card = page.locator("#today .entry").filter({ hasText: "Разбор недели" }).first();
+  await expect(card).toBeVisible({ timeout: 15000 });
+  await card.locator(".entry-title").click();
+  await page.locator(".card-source summary").click();
+
+  // Пока заметку не правили, её тело — копия записи, и текст не дублируется.
+  await expect(page.locator(".review-raw")).toContainText("совпадает с заметками");
+  await expect(page.locator(".card-source .md-block")).toHaveCount(0);
+
+  // После правки заметки источник показывает исходную запись готовым видом.
+  const body = page.locator("#card-body-editor");
+  await body.click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.type(" правка");
+  const saved = page.waitForResponse(
+    (response) => response.url().includes("/notes") && response.request().method() === "POST",
+  );
+  await body.press("ControlOrMeta+Enter");
+  expect((await saved).status()).toBe(200);
+  // Блок источника собирается при открытии карточки, поэтому переоткрываем её.
+  await page.locator("#review-close").click();
+  await card.locator(".entry-title").click();
+  await page.locator(".card-source summary").click();
+  const rendered = page.locator(".card-source .md-block");
+  await expect(rendered.locator("table.md-table th").last()).toHaveText("Когда");
+  await expect(rendered.locator("td").first()).toHaveText("созвон");
+  await expect(rendered.locator("li.md-task-done")).toContainText("созвон");
+  await expect(rendered.locator(".md-callout-warning .md-callout-title")).toHaveText("Осторожно");
+  await expect(rendered.locator(".md-tag")).toHaveText("#hub");
+});
+
+test("lists continue on enter and checkboxes are clickable", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  const field = page.getByLabel("Новая запись");
+  await field.click();
+
+  // Enter продолжает список тем же маркером.
+  await page.keyboard.type("- [ ] первая задача");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("вторая задача");
+  await expect(field.locator(".md-line").nth(1)).toHaveText("- [ ] вторая задача");
+
+  // Enter на пустом пункте заканчивает список, а не плодит маркеры.
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("1. первый пункт");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("второй пункт");
+  await expect(field.locator(".md-line").nth(3)).toHaveText("2. второй пункт");
+
+  // Обычный дефис даёт буллет, у задачи — чекбокс вместо буллета.
+  await expect(field.locator(".md-bullet-task").first()).toBeVisible();
+  await expect(field.locator(".md-ordered").first()).toBeVisible();
+
+  // Чекбокс переключается мышью, и это меняет сам текст записи.
+  await field.locator(".md-line").first().locator(".md-checkbox").click();
+  await expect(field.locator(".md-line").first()).toHaveText("- [x] первая задача");
+  await expect(field.locator(".md-checkbox-done")).toHaveCount(1);
+  await field.locator(".md-line").first().locator(".md-checkbox").click();
+  await expect(field.locator(".md-line").first()).toHaveText("- [ ] первая задача");
+
+  // Отмеченная задача уходит на сервер именно как [x].
+  await field.locator(".md-line").first().locator(".md-checkbox").click();
+  const posted = page.waitForRequest(
+    (request_) => request_.url().endsWith("/api/captures") && request_.method() === "POST",
+  );
+  await page.getByRole("button", { name: "Сохранить запись" }).click();
+  expect(JSON.parse((await posted).postData() || "{}").raw).toContain("- [x] первая задача");
+});
+
+test("the card body is the same live field as the capture card, and the title stays a title", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  const raw = ["# Разбор недели", "- [ ] отчёт", "| Что | Когда |", "| --- | ---: |", "| созвон | завтра |"].join("\n");
+  await page.getByLabel("Новая запись").click();
+  await page.keyboard.insertText(raw);
+  await page.getByRole("button", { name: "Сохранить запись" }).click();
+
+  // Заголовок — первая значимая строка с многоточием, а не склейка таблицы.
+  const card = page.locator("#today .entry").filter({ hasText: "Разбор недели" }).first();
+  await expect(card).toBeVisible({ timeout: 15000 });
+  await expect(card.locator(".entry-title")).toHaveText("Разбор недели …");
+  await card.locator(".entry-title").click();
+  await expect(page.locator("#review h2")).toHaveText("Разбор недели …");
+
+  // Тело карточки ведёт себя ровно как поле ввода: живая разметка,
+  // продолжение списка по Enter и кликабельный чекбокс.
+  const body = page.locator("#card-body-editor");
+  await expect(body.locator(".md-heading")).toHaveText("Разбор недели");
+  await expect(body.locator(".md-checkbox")).toHaveCount(1);
+  await body.locator(".md-line").nth(1).click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("вторая задача");
+  await expect(body.locator(".md-line").nth(2)).toHaveText("- [ ] вторая задача");
+  await body.locator(".md-line").nth(2).locator(".md-checkbox").click();
+  await expect(body.locator(".md-line").nth(2)).toHaveText("- [x] вторая задача");
+
+  // Правка сохраняется как новая версия заметки, raw не меняется.
+  const saved = page.waitForResponse(
+    (response) => response.url().includes("/notes") && response.request().method() === "POST",
+  );
+  await body.press("ControlOrMeta+Enter");
+  expect((await saved).status()).toBe(200);
+  await expect(page.locator(".card-body .prop-section")).toContainText("версия 1");
+  const entries = await (await page.request.get("/api/entries?limit=100")).json();
+  const entry = entries.entries.find((item) => item.raw === raw);
+  expect(entry.raw).toBe(raw);
+  expect(entry.note.body).toContain("- [x] вторая задача");
+});
+
+test("tab nests a list item and shift+tab pulls it back, outside a list tab still moves focus", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  const field = page.getByLabel("Новая запись");
+  await field.click();
+
+  await page.keyboard.type("- верхний пункт");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("подпункт");
+  await expect(field.locator(".md-line").nth(1)).toHaveText("  - подпункт");
+
+  // Каретка остаётся на месте: продолжаем печатать там же, где стояли.
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.type(" дописано");
+  await expect(field.locator(".md-line").nth(1)).toHaveText("- подпункт дописано");
+
+  // Вне списка Tab уводит фокус дальше по форме — с клавиатуры поле не ловушка.
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("обычная строка");
+  await page.keyboard.press("Tab");
+  await expect(field.locator(".md-line").last()).toHaveText("обычная строка");
+  await expect(field).not.toBeFocused();
+
+  // Вложенность доезжает до карточки настоящим вложенным списком.
+  await field.click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("- верх");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("вложенный");
+  const posted = page.waitForRequest(
+    (request_) => request_.url().endsWith("/api/captures") && request_.method() === "POST",
+  );
+  await page.getByRole("button", { name: "Сохранить запись" }).click();
+  expect(JSON.parse((await posted).postData() || "{}").raw).toContain("  - вложенный");
+});
+
+test("enter continues a callout body and the body keeps the callout colour", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  const field = page.getByLabel("Новая запись");
+  await field.click();
+
+  await page.keyboard.type("> [!warning] Осторожно");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("тело предупреждения");
+  await expect(field.locator(".md-line").nth(1)).toHaveText("> тело предупреждения");
+  // Полоса тела окрашена в цвет заголовка: блок читается целиком.
+  await expect(field.locator(".md-line").nth(1)).toHaveClass(/md-callout-warning/);
+
+  // Пустая цитата заканчивает блок, а не тянет «>» дальше.
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("обычный текст");
+  await expect(field.locator(".md-line").last()).toHaveText("обычный текст");
+  await expect(field.locator(".md-line").last()).not.toHaveClass(/md-callout/);
 });

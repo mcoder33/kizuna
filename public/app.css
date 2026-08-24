@@ -219,15 +219,99 @@ main {
   box-shadow: 0 18px 42px rgba(34, 34, 34, 0.08);
   text-align: left;
 }
-.capture textarea {
+/* ── поле ввода с живой разметкой ── */
+.md-field {
   width: 100%;
   min-height: 128px;
-  resize: vertical;
   border: 0;
   outline: 0;
   font: inherit;
   font-size: 15px;
   padding: 5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: text;
+}
+.md-field[data-empty="true"]::before {
+  content: attr(data-placeholder);
+  color: #b3b0ad;
+  pointer-events: none;
+}
+.md-field[data-disabled="true"] {
+  opacity: 0.6;
+}
+.md-line {
+  min-height: 1.45em;
+}
+/* Маркеры разметки остаются в тексте — иначе в них некуда поставить каретку —
+   но приглушены, чтобы читалось оформление, а не синтаксис. */
+.md-mark {
+  color: #c9c4be;
+  font-weight: 400;
+}
+.md-field .md-heading {
+  font-weight: 750;
+}
+.md-field .md-h1 { font-size: 1.32em; }
+.md-field .md-h2 { font-size: 1.2em; }
+.md-field .md-h3 { font-size: 1.09em; }
+.md-field .md-h4 { font-size: 1em; }
+.md-field .md-quote,
+.md-field .md-callout-line {
+  display: inline-block;
+  border-left: 3px solid var(--callout-line, #d7d3d0);
+  padding-left: 7px;
+  margin-left: -10px;
+}
+.md-field .md-quote {
+  color: var(--muted);
+  font-style: italic;
+}
+/* Маркер списка остаётся в тексте (иначе каретке некуда встать), но рисуется
+   как буллет: сам дефис прозрачен, а точку подставляет ::before. */
+.md-field .md-bullet {
+  position: relative;
+  color: var(--type-todo);
+}
+.md-field .md-bullet .md-mark {
+  color: transparent;
+}
+.md-field .md-bullet::before {
+  content: "•";
+  position: absolute;
+  left: 0.1em;
+  color: var(--type-todo);
+  pointer-events: none;
+}
+/* У задачи свой знак — чекбокс, поэтому буллет ей не рисуем. */
+.md-field .md-bullet-task::before {
+  content: none;
+}
+/* Нумерованный список: цифра читается сама, приглушать её незачем. */
+.md-field .md-bullet.md-ordered .md-mark {
+  color: var(--type-todo);
+}
+.md-field .md-bullet.md-ordered::before {
+  content: none;
+}
+.md-field code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+  background: var(--hairline);
+  border-radius: 4px;
+  padding: 0 2px;
+}
+.md-field .md-link {
+  color: var(--focus);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md-field del {
+  opacity: 0.65;
+}
+.md-field .md-rule,
+.md-field .md-fence {
+  color: #b3b0ad;
 }
 .capture-foot {
   display: flex;
@@ -902,7 +986,7 @@ dialog form > div {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
-.capture textarea:focus-visible {
+.md-field:focus-visible {
   outline: 0;
 }
 .capture:focus-within {
@@ -1267,7 +1351,7 @@ dialog form > div {
 .today-page .capture {
   padding: 16px;
 }
-.today-page .capture textarea {
+.today-page .md-field {
   min-height: 128px;
   font-size: 17px;
 }
@@ -1306,7 +1390,7 @@ dialog form > div {
     left: 0;
     transform: none;
   }
-  .today-page .capture textarea {
+  .today-page .md-field {
     min-height: 112px;
   }
   .today-page .dashboard {
@@ -1349,68 +1433,350 @@ dialog form > div {
   padding-top: 14px;
   border-top: 1px solid var(--line);
 }
-.card-markdown {
-  min-height: 190px;
+.source-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: #96918e;
+  margin: 0 0 4px;
+}
+.md-block {
   padding: 8px 10px;
   border-radius: 10px;
-  cursor: text;
   font-size: 15px;
+}
+.card-body > .card-markdown {
+  min-height: 190px;
+  cursor: text;
+}
+.card-body .md-field {
+  font-size: 15px;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+.card-body .md-field:hover {
+  background: var(--wash);
+}
+.card-body .md-field:focus {
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.16);
+}
+.review-raw .md-block,
+.answer .md-block,
+.source .md-block {
+  padding: 0;
 }
 .card-markdown:hover {
   background: var(--wash);
 }
-.card-markdown .empty {
+.md-block .empty {
   margin: 0;
 }
-.card-markdown > :first-child {
-  margin-top: 0;
+/* ── онлайн-разметка во всём интерфейсе ── */
+/* ── разметка уровня Obsidian: таблицы, задачи, callout-блоки, теги ── */
+.md-block .md-table-wrap {
+  overflow-x: auto;
+  margin: 10px 0;
 }
-.card-markdown > :last-child {
+.md-table {
+  border-collapse: collapse;
+  font-size: 13.5px;
+  min-width: 100%;
+}
+.md-table th,
+.md-table td {
+  border: 1px solid var(--line);
+  padding: 6px 10px;
+  text-align: left;
+}
+.md-table th {
+  background: var(--hairline);
+  font-weight: 700;
+}
+.md-block li.md-task {
+  list-style: none;
+  margin-left: -18px;
+}
+.md-block .md-checkbox {
+  margin-right: 7px;
+  color: var(--type-todo);
+}
+.md-block li.md-task-done {
+  color: var(--muted);
+  text-decoration: line-through;
+  text-decoration-color: #c9c4be;
+}
+.md-callout {
+  border-left: 3px solid var(--callout-line, var(--type-note));
+  background: var(--callout-tint, var(--hairline));
+  border-radius: 0 10px 10px 0;
+  padding: 9px 12px;
+  margin: 10px 0;
+}
+.md-callout-title {
+  font-weight: 700;
+  font-size: 13px;
+  margin: 0 0 4px;
+  color: var(--callout-line, var(--ink));
+}
+.md-callout > :last-child {
   margin-bottom: 0;
 }
-.card-markdown h3,
-.card-markdown h4,
-.card-markdown h5,
-.card-markdown h6 {
+.md-callout-warning,
+.md-callout-caution,
+.md-callout-attention {
+  --callout-line: #b45309;
+  --callout-tint: #fdf4ec;
+}
+.md-callout-danger,
+.md-callout-error,
+.md-callout-bug,
+.md-callout-failure,
+.md-callout-fail,
+.md-callout-missing {
+  --callout-line: #c33434;
+  --callout-tint: #fdeef5;
+}
+.md-callout-success,
+.md-callout-check,
+.md-callout-done,
+.md-callout-tip,
+.md-callout-hint {
+  --callout-line: #11775e;
+  --callout-tint: #eef7f4;
+}
+.md-callout-question,
+.md-callout-help,
+.md-callout-faq,
+.md-callout-todo,
+.md-callout-important {
+  --callout-line: var(--type-todo);
+  --callout-tint: var(--tint-todo);
+}
+.md-callout-info,
+.md-callout-note,
+.md-callout-example,
+.md-callout-quote,
+.md-callout-cite,
+.md-callout-abstract,
+.md-callout-summary,
+.md-callout-tldr {
+  --callout-line: #0891b2;
+  --callout-tint: var(--tint-outcome);
+}
+.md-tag {
+  color: var(--type-todo);
+  background: var(--tint-todo);
+  border-radius: 5px;
+  padding: 0 4px;
+  font-size: 0.92em;
+}
+.md-wikilink {
+  color: var(--focus);
+  text-decoration: none;
+  border-bottom: 1px dashed currentColor;
+}
+.md-image {
+  color: var(--focus);
+  text-decoration: none;
+}
+.md-anchor,
+.md-footnote-index {
+  color: #b3b0ad;
+  font-size: 0.9em;
+}
+.md-math {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--tint-outcome);
+}
+.md-block mark,
+.md-field mark {
+  background: #fdf3c7;
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+.md-footnotes {
+  border-top: 1px solid var(--line);
+  margin-top: 12px;
+  padding-top: 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.md-footnotes ol {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+.md-footnote-ref a {
+  text-decoration: none;
+}
+.md-block pre.md-code {
+  position: relative;
+}
+.md-block pre.md-code::before {
+  content: attr(data-language);
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  color: #b3b0ad;
+}
+.md-block .md-h1 { font-size: 1.3em; }
+.md-block .md-h2 { font-size: 1.18em; }
+.md-block .md-h3 { font-size: 1.08em; }
+.md-block .md-h4,
+.md-block .md-h5,
+.md-block .md-h6 { font-size: 1em; }
+.md-block .md-h6 { color: var(--muted); }
+
+/* ── те же конструкции в живом поле ── */
+.md-field .md-h5,
+.md-field .md-h6 { font-size: 1em; }
+.md-field .md-h6 { color: var(--muted); }
+/* Чекбокс задачи: скобки со статусом остаются текстом, поверх рисуется
+   настоящая коробочка — по ней можно щёлкнуть мышью. */
+.md-field .md-checkbox {
+  position: relative;
+  cursor: pointer;
+  color: transparent;
+}
+.md-field .md-checkbox .md-mark {
+  color: transparent;
+}
+.md-field .md-checkbox::before {
+  content: "☐";
+  position: absolute;
+  left: 0;
+  color: var(--type-todo);
+  font-weight: 400;
+}
+.md-field .md-checkbox-done::before {
+  content: "☑";
+  color: var(--green);
+}
+.md-field .md-checkbox:hover::before {
+  color: var(--ink);
+}
+.md-field .md-task-done {
+  color: var(--muted);
+  text-decoration: line-through;
+  text-decoration-color: #c9c4be;
+}
+.md-field .md-callout-kind,
+.md-field .md-callout-title {
+  color: var(--callout-line, var(--ink));
+  font-weight: 700;
+}
+.md-field .md-tag {
+  color: var(--type-todo);
+}
+.md-field .md-wikilink {
+  color: var(--focus);
+}
+.md-field .md-image {
+  color: var(--focus);
+}
+.md-field .md-comment {
+  color: #c9c4be;
+  font-style: italic;
+}
+.md-field .md-math {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--tint-outcome);
+  border-radius: 4px;
+}
+.md-field .md-cell {
+  padding: 0 4px;
+}
+.md-field .md-table-line {
+  font-variant-numeric: tabular-nums;
+}
+.md-field .md-footnote-ref,
+.md-field .md-anchor {
+  color: #a8a5a2;
+}
+.md-field .md-footnote-def .md-mark {
+  color: #a8a5a2;
+}
+/* Инлайновая строка: заголовок записи, пункт отчёта, уведомление. Блочные
+   элементы внутри неё не появляются — рендерер возвращает только фразу. */
+.md-inline strong {
+  font-weight: 750;
+}
+.md-inline code,
+.md-block code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.88em;
+  background: var(--hairline);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+.md-block a {
+  color: var(--focus);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md-inline .md-link,
+.md-block .md-link {
+  color: var(--focus);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md-inline del,
+.md-block del {
+  opacity: 0.6;
+}
+.md-block > :first-child {
+  margin-top: 0;
+}
+.md-block > :last-child {
+  margin-bottom: 0;
+}
+.md-block h3,
+.md-block h4,
+.md-block h5,
+.md-block h6 {
   margin: 14px 0 6px;
   font-size: 15px;
 }
-.card-markdown p {
+.md-block p {
   margin: 8px 0;
 }
-.card-markdown ul,
-.card-markdown ol {
+.md-block ul,
+.md-block ol {
   margin: 8px 0;
   padding-left: 22px;
 }
-.card-markdown li {
+.md-block li {
   margin: 3px 0;
 }
-.card-markdown code {
+.md-block code {
   padding: 1px 5px;
   border-radius: 5px;
   background: var(--pink);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
 }
-.card-markdown pre {
+.md-block pre {
   margin: 10px 0;
   padding: 11px 12px;
   overflow-x: auto;
   border-radius: 10px;
   background: #f7f7f6;
 }
-.card-markdown pre code {
+.md-block pre code {
   padding: 0;
   background: none;
 }
-.card-markdown blockquote {
+.md-block blockquote {
   margin: 10px 0;
   padding-left: 12px;
   border-left: 2px solid var(--line);
   color: var(--muted);
 }
-.card-markdown hr {
+.md-block hr {
   margin: 14px 0;
   border: 0;
   border-top: 1px solid var(--line);
