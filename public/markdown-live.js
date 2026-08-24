@@ -259,18 +259,29 @@ export function createMarkdownField({ id, ariaLabel, placeholder = "", onInput, 
     // Тело callout — обычные строки цитаты, но полоса у них должна быть цвета
     // заголовка: иначе блок распадается на разноцветную шапку и серый хвост.
     let calloutKind = null;
-    root.replaceChildren(
-      ...lines.map((line) => {
-        const node = document.createElement("div");
-        node.className = LINE;
-        const callout = line.match(/^\s*(?:>\s?)+\[!([\p{L}\p{N}_-]+)\]/u);
-        if (callout) calloutKind = callout[1].toLowerCase();
-        else if (!/^\s*>/.test(line)) calloutKind = null;
-        else if (calloutKind) node.classList.add(`md-callout-${calloutKind}`);
-        node.innerHTML = decorateLine(line);
-        return node;
-      }),
-    );
+    const nodes = lines.map((line) => {
+      const node = document.createElement("div");
+      node.className = LINE;
+      const callout = line.match(/^\s*(?:>\s?)+\[!([\p{L}\p{N}_-]+)\]/u);
+      if (callout) {
+        calloutKind = callout[1].toLowerCase();
+        node.classList.add("md-callout-head", `md-callout-${calloutKind}`);
+      } else if (!/^\s*>/.test(line)) {
+        calloutKind = null;
+      } else if (calloutKind) {
+        node.classList.add("md-callout-body", `md-callout-${calloutKind}`);
+      }
+      node.innerHTML = decorateLine(line);
+      return node;
+    });
+    // Последняя строка блока скругляется снизу: строки остаются отдельными
+    // (иначе каретка потеряется), но выглядят одним callout.
+    nodes.forEach((node, index) => {
+      const inside = node.classList.contains("md-callout-head") || node.classList.contains("md-callout-body");
+      const nextInside = nodes[index + 1]?.classList.contains("md-callout-body");
+      if (inside && !nextInside) node.classList.add("md-callout-tail");
+    });
+    root.replaceChildren(...nodes);
     root.dataset.empty = String(lines.length === 1 && lines[0] === "");
     placeCaret(caret);
   };

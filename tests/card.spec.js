@@ -459,3 +459,23 @@ test("enter continues a callout body and the body keeps the callout colour", asy
   await expect(field.locator(".md-line").last()).toHaveText("обычный текст");
   await expect(field.locator(".md-line").last()).not.toHaveClass(/md-callout/);
 });
+
+test("a callout looks like one filled block, a plain quote stays a quote", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  const field = page.getByLabel("Новая запись");
+  await field.click();
+  await page.keyboard.insertText("> [!warning] Осторожно\n> тело\n> вторая строка\n\nобычный текст\n\n> просто цитата");
+
+  const lines = field.locator(".md-line");
+  // Заголовок, тело и хвост размечены так, что складываются в один блок.
+  await expect(lines.nth(0)).toHaveClass(/md-callout-head md-callout-warning/);
+  await expect(lines.nth(1)).toHaveClass(/md-callout-body md-callout-warning/);
+  await expect(lines.nth(2)).toHaveClass(/md-callout-tail/);
+  // Заливка у строк блока есть, у обычного текста — нет.
+  const filled = await lines.nth(1).evaluate((node) => getComputedStyle(node).backgroundColor);
+  const plain = await lines.nth(4).evaluate((node) => getComputedStyle(node).backgroundColor);
+  expect(filled).not.toBe(plain);
+  // Обычная цитата блоком callout не притворяется.
+  await expect(lines.last()).not.toHaveClass(/md-callout/);
+});

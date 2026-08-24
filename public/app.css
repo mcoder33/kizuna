@@ -263,6 +263,34 @@ main {
   padding-left: 7px;
   margin-left: -10px;
 }
+/* Callout собирается из отдельных строк — иначе каретка потеряется, — но
+   заливка и скругления делают из них один блок, как в Obsidian. */
+.md-field .md-callout-head,
+.md-field .md-callout-body {
+  background: var(--callout-tint, var(--hairline));
+  border-left: 3px solid var(--callout-line, #d7d3d0);
+  padding: 2px 10px 2px 10px;
+  margin: 0 -10px;
+}
+/* Полосу рисует сама строка, иначе она разрывается между строками. */
+.md-field .md-callout-head .md-callout-line,
+.md-field .md-callout-body .md-quote {
+  border-left: 0;
+  margin-left: 0;
+  padding-left: 0;
+}
+.md-field .md-callout-head {
+  padding-top: 6px;
+  border-radius: 8px 8px 0 0;
+}
+.md-field .md-callout-tail {
+  padding-bottom: 6px;
+  border-radius: 0 0 8px 8px;
+}
+.md-field .md-callout-head.md-callout-tail {
+  border-radius: 8px;
+}
+
 .md-field .md-quote {
   color: var(--muted);
   font-style: italic;
