@@ -382,85 +382,79 @@ main {
 .capture-expand .ic-collapse {
   display: none;
 }
-.capture-page .capture-expand {
+.capture-large .capture-expand {
   color: var(--muted);
 }
-.capture-page .capture-expand .ic-expand {
+.capture-large .capture-expand .ic-expand {
   display: none;
 }
-.capture-page .capture-expand .ic-collapse {
+.capture-large .capture-expand .ic-collapse {
   display: block;
 }
 
-/* ── режим большой страницы: поле разворачивается в лист во весь экран ── */
-body.capture-page-open {
+/* ── лист: карточка выходит на передний план и вписывается в окно ── */
+/* Пропорция листа (1 : 1.3 — чуть шире A4) считается от высоты окна, а когда
+   окно узкое — от ширины: лист всегда целиком виден, без прокрутки страницы. */
+body.capture-large-open {
   overflow: hidden;
 }
-.capture.capture-page {
+body.capture-large-open::before {
+  content: "";
   position: fixed;
   inset: 0;
-  z-index: 9;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  background: var(--wash);
-  overflow-y: auto;
+  z-index: 8;
+  background: rgba(31, 29, 27, 0.28);
+  backdrop-filter: blur(2px);
+  animation: capture-backdrop 0.24s ease-out;
 }
-.capture.capture-page:focus-within {
-  border: 0;
-  box-shadow: none;
+@keyframes capture-backdrop {
+  from {
+    opacity: 0;
+  }
 }
-.capture.capture-page .md-field {
-  max-width: 680px;
-  margin: 0 auto;
-  min-height: 60vh;
-  padding: 9vh 28px 160px;
-  font-size: 19px;
-  line-height: 1.65;
-}
-.capture.capture-page .todo-line {
-  max-width: 680px;
-  margin: 0 auto;
-  padding: 0 28px;
-}
-.capture.capture-page .capture-foot {
+.capture.capture-large {
   position: fixed;
+  top: 50%;
   left: 50%;
-  bottom: 22px;
-  transform: translateX(-50%);
-  width: min(680px, calc(100vw - 48px));
-  margin: 0;
-  padding: 8px 8px 8px 14px;
-  border: 1px solid var(--line);
-  border-radius: 99px;
-  background: #fff;
-  box-shadow: 0 18px 42px rgba(34, 34, 34, 0.12);
+  z-index: 9;
+  height: min(92vh, calc((100vw - 120px) * 1.3));
+  width: min(calc(92vh / 1.3), calc(100vw - 120px));
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 40px 90px rgba(31, 29, 27, 0.22);
+  transform: translate(-50%, -50%);
 }
-.capture.capture-page .tag-suggest {
-  bottom: calc(100% + 10px);
+.capture.capture-large .body,
+.today-page .capture.capture-large .body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
+.today-page .capture.capture-large .md-field {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  font-size: 18px;
+  line-height: 1.62;
+}
+@media (prefers-reduced-motion: reduce) {
+  body.capture-large-open::before {
+    animation: none;
+  }
+}
+/* На телефоне пропорция листа не нужна: важнее место под текст. */
 @media (max-width: 760px) {
-  .capture.capture-page .md-field {
-    padding: 40px 20px 150px;
-    font-size: 17px;
-    line-height: 1.6;
+  .capture.capture-large {
+    height: calc(100dvh - 32px);
+    width: calc(100vw - 24px);
   }
-  .capture.capture-page .capture-foot {
-    left: 0;
-    right: 0;
-    bottom: 0;
-    transform: none;
-    width: 100%;
-    border-radius: 18px 18px 0 0;
-    border-left: 0;
-    border-right: 0;
-    border-bottom: 0;
-    padding: 10px 12px calc(10px + env(safe-area-inset-bottom)) 14px;
-    box-shadow: 0 -12px 32px rgba(34, 34, 34, 0.1);
+  .today-page .capture.capture-large .md-field {
+    font-size: 17px;
   }
 }
+
 .foot-sep {
   width: 1px;
   height: 18px;
@@ -820,13 +814,22 @@ body.capture-page-open {
 #review-dialog:focus-visible {
   outline: none;
 }
+/* Карточка записи — тот же лист, что и увеличенное поле ввода: одинаковые
+   ширина, высота и пропорция, чтобы это читалось как один предмет. */
 #review-dialog {
   position: relative;
-  width: min(560px, calc(100vw - 32px));
+  width: min(calc(92vh / 1.3), calc(100vw - 120px));
+  height: min(92vh, calc((100vw - 120px) * 1.3));
   max-width: none;
-  max-height: calc(100vh - 48px);
+  max-height: none;
   overflow-y: auto;
   padding: 26px;
+}
+@media (max-width: 760px) {
+  #review-dialog {
+    width: calc(100vw - 24px);
+    height: calc(100dvh - 32px);
+  }
 }
 /* Крестик остаётся на месте при прокрутке содержимого карточки. */
 #review-dialog .dialog-close {

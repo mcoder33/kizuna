@@ -350,6 +350,8 @@ function entryCard(entry, { overdue = false, compact = false } = {}) {
   const title = markdownNode("button", c.summary, "entry-title", { inline: true, links: false, firstLine: true });
   title.type = "button";
   title.addEventListener("click", () => {
+    // Карточка вытекает из той записи, по которой щёлкнули.
+    cardOrigin = card;
     // Если у записи есть свой вопрос от модели, он и показывается; иначе
     // карточка открывается на обычное уточнение.
     const review = reviewFromEntry(entry);
@@ -553,6 +555,14 @@ async function load() {
     request("/api/entries?limit=100"),
   ]);
   render({ ...day, entries: entries.entries });
+}
+// Элемент, из которого «вытекает» карточка записи: запись в списке, по которой
+// щёлкнули. Один и тот же приём, что и у листа записи, — карточка вырастает
+// оттуда, куда смотрел человек, а не появляется из ниоткуда.
+let cardOrigin = null;
+function flowFrom(element, origin) {
+  if (!origin) return;
+  flowBetween(element, origin.getBoundingClientRect(), element.getBoundingClientRect());
 }
 function closeCard() {
   const dialog = $("#review-dialog");
@@ -799,6 +809,8 @@ function showReview(entry, review, undoGroupId, provenance) {
   area.append(source);
   if (!dialog.open) {
     dialog.showModal();
+    flowFrom(dialog, cardOrigin);
+    cardOrigin = null;
     // Фокус на самой карточке: иначе он уходит на крестик или на селектор
     // типа, хотя карточку открывают ради заметок.
     dialog.focus();
@@ -1305,31 +1317,69 @@ tagsHost.append(tagInput, tagSuggest);
 renderCaptureControls();
 refreshKnownTags();
 
-// Режим большой страницы: поле разворачивается в лист во весь экран. DOM не
-// перестраивается — переключаются два класса, поэтому каретка, история отмены
-// и набранный текст остаются на месте.
+// Лист: карточка выходит на передний план и вписывается в окно листом A4.
+// DOM не перестраивается — переключаются два класса, поэтому текст, каретка и
+// история отмены остаются на месте, а появление можно анимировать.
 const expandButton = $("#capture-expand");
-function capturePageOpen() {
-  return $("#capture-form").classList.contains("capture-page");
+function captureLarge() {
+  return $("#capture-form").classList.contains("capture-large");
 }
-function setCapturePage(open) {
+// Кривая в духе macOS: короткий разгон и длинное мягкое торможение.
+const SHEET_EASING = "cubic-bezier(0.16, 0.84, 0.24, 1)";
+const SHEET_DURATION = 540;
+// Путь от прежнего прямоугольника к новому. Позицию считает раскладка,
+// анимация только показывает переход — поэтому её можно выключить целиком.
+function flowBetween(element, from, to, base = "") {
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+  if (!to.width || !to.height || !from.width || !from.height) return;
+  const shiftX = from.left + from.width / 2 - (to.left + to.width / 2);
+  const shiftY = from.top + from.height / 2 - (to.top + to.height / 2);
+  // Лист выезжает из того места, куда смотрел человек: главное здесь —
+  // движение, а масштаб лишь чуть отстаёт, чтобы переход не выглядел рывком.
+  // Небольшой сдвиг вниз на старте нужен, когда источник и лист почти совпали:
+  // иначе выезжать было бы неоткуда.
+  const nudgeY = Math.abs(shiftY) < 24 ? 24 : 0;
+  element.animate(
+    [
+      {
+        transform: `${base} translate(${shiftX}px, ${shiftY + nudgeY}px) scale(0.92)`,
+        opacity: 0,
+        offset: 0,
+      },
+      {
+        transform: `${base} translate(${shiftX * 0.22}px, ${(shiftY + nudgeY) * 0.22}px) scale(0.985)`,
+        opacity: 1,
+        offset: 0.55,
+      },
+      { transform: base || "none", opacity: 1, offset: 1 },
+    ],
+    { duration: SHEET_DURATION, easing: SHEET_EASING },
+  );
+}
+function setCaptureLarge(large) {
   const form = $("#capture-form");
-  form.classList.toggle("capture-page", open);
-  document.body.classList.toggle("capture-page-open", open);
-  expandButton.setAttribute("aria-pressed", String(open));
-  const label = open ? "Свернуть — Esc" : "Развернуть на всю страницу";
+  // Лист вытекает из карточки: запоминаем, где она была, переключаем классы и
+  // проигрываем путь от прежнего прямоугольника к новому. Позицию считает
+  // раскладка, анимация только показывает переход.
+  const from = form.getBoundingClientRect();
+  form.classList.toggle("capture-large", large);
+  document.body.classList.toggle("capture-large-open", large);
+  const to = form.getBoundingClientRect();
+  flowBetween(form, from, to, large ? "translate(-50%, -50%)" : "");
+  expandButton.setAttribute("aria-pressed", String(large));
+  const label = large ? "Свернуть поле — Esc" : "Увеличить поле";
   expandButton.setAttribute("aria-label", label);
   expandButton.title = label;
   captureField.focus();
 }
-expandButton.addEventListener("click", () => setCapturePage(!capturePageOpen()));
-// Esc выходит из режима. Слушатель на самом поле: там же обрабатываются
+expandButton.addEventListener("click", () => setCaptureLarge(!captureLarge()));
+// Esc возвращает обычный размер. Слушатель на самом поле: там же живут
 // остальные клавиши ввода, и поповеры шапки перехватывать не приходится.
 captureField.element.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && capturePageOpen()) {
+  if (event.key === "Escape" && captureLarge()) {
     event.preventDefault();
     event.stopPropagation();
-    setCapturePage(false);
+    setCaptureLarge(false);
   }
 });
 
@@ -1359,7 +1409,7 @@ $("#capture-form").addEventListener("submit", async (event) => {
     if (result.response.status !== 202 || !safeCaptureEnvelope(result.data))
       throw new Error("Сервер не подтвердил асинхронное сохранение.");
     captureField.clear();
-    if (capturePageOpen()) setCapturePage(false);
+    if (captureLarge()) setCaptureLarge(false);
     // Параметры действуют на одну запись: залипший тип или «важно» молча
     // испортили бы следующие записи.
     resetComposerOverrides();
