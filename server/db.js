@@ -564,7 +564,17 @@ export function undo(db, undoGroupId) { const result = db.prepare("UPDATE projec
 const memoryStopwords=new Set(['что','было','по','мы','уже','про','о','об','когда','кто','где','как','я','ты','он','она','оно','они','меня','мне','тебя','тебе','его','её','ей','их','нас','нам','вас','вам','себя','свой','моя','мой','твоя','твой','наш','ваш','этот','эта','это','эти','тот','та','то','те','ли','не','да','а','и','в','во','с','со','за','для','от','до','из','на']);
 export function normalizeMemoryText(value){return String(value||'').normalize('NFKC').toLocaleLowerCase('ru-RU').replace(/[^\p{L}\p{N}]+/gu,' ').trim().replace(/\s+/g,' ')}
 function meaningfulTokens(normalized){return [...new Set(normalized.split(' ').filter(token=>token&&!memoryStopwords.has(token)))].slice(0,8)}
-export function search(db, query) { const normalizedQuery=normalizeMemoryText(query),tokens=meaningfulTokens(normalizedQuery); const rows=db.prepare('SELECT id,raw,created_at FROM captures WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?').all(500); const results=[]; for(const row of rows){const normalizedRaw=normalizeMemoryText(row.raw),rawTokens=new Set(normalizedRaw.split(' '));const matched=tokens.filter(token=>rawTokens.has(token));const exact=Boolean(normalizedQuery&&normalizedRaw.includes(normalizedQuery));if(!matched.length&&!exact)continue;const score=(exact?10000:0)+matched.length*100+(tokens.length?matched.length/tokens.length:0)*10;results.push({captureId:row.id,snippet:row.raw.slice(0,500),createdAt:row.created_at,score})}return results.sort((left,right)=>right.score-left.score||right.createdAt.localeCompare(left.createdAt)).slice(0,12).map(({score,...result})=>result); }
+// Падежи: «про Даниила» должно находить «с Даниилом». Полноценной морфологии
+// здесь нет и не нужно — хватает совпадения по началу слова, и оно ценится
+// ниже точного, чтобы порядок выдачи не перевернулся.
+const STEM_LENGTH = 5;
+function stemMatch(token, rawTokens) {
+  if (token.length < STEM_LENGTH) return false;
+  const stem = token.slice(0, STEM_LENGTH);
+  for (const rawToken of rawTokens) if (rawToken.length >= STEM_LENGTH && rawToken.startsWith(stem)) return true;
+  return false;
+}
+export function search(db, query) { const normalizedQuery=normalizeMemoryText(query),tokens=meaningfulTokens(normalizedQuery); const rows=db.prepare('SELECT id,raw,created_at FROM captures WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?').all(500); const results=[]; for(const row of rows){const normalizedRaw=normalizeMemoryText(row.raw),rawTokens=new Set(normalizedRaw.split(' '));const matched=tokens.filter(token=>rawTokens.has(token));const stemmed=tokens.filter(token=>!rawTokens.has(token)&&stemMatch(token,rawTokens));const exact=Boolean(normalizedQuery&&normalizedRaw.includes(normalizedQuery));if(!matched.length&&!stemmed.length&&!exact)continue;const score=(exact?10000:0)+matched.length*100+stemmed.length*40+(tokens.length?(matched.length+stemmed.length*0.5)/tokens.length:0)*10;results.push({captureId:row.id,snippet:row.raw.slice(0,500),createdAt:row.created_at,score})}return results.sort((left,right)=>right.score-left.score||right.createdAt.localeCompare(left.createdAt)).slice(0,12).map(({score,...result})=>result); }
 const EXPORT_ROW_LIMIT = 10_000;
 const exportTables = ['captures','interpretations','corrections','projections','capture_jobs','capture_job_events','ledger_events','daily_briefs','daily_brief_sources'];
 function exportRowCount(db) { return exportTables.reduce((total, table) => total + db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count, 0); }
