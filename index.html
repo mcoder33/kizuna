@@ -1,0 +1,1973 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='24' fill='%23ff385c'/%3E%3Ccircle cx='32' cy='32' r='8' fill='white'/%3E%3C/svg%3E">
+  <title>Память, которая двигает дела — концепции персонального помощника</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f7f7;
+      --surface: #ffffff;
+      --surface-2: #f7f7f7;
+      --surface-3: #ebebeb;
+      --line: rgba(34,34,34,.12);
+      --muted: #717171;
+      --text: #222222;
+      --amber: #ff385c;
+      --amber-bright: #e31c5f;
+      --violet: #c13584;
+      --mint: #008a6e;
+      --blue: #006ce4;
+      --red: #c13515;
+      --radius: 24px;
+      --shadow: 0 18px 55px rgba(0,0,0,.13);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Avenir Next", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button { font: inherit; }
+
+    .app {
+      width: 100%;
+      height: 100%;
+      display: grid;
+      place-items: center;
+      padding: 22px;
+    }
+
+    .deck {
+      position: relative;
+      width: min(96vw, calc(92vh * 16 / 9));
+      aspect-ratio: 16 / 9;
+      overflow: hidden;
+      border: 1px solid rgba(34,34,34,.1);
+      border-radius: 32px;
+      background: #ffffff;
+      box-shadow: var(--shadow);
+      isolation: isolate;
+    }
+
+    .slide {
+      position: absolute;
+      inset: 0;
+      padding: clamp(32px, 4vw, 72px);
+      opacity: 0;
+      pointer-events: none;
+      transform: translateX(26px) scale(.992);
+      transition: opacity .38s ease, transform .48s cubic-bezier(.2,.8,.2,1);
+      overflow: hidden;
+    }
+
+    .slide::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(rgba(255,255,255,.022) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.022) 1px, transparent 1px);
+      background-size: 42px 42px;
+      mask-image: linear-gradient(to bottom, rgba(0,0,0,.45), transparent 70%);
+      z-index: -1;
+    }
+
+    .slide.active {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateX(0) scale(1);
+      z-index: 2;
+    }
+
+    .slide.was-active { transform: translateX(-26px) scale(.992); }
+
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--amber);
+      font-size: clamp(11px, .82vw, 15px);
+      font-weight: 720;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+
+    h1 {
+      max-width: 770px;
+      margin-bottom: 22px;
+      font-size: clamp(44px, 5.25vw, 88px);
+      font-weight: 660;
+      line-height: .98;
+      letter-spacing: -.055em;
+    }
+
+    h2 {
+      margin-bottom: 14px;
+      font-size: clamp(32px, 3.4vw, 58px);
+      font-weight: 650;
+      line-height: 1.02;
+      letter-spacing: -.045em;
+    }
+
+    h3 {
+      margin-bottom: 9px;
+      font-size: clamp(16px, 1.35vw, 24px);
+      line-height: 1.1;
+      letter-spacing: -.025em;
+    }
+
+    .lead {
+      max-width: 720px;
+      color: #c7c4c0;
+      font-size: clamp(16px, 1.35vw, 23px);
+      line-height: 1.5;
+    }
+
+    .muted { color: var(--muted); }
+    .accent { color: var(--amber-bright); }
+    .violet { color: var(--violet); }
+    .mint { color: var(--mint); }
+
+    .slide-head {
+      position: relative;
+      z-index: 3;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: clamp(24px, 2.4vw, 44px);
+    }
+
+    .slide-head .lead { margin-bottom: 0; }
+
+    .concept-chip {
+      flex: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      padding: 9px 13px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255,255,255,.045);
+      color: #d5d2ce;
+      font-size: clamp(10px, .72vw, 13px);
+      font-weight: 650;
+    }
+
+    .concept-chip i {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 14px currentColor;
+    }
+
+    /* Cover */
+    .cover { padding: 0; }
+
+    .cover::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, #08080a 0%, #08080a 31%, rgba(8,8,10,.91) 43%, rgba(8,8,10,.25) 69%, rgba(8,8,10,.1));
+      z-index: -1;
+    }
+
+    .cover-art {
+      position: absolute;
+      inset: 0;
+      z-index: -2;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .cover-content {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: clamp(44px, 5.4vw, 92px);
+    }
+
+    .cover .lead { max-width: 600px; }
+
+    .cover-mark {
+      position: absolute;
+      left: clamp(44px, 5.4vw, 92px);
+      bottom: clamp(32px, 3.2vw, 56px);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: #a9a6a1;
+      font-size: clamp(11px, .85vw, 15px);
+    }
+
+    .cover-mark span:first-child {
+      display: grid;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      border: 1px solid rgba(242,181,107,.46);
+      border-radius: 50%;
+      color: var(--amber);
+    }
+
+    /* Brief */
+    .brief-grid {
+      height: calc(100% - 148px);
+      display: grid;
+      grid-template-columns: .92fr 1.08fr;
+      gap: clamp(28px, 3vw, 54px);
+      align-items: center;
+    }
+
+    .reference-frame {
+      position: relative;
+      overflow: hidden;
+      align-self: stretch;
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: #161618;
+      box-shadow: 0 20px 60px rgba(0,0,0,.28);
+    }
+
+    .reference-frame img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: left center;
+      filter: saturate(.75) contrast(.96);
+    }
+
+    .reference-label {
+      position: absolute;
+      left: 18px;
+      top: 18px;
+      padding: 8px 11px;
+      border: 1px solid rgba(255,255,255,.13);
+      border-radius: 10px;
+      background: rgba(10,10,12,.78);
+      backdrop-filter: blur(18px);
+      color: #d7d4cf;
+      font-size: clamp(10px, .72vw, 13px);
+    }
+
+    .requirement-list {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .requirement {
+      min-height: 122px;
+      padding: clamp(16px, 1.6vw, 26px);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: linear-gradient(145deg, rgba(255,255,255,.05), rgba(255,255,255,.022));
+    }
+
+    .requirement b {
+      display: block;
+      margin-bottom: 8px;
+      font-size: clamp(15px, 1.2vw, 21px);
+      letter-spacing: -.02em;
+    }
+
+    .requirement p {
+      margin: 0;
+      color: var(--muted);
+      font-size: clamp(11px, .83vw, 15px);
+      line-height: 1.42;
+    }
+
+    .req-icon {
+      display: grid;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      margin-bottom: 16px;
+      border-radius: 9px;
+      background: rgba(242,181,107,.12);
+      color: var(--amber);
+      font-size: 14px;
+    }
+
+    /* Thesis */
+    .thesis-center {
+      height: calc(100% - 140px);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 38px;
+    }
+
+    .thesis-statement {
+      max-width: 1050px;
+      font-size: clamp(30px, 3.4vw, 58px);
+      line-height: 1.12;
+      letter-spacing: -.045em;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+    }
+
+    .flow-step {
+      position: relative;
+      min-height: 150px;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 19px;
+      background: var(--surface);
+    }
+
+    .flow-step:not(:last-child)::after {
+      content: "→";
+      position: absolute;
+      right: -24px;
+      top: 50%;
+      z-index: 2;
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      transform: translateY(-50%);
+      border: 1px solid var(--line);
+      border-radius: 50%;
+      background: #0d0d10;
+      color: var(--amber);
+    }
+
+    .flow-step .number {
+      margin-bottom: 28px;
+      color: #676770;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .flow-step strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: clamp(17px, 1.25vw, 22px);
+    }
+
+    .flow-step small {
+      color: var(--muted);
+      font-size: clamp(10px, .75vw, 13px);
+      line-height: 1.4;
+    }
+
+    .principle-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 15px 18px;
+      border: 1px solid rgba(242,181,107,.22);
+      border-radius: 14px;
+      background: rgba(242,181,107,.07);
+      color: #ddd6cc;
+      font-size: clamp(11px, .86vw, 15px);
+    }
+
+    .principle-bar b { color: var(--amber-bright); }
+
+    /* Product mockups */
+    .mockup-stage {
+      position: relative;
+      height: calc(100% - 150px);
+      min-height: 0;
+    }
+
+    .browser {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,.13);
+      border-radius: 18px;
+      background: #0d0d10;
+      box-shadow: 0 28px 70px rgba(0,0,0,.4);
+    }
+
+    .browser-bar {
+      height: 34px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 13px;
+      border-bottom: 1px solid rgba(255,255,255,.075);
+      background: #151519;
+    }
+
+    .browser-bar i {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #3d3d44;
+    }
+
+    .browser-bar .address {
+      margin: auto;
+      width: 32%;
+      height: 15px;
+      border-radius: 5px;
+      background: rgba(255,255,255,.045);
+    }
+
+    /* Concept A */
+    .stream-app {
+      height: calc(100% - 34px);
+      display: grid;
+      grid-template-columns: 154px 1fr 252px;
+    }
+
+    .app-sidebar {
+      padding: 20px 14px;
+      border-right: 1px solid rgba(255,255,255,.07);
+      background: #0b0b0d;
+    }
+
+    .tiny-brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 7px 26px;
+      font-size: 12px;
+      font-weight: 730;
+    }
+
+    .tiny-brand i {
+      width: 18px;
+      height: 18px;
+      border: 1px solid rgba(242,181,107,.5);
+      border-radius: 50%;
+      box-shadow: inset 0 0 10px rgba(242,181,107,.2);
+    }
+
+    .side-link {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin-bottom: 4px;
+      padding: 9px 10px;
+      border-radius: 9px;
+      color: #888892;
+      font-size: 10px;
+    }
+
+    .side-link.active {
+      background: rgba(255,255,255,.06);
+      color: #efede9;
+    }
+
+    .side-link span:first-child { width: 15px; text-align: center; }
+
+    .project-mini {
+      margin: 26px 10px 9px;
+      color: #54545c;
+      font-size: 8px;
+      font-weight: 750;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .stream-main {
+      padding: 22px 30px 30px;
+      overflow: hidden;
+      background: linear-gradient(145deg, #111115, #0d0d10 70%);
+    }
+
+    .stream-date {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      margin-bottom: 18px;
+    }
+
+    .stream-date h4 {
+      margin: 0;
+      font-size: 24px;
+      letter-spacing: -.04em;
+    }
+
+    .stream-date span { color: #75757f; font-size: 9px; }
+
+    .capture-box {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 18px;
+      padding: 14px 14px 14px 17px;
+      border: 1px solid rgba(242,181,107,.28);
+      border-radius: 14px;
+      background: rgba(242,181,107,.06);
+      box-shadow: 0 0 36px rgba(242,181,107,.055);
+    }
+
+    .capture-box p {
+      margin: 0 0 4px;
+      color: #e0dcd6;
+      font-size: 11px;
+    }
+
+    .capture-box small { color: #706d6a; font-size: 8px; }
+
+    .mic-button {
+      display: grid;
+      place-items: center;
+      width: 33px;
+      height: 33px;
+      border: 0;
+      border-radius: 50%;
+      background: var(--amber);
+      color: #2d1a08;
+      box-shadow: 0 0 24px rgba(242,181,107,.26);
+    }
+
+    .timeline {
+      display: grid;
+      gap: 9px;
+    }
+
+    .timeline-item {
+      display: grid;
+      grid-template-columns: 42px 1fr auto;
+      gap: 12px;
+      align-items: start;
+      padding: 12px 13px;
+      border: 1px solid rgba(255,255,255,.065);
+      border-radius: 12px;
+      background: rgba(255,255,255,.027);
+    }
+
+    .timeline-item .time { color: #5e5e68; font-size: 8px; padding-top: 2px; }
+    .timeline-item strong { display: block; margin-bottom: 5px; font-size: 10px; }
+    .timeline-item p { margin: 0; color: #82828c; font-size: 8px; line-height: 1.35; }
+
+    .tag-row { display: flex; gap: 5px; margin-top: 7px; }
+    .tag {
+      padding: 3px 6px;
+      border-radius: 999px;
+      background: rgba(157,140,255,.1);
+      color: #aaa0f4;
+      font-size: 6.5px;
+    }
+    .tag.calendar { background: rgba(127,183,255,.1); color: var(--blue); }
+    .tag.todo { background: rgba(113,216,178,.1); color: var(--mint); }
+
+    .done-mark {
+      padding: 5px 7px;
+      border-radius: 8px;
+      background: rgba(113,216,178,.1);
+      color: var(--mint);
+      font-size: 7px;
+      white-space: nowrap;
+    }
+
+    .insight-rail {
+      padding: 22px 18px;
+      border-left: 1px solid rgba(255,255,255,.07);
+      background: #0b0b0d;
+    }
+
+    .rail-title {
+      margin-bottom: 12px;
+      color: #606069;
+      font-size: 8px;
+      font-weight: 750;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .insight-card {
+      margin-bottom: 9px;
+      padding: 12px;
+      border: 1px solid rgba(255,255,255,.075);
+      border-radius: 12px;
+      background: rgba(255,255,255,.03);
+    }
+
+    .insight-card.attention { border-color: rgba(242,181,107,.22); background: rgba(242,181,107,.055); }
+    .insight-card small { display: block; margin-bottom: 7px; color: #6c6c75; font-size: 7px; }
+    .insight-card b { display: block; margin-bottom: 6px; font-size: 9px; line-height: 1.3; }
+    .insight-card p { margin: 0; color: #7d7d86; font-size: 7px; line-height: 1.4; }
+
+    .rail-action {
+      margin-top: 10px;
+      width: 100%;
+      padding: 8px;
+      border: 1px solid rgba(242,181,107,.2);
+      border-radius: 8px;
+      background: rgba(242,181,107,.07);
+      color: var(--amber);
+      font-size: 7px;
+    }
+
+    /* Concept B */
+    .dialog-app {
+      height: calc(100% - 34px);
+      display: grid;
+      grid-template-columns: 176px 1fr 290px;
+    }
+
+    .dialog-nav {
+      padding: 19px 14px;
+      border-right: 1px solid rgba(255,255,255,.07);
+    }
+
+    .chat-list-item {
+      margin-bottom: 6px;
+      padding: 10px;
+      border-radius: 10px;
+      color: #777781;
+      font-size: 8px;
+      line-height: 1.35;
+    }
+
+    .chat-list-item.active { background: rgba(157,140,255,.08); color: #d8d4ef; }
+
+    .dialog-main {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      padding: 20px 26px 16px;
+      background:
+        radial-gradient(circle at 50% -20%, rgba(157,140,255,.11), transparent 45%),
+        #101014;
+    }
+
+    .meeting-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 17px;
+      padding: 9px 11px;
+      border: 1px solid rgba(157,140,255,.19);
+      border-radius: 10px;
+      background: rgba(157,140,255,.065);
+      font-size: 8px;
+    }
+
+    .meeting-banner span:last-child { color: #a99ef4; }
+
+    .conversation {
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .message {
+      max-width: 86%;
+      margin-bottom: 12px;
+      padding: 12px 14px;
+      border-radius: 13px;
+      background: rgba(255,255,255,.047);
+      color: #d3d1cf;
+      font-size: 9px;
+      line-height: 1.5;
+    }
+
+    .message.assistant {
+      border: 1px solid rgba(157,140,255,.12);
+      border-top-left-radius: 4px;
+    }
+
+    .message.user {
+      margin-left: auto;
+      border-top-right-radius: 4px;
+      background: rgba(242,181,107,.095);
+    }
+
+    .message b { color: #f0ece7; }
+
+    .context-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 9px;
+    }
+
+    .context-links span {
+      padding: 4px 6px;
+      border: 1px solid rgba(157,140,255,.14);
+      border-radius: 6px;
+      color: #aea5ef;
+      font-size: 6.5px;
+    }
+
+    .chat-input {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 9px;
+      align-items: center;
+      padding: 9px 10px 9px 13px;
+      border: 1px solid rgba(255,255,255,.11);
+      border-radius: 12px;
+      background: #18181e;
+      color: #6f6f79;
+      font-size: 8px;
+    }
+
+    .chat-input button {
+      width: 29px;
+      height: 29px;
+      border: 0;
+      border-radius: 9px;
+      background: var(--violet);
+      color: white;
+    }
+
+    .context-panel {
+      padding: 20px 18px;
+      border-left: 1px solid rgba(255,255,255,.07);
+      background: #0c0c0f;
+    }
+
+    .context-panel h5 { margin: 0 0 5px; font-size: 12px; }
+    .context-panel > p { margin: 0 0 17px; color: #6b6b74; font-size: 7px; }
+
+    .brief-section {
+      margin-bottom: 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid rgba(255,255,255,.065);
+    }
+
+    .brief-section small {
+      display: block;
+      margin-bottom: 7px;
+      color: #686871;
+      font-size: 7px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .brief-section p {
+      margin: 0 0 6px;
+      color: #aaa8aa;
+      font-size: 7.5px;
+      line-height: 1.45;
+    }
+
+    .brief-section .question { color: var(--amber-bright); }
+
+    /* Concept C */
+    .autopilot-app {
+      height: calc(100% - 34px);
+      padding: 22px 26px;
+      background:
+        radial-gradient(circle at 75% 0%, rgba(113,216,178,.07), transparent 34%),
+        #0f1012;
+    }
+
+    .autopilot-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .autopilot-top h4 { margin: 0 0 3px; font-size: 19px; }
+    .autopilot-top p { margin: 0; color: #777780; font-size: 8px; }
+
+    .trust-pill {
+      padding: 7px 10px;
+      border: 1px solid rgba(113,216,178,.17);
+      border-radius: 999px;
+      background: rgba(113,216,178,.06);
+      color: var(--mint);
+      font-size: 7px;
+    }
+
+    .autopilot-grid {
+      display: grid;
+      grid-template-columns: 1.25fr .75fr;
+      gap: 13px;
+      height: calc(100% - 52px);
+    }
+
+    .projects-panel,
+    .agent-panel {
+      min-height: 0;
+      padding: 15px;
+      border: 1px solid rgba(255,255,255,.07);
+      border-radius: 14px;
+      background: rgba(255,255,255,.023);
+    }
+
+    .panel-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 11px;
+      color: #6e6e77;
+      font-size: 7px;
+      font-weight: 750;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    .panel-heading span:last-child { color: #55555d; }
+
+    .project-row {
+      display: grid;
+      grid-template-columns: 1fr 84px 90px;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 8px;
+      padding: 11px 12px;
+      border: 1px solid rgba(255,255,255,.065);
+      border-radius: 11px;
+      background: rgba(255,255,255,.028);
+    }
+
+    .project-row.attention { border-color: rgba(242,181,107,.2); }
+    .project-row b { display: block; margin-bottom: 4px; font-size: 9px; }
+    .project-row small { color: #74747d; font-size: 6.5px; }
+
+    .progress {
+      height: 4px;
+      overflow: hidden;
+      border-radius: 99px;
+      background: #28282d;
+    }
+
+    .progress i { display: block; height: 100%; border-radius: inherit; background: var(--mint); }
+    .project-row.attention .progress i { background: var(--amber); }
+
+    .project-state { text-align: right; color: #777780; font-size: 7px; }
+    .project-state b { color: #bdbabe; font-size: 7px; font-weight: 650; }
+
+    .forgotten-card {
+      margin-top: 11px;
+      padding: 13px;
+      border: 1px dashed rgba(242,181,107,.23);
+      border-radius: 11px;
+      background: rgba(242,181,107,.045);
+    }
+
+    .forgotten-card small { color: var(--amber); font-size: 7px; }
+    .forgotten-card b { display: block; margin: 6px 0; font-size: 9px; }
+    .forgotten-card p { margin: 0; color: #77747a; font-size: 7px; line-height: 1.45; }
+
+    .agent-action {
+      position: relative;
+      margin-bottom: 8px;
+      padding: 11px 10px 11px 28px;
+      border-radius: 10px;
+      background: rgba(255,255,255,.033);
+    }
+
+    .agent-action::before {
+      content: "";
+      position: absolute;
+      left: 11px;
+      top: 13px;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--mint);
+      box-shadow: 0 0 9px rgba(113,216,178,.45);
+    }
+
+    .agent-action.wait::before { background: var(--amber); box-shadow: 0 0 9px rgba(242,181,107,.45); }
+    .agent-action b { display: block; margin-bottom: 4px; font-size: 8px; }
+    .agent-action p { margin: 0; color: #73737c; font-size: 6.5px; line-height: 1.35; }
+
+    .permission-box {
+      margin-top: 11px;
+      padding: 11px;
+      border: 1px solid rgba(255,255,255,.07);
+      border-radius: 10px;
+      background: #111115;
+    }
+
+    .permission-box small { color: #66666f; font-size: 6.5px; }
+    .permission-scale { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 8px; }
+    .permission-scale span {
+      padding: 6px 3px;
+      border-radius: 6px;
+      background: #1b1b20;
+      color: #696971;
+      text-align: center;
+      font-size: 5.8px;
+    }
+    .permission-scale span.active { background: rgba(113,216,178,.11); color: var(--mint); }
+
+    /* Scenario */
+    .scenario-layout {
+      height: calc(100% - 145px);
+      display: grid;
+      grid-template-columns: .92fr 1.08fr;
+      gap: clamp(24px, 3vw, 54px);
+      align-items: center;
+    }
+
+    .scenario-story { display: grid; gap: 10px; }
+
+    .story-line {
+      position: relative;
+      display: grid;
+      grid-template-columns: 72px 1fr;
+      gap: 15px;
+      align-items: center;
+      min-height: 66px;
+      padding: 10px 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--surface);
+    }
+
+    .story-line:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      left: 49px;
+      bottom: -11px;
+      width: 1px;
+      height: 11px;
+      background: rgba(242,181,107,.34);
+    }
+
+    .story-time { color: var(--amber); font-size: clamp(9px, .7vw, 12px); font-weight: 720; }
+    .story-line b { display: block; margin-bottom: 3px; font-size: clamp(12px, .92vw, 16px); }
+    .story-line p { margin: 0; color: var(--muted); font-size: clamp(9px, .7vw, 12px); line-height: 1.35; }
+
+    .brief-card-large {
+      position: relative;
+      padding: clamp(23px, 2.2vw, 38px);
+      border: 1px solid rgba(157,140,255,.2);
+      border-radius: 22px;
+      background:
+        radial-gradient(circle at 100% 0%, rgba(157,140,255,.13), transparent 34%),
+        linear-gradient(145deg, #18171f, #111116);
+      box-shadow: 0 26px 60px rgba(0,0,0,.28);
+    }
+
+    .brief-card-large::before {
+      content: "контекст готов";
+      position: absolute;
+      right: 22px;
+      top: 20px;
+      color: var(--mint);
+      font-size: clamp(8px, .6vw, 11px);
+      text-transform: uppercase;
+      letter-spacing: .1em;
+    }
+
+    .brief-card-large > small { color: var(--violet); font-size: clamp(9px, .68vw, 12px); }
+    .brief-card-large h3 { margin-top: 12px; font-size: clamp(22px, 2vw, 34px); }
+    .brief-card-large > p { color: var(--muted); font-size: clamp(10px, .8vw, 14px); line-height: 1.45; }
+
+    .brief-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 18px; }
+    .brief-fact { padding: 12px; border-radius: 11px; background: rgba(255,255,255,.04); }
+    .brief-fact small { display: block; margin-bottom: 5px; color: #6b6b75; font-size: clamp(7px, .55vw, 10px); text-transform: uppercase; letter-spacing: .08em; }
+    .brief-fact b { font-size: clamp(10px, .8vw, 14px); line-height: 1.3; }
+
+    .brief-question {
+      margin-top: 8px;
+      padding: 12px;
+      border: 1px solid rgba(242,181,107,.18);
+      border-radius: 11px;
+      background: rgba(242,181,107,.055);
+      color: var(--amber-bright);
+      font-size: clamp(9px, .7vw, 12px);
+      line-height: 1.4;
+    }
+
+    /* Comparison */
+    .comparison {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0 7px;
+      font-size: clamp(10px, .8vw, 14px);
+    }
+
+    .comparison th {
+      padding: 8px 16px;
+      color: #777780;
+      font-size: clamp(9px, .65vw, 12px);
+      font-weight: 700;
+      text-align: left;
+      text-transform: uppercase;
+      letter-spacing: .09em;
+    }
+
+    .comparison th:not(:first-child),
+    .comparison td:not(:first-child) { text-align: center; }
+
+    .comparison td {
+      padding: clamp(10px, 1vw, 17px) 16px;
+      background: rgba(255,255,255,.033);
+    }
+
+    .comparison td:first-child { border-radius: 12px 0 0 12px; color: #d5d2cf; }
+    .comparison td:last-child { border-radius: 0 12px 12px 0; }
+    .comparison tr.recommended td { background: rgba(242,181,107,.065); }
+
+    .score { display: inline-flex; gap: 4px; }
+    .score i { width: 6px; height: 6px; border-radius: 50%; background: #34343a; }
+    .score i.on { background: var(--amber); box-shadow: 0 0 8px rgba(242,181,107,.28); }
+    .score.violet-score i.on { background: var(--violet); }
+    .score.mint-score i.on { background: var(--mint); }
+
+    .table-note {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      margin-top: 13px;
+      color: #6f6f77;
+      font-size: clamp(8px, .65vw, 11px);
+    }
+
+    /* Recommendation */
+    .recommendation-grid {
+      height: calc(100% - 145px);
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: clamp(24px, 3.2vw, 58px);
+      align-items: center;
+    }
+
+    .stack-diagram {
+      position: relative;
+      min-height: 370px;
+      display: grid;
+      place-items: center;
+    }
+
+    .stack-layer {
+      position: absolute;
+      width: 82%;
+      min-height: 94px;
+      padding: 20px 23px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(19,19,24,.92);
+      box-shadow: 0 18px 45px rgba(0,0,0,.3);
+      transform: perspective(900px) rotateX(58deg) rotateZ(-5deg);
+    }
+
+    .stack-layer:nth-child(1) { top: 12px; z-index: 3; border-color: rgba(242,181,107,.31); }
+    .stack-layer:nth-child(2) { top: 115px; z-index: 2; border-color: rgba(157,140,255,.25); }
+    .stack-layer:nth-child(3) { top: 218px; z-index: 1; border-color: rgba(113,216,178,.2); }
+    .stack-layer b { display: block; margin-bottom: 5px; font-size: clamp(13px, 1vw, 18px); }
+    .stack-layer small { color: var(--muted); font-size: clamp(8px, .62vw, 11px); }
+
+    .recommendation-copy h3 { margin-bottom: 18px; font-size: clamp(25px, 2.4vw, 42px); line-height: 1.08; }
+
+    .rec-point {
+      display: grid;
+      grid-template-columns: 28px 1fr;
+      gap: 12px;
+      margin-bottom: 15px;
+      color: #cbc8c4;
+      font-size: clamp(11px, .86vw, 15px);
+      line-height: 1.45;
+    }
+
+    .rec-point span {
+      display: grid;
+      place-items: center;
+      width: 26px;
+      height: 26px;
+      border-radius: 9px;
+      background: rgba(242,181,107,.1);
+      color: var(--amber);
+      font-size: 10px;
+      font-weight: 750;
+    }
+
+    /* Roadmap */
+    .roadmap {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      margin-top: 30px;
+    }
+
+    .phase {
+      position: relative;
+      min-height: 330px;
+      padding: clamp(20px, 2vw, 32px);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: linear-gradient(145deg, rgba(255,255,255,.05), rgba(255,255,255,.022));
+    }
+
+    .phase:first-child { border-color: rgba(242,181,107,.28); }
+    .phase-number { color: #56565e; font-size: 11px; font-weight: 750; }
+    .phase h3 { margin-top: 30px; font-size: clamp(20px, 1.8vw, 30px); }
+    .phase > p { min-height: 48px; color: var(--muted); font-size: clamp(10px, .75vw, 13px); line-height: 1.4; }
+
+    .phase ul { margin: 22px 0 0; padding: 0; list-style: none; }
+    .phase li {
+      position: relative;
+      margin-bottom: 10px;
+      padding-left: 17px;
+      color: #c1bebb;
+      font-size: clamp(9px, .7vw, 12px);
+      line-height: 1.35;
+    }
+    .phase li::before { content: ""; position: absolute; left: 0; top: .45em; width: 6px; height: 6px; border-radius: 50%; background: var(--amber); }
+    .phase:nth-child(2) li::before { background: var(--violet); }
+    .phase:nth-child(3) li::before { background: var(--mint); }
+
+    /* Decision */
+    .decision-slide { display: flex; flex-direction: column; justify-content: center; }
+    .decision-slide .slide-head { margin-bottom: 30px; }
+    .choice-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+
+    .choice-card {
+      position: relative;
+      min-height: 260px;
+      padding: clamp(20px, 2vw, 32px);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: rgba(255,255,255,.035);
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+      transition: transform .2s ease, border-color .2s ease, background .2s ease;
+    }
+
+    .choice-card:hover { transform: translateY(-5px); border-color: rgba(255,255,255,.2); }
+    .choice-card.selected { border-color: rgba(242,181,107,.5); background: rgba(242,181,107,.07); }
+    .choice-card.recommended::after {
+      content: "рекомендация";
+      position: absolute;
+      right: 18px;
+      top: 18px;
+      color: var(--amber);
+      font-size: clamp(7px, .52vw, 10px);
+      font-weight: 760;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .choice-letter { display: block; margin-bottom: 36px; color: #56565e; font-size: clamp(12px, .9vw, 16px); font-weight: 800; }
+    .choice-card h3 { font-size: clamp(22px, 2vw, 34px); }
+    .choice-card p { color: var(--muted); font-size: clamp(10px, .78vw, 14px); line-height: 1.45; }
+
+    .selection-result {
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-top: 16px;
+      padding: 12px 16px;
+      border: 1px solid rgba(255,255,255,.07);
+      border-radius: 12px;
+      background: rgba(255,255,255,.025);
+      color: #8b8b94;
+      font-size: clamp(9px, .7vw, 12px);
+    }
+    .selection-result b { color: var(--amber-bright); }
+    .selection-result a { color: var(--amber-bright); font-weight: 680; text-decoration: none; }
+    .selection-result a:hover { text-decoration: underline; }
+
+    /* Chrome */
+    .deck-nav {
+      position: fixed;
+      left: 50%;
+      bottom: 10px;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transform: translateX(-50%);
+    }
+
+    .nav-btn {
+      display: grid;
+      place-items: center;
+      width: 35px;
+      height: 35px;
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 50%;
+      background: rgba(17,17,20,.85);
+      color: #dad7d2;
+      cursor: pointer;
+      backdrop-filter: blur(16px);
+    }
+
+    .nav-btn:disabled { opacity: .28; cursor: default; }
+
+    .slide-counter {
+      min-width: 58px;
+      color: #85858e;
+      font-size: 11px;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .progress-track {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 12;
+      height: 3px;
+      background: rgba(255,255,255,.04);
+    }
+
+    .progress-line {
+      width: 0;
+      height: 100%;
+      background: linear-gradient(90deg, var(--amber), var(--violet));
+      transition: width .36s ease;
+    }
+
+    .hint {
+      position: absolute;
+      right: 22px;
+      bottom: 16px;
+      z-index: 10;
+      color: #55555d;
+      font-size: 9px;
+    }
+
+    /* Airbnb-inspired visual system: warm, light, tactile, and content-first. */
+    .slide:not(.cover) { background: #fff; }
+    .slide::before { background: none; mask-image: none; }
+
+    h1, h2, h3 { color: #222; font-weight: 700; }
+    .lead { color: #717171; }
+    .eyebrow { color: var(--amber); letter-spacing: .1em; }
+    .accent { color: var(--amber-bright); }
+
+    .concept-chip {
+      border-color: #dddddd;
+      background: #ffffff;
+      color: #222222;
+      box-shadow: 0 3px 12px rgba(0,0,0,.08);
+    }
+
+    .cover::after { background: none; }
+    .cover::before {
+      background: radial-gradient(circle at 79% 68%, rgba(255,56,92,.17), transparent 28%);
+      mask-image: none;
+    }
+    .cover-art {
+      inset: 8% auto auto 53%;
+      z-index: -1;
+      width: 42%;
+      height: 84%;
+      border-radius: 36px;
+      object-position: 70% center;
+      box-shadow: 0 18px 55px rgba(0,0,0,.18);
+      filter: saturate(.76) brightness(1.05);
+    }
+    .cover-content { width: 58%; }
+    .cover .lead { color: #717171; }
+    .cover-mark { color: #717171; }
+    .cover-mark span:first-child {
+      border-color: rgba(255,56,92,.38);
+      color: var(--amber);
+      background: #fff0f3;
+    }
+
+    .reference-frame,
+    .requirement,
+    .flow-step,
+    .brief-card-large,
+    .phase,
+    .choice-card {
+      border-color: #dddddd;
+      background: #ffffff;
+      box-shadow: 0 4px 18px rgba(0,0,0,.07);
+    }
+    .reference-label {
+      border: 0;
+      background: rgba(255,255,255,.94);
+      color: #222222;
+      box-shadow: 0 2px 10px rgba(0,0,0,.1);
+    }
+    .requirement p,
+    .flow-step small,
+    .phase > p,
+    .phase li,
+    .choice-card p { color: #717171; }
+    .req-icon {
+      border-radius: 50%;
+      background: #fff0f3;
+      color: var(--amber);
+    }
+    .flow-step:not(:last-child)::after {
+      border-color: #dddddd;
+      background: #ffffff;
+      color: var(--amber);
+      box-shadow: 0 2px 8px rgba(0,0,0,.08);
+    }
+    .flow-step .number { color: #b0b0b0; }
+    .principle-bar {
+      border-color: rgba(255,56,92,.22);
+      background: #fff5f7;
+      color: #484848;
+    }
+
+    .browser {
+      border: 0;
+      border-radius: 28px;
+      background: #ffffff;
+      box-shadow: 0 12px 40px rgba(0,0,0,.14);
+    }
+    .browser-bar {
+      border-bottom-color: #eeeeee;
+      background: #ffffff;
+    }
+    .browser-bar i { background: #dddddd; }
+    .browser-bar .address { background: #f2f2f2; }
+
+    .app-sidebar,
+    .insight-rail,
+    .dialog-nav,
+    .context-panel {
+      border-color: #ebebeb;
+      background: #ffffff;
+    }
+    .tiny-brand { color: #222222; }
+    .tiny-brand i {
+      border: 0;
+      background: linear-gradient(135deg, #ff385c, #d70466);
+      box-shadow: 0 4px 12px rgba(215,4,102,.25);
+    }
+    .side-link { color: #717171; }
+    .side-link.active {
+      background: #f2f2f2;
+      color: #222222;
+      font-weight: 650;
+    }
+    .project-mini,
+    .rail-title,
+    .panel-heading { color: #b0b0b0; }
+
+    .stream-main {
+      background: #f7f7f7;
+    }
+    .stream-date h4 { color: #222222; }
+    .stream-date span { color: #717171; }
+    .capture-box {
+      border-color: #dddddd;
+      border-radius: 999px;
+      background: #ffffff;
+      box-shadow: 0 5px 18px rgba(0,0,0,.1);
+    }
+    .capture-box p { color: #222222; font-weight: 600; }
+    .capture-box small { color: #717171; }
+    .mic-button {
+      background: linear-gradient(135deg, #ff385c, #d70466);
+      color: #ffffff;
+      box-shadow: 0 5px 14px rgba(215,4,102,.28);
+    }
+    .timeline-item {
+      border: 0;
+      border-radius: 16px;
+      background: #ffffff;
+      box-shadow: 0 2px 10px rgba(0,0,0,.055);
+    }
+    .timeline-item .time { color: #b0b0b0; }
+    .timeline-item strong { color: #222222; }
+    .timeline-item p { color: #717171; }
+    .tag { background: #f2f2f2; color: #717171; }
+    .tag.calendar { background: #edf4ff; color: var(--blue); }
+    .tag.todo { background: #e8f7f2; color: var(--mint); }
+    .done-mark { background: #e8f7f2; color: var(--mint); }
+    .insight-card {
+      border: 0;
+      border-radius: 16px;
+      background: #f7f7f7;
+    }
+    .insight-card.attention {
+      border: 1px solid rgba(255,56,92,.2);
+      background: #fff5f7;
+    }
+    .insight-card small { color: #b0b0b0; }
+    .insight-card b { color: #222222; }
+    .insight-card p { color: #717171; }
+    .rail-action {
+      border: 0;
+      border-radius: 999px;
+      background: linear-gradient(135deg, #ff385c, #d70466);
+      color: #ffffff;
+      font-weight: 650;
+    }
+
+    .dialog-main {
+      background: #f7f7f7;
+    }
+    .chat-list-item { color: #717171; }
+    .chat-list-item.active {
+      background: #f2f2f2;
+      color: #222222;
+    }
+    .meeting-banner {
+      border: 0;
+      border-radius: 999px;
+      background: #ffffff;
+      color: #222222;
+      box-shadow: 0 3px 12px rgba(0,0,0,.08);
+    }
+    .meeting-banner span:last-child { color: var(--amber); font-weight: 650; }
+    .message {
+      background: #ffffff;
+      color: #484848;
+      box-shadow: 0 2px 10px rgba(0,0,0,.06);
+    }
+    .message.assistant { border: 0; }
+    .message.user { background: #fff0f3; color: #222222; }
+    .message b { color: #222222; }
+    .context-links span {
+      border-color: #dddddd;
+      background: #f7f7f7;
+      color: #717171;
+    }
+    .chat-input {
+      border-color: #dddddd;
+      border-radius: 999px;
+      background: #ffffff;
+      color: #717171;
+      box-shadow: 0 3px 14px rgba(0,0,0,.08);
+    }
+    .chat-input button {
+      border-radius: 50%;
+      background: linear-gradient(135deg, #ff385c, #d70466);
+    }
+    .context-panel h5 { color: #222222; }
+    .context-panel > p,
+    .brief-section p { color: #717171; }
+    .brief-section { border-bottom-color: #ebebeb; }
+    .brief-section small { color: #b0b0b0; }
+    .brief-section .question { color: var(--amber-bright); }
+
+    .autopilot-app {
+      background: #f7f7f7;
+    }
+    .autopilot-top h4 { color: #222222; }
+    .autopilot-top p { color: #717171; }
+    .trust-pill {
+      border: 0;
+      background: #e8f7f2;
+      color: var(--mint);
+    }
+    .projects-panel,
+    .agent-panel {
+      border: 0;
+      background: #ffffff;
+      box-shadow: 0 3px 14px rgba(0,0,0,.065);
+    }
+    .project-row {
+      border: 0;
+      background: #f7f7f7;
+    }
+    .project-row.attention { background: #fff5f7; }
+    .project-row b,
+    .agent-action b,
+    .forgotten-card b { color: #222222; }
+    .project-row small,
+    .agent-action p,
+    .forgotten-card p,
+    .project-state { color: #717171; }
+    .progress { background: #dddddd; }
+    .project-row.attention .progress i { background: var(--amber); }
+    .forgotten-card {
+      border-color: rgba(255,56,92,.3);
+      background: #fff5f7;
+    }
+    .forgotten-card small { color: var(--amber); }
+    .agent-action { background: #f7f7f7; }
+    .permission-box {
+      border-color: #ebebeb;
+      background: #ffffff;
+    }
+    .permission-scale span { background: #f2f2f2; color: #717171; }
+    .permission-scale span.active { background: #e8f7f2; color: var(--mint); }
+
+    .story-line {
+      border: 0;
+      background: #ffffff;
+      box-shadow: 0 3px 14px rgba(0,0,0,.07);
+    }
+    .story-line b { color: #222222; }
+    .story-line p { color: #717171; }
+    .story-line:not(:last-child)::after { background: rgba(255,56,92,.3); }
+    .brief-card-large {
+      border: 0;
+      background: linear-gradient(145deg, #ffffff, #fff7f8);
+      box-shadow: 0 12px 34px rgba(0,0,0,.1);
+    }
+    .brief-card-large > p { color: #717171; }
+    .brief-fact { background: #f7f7f7; }
+    .brief-fact small { color: #b0b0b0; }
+    .brief-question {
+      border-color: rgba(255,56,92,.18);
+      background: #fff0f3;
+      color: var(--amber-bright);
+    }
+
+    .comparison th { color: #717171; }
+    .comparison td { background: #f7f7f7; }
+    .comparison td:first-child { color: #222222; }
+    .comparison tr.recommended td { background: #fff0f3; }
+    .score i { background: #dddddd; }
+    .score i.on { background: var(--amber); box-shadow: none; }
+    .table-note { color: #717171; }
+
+    .stack-layer {
+      border-color: #dddddd;
+      background: rgba(255,255,255,.97);
+      box-shadow: 0 14px 34px rgba(0,0,0,.1);
+    }
+    .stack-layer:nth-child(1) { border-color: rgba(255,56,92,.34); }
+    .stack-layer:nth-child(2) { border-color: rgba(193,53,132,.26); }
+    .stack-layer:nth-child(3) { border-color: rgba(0,138,110,.23); }
+    .stack-layer small { color: #717171; }
+    .rec-point { color: #484848; }
+    .rec-point span { background: #fff0f3; color: var(--amber); }
+
+    .phase:first-child { border-color: rgba(255,56,92,.3); }
+    .phase-number { color: #b0b0b0; }
+    .phase li::before { background: var(--amber); }
+
+    .choice-card { color: #222222; }
+    .choice-card:hover { border-color: #b0b0b0; }
+    .choice-card.selected {
+      border-color: var(--amber);
+      background: #fff5f7;
+      box-shadow: 0 6px 22px rgba(255,56,92,.14);
+    }
+    .choice-letter { color: #b0b0b0; }
+    .selection-result {
+      border-color: #ebebeb;
+      background: #f7f7f7;
+      color: #717171;
+    }
+
+    .nav-btn {
+      border-color: #dddddd;
+      background: rgba(255,255,255,.94);
+      color: #222222;
+      box-shadow: 0 2px 10px rgba(0,0,0,.1);
+    }
+    .slide-counter { color: #717171; }
+    .progress-track { background: #ebebeb; }
+    .progress-line { background: linear-gradient(90deg, #ff385c, #d70466); }
+    .hint { color: #b0b0b0; }
+
+    @media (max-width: 900px) {
+      .app { padding: 8px; }
+      .deck { width: 100vw; max-height: 100vh; border-radius: 10px; }
+      .slide { padding: 28px; }
+      .deck-nav { bottom: 4px; }
+      .hint { display: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .slide, .progress-line, .choice-card { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app" aria-label="Презентация концепций персонального помощника">
+    <div class="deck" id="deck">
+      <section class="slide cover active" data-title="Обложка">
+        <img class="cover-art" src="assets/assistant-memory-cover.png" alt="Абстрактная визуализация потока заметок в память, календарь, задачи и проекты">
+        <div class="cover-content">
+          <p class="eyebrow">Концепция персонального помощника</p>
+          <h1>Память, которая<br>двигает дела</h1>
+          <p class="lead">Один вход для мыслей, встреч и задач. Система сама разбирает поток, возвращает контекст и замечает забытое.</p>
+        </div>
+        <div class="cover-mark"><span>●</span><span>Продуктовые направления · август 2026</span></div>
+      </section>
+
+      <section class="slide" data-title="Задача">
+        <div class="slide-head">
+          <div>
+            <p class="eyebrow">01 · От текущей привычки</p>
+            <h2>Не ломать поток.<br>Убрать обслуживание системы.</h2>
+          </div>
+          <span class="concept-chip"><i></i> исходная точка</span>
+        </div>
+        <div class="brief-grid">
+          <figure class="reference-frame">
+            <img src="assets/current-daily-page.png" alt="Текущая ежедневная страница пользователя">
+            <figcaption class="reference-label">Сейчас: ручная дневная страница</figcaption>
+          </figure>
+          <div class="requirement-list">
+            <article class="requirement">
+              <span class="req-icon">↓</span>
+              <b>Внести — и забыть</b>
+              <p>Текст, голос, встреча или задача попадают в один вход без выбора папки.</p>
+            </article>
+            <article class="requirement">
+              <span class="req-icon">◇</span>
+              <b>Память со связями</b>
+              <p>Люди, проекты, решения и обещания связываются после ввода автоматически.</p>
+            </article>
+            <article class="requirement">
+              <span class="req-icon">↗</span>
+              <b>Контекст вовремя</b>
+              <p>Перед созвоном система поднимает решения, хвосты и открытые вопросы.</p>
+            </article>
+            <article class="requirement">
+              <span class="req-icon">✦</span>
+              <b>Заметить забытое</b>
+              <p>Помощник сам видит зависшие темы и предлагает следующий безопасный шаг.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Принцип">
+        <div class="slide-head">
+          <div>
+            <p class="eyebrow">02 · Продуктовый принцип</p>
+            <h2>Организация — работа системы,<br>а не пользователя.</h2>
+          </div>
+        </div>
+        <div class="thesis-center">
+          <p class="thesis-statement">Человек ведёт <span class="accent">не базу знаний</span>, а непрерывный разговор со своей памятью.</p>
+          <div class="flow">
+            <article class="flow-step"><span class="number">01</span><strong>Сброс</strong><small>Сказал или написал как есть</small></article>
+            <article class="flow-step"><span class="number">02</span><strong>Разбор</strong><small>Событие, задача, факт, решение</small></article>
+            <article class="flow-step"><span class="number">03</span><strong>Связи</strong><small>Люди, темы, проекты, сроки</small></article>
+            <article class="flow-step"><span class="number">04</span><strong>Движение</strong><small>Контекст, напоминание или действие</small></article>
+          </div>
+          <div class="principle-bar"><span><b>Главный UX-гейт:</b> ни один новый объект не требует обязательной ручной классификации.</span><span>Можно исправить позже — если захочется.</span></div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Концепция A">
+        <div class="slide-head">
+          <div>
+            <p class="eyebrow">03 · Концепция A</p>
+            <h2>Поток</h2>
+            <p class="lead">Знакомая дневная страница становится живой лентой: ввод сверху, результат разбора появляется прямо рядом.</p>
+          </div>
+          <span class="concept-chip" style="color:var(--amber)"><i></i> низкий порог входа</span>
+        </div>
+        <div class="mockup-stage">
+          <div class="browser">
+            <div class="browser-bar"><i></i><i></i><i></i><span class="address"></span></div>
+            <div class="stream-app">
+              <aside class="app-sidebar">
+                <div class="tiny-brand"><i></i> Pagent</div>
+                <div class="side-link active"><span>◉</span><span>Сегодня</span></div>
+                <div class="side-link"><span>◌</span><span>Память</span></div>
+                <div class="side-link"><span>□</span><span>Календарь</span></div>
+                <div class="project-mini">Проекты</div>
+                <div class="side-link"><span>·</span><span>Hub</span></div>
+                <div class="side-link"><span>·</span><span>Monetization</span></div>
+                <div class="side-link"><span>·</span><span>TCAM</span></div>
+              </aside>
+              <section class="stream-main">
+                <div class="stream-date"><h4>Сегодня, 20 августа</h4><span>четверг · 5 записей</span></div>
+                <div class="capture-box">
+                  <div><p>Запиши мысль, задачу или встречу…</p><small>⌘ Enter — отправить · удерживай Space — говорить</small></div>
+                  <button class="mic-button" aria-label="Голосовой ввод">●</button>
+                </div>
+                <div class="timeline">
+                  <article class="timeline-item">
+                    <span class="time">09:14</span>
+                    <div><strong>Завтра в 11 созвон с BE по секретам сессий в Hub</strong><p>Нужно поднять текущее решение и последние замечания команды.</p><div class="tag-row"><span class="tag calendar">встреча · 21 авг</span><span class="tag">Hub</span><span class="tag">BE</span></div></div>
+                    <span class="done-mark">в календаре ✓</span>
+                  </article>
+                  <article class="timeline-item">
+                    <span class="time">10:46</span>
+                    <div><strong>Новое видение будущего команды</strong><p>Нужно рассказать парням. Система связала запись с заметками о стратегии.</p><div class="tag-row"><span class="tag todo">задача</span><span class="tag">команда</span></div></div>
+                    <span class="done-mark">на пятницу</span>
+                  </article>
+                  <article class="timeline-item">
+                    <span class="time">12:08</span>
+                    <div><strong>По TCAM закончил дашборды</strong><p>Обновлён статус проекта. Остался вопрос по источнику метрик.</p><div class="tag-row"><span class="tag">TCAM</span><span class="tag todo">результат</span></div></div>
+                    <span class="done-mark">память ✓</span>
+                  </article>
+                </div>
+              </section>
+              <aside class="insight-rail">
+                <div class="rail-title">Система заметила</div>
+                <article class="insight-card attention"><small>ЗАВИСЛО · 6 ДНЕЙ</small><b>Уязвимость секретов сессий</b><p>Есть исследование, но не зафиксировано решение и ответственный.</p><button class="rail-action">Подготовить к созвону</button></article>
+                <article class="insight-card"><small>КОНТЕКСТ · ЗАВТРА</small><b>Созвон с BE</b><p>4 связанные записи · 2 решения · 1 открытый вопрос</p></article>
+                <article class="insight-card"><small>НОВЫЙ ПРОЕКТ?</small><b>Редизайн админки Hub</b><p>Тема повторилась 4 раза за две недели.</p></article>
+              </aside>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Концепция B">
+        <div class="slide-head">
+          <div>
+            <p class="eyebrow">04 · Концепция B</p>
+            <h2>Собеседник</h2>
+            <p class="lead">Интерфейс строится вокруг диалога. Память сама входит в разговор, когда становится полезной.</p>
+          </div>
+          <span class="concept-chip" style="color:var(--violet)"><i></i> сильный AI-образ</span>
+        </div>
+        <div class="mockup-stage">
+          <div class="browser">
+            <div class="browser-bar"><i></i><i></i><i></i><span class="address"></span></div>
+            <div class="dialog-app">
+              <aside class="dialog-nav">
+                <div class="tiny-brand"><i style="border-color:rgba(157,140,255,.5)"></i> Pagent</div>
+                <div class="project-mini">Разговоры</div>
+                <div class="chat-list-item active"><b>Сегодня</b><br>Созвон по Hub и секретам</div>
+                <div class="chat-list-item">Вчера<br>Монетизация и метрики</div>
+                <div class="chat-list-item">18 августа<br>Видение команды</div>
+                <div class="project-mini">Быстрый доступ</div>
+                <div class="side-link"><span>◇</span><span>Спросить память</span></div>
+                <div class="side-link"><span>□</span><span>Встречи</span></div>
+              </aside>
+              <section class="dialog-main">
+                <div class="meeting-banner"><span>◷ Через 18 минут · Hub / безопасность сессий</span><span>бриф открыт →</span></div>
+                <div class="conversation">
+                  <div class="message user">Напомни, к чему мы пришли по секретам сессий и что осталось решить?</div>
+                  <div class="message assistant"><b>Коротко:</b> команда согласилась прокалывать ключи через Hub, но для надсессионной памяти ещё нет безопасной модели хранения. Последнее действие — проверить ротацию и отвязать секрет от общей памяти.<div class="context-links"><span>решение · 14 авг</span><span>заметка · 19 авг</span><span>обсуждение с BE</span></div></div>
+                  <div class="message assistant">Я собрал к созвону 3 открытых вопроса. Самый важный: <b>кто владеет ротацией ключей при восстановлении сессии?</b></div>
+                  <div class="message user">Добавь это первым пунктом и после встречи создай задачи из решений.</div>
+                </div>
+                <div class="chat-input"><span>Скажи или напиши что угодно…</span><button aria-label="Говорить">●</button></div>
+              </section>
+              <aside class="context-panel">
+                <h5>Бриф к встрече</h5>
+                <p>Собран из 8 связанных записей</p>
+                <div class="brief-section"><small>Последнее решение</small><p>Ключи прокалываются на уровне Hub, сервисы не получают исходный секрет.</p></div>
+                <div class="brief-section"><small>Открытые хвосты</small><p>• модель ротации</p><p>• восстановление сессии</p><p>• граница общей памяти</p></div>
+                <div class="brief-section"><small>Спросить</small><p class="question">Кто становится владельцем ротации ключей?</p></div>
+                <div class="brief-section"><small>Люди</small><p>BE team · Security · Hub</p></div>
+              </aside>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Концепция C">
+        <div class="slide-head">
+          <div>
+            <p class="eyebrow">05 · Концепция C</p>
+            <h2>Автопилот</h2>
+            <p class="lead">Помощник сам строит карту проектов, отслеживает обещания и двигает разрешённые действия.</p>
+          </div>
+          <span class="concept-chip" style="color:var(--mint)"><i></i> максимум проактивности</span>
+        </div>
+        <div class="mockup-stage">
+          <div class="browser">
+            <div class="browser-bar"><i></i><i></i><i></i><span class="address"></span></div>
+            <div class="autopilot-app">
+              <header class="autopilot-top"><div><h4>Карта движения</h4><p>Собрана из записей, встреч и календаря</p></div><span class="trust-pill">● Автопилот: подготовка без подтверждения</span></header>
+              <div class="autopilot-grid">
+                <section class="projects-panel">
+                  <div class="panel-heading"><span>Активные проекты</span><span>обновлено 2 мин назад</span></div>
+                  <article class="project-row attention"><div><b>Hub · безопасность сессий</b><small>2 решения · 3 хвоста · встреча завтра</small></div><div class="progress"><i style="width:58%"></i></div><div class="project-state"><b>требует решения</b><br>6 дней без движения</div></article>
+                  <article class="project-row"><div><b>Монетизация</b><small>5 связанных тем · обновлено сегодня</small></div><div class="progress"><i style="width:74%"></i></div><div class="project-state"><b>в движении</b><br>следующий шаг есть</div></article>
+                  <article class="project-row"><div><b>TCAM · дашборды</b><small>результат зафиксирован · 1 вопрос</small></div><div class="progress"><i style="width:89%"></i></div><div class="project-state"><b>почти готово</b><br>ждёт метрики</div></article>
+                  <article class="project-row"><div><b>Редизайн админки Hub</b><small>новая тема · 4 упоминания</small></div><div class="progress"><i style="width:26%"></i></div><div class="project-state"><b>классификация</b><br>похож на проект</div></article>
+                  <div class="forgotten-card"><small>ВОЗМОЖНО, ЗАБЫТО</small><b>Рассказать команде новое видение будущего</b><p>Обещание появилось 8 дней назад и не связано с событием в календаре. Предлагаю поставить на пятничный синк.</p></div>
+                </section>
+                <aside class="agent-panel">
+                  <div class="panel-heading"><span>Что делает помощник</span><span>сегодня</span></div>
+                  <article class="agent-action"><b>Готовит бриф по Hub</b><p>Собирает решения и спорные вопросы к встрече.</p></article>
+                  <article class="agent-action"><b>Обновил статус TCAM</b><p>Нашёл запись «дашборды закончены» и отметил результат.</p></article>
+                  <article class="agent-action wait"><b>Ждёт подтверждения</b><p>Добавить тему про видение команды в пятничный синк?</p></article>
+                  <article class="agent-action"><b>Сгруппировал 4 заметки</b><p>Предложил новый проект «Редизайн админки Hub».</p></article>
+                  <div class="permission-box"><small>Уровень самостоятельности</small><div class="permission-scale"><span>предлагать</span><span class="active">готовить</span><span>выполнять</span></div></div>
+                </aside>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Сценарий встречи">
+        <div class="slide-head">
+          <div>
+            <p class="eyebrow">06 · Ключевой сценарий</p>
+            <h2>Контекст приходит сам.<br>Именно когда нужен.</h2>
+          </div>
+          <span class="concept-chip" style="color:var(--violet)"><i></i> перед встречей</span>
+        </div>
+        <div class="scenario-layout">
+          <div class="scenario-story">
+            <article class="story-line"><span class="story-time">6 дней назад</span><div><b>Исследование</b><p>Запись о риске хранения секретов в общей памяти</p></div></article>
+            <article class="story-line"><span class="story-time">вчера</span><div><b>Календарь</b><p>Созвон с BE распознан и связан с темой Hub</p></div></article>
+            <article class="story-line"><span class="story-time">−20 минут</span><div><b>Синтез</b><p>Собраны решения, разногласия, люди и хвосты</p></div></article>
+            <article class="story-line"><span class="story-time">после</span><div><b>Продолжение</b><p>Решения записаны, задачи предложены, память обновлена</p></div></article>
+          </div>
+          <article class="brief-card-large">
+            <small>Завтра · 11:00 · 35 минут</small>
+            <h3>Hub / безопасность сессий</h3>
+            <p>Цель встречи: выбрать безопасную модель хранения и определить владельца ротации ключей.</p>
+            <div class="brief-facts">
+              <div class="brief-fact"><small>Решено</small><b>Прокалывание ключей на уровне Hub</b></div>
+              <div class="brief-fact"><small>Не решено</small><b>Надсессионная память и восстановление</b></div>
+              <div class="brief-fact"><small>Люди</small><b>BE team · Security · Hub</b></div>
+              <div class="brief-fact"><small>Материалы</small><b>8 заметок · 2 решения · 1 схема</b></div>
+            </div>
+            <div class="brief-question">Первый вопрос: кто владеет ротацией ключей и что происходит при восстановлении сессии?</div>
+          </article>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Сравнение">
+        <div class="slide-head">
+          <div>
+            <p class="eyebrow">07 · Сравнение направлений</p>
+            <h2>Три образа одного продукта</h2>
+            <p class="lead">Разница не только в интерфейсе — меняется главный способ взаимодействия и уровень доверия.</p>
+          </div>
+        </div>
+        <table class="comparison" aria-label="Сравнение концепций">
+          <thead><tr><th>Критерий</th><th>A · Поток</th><th>B · Собеседник</th><th>C · Автопилот</th></tr></thead>
+          <tbody>
+            <tr class="recommended"><td>Скорость и привычность ввода</td><td><span class="score"><i class="on"></i><i class="on"></i><i class="on"></i></span></td><td><span class="score violet-score"><i class="on"></i><i class="on"></i><i></i></span></td><td><span class="score mint-score"><i class="on"></i><i></i><i></i></span></td></tr>
+            <tr><td>Подготовка к встречам</td><td><span class="score"><i class="on"></i><i class="on"></i><i></i></span></td><td><span class="score violet-score"><i class="on"></i><i class="on"></i><i class="on"></i></span></td><td><span class="score mint-score"><i class="on"></i><i class="on"></i><i></i></span></td></tr>
+            <tr><td>Проактивность</td><td><span class="score"><i class="on"></i><i></i><i></i></span></td><td><span class="score violet-score"><i class="on"></i><i class="on"></i><i></i></span></td><td><span class="score mint-score"><i class="on"></i><i class="on"></i><i class="on"></i></span></td></tr>
+            <tr><td>Прозрачность и контроль</td><td><span class="score"><i class="on"></i><i class="on"></i><i class="on"></i></span></td><td><span class="score violet-score"><i class="on"></i><i class="on"></i><i></i></span></td><td><span class="score mint-score"><i class="on"></i><i></i><i></i></span></td></tr>
+            <tr><td>Ценность уже в первом MVP</td><td><span class="score"><i class="on"></i><i class="on"></i><i class="on"></i></span></td><td><span class="score violet-score"><i class="on"></i><i class="on"></i><i></i></span></td><td><span class="score mint-score"><i class="on"></i><i></i><i></i></span></td></tr>
+            <tr><td>Риск «чёрного ящика»</td><td><span class="score"><i class="on"></i><i></i><i></i></span></td><td><span class="score violet-score"><i class="on"></i><i class="on"></i><i></i></span></td><td><span class="score mint-score"><i class="on"></i><i class="on"></i><i class="on"></i></span></td></tr>
+          </tbody>
+        </table>
+        <div class="table-note"><span>В строке риска больше точек = больше риск.</span><span class="accent">Лучший старт — A. Самый сильный образ — B. Целевая зрелость — C.</span></div>
+      </section>
+
+      <section class="slide" data-title="Рекомендация">
+        <div class="slide-head">
+          <div>
+            <p class="eyebrow">08 · Рекомендация</p>
+            <h2>Начать с «Потока+»</h2>
+            <p class="lead">Взять концепцию A как дом продукта, а сильные стороны B и C подключать как режимы.</p>
+          </div>
+          <span class="concept-chip" style="color:var(--amber)"><i></i> выбранное направление</span>
+        </div>
+        <div class="recommendation-grid">
+          <div class="stack-diagram" aria-label="Три слоя рекомендованной концепции">
+            <div class="stack-layer"><b class="accent">Поток · главный интерфейс</b><small>Мгновенный ввод и прозрачная дневная лента</small></div>
+            <div class="stack-layer"><b class="violet">Собеседник · режим работы</b><small>Вопросы к памяти и подготовка к встречам</small></div>
+            <div class="stack-layer"><b class="mint">Автопилот · фоновый слой</b><small>Проекты, забытое и безопасные действия</small></div>
+          </div>
+          <div class="recommendation-copy">
+            <h3>Почему это правильный первый продукт</h3>
+            <div class="rec-point"><span>1</span><div><b>Не требует новой привычки.</b> Сохраняется уже работающий ритуал дневной страницы.</div></div>
+            <div class="rec-point"><span>2</span><div><b>Показывает работу памяти.</b> Видно, что именно система поняла и куда связала.</div></div>
+            <div class="rec-point"><span>3</span><div><b>Даёт доверие до автономии.</b> Сначала предлагает и готовит; выполняет только после разрешения.</div></div>
+            <div class="rec-point"><span>4</span><div><b>Естественно растёт.</b> Диалог и автопилот добавляются без смены базовой модели.</div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="MVP">
+        <div class="slide-head">
+          <div>
+            <p class="eyebrow">09 · Движение к продукту</p>
+            <h2>Сначала полезная память.<br>Потом автономность.</h2>
+          </div>
+        </div>
+        <div class="roadmap">
+          <article class="phase"><span class="phase-number">01 · CAPTURE</span><h3>Поток</h3><p>Единый вход и автоматический разбор без ручной раскладки.</p><ul><li>текст и голос</li><li>задачи и события календаря</li><li>дневная лента с результатом разбора</li><li>поиск по естественному языку</li></ul></article>
+          <article class="phase"><span class="phase-number">02 · CONTEXT</span><h3>Память</h3><p>Связи между людьми, проектами, решениями и встречами.</p><ul><li>карточки проектов из потока</li><li>контекст перед встречей</li><li>решения и открытые вопросы</li><li>послевстречное продолжение</li></ul></article>
+          <article class="phase"><span class="phase-number">03 · ACTION</span><h3>Автопилот</h3><p>Проактивные предложения и действия в заданных границах.</p><ul><li>поиск забытого и зависшего</li><li>следующие шаги по проектам</li><li>уровни разрешений</li><li>журнал действий и отмена</li></ul></article>
+        </div>
+      </section>
+
+      <section class="slide decision-slide" data-title="Выбор">
+        <div class="slide-head">
+          <div>
+            <p class="eyebrow">10 · Зафиксировать направление</p>
+            <h2>Какой образ должен<br>стать главным?</h2>
+            <p class="lead">Выбор задаст характер первого клика, а не ограничит будущие возможности.</p>
+          </div>
+        </div>
+        <div class="choice-grid">
+          <button class="choice-card recommended" data-choice="Поток+"><span class="choice-letter">A</span><h3>Поток+</h3><p>Дневная лента как дом продукта; диалог и автопилот — контекстные режимы.</p></button>
+          <button class="choice-card" data-choice="Собеседник"><span class="choice-letter">B</span><h3>Собеседник</h3><p>Помощник ощущается прежде всего как разговор с собственной памятью.</p></button>
+          <button class="choice-card" data-choice="Автопилот"><span class="choice-letter">C</span><h3>Автопилот</h3><p>Главный экран — карта проектов, забытых обещаний и действий агента.</p></button>
+        </div>
+        <div class="selection-result" id="selectionResult"><span>Нажмите на вариант, чтобы зафиксировать выбор в браузере.</span><a href="ui-options.html">Сравнить 6 моделей интерфейса →</a></div>
+      </section>
+
+      <div class="progress-track" aria-hidden="true"><div class="progress-line" id="progressLine"></div></div>
+      <span class="hint">← → для навигации · F — полный экран</span>
+    </div>
+  </main>
+
+  <nav class="deck-nav" aria-label="Навигация по слайдам">
+    <button class="nav-btn" id="prevBtn" aria-label="Предыдущий слайд">←</button>
+    <span class="slide-counter" id="slideCounter">01 / 11</span>
+    <button class="nav-btn" id="nextBtn" aria-label="Следующий слайд">→</button>
+  </nav>
+
+  <script>
+    const slides = [...document.querySelectorAll('.slide')];
+    const previousButton = document.getElementById('prevBtn');
+    const nextButton = document.getElementById('nextBtn');
+    const counter = document.getElementById('slideCounter');
+    const progressLine = document.getElementById('progressLine');
+    const selectionResult = document.getElementById('selectionResult');
+    let current = Math.max(0, Math.min(slides.length - 1, Number(location.hash.slice(1)) - 1 || 0));
+
+    function renderSlide(nextIndex, updateHash = true) {
+      const previous = current;
+      current = Math.max(0, Math.min(slides.length - 1, nextIndex));
+      slides.forEach((slide, index) => {
+        slide.classList.toggle('active', index === current);
+        slide.classList.toggle('was-active', index < current);
+        slide.setAttribute('aria-hidden', index === current ? 'false' : 'true');
+      });
+      previousButton.disabled = current === 0;
+      nextButton.disabled = current === slides.length - 1;
+      counter.textContent = `${String(current + 1).padStart(2, '0')} / ${String(slides.length).padStart(2, '0')}`;
+      progressLine.style.width = `${((current + 1) / slides.length) * 100}%`;
+      document.title = `${slides[current].dataset.title} — Pagent`;
+      if (updateHash && previous !== current) history.replaceState(null, '', `#${current + 1}`);
+    }
+
+    previousButton.addEventListener('click', () => renderSlide(current - 1));
+    nextButton.addEventListener('click', () => renderSlide(current + 1));
+
+    document.addEventListener('keydown', (event) => {
+      if (['ArrowRight', 'PageDown', ' '].includes(event.key)) {
+        event.preventDefault();
+        renderSlide(current + 1);
+      }
+      if (['ArrowLeft', 'PageUp'].includes(event.key)) {
+        event.preventDefault();
+        renderSlide(current - 1);
+      }
+      if (event.key.toLowerCase() === 'f') document.documentElement.requestFullscreen?.();
+      if (event.key === 'Home') renderSlide(0);
+      if (event.key === 'End') renderSlide(slides.length - 1);
+    });
+
+    window.addEventListener('hashchange', () => renderSlide(Number(location.hash.slice(1)) - 1, false));
+
+    const choiceCards = [...document.querySelectorAll('.choice-card')];
+    const savedChoice = localStorage.getItem('pagent-concept');
+
+    function selectChoice(choice) {
+      choiceCards.forEach(card => card.classList.toggle('selected', card.dataset.choice === choice));
+      selectionResult.innerHTML = `<span>Выбранное направление: <b>${choice}</b></span><a href="ui-options.html">Теперь выбрать модель интерфейса →</a>`;
+      localStorage.setItem('pagent-concept', choice);
+    }
+
+    choiceCards.forEach(card => card.addEventListener('click', () => selectChoice(card.dataset.choice)));
+    if (savedChoice) selectChoice(savedChoice);
+    renderSlide(current, false);
+  </script>
+</body>
+</html>

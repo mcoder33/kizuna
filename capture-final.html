@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Pagent — финальная карточка ввода</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='28' fill='%23ff385c'/%3E%3Ccircle cx='32' cy='32' r='9' fill='white'/%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        --ink: #222;
+        --muted: #6a6a6a;
+        --line: #e9e9e7;
+        --hairline: #f2f0ee;
+        --wash: #fbfaf9;
+        --coral: #ff385c;
+        --pink: #fdf0f4;
+        --green: #11775e;
+        --shadow: 0 18px 42px rgba(34, 34, 34, 0.08);
+        /* палитра типов — «Конфетная» */
+        --type-auto: #e11d74;
+        --type-todo: #7c3aed;
+        --type-outcome: #0891b2;
+        --type-note: #94a3b8;
+        --tint-auto: #fdeef5;
+        --tint-todo: #f3edfc;
+        --tint-outcome: #e7f5f9;
+        --tint-note: #f1f4f7;
+      }
+      * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
+      body {
+        margin: 0; background: var(--wash); color: var(--ink); line-height: 1.45;
+        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main { max-width: 1000px; margin: auto; padding: 56px 24px 110px; }
+      .page-head { max-width: 720px; margin-bottom: 30px; }
+      .eyebrow {
+        font-size: 10px; font-weight: 800; letter-spacing: 1.3px;
+        color: #96918e; margin: 0 0 11px; text-transform: uppercase;
+      }
+      h1 { font-size: 34px; line-height: 1.15; margin: 0 0 14px; letter-spacing: -0.5px; }
+      .page-head p { color: var(--muted); font-size: 15px; margin: 0 0 10px; }
+      .page-head strong { color: var(--ink); }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.9em; background: #f2f0ee; border-radius: 4px; padding: 1px 4px;
+      }
+
+      .toolbar { display: flex; justify-content: flex-end; margin-bottom: 18px; }
+      .viewport-switch { display: flex; gap: 4px; border: 1px solid var(--line); background: #fff; border-radius: 99px; padding: 3px; }
+      .viewport-switch button {
+        font: inherit; font-size: 12px; cursor: pointer; border: 0; background: none;
+        color: var(--muted); border-radius: 99px; padding: 4px 12px;
+      }
+      .viewport-switch button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+
+      .stage {
+        background: #f4f2f0; border: 1px solid var(--line); border-radius: 22px;
+        padding: 44px 34px; display: flex; justify-content: center;
+      }
+      .stage-inner { width: 100%; max-width: 680px; transition: max-width 0.25s ease; }
+      body.mobile .stage-inner { max-width: 342px; }
+      body.mobile .stage { padding: 26px 18px; }
+
+      /* ── карточка ──────────────────────────────────────────── */
+      .capture {
+        background: #fff; border: 1px solid #e3e3e1; border-radius: 18px;
+        box-shadow: var(--shadow); text-align: left; position: relative;
+      }
+      .capture:focus-within { border-color: #cfcfcd; box-shadow: var(--shadow), 0 0 0 3px rgba(124, 58, 237, 0.13); }
+      .capture .body { padding: 16px 16px 14px; }
+      .capture textarea {
+        width: 100%; min-height: 132px; resize: vertical; border: 0; outline: 0;
+        font: inherit; font-size: 15px; padding: 5px; color: var(--ink); background: transparent;
+      }
+      .capture textarea::placeholder { color: #b3b0ad; }
+      .send {
+        border: 0; background: var(--coral); color: #fff; border-radius: 99px;
+        font: inherit; font-weight: 700; padding: 10px 16px; cursor: pointer; line-height: 1; flex: none;
+      }
+      .send:hover { background: #ec2f53; }
+
+      /* ── строка параметров ТУДУ ────────────────────────────── */
+      .todo-line {
+        display: flex; flex-wrap: wrap; gap: 2px 2px; align-items: center;
+        margin-top: 8px; padding: 2px 3px 0; font-size: 12.5px; color: #a8a5a2;
+        animation: fade 0.18s ease-out;
+      }
+      @keyframes fade { from { opacity: 0; transform: translateY(-2px); } }
+      .ghost {
+        border: 0; background: none; font: inherit; font-size: 12.5px;
+        color: #96918e; cursor: pointer; padding: 5px 9px; border-radius: 99px; white-space: nowrap;
+      }
+      .ghost:hover { color: var(--ink); background: var(--hairline); }
+      .ghost[aria-pressed="true"] { color: var(--ink); background: #f2f0ee; font-weight: 600; }
+      .ghost.prio-high[aria-pressed="true"] { color: #b91c5b; background: #fdeef5; }
+      .ghost.prio-low[aria-pressed="true"] { color: #62707e; background: #f1f4f7; }
+      .sep { color: #e2dfdc; margin: 0 6px; user-select: none; }
+      .picker-anchor { position: relative; display: inline-flex; }
+      .picker-anchor input {
+        position: absolute; inset: 0; width: 100%; height: 100%;
+        opacity: 0; pointer-events: none; border: 0; padding: 0;
+      }
+
+      /* ── подвал: метки типов · теги · отправка ─────────────── */
+      .foot-line {
+        display: flex; gap: 7px; align-items: center; font-size: 12px; color: var(--muted);
+        margin-top: 10px; padding-top: 11px; border-top: 1px solid var(--hairline);
+      }
+      body.mobile .foot-line { flex-wrap: wrap; }
+      body.mobile .foot-line .send { margin-left: auto; }
+      .foot-sep { width: 1px; height: 18px; background: var(--hairline); margin: 0 4px; flex: none; }
+
+      .fdots { display: flex; gap: 3px; align-items: center; flex: none; }
+      .mk {
+        position: relative; height: 28px; min-width: 28px; border-radius: 99px; cursor: pointer;
+        border: 0; background: none; display: flex; align-items: center; justify-content: center;
+        color: var(--c); flex: none; padding: 0 9px; font: inherit;
+      }
+      .mk .m { width: 10px; height: 10px; border-radius: 99px; background: var(--c); flex: none; transition: transform 0.15s; }
+      .mk:hover .m { transform: scale(1.25); }
+      .mk .lbl {
+        max-width: 0; overflow: hidden; white-space: nowrap;
+        font-size: 11.5px; font-weight: 700; color: var(--c);
+        transition: max-width 0.22s ease, margin-left 0.22s ease;
+      }
+      .mk:hover .lbl, .mk[aria-selected="true"] .lbl { max-width: 84px; margin-left: 7px; }
+      .mk[aria-selected="true"] { background: var(--tint); }
+      .mk[aria-selected="true"] .m { transform: none; }
+
+      /* ── теги ──────────────────────────────────────────────── */
+      .tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; position: relative; flex: 1; min-width: 110px; }
+      .tag {
+        display: inline-flex; align-items: center; gap: 5px;
+        background: #f1f4f7; border: 1px solid #dde4ec; color: #47566b;
+        border-radius: 7px; padding: 3px 5px 3px 8px; font-size: 11.5px; font-weight: 600;
+      }
+      .tag button { border: 0; background: none; cursor: pointer; color: inherit; font: inherit; font-size: 12px; line-height: 1; opacity: 0.5; padding: 0 1px; }
+      .tag button:hover { opacity: 1; }
+      .tag-input { font: inherit; font-size: 12px; border: 0; outline: 0; background: none; min-width: 80px; flex: 1; color: var(--ink); padding: 4px 2px; }
+      .tag-input::placeholder { color: #c4c1be; }
+      .tag-suggest {
+        position: absolute; z-index: 7; display: grid; gap: 1px; min-width: 168px; padding: 6px;
+        border: 1px solid var(--line); border-radius: 12px; background: #fff; box-shadow: 0 10px 28px #24140a1a;
+      }
+      .tag-suggest button {
+        font: inherit; font-size: 12.5px; text-align: left; cursor: pointer;
+        border: 0; background: none; color: var(--ink); padding: 6px 9px; border-radius: 7px;
+      }
+      .tag-suggest button:hover, .tag-suggest button.cursor { background: var(--wash); }
+
+      .state-readout {
+        margin-top: 14px; font-size: 12px; color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: #fff; border: 1px solid var(--line); border-radius: 10px;
+        padding: 9px 12px; overflow-x: auto; white-space: pre;
+      }
+      .state-readout b { color: var(--ink); font-weight: 700; }
+
+      /* ── спецификация ──────────────────────────────────────── */
+      .spec { margin-top: 44px; border-top: 1px solid var(--line); padding-top: 30px; }
+      .spec h2 { font-size: 20px; margin: 0 0 16px; }
+      .spec-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 22px; }
+      body.mobile .spec-grid { grid-template-columns: 1fr; }
+      .spec h3 {
+        font-size: 10px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase;
+        color: #96918e; margin: 0 0 9px;
+      }
+      .spec ul { margin: 0; padding-left: 17px; font-size: 13.5px; color: #4a4744; }
+      .spec li { margin-bottom: 6px; }
+      .spec li::marker { color: #c9c6c3; }
+      .swatches { display: flex; gap: 10px; flex-wrap: wrap; margin: 4px 0 10px; }
+      .swatch-item { display: flex; gap: 7px; align-items: center; font-size: 12px; color: var(--muted); }
+      .swatch-item i { width: 14px; height: 14px; border-radius: 99px; display: inline-block; }
+      .sr-only {
+        position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+        overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+      }
+      @media (max-width: 640px) {
+        main { padding: 34px 16px 80px; }
+        h1 { font-size: 27px; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="page-head">
+        <p class="eyebrow">Pagent · карточка ввода · финальный макет</p>
+        <h1>Карточка ввода — итог</h1>
+        <p>
+          Сумма всех решений: метки типов в подвале, <strong>активная
+          раскрывается в подпись</strong> (дизайн пробы 13), палитра
+          «Конфетная» (проба 14). Большое поле, воздушная строка ТУДУ,
+          теги и отправка в той же строке, подсказок нет — <code>⌘ Enter</code>
+          работает молча.
+        </p>
+      </div>
+
+      <div class="toolbar">
+        <div class="viewport-switch" role="group" aria-label="Ширина превью">
+          <button type="button" data-viewport="desktop" aria-pressed="true">Десктоп</button>
+          <button type="button" data-viewport="mobile" aria-pressed="false">390px</button>
+        </div>
+      </div>
+
+      <div class="stage"><div class="stage-inner" data-final></div></div>
+
+      <section class="spec">
+        <h2>Спецификация</h2>
+        <div class="swatches">
+          <span class="swatch-item"><i style="background:#e11d74"></i>Авто #e11d74</span>
+          <span class="swatch-item"><i style="background:#7c3aed"></i>ТУДУ #7c3aed</span>
+          <span class="swatch-item"><i style="background:#0891b2"></i>Результат #0891b2</span>
+          <span class="swatch-item"><i style="background:#94a3b8"></i>Заметка #94a3b8</span>
+        </div>
+        <div class="spec-grid">
+          <div>
+            <h3>Переключатель типа</h3>
+            <ul>
+              <li>Четыре метки-точки в подвале, перед тегами, через тонкий разделитель.</li>
+              <li>Активная раскрывается в пилюлю: точка + название на светлой подложке своего тона.</li>
+              <li>Наведение раскрывает подпись у любой метки — обучение без постоянного текста.</li>
+              <li>Смена типа меняет плейсхолдер поля — подтверждение выбора видно и на таче.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Параметры ТУДУ</h3>
+            <ul>
+              <li>Одна строка тихих кнопок: Сегодня · Завтра · Неделя · дата… · время… | ⌄ не срочно · ⌃ важно.</li>
+              <li>«Дата…» и «время…» открывают системный пикер; время появляется после даты.</li>
+              <li>«Обычная» важность — отсутствие выбора; повторный клик снимает отметку.</li>
+              <li>Акценты важности перекрашены под палитру: «важно» — розовый тон Авто.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Контракт</h3>
+            <ul>
+              <li><code>POST /api/captures</code> + необязательные <code>primaryType</code>, <code>due</code>, <code>priority</code>, <code>tags</code>.</li>
+              <li>Ничего не выбрано — уходит <code>{ raw }</code>: «Авто», нынешнее поведение.</li>
+              <li>После отправки всё сбрасывается в «Авто»; поле очищается.</li>
+              <li>Заданное руками — <code>kind: "fact"</code>, <code>confidence: 1</code>, снимает <code>ambiguity</code> по полю.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module">
+      const TYPES = [
+        { value: "auto", label: "Авто", color: "#e11d74", tint: "#fdeef5", placeholder: "Запишите мысль, план или итог дня" },
+        { value: "todo", label: "ТУДУ", color: "#7c3aed", tint: "#f3edfc", placeholder: "Что нужно сделать — и когда" },
+        { value: "outcome", label: "Результат", color: "#0891b2", tint: "#e7f5f9", placeholder: "Что решили или что уже сделано" },
+        { value: "note", label: "Заметка", color: "#94a3b8", tint: "#f1f4f7", placeholder: "Наблюдение, идея, открытый вопрос" },
+      ];
+      const KNOWN_TAGS = ["hub", "tcam", "монетизация", "cp", "созвон", "релиз", "личное"];
+      const byType = (value) => TYPES.find((type) => type.value === value);
+      const el = (tag, props = {}, ...children) => {
+        const node = Object.assign(document.createElement(tag), props);
+        node.append(...children.filter(Boolean));
+        return node;
+      };
+      const today = new Date();
+      const iso = (shift = 0) => {
+        const day = new Date(today);
+        day.setDate(day.getDate() + shift);
+        return day.toISOString().slice(0, 10);
+      };
+
+      const state = { type: "auto", date: null, time: null, priority: "normal", tags: [] };
+      function resetSettings() {
+        if (state.type !== "todo") {
+          state.date = null;
+          state.time = null;
+          state.priority = "normal";
+        }
+      }
+      function renderPayload() {
+        const parts = ["raw"];
+        if (state.type !== "auto") parts.push(`primaryType: "${state.type}"`);
+        if (state.date) parts.push(`due: { date: "${state.date}"${state.time ? `, time: "${state.time}"` : ""} }`);
+        if (state.type === "todo" && state.priority !== "normal") parts.push(`priority: "${state.priority}"`);
+        if (state.tags.length) parts.push(`tags: [${state.tags.map((tag) => `"${tag}"`).join(", ")}]`);
+        return { text: `{ ${parts.join(", ")} }`, empty: parts.length === 1 };
+      }
+
+      function createTags(onChange) {
+        const host = el("div", { className: "tags" });
+        const input = el("input", { className: "tag-input", placeholder: "#тег…", "aria-label": "Теги" });
+        const suggest = el("div", { className: "tag-suggest", hidden: true });
+        let cursor = 0;
+        const add = (value) => {
+          const tag = value.trim().replace(/^#/, "").toLowerCase();
+          if (!tag || state.tags.includes(tag) || state.tags.length >= 8) return;
+          state.tags.push(tag);
+          input.value = "";
+          close();
+          render();
+          onChange();
+        };
+        const remove = (tag) => {
+          state.tags = state.tags.filter((item) => item !== tag);
+          render();
+          onChange();
+        };
+        function close() {
+          suggest.hidden = true;
+          cursor = 0;
+        }
+        function open() {
+          const query = input.value.trim().replace(/^#/, "").toLowerCase();
+          const matches = KNOWN_TAGS.filter((tag) => !state.tags.includes(tag) && (!query || tag.startsWith(query))).slice(0, 5);
+          if (!matches.length) return close();
+          suggest.replaceChildren(
+            ...matches.map((tag, index) => {
+              const option = el("button", { type: "button", textContent: `#${tag}`, className: index === cursor ? "cursor" : "" });
+              option.addEventListener("mousedown", (event) => {
+                event.preventDefault();
+                add(tag);
+              });
+              return option;
+            }),
+          );
+          suggest.style.bottom = "100%";
+          suggest.style.left = `${input.offsetLeft}px`;
+          suggest.hidden = false;
+        }
+        input.addEventListener("input", () => {
+          cursor = 0;
+          open();
+        });
+        input.addEventListener("focus", open);
+        input.addEventListener("blur", () => setTimeout(close, 80));
+        input.addEventListener("keydown", (event) => {
+          const options = [...suggest.querySelectorAll("button")];
+          if (event.key === "Enter") {
+            event.preventDefault();
+            add(!suggest.hidden && options[cursor] ? options[cursor].textContent : input.value);
+          } else if (event.key === "Backspace" && !input.value && state.tags.length) {
+            remove(state.tags[state.tags.length - 1]);
+          } else if (event.key === "Escape") {
+            close();
+          } else if ((event.key === "ArrowDown" || event.key === "ArrowUp") && !suggest.hidden) {
+            event.preventDefault();
+            cursor = (cursor + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
+            options.forEach((option, index) => option.classList.toggle("cursor", index === cursor));
+          }
+        });
+        function render() {
+          host.replaceChildren(
+            ...state.tags.map((tag) => {
+              const drop = el("button", { type: "button", textContent: "✕", "aria-label": `Убрать тег ${tag}` });
+              drop.addEventListener("click", () => remove(tag));
+              return el("span", { className: "tag" }, document.createTextNode(`#${tag}`), drop);
+            }),
+            input,
+            suggest,
+          );
+        }
+        render();
+        return { host };
+      }
+
+      function createTodoLine(onChange) {
+        const host = el("div", { className: "todo-line" });
+        const QUICKS = [["Сегодня", 0], ["Завтра", 1], ["Неделя", 7]];
+        const quickDates = QUICKS.map(([, shift]) => iso(shift));
+        const dateInput = el("input", { type: "date", tabIndex: -1, "aria-hidden": "true" });
+        const timeInput = el("input", { type: "time", tabIndex: -1, "aria-hidden": "true" });
+        const dateButton = el("button", { type: "button", className: "ghost" });
+        const timeButton = el("button", { type: "button", className: "ghost" });
+        const dateAnchor = el("span", { className: "picker-anchor" }, dateButton, dateInput);
+        const timeAnchor = el("span", { className: "picker-anchor" }, timeButton, timeInput);
+        const openPicker = (input) => {
+          input.style.pointerEvents = "auto";
+          try { input.showPicker?.(); } catch { input.focus(); }
+          input.style.pointerEvents = "none";
+        };
+        dateButton.addEventListener("click", () => openPicker(dateInput));
+        timeButton.addEventListener("click", () => openPicker(timeInput));
+        const quicks = QUICKS.map(([text], index) => {
+          const button = el("button", { type: "button", className: "ghost", textContent: text });
+          button.dataset.date = quickDates[index];
+          button.addEventListener("click", () => {
+            state.date = state.date === button.dataset.date ? null : button.dataset.date;
+            if (!state.date) state.time = null;
+            sync();
+            onChange();
+          });
+          return button;
+        });
+        dateInput.addEventListener("change", () => {
+          state.date = dateInput.value || null;
+          if (!state.date) state.time = null;
+          sync();
+          onChange();
+        });
+        timeInput.addEventListener("change", () => {
+          state.time = timeInput.value || null;
+          sync();
+          onChange();
+        });
+        const prioButtons = [
+          { value: "low", label: "⌄ не срочно", className: "ghost prio-low" },
+          { value: "high", label: "⌃ важно", className: "ghost prio-high" },
+        ].map((level) => {
+          const button = el("button", { type: "button", className: level.className, textContent: level.label });
+          button.dataset.value = level.value;
+          button.addEventListener("click", () => {
+            state.priority = state.priority === level.value ? "normal" : level.value;
+            sync();
+            onChange();
+          });
+          return button;
+        });
+        host.append(...quicks, dateAnchor, timeAnchor, el("span", { className: "sep", textContent: "·" }), ...prioButtons);
+        function sync() {
+          for (const button of quicks) button.setAttribute("aria-pressed", String(button.dataset.date === state.date));
+          const custom = state.date && !quickDates.includes(state.date);
+          dateButton.textContent = custom ? state.date.split("-").reverse().slice(0, 2).join(".") : "дата…";
+          dateButton.setAttribute("aria-pressed", String(Boolean(custom)));
+          dateInput.value = state.date || "";
+          timeAnchor.hidden = !state.date;
+          timeButton.textContent = state.time || "время…";
+          timeButton.setAttribute("aria-pressed", String(Boolean(state.time)));
+          timeInput.value = state.time || "";
+          for (const button of prioButtons) button.setAttribute("aria-pressed", String(button.dataset.value === state.priority));
+        }
+        sync();
+        return { host, sync };
+      }
+
+      /* метки типов: точка, активная раскрывается в подпись */
+      const marksHost = el("div", { className: "fdots", role: "tablist", "aria-label": "Тип записи" });
+      for (const type of TYPES) {
+        const button = el("button", { type: "button", role: "tab", className: "mk" });
+        button.dataset.value = type.value;
+        button.style.setProperty("--c", type.color);
+        button.style.setProperty("--tint", type.tint);
+        button.setAttribute("aria-label", type.label);
+        button.append(el("span", { className: "m" }), el("span", { className: "lbl", textContent: type.label }));
+        button.addEventListener("click", () => {
+          state.type = type.value;
+          resetSettings();
+          render();
+        });
+        marksHost.append(button);
+      }
+
+      const area = el("textarea", { id: "final-input", placeholder: TYPES[0].placeholder });
+      const todoLine = createTodoLine(() => render());
+      const tags = createTags(() => render());
+      const readoutNode = el("p", { className: "state-readout" });
+      const sendButton = el("button", { className: "send", type: "submit", "aria-label": "Сохранить запись", textContent: "→" });
+      const form = el("form", { className: "capture" });
+      form.append(
+        el(
+          "div",
+          { className: "body" },
+          el("label", { className: "sr-only", htmlFor: "final-input", textContent: "Новая запись" }),
+          area,
+          todoLine.host,
+          el("div", { className: "foot-line" }, marksHost, el("span", { className: "foot-sep" }), tags.host, sendButton),
+        ),
+      );
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        // демо «отправки»: сброс в Авто
+        area.value = "";
+        state.type = "auto";
+        state.date = null;
+        state.time = null;
+        state.priority = "normal";
+        state.tags = [];
+        tags.host.querySelectorAll(".tag").forEach((tag) => tag.remove());
+        render();
+        area.focus();
+      });
+      area.addEventListener("keydown", (event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+          event.preventDefault();
+          form.requestSubmit();
+        }
+      });
+      document.querySelector("[data-final]").append(form, readoutNode);
+
+      function render() {
+        for (const button of marksHost.querySelectorAll("button"))
+          button.setAttribute("aria-selected", String(button.dataset.value === state.type));
+        area.placeholder = byType(state.type).placeholder;
+        todoLine.host.hidden = state.type !== "todo";
+        todoLine.sync();
+        const payload = renderPayload();
+        readoutNode.innerHTML = payload.empty
+          ? 'POST /api/captures → <b>{ raw }</b> — тип, срок и теги определит модель'
+          : `POST /api/captures → <b>${payload.text}</b>`;
+      }
+      render();
+
+      for (const button of document.querySelectorAll("[data-viewport]")) {
+        button.addEventListener("click", () => {
+          document.body.classList.toggle("mobile", button.dataset.viewport === "mobile");
+          for (const other of document.querySelectorAll("[data-viewport]"))
+            other.setAttribute("aria-pressed", String(other === button));
+        });
+      }
+    </script>
+  </body>
+</html>

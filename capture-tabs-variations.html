@@ -1,0 +1,976 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Pagent — вариации бланка типа</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='28' fill='%23ff385c'/%3E%3Ccircle cx='32' cy='32' r='9' fill='white'/%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        --ink: #222;
+        --muted: #6a6a6a;
+        --line: #e9e9e7;
+        --wash: #fbfaf9;
+        --coral: #ff385c;
+        --pink: #fdf0f4;
+        --green: #11775e;
+        --focus: #1c68d4;
+        --shadow: 0 18px 42px rgba(34, 34, 34, 0.08);
+      }
+      * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
+      body {
+        margin: 0; background: var(--wash); color: var(--ink); line-height: 1.45;
+        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main { max-width: 1080px; margin: auto; padding: 56px 24px 110px; }
+      .page-head { max-width: 720px; margin-bottom: 30px; }
+      .eyebrow {
+        font-size: 10px; font-weight: 800; letter-spacing: 1.3px;
+        color: #96918e; margin: 0 0 11px; text-transform: uppercase;
+      }
+      h1 { font-size: 34px; line-height: 1.15; margin: 0 0 14px; letter-spacing: -0.5px; }
+      .page-head p { color: var(--muted); font-size: 15px; margin: 0 0 10px; }
+      .page-head strong { color: var(--ink); }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.9em; background: #f2f0ee; border-radius: 4px; padding: 1px 4px;
+      }
+      .axes {
+        display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px;
+        margin-bottom: 40px;
+      }
+      .axis {
+        background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 15px 17px;
+      }
+      .axis h3 { font-size: 13px; margin: 0 0 7px; }
+      .axis p { margin: 0; font-size: 12.5px; color: var(--muted); }
+
+      .toc {
+        position: sticky; top: 0; z-index: 8;
+        display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+        margin: 0 -24px 40px; padding: 12px 24px;
+        background: rgba(251, 250, 249, 0.92); backdrop-filter: blur(8px);
+        border-bottom: 1px solid var(--line);
+      }
+      .toc a {
+        font-size: 12px; text-decoration: none; color: var(--muted);
+        border: 1px solid var(--line); background: #fff;
+        border-radius: 99px; padding: 6px 12px; white-space: nowrap;
+      }
+      .toc a:hover { color: var(--ink); border-color: #cfcfcd; }
+      .toc .spacer { flex: 1; }
+      .viewport-switch { display: flex; gap: 4px; border: 1px solid var(--line); background: #fff; border-radius: 99px; padding: 3px; }
+      .viewport-switch button {
+        font: inherit; font-size: 12px; cursor: pointer; border: 0; background: none;
+        color: var(--muted); border-radius: 99px; padding: 4px 12px;
+      }
+      .viewport-switch button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+
+      .variant { margin-bottom: 62px; scroll-margin-top: 76px; }
+      .variant-head { display: flex; gap: 14px; align-items: baseline; margin-bottom: 6px; flex-wrap: wrap; }
+      .variant-no {
+        font-size: 12px; font-weight: 800; color: var(--coral);
+        border: 1px solid var(--pink); background: var(--pink); border-radius: 99px; padding: 3px 10px;
+      }
+      .variant h2 { font-size: 22px; margin: 0; letter-spacing: -0.3px; }
+      .badge {
+        font-size: 10.5px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
+        color: #8d8a87; border: 1px solid var(--line); background: #fff;
+        border-radius: 99px; padding: 3px 9px;
+      }
+      .variant > p.lead { color: var(--muted); font-size: 14px; margin: 0 0 20px; max-width: 680px; }
+
+      .stage {
+        background: #f4f2f0; border: 1px solid var(--line); border-radius: 22px;
+        padding: 34px; display: flex; justify-content: center;
+      }
+      .stage-inner { width: 100%; max-width: 640px; transition: max-width 0.25s ease; }
+      body.mobile .stage-inner { max-width: 342px; }
+      body.mobile .stage { padding: 24px 18px; }
+
+      /* ── карточка ──────────────────────────────────────────── */
+      .capture {
+        background: #fff; border: 1px solid #e3e3e1; border-radius: 18px;
+        box-shadow: var(--shadow); text-align: left; overflow: hidden;
+      }
+      .capture:focus-within { border-color: #cfcfcd; box-shadow: var(--shadow), 0 0 0 3px rgba(28, 104, 212, 0.16); }
+      .capture .body { padding: 12px 14px 14px; }
+      .capture textarea {
+        width: 100%; min-height: 74px; resize: vertical; border: 0; outline: 0;
+        font: inherit; font-size: 15px; padding: 5px; color: var(--ink); background: transparent;
+      }
+      .capture textarea::placeholder { color: #b3b0ad; }
+      .capture-foot {
+        display: flex; justify-content: space-between; align-items: center;
+        color: #aaa; font-size: 12px; gap: 10px; flex-wrap: wrap; margin-top: 10px;
+      }
+      .send {
+        border: 0; background: var(--coral); color: #fff; border-radius: 99px;
+        font: inherit; font-weight: 700; padding: 10px 16px; cursor: pointer; line-height: 1;
+      }
+      .send:hover { background: #ec2f53; }
+      .dot { width: 7px; height: 7px; border-radius: 99px; background: currentColor; flex: none; }
+
+      /* ── A. подчёркнутые вкладки ───────────────────────────── */
+      .tabs {
+        display: flex; gap: 2px; padding: 6px 8px 0; overflow-x: auto;
+        border-bottom: 1px solid var(--line); background: #fcfbfa; scrollbar-width: none;
+      }
+      .tabs::-webkit-scrollbar { display: none; }
+      .tabs button {
+        font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap;
+        border: 0; background: none; color: #8d8a87;
+        padding: 10px 12px 9px; border-bottom: 2px solid transparent; margin-bottom: -1px;
+      }
+      .tabs button:hover { color: var(--ink); }
+      .tabs button[aria-selected="true"] { color: var(--ink); font-weight: 700; border-bottom-color: var(--accent, var(--coral)); }
+      .capture.top-accent { border-top: 3px solid var(--accent, transparent); transition: border-color 0.2s; }
+
+      /* ── B. сегмент над карточкой ──────────────────────────── */
+      .segment {
+        display: inline-flex; gap: 2px; padding: 3px; margin: 0 auto 14px;
+        background: #edeae7; border-radius: 99px; max-width: 100%; overflow-x: auto; scrollbar-width: none;
+      }
+      .segment::-webkit-scrollbar { display: none; }
+      .segment button {
+        font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap;
+        border: 0; background: none; color: #7a7671; border-radius: 99px; padding: 7px 15px;
+        display: inline-flex; align-items: center; gap: 6px; transition: background 0.15s, color 0.15s;
+      }
+      .segment button:hover { color: var(--ink); }
+      .segment button[aria-selected="true"] {
+        background: #fff; color: var(--ink); font-weight: 700;
+        box-shadow: 0 1px 3px rgba(34, 34, 34, 0.12);
+      }
+      .segment-wrap { display: flex; justify-content: center; }
+
+      /* ── C. боковой рельс ──────────────────────────────────── */
+      .rail-card { display: grid; grid-template-columns: 132px 1fr; }
+      .rail {
+        display: grid; align-content: start; gap: 2px; padding: 10px 8px;
+        background: #fcfbfa; border-right: 1px solid var(--line);
+      }
+      .rail button {
+        font: inherit; font-size: 12.5px; cursor: pointer; text-align: left;
+        border: 0; background: none; color: #8d8a87; border-radius: 9px;
+        padding: 8px 10px; display: flex; align-items: center; gap: 8px;
+        border-left: 2px solid transparent;
+      }
+      .rail button:hover { color: var(--ink); background: #f4f2f0; }
+      .rail button[aria-selected="true"] {
+        color: var(--ink); font-weight: 700; background: var(--tint, #f4f2f0);
+        border-left-color: var(--accent, var(--coral));
+      }
+      body.mobile .rail-card { grid-template-columns: 1fr; }
+      body.mobile .rail {
+        grid-auto-flow: column; grid-auto-columns: max-content; overflow-x: auto;
+        border-right: 0; border-bottom: 1px solid var(--line); scrollbar-width: none;
+      }
+      body.mobile .rail::-webkit-scrollbar { display: none; }
+      body.mobile .rail button { border-left: 0; border-bottom: 2px solid transparent; border-radius: 9px 9px 0 0; }
+      body.mobile .rail button[aria-selected="true"] { border-bottom-color: var(--accent, var(--coral)); }
+
+      /* ── D. цветная шапка ──────────────────────────────────── */
+      .filled-head {
+        display: flex; gap: 3px; padding: 8px; overflow-x: auto; scrollbar-width: none;
+        background: var(--tint, #fcfbfa); border-bottom: 1px solid var(--tint-line, var(--line));
+        transition: background 0.2s;
+      }
+      .filled-head::-webkit-scrollbar { display: none; }
+      .filled-head button {
+        font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap;
+        border: 0; background: none; color: var(--head-muted, #8d8a87); border-radius: 99px;
+        padding: 7px 13px; display: inline-flex; align-items: center; gap: 6px;
+      }
+      .filled-head button:hover { color: var(--head-ink, var(--ink)); }
+      .filled-head button[aria-selected="true"] {
+        background: #fff; color: var(--accent-ink, var(--ink)); font-weight: 700;
+        box-shadow: 0 1px 2px rgba(34, 34, 34, 0.08);
+      }
+
+      /* ── бланк: строки ─────────────────────────────────────── */
+      .form-grid { display: grid; gap: 8px; margin-top: 11px; padding-top: 11px; border-top: 1px dashed var(--line); }
+      .form-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+      .form-line > .key { width: 76px; flex: none; color: #96918e; }
+      body.mobile .form-line > .key { width: 100%; }
+
+      /* ── бланк: строка пилюль ──────────────────────────────── */
+      .pill-row {
+        display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+        margin-top: 11px; padding-top: 11px; border-top: 1px dashed var(--line);
+      }
+      .pill {
+        display: inline-flex; align-items: center; gap: 6px; position: relative;
+        font-size: 12px; color: var(--muted); background: #fff;
+        border: 1px solid var(--line); border-radius: 99px; padding: 5px 11px; cursor: pointer;
+        font-family: inherit; white-space: nowrap;
+      }
+      .pill:hover { border-color: #cfcfcd; color: var(--ink); }
+      .pill.set { color: var(--ink); border-color: #d7d3d0; background: #faf9f8; font-weight: 600; }
+      .menu { position: relative; }
+      .menu > summary { list-style: none; }
+      .menu > summary::-webkit-details-marker { display: none; }
+      .caret { font-size: 9px; opacity: 0.55; }
+      .popover {
+        position: absolute; top: calc(100% + 8px); left: 0; z-index: 6;
+        display: grid; min-width: 212px; max-width: 280px; padding: 9px; gap: 3px;
+        border: 1px solid var(--line); border-radius: 14px; background: #fff;
+        box-shadow: 0 10px 28px #24140a1a;
+      }
+      .popover .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 2px; }
+      .popover .label {
+        font-size: 10px; font-weight: 800; letter-spacing: 0.8px; text-transform: uppercase;
+        color: #a8a5a2; padding: 4px 6px 1px; margin: 0;
+      }
+
+      /* ── поля ──────────────────────────────────────────────── */
+      .field {
+        display: inline-flex; align-items: center; gap: 6px; background: #fff;
+        border: 1px solid var(--line); border-radius: 10px; padding: 4px 8px;
+        font-size: 12px; color: var(--muted);
+      }
+      .field:focus-within { border-color: #b9c9e6; box-shadow: 0 0 0 3px rgba(28, 104, 212, 0.1); }
+      .field input {
+        font: inherit; font-size: 12px; border: 0; outline: 0; background: none;
+        color: var(--ink); padding: 1px 0; min-width: 0;
+      }
+      .field input[type="date"] { width: 116px; }
+      .field input[type="time"] { width: 58px; }
+      .quick { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+      .quick button {
+        font: inherit; font-size: 11.5px; cursor: pointer; color: var(--muted);
+        border: 1px solid var(--line); background: #fff; border-radius: 99px; padding: 3px 9px;
+      }
+      .quick button:hover { color: var(--ink); border-color: #cfcfcd; }
+      .quick button[aria-pressed="true"] { background: #f2f0ee; color: var(--ink); border-color: #ddd9d6; font-weight: 600; }
+      .prio { display: inline-flex; border: 1px solid var(--line); border-radius: 99px; padding: 2px; background: #fff; }
+      .prio button {
+        font: inherit; font-size: 11.5px; cursor: pointer; color: var(--muted);
+        border: 0; background: none; border-radius: 99px; padding: 3px 10px;
+      }
+      .prio button:hover { color: var(--ink); }
+      .prio button[aria-pressed="true"] { color: #fff; font-weight: 600; background: var(--prio-color, var(--ink)); }
+      .tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; position: relative; min-width: 120px; }
+      .tag {
+        display: inline-flex; align-items: center; gap: 5px;
+        background: #f2f5fa; border: 1px solid #dfe6f1; color: #35538a;
+        border-radius: 7px; padding: 3px 5px 3px 8px; font-size: 11.5px; font-weight: 600;
+      }
+      .tag button { border: 0; background: none; cursor: pointer; color: inherit; font: inherit; font-size: 12px; line-height: 1; opacity: 0.5; padding: 0 1px; }
+      .tag button:hover { opacity: 1; }
+      .tag-input { font: inherit; font-size: 12px; border: 0; outline: 0; background: none; min-width: 92px; flex: 1; color: var(--ink); padding: 3px 0; }
+      .tag-input::placeholder { color: #bdbab7; }
+      .tag-suggest {
+        position: absolute; z-index: 7; display: grid; gap: 1px; min-width: 168px; padding: 6px;
+        border: 1px solid var(--line); border-radius: 12px; background: #fff; box-shadow: 0 10px 28px #24140a1a;
+      }
+      .tag-suggest button {
+        font: inherit; font-size: 12.5px; text-align: left; cursor: pointer;
+        border: 0; background: none; color: var(--ink); padding: 6px 9px; border-radius: 7px;
+      }
+      .tag-suggest button:hover, .tag-suggest button.cursor { background: var(--wash); }
+
+      /* ── описания ──────────────────────────────────────────── */
+      .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 22px; margin-top: 24px; }
+      body.mobile .notes { grid-template-columns: 1fr; }
+      .notes h3 {
+        font-size: 10px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase;
+        color: #96918e; margin: 0 0 9px;
+      }
+      .notes ul { margin: 0; padding-left: 17px; font-size: 13.5px; color: #4a4744; }
+      .notes li { margin-bottom: 6px; }
+      .notes li::marker { color: #c9c6c3; }
+      .notes .plus li::marker { color: var(--green); }
+      .notes .minus li::marker { color: var(--coral); }
+      .state-readout {
+        margin-top: 14px; font-size: 12px; color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: #fff; border: 1px solid var(--line); border-radius: 10px;
+        padding: 9px 12px; overflow-x: auto; white-space: pre;
+      }
+      .state-readout b { color: var(--ink); font-weight: 700; }
+      .closing { border-top: 1px solid var(--line); padding-top: 34px; margin-top: 20px; }
+      .closing h2 { font-size: 20px; margin: 0 0 16px; }
+      table { border-collapse: collapse; width: 100%; font-size: 13px; }
+      th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+      th { font-size: 10px; letter-spacing: 0.9px; text-transform: uppercase; color: #96918e; font-weight: 800; }
+      td:first-child { font-weight: 700; white-space: nowrap; }
+      .scroll-x { overflow-x: auto; }
+      .sr-only {
+        position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+        overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+      }
+      @media (max-width: 640px) {
+        main { padding: 34px 16px 80px; }
+        h1 { font-size: 27px; }
+        .toc { margin: 0 -16px 30px; padding: 10px 16px; }
+        .stage { padding: 20px 14px; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="page-head">
+        <p class="eyebrow">Pagent · карточка ввода · направление «вкладки и бланк»</p>
+        <h1>Шесть вариаций одного направления</h1>
+        <p>
+          Направление фиксировано: тип выбирается <strong>до</strong> текста и
+          перестраивает форму — у ТУДУ появляются срок, важность и теги, у
+          остальных только теги. Меняются две вещи: где живёт переключатель типа
+          и как выглядит бланк.
+        </p>
+        <p>
+          Все шесть — рабочие: переключайте типы, ставьте срок и теги. Под каждой
+          карточкой видно, во что это превращается на API.
+        </p>
+      </div>
+
+      <div class="axes">
+        <div class="axis">
+          <h3>Ось 1 — где переключатель</h3>
+          <p>Вкладками в шапке карточки, сегментом над ней, рельсом слева или в подвале под текстом.</p>
+        </div>
+        <div class="axis">
+          <h3>Ось 2 — как выглядит бланк</h3>
+          <p>Подписанными строками «ключ — значение» или плотной строкой пилюль, где детали открываются поповером.</p>
+        </div>
+        <div class="axis">
+          <h3>Что не меняется</h3>
+          <p>Четыре типа, «Авто» по умолчанию, набор полей у ТУДУ, теги у всех и цвет типа как акцент.</p>
+        </div>
+      </div>
+
+      <nav class="toc" aria-label="Вариации">
+        <a href="#a">A · Эталон</a>
+        <a href="#b">B · Сегмент</a>
+        <a href="#c">C · Рельс</a>
+        <a href="#d">D · Цветная шапка</a>
+        <a href="#e">E · Текст сначала</a>
+        <a href="#f">F · Пилюли</a>
+        <span class="spacer"></span>
+        <div class="viewport-switch" role="group" aria-label="Ширина превью">
+          <button type="button" data-viewport="desktop" aria-pressed="true">Десктоп</button>
+          <button type="button" data-viewport="mobile" aria-pressed="false">390px</button>
+        </div>
+      </nav>
+
+      <section class="variant" id="a">
+        <div class="variant-head">
+          <span class="variant-no">A</span>
+          <h2>Эталон: подчёркнутые вкладки</h2>
+          <span class="badge">вкладки сверху · бланк строками</span>
+        </div>
+        <p class="lead">
+          То, что понравилось, — здесь для сравнения. Вкладки в шапке, цветная
+          кромка сверху, подписанные строки бланка под текстом.
+        </p>
+        <div class="stage"><div class="stage-inner" data-variation="a"></div></div>
+        <div class="notes">
+          <div class="plus">
+            <h3>Сильные стороны</h3>
+            <ul>
+              <li>Привычная механика вкладок: ничему учить не надо.</li>
+              <li>Подписи полей снимают все вопросы «что это за поле».</li>
+              <li>Цветная кромка держит тип в поле зрения, даже когда вкладки уехали из внимания.</li>
+            </ul>
+          </div>
+          <div class="minus">
+            <h3>Слабые стороны</h3>
+            <ul>
+              <li>Первое, что видит человек, — панель выбора, а не поле ввода.</li>
+              <li>Подчёркивание — самый тихий индикатор активной вкладки из четырёх здесь.</li>
+              <li>На 390px четыре вкладки почти упираются в края.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="variant" id="b">
+        <div class="variant-head">
+          <span class="variant-no">B</span>
+          <h2>Сегмент над карточкой</h2>
+          <span class="badge">переключатель снаружи · бланк строками</span>
+        </div>
+        <p class="lead">
+          Переключатель вынесен из карточки и стоит над ней по центру — как
+          фильтр раздела. Карточка снова становится одним предметом: поле, бланк,
+          кнопка. Хорошо ложится на нынешний центрированный герой «Сегодня».
+        </p>
+        <div class="stage"><div class="stage-inner" data-variation="b"></div></div>
+        <div class="notes">
+          <div class="plus">
+            <h3>Сильные стороны</h3>
+            <ul>
+              <li>Карточка не обрастает шапкой: границы предмета остаются чистыми.</li>
+              <li>Активный сегмент читается заметно лучше подчёркивания.</li>
+              <li>Переключатель на виду ещё до фокуса в поле — режим ввода понятен сразу.</li>
+            </ul>
+          </div>
+          <div class="minus">
+            <h3>Слабые стороны</h3>
+            <ul>
+              <li>Тип визуально оторван от карточки — связь держится только близостью.</li>
+              <li>Съедает вертикаль над полем, а это самое дорогое место экрана.</li>
+              <li>На 390px сегмент уезжает в горизонтальный скролл.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="variant" id="c">
+        <div class="variant-head">
+          <span class="variant-no">C</span>
+          <h2>Боковой рельс</h2>
+          <span class="badge">типы слева · бланк строками</span>
+        </div>
+        <p class="lead">
+          Типы стоят вертикальным столбиком слева внутри карточки, поля — справа.
+          Выбранный тип подсвечен своим оттенком и цветной планкой: тип виден как
+          «корешок» карточки, а не как строка меню.
+        </p>
+        <div class="stage"><div class="stage-inner" data-variation="c"></div></div>
+        <div class="notes">
+          <div class="plus">
+            <h3>Сильные стороны</h3>
+            <ul>
+              <li>Самый заметный индикатор типа: подсветка, планка и оттенок разом.</li>
+              <li>Вертикаль не тратится — рельс идёт вдоль поля, а не над ним.</li>
+              <li>Список типов растёт вниз без скролла и переносов.</li>
+            </ul>
+          </div>
+          <div class="minus">
+            <h3>Слабые стороны</h3>
+            <ul>
+              <li>Забирает ~130px ширины: поле ввода становится заметно уже.</li>
+              <li>На 390px рельс всё равно превращается в горизонтальный ряд — на телефоне это вариант A.</li>
+              <li>Непривычно для формы ввода: так выглядят разделы, а не режимы записи.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="variant" id="d">
+        <div class="variant-head">
+          <span class="variant-no">D</span>
+          <h2>Цветная шапка типа</h2>
+          <span class="badge">вкладки сверху · тон типа · бланк строками</span>
+        </div>
+        <p class="lead">
+          Те же вкладки, но шапка заливается оттенком выбранного типа, а активная
+          вкладка становится белой пилюлей на этом фоне. Тип читается боковым
+          зрением — не нужно искать, что подчёркнуто.
+        </p>
+        <div class="stage"><div class="stage-inner" data-variation="d"></div></div>
+        <div class="notes">
+          <div class="plus">
+            <h3>Сильные стороны</h3>
+            <ul>
+              <li>Тип узнаётся мгновенно и без чтения — по цвету всей шапки.</li>
+              <li>Тот же приём переносится в карточку записи и в списки: цвет становится языком типов.</li>
+              <li>Высота ровно как у эталона — заметность бесплатна.</li>
+            </ul>
+          </div>
+          <div class="minus">
+            <h3>Слабые стороны</h3>
+            <ul>
+              <li>Цвета в интерфейсе становится больше, а он у Pagent сейчас один — коралловый акцент.</li>
+              <li>Нужны выверенные светлые тона: четыре заливки легко выглядят пёстро.</li>
+              <li>«Авто» без своего цвета выглядит бледнее трёх остальных.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="variant" id="e">
+        <div class="variant-head">
+          <span class="variant-no">E</span>
+          <h2>Текст сначала, тип и бланк — под ним</h2>
+          <span class="badge">сегмент в подвале · бланк пилюлями</span>
+        </div>
+        <p class="lead">
+          Карточка начинается полем ввода — ровно как сейчас. Тип и бланк живут
+          в подвале и не мешают начать писать; выбор ТУДУ добавляет строку пилюль
+          над кнопкой. Компромисс между «бланком» и «просто напиши».
+        </p>
+        <div class="stage"><div class="stage-inner" data-variation="e"></div></div>
+        <div class="notes">
+          <div class="plus">
+            <h3>Сильные стороны</h3>
+            <ul>
+              <li>Курсор и поле — первое, что видно; обещание «освободи память» цело.</li>
+              <li>Тип всё ещё выбирается до отправки, но не требует решения до текста.</li>
+              <li>Пилюли занимают одну строку вместо трёх строк бланка.</li>
+            </ul>
+          </div>
+          <div class="minus">
+            <h3>Слабые стороны</h3>
+            <ul>
+              <li>Подвал становится плотным: сегмент, пилюли, подсказка и кнопка.</li>
+              <li>Пилюли без подписей — «⌃ Высокая» понятно, пустая «Важность» уже нет.</li>
+              <li>Настройки уходят вниз, куда взгляд доходит последним.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="variant" id="f">
+        <div class="variant-head">
+          <span class="variant-no">F</span>
+          <h2>Вкладки и бланк-строка</h2>
+          <span class="badge">вкладки сверху · бланк пилюлями</span>
+        </div>
+        <p class="lead">
+          Шапка как в эталоне, но бланк сжат в одну строку пилюль: срок, время,
+          важность, теги. Детали открываются поповером, карточка почти не растёт
+          при переключении на ТУДУ.
+        </p>
+        <div class="stage"><div class="stage-inner" data-variation="f"></div></div>
+        <div class="notes">
+          <div class="plus">
+            <h3>Сильные стороны</h3>
+            <ul>
+              <li>Разница высоты между типами — одна строка вместо трёх.</li>
+              <li>Пилюля показывает значение прямо на себе: «Завтра 15:00» видно, не открывая.</li>
+              <li>Одинаково держится и на 640px, и на 390px.</li>
+            </ul>
+          </div>
+          <div class="minus">
+            <h3>Слабые стороны</h3>
+            <ul>
+              <li>Теряются подписи полей — главное преимущество бланка.</li>
+              <li>До каждого значения два действия вместо одного.</li>
+              <li>Почти сходится с вариантом «пилюли в подвале» из прошлой подборки — направление размывается.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="closing">
+        <h2>Сравнение</h2>
+        <div class="scroll-x">
+          <table>
+            <thead>
+              <tr>
+                <th>Вариация</th>
+                <th>Где тип</th>
+                <th>Заметность типа</th>
+                <th>Бланк</th>
+                <th>Первое на экране</th>
+                <th>390px</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>A · Эталон</td><td>Шапка карточки</td><td>Средняя</td><td>Строки с подписями</td><td>Вкладки</td><td>Вкладки впритык</td></tr>
+              <tr><td>B · Сегмент</td><td>Над карточкой</td><td>Высокая</td><td>Строки с подписями</td><td>Сегмент</td><td>Скролл сегмента</td></tr>
+              <tr><td>C · Рельс</td><td>Слева в карточке</td><td>Максимальная</td><td>Строки с подписями</td><td>Рельс и поле разом</td><td>Схлопывается в A</td></tr>
+              <tr><td>D · Цветная шапка</td><td>Шапка карточки</td><td>Максимальная</td><td>Строки с подписями</td><td>Цветная шапка</td><td>Как A</td></tr>
+              <tr><td>E · Текст сначала</td><td>Подвал</td><td>Низкая</td><td>Строка пилюль</td><td>Поле ввода</td><td>Подвал в два ряда</td></tr>
+              <tr><td>F · Пилюли</td><td>Шапка карточки</td><td>Средняя</td><td>Строка пилюль</td><td>Вкладки</td><td>Ровно держится</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 style="margin-top: 34px">Если выбирать</h2>
+        <div class="notes" style="grid-template-columns: repeat(auto-fit, minmax(250px, 1fr))">
+          <div>
+            <h3>Рекомендация</h3>
+            <ul>
+              <li><strong>D — цветная шапка.</strong> Это тот же эталон, который понравился, но с заметностью типа за ту же высоту: ничего не сдвинуто, добавлен только тон.</li>
+              <li>Цвет типа стоит завести один раз и использовать везде — в шапке ввода, в карточке записи и метках списков.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Если карточка кажется тяжёлой</h3>
+            <ul>
+              <li>Берите <strong>F</strong>: та же шапка, но бланк в одну строку — разница высоты между «Заметкой» и «ТУДУ» почти исчезает.</li>
+              <li>Или <strong>B</strong>: карточка остаётся одним предметом, переключатель уходит наружу.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Что проверить на людях</h3>
+            <ul>
+              <li>Не начнут ли выбирать тип руками там, где «Авто» справлялся: если да — любой вариант с видимой шапкой мешает, и правильнее E.</li>
+              <li>Понятна ли «Важность» без подписи — это решает спор «строки против пилюль».</li>
+              <li>Хватает ли на телефоне четырёх вкладок в ряд, или «Авто» стоит вынести отдельным переключателем.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module">
+      /* ── данные ────────────────────────────────────────────── */
+      const TYPES = [
+        { value: "auto", label: "Авто", mark: "✦", color: "#ff385c", tint: "#fdf0f4", tintLine: "#f6dbe3",
+          placeholder: "Запишите мысль, план или итог дня", foot: "Тип, срок и теги определит модель" },
+        { value: "todo", label: "ТУДУ", mark: "◐", color: "#d4691c", tint: "#fdf4ec", tintLine: "#f2ddc9",
+          placeholder: "Что нужно сделать — и когда", foot: "Срок можно не писать: вытащит модель" },
+        { value: "outcome", label: "Результат", mark: "✓", color: "#11775e", tint: "#eef7f4", tintLine: "#cfe6df",
+          placeholder: "Что решили или что уже сделано", foot: "Запись не откроет дело" },
+        { value: "note", label: "Заметка", mark: "◇", color: "#6a6a6a", tint: "#f4f3f2", tintLine: "#e2e0de",
+          placeholder: "Наблюдение, идея, открытый вопрос", foot: "Останется в «Заметках»" },
+      ];
+      const PRIORITIES = [
+        { value: "low", label: "Низкая", mark: "⌄", color: "#7b8794" },
+        { value: "normal", label: "Обычная", mark: "–", color: "#4a4744" },
+        { value: "high", label: "Высокая", mark: "⌃", color: "#d43b3b" },
+      ];
+      const KNOWN_TAGS = ["hub", "tcam", "монетизация", "cp", "созвон", "релиз", "личное"];
+      const byType = (value) => TYPES.find((type) => type.value === value);
+      const byPriority = (value) => PRIORITIES.find((level) => level.value === value);
+      const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+      const cmd = isMac ? "⌘" : "Ctrl +";
+      const el = (tag, props = {}, ...children) => {
+        const node = Object.assign(document.createElement(tag), props);
+        node.append(...children.filter(Boolean));
+        return node;
+      };
+      const today = new Date();
+      const iso = (shift = 0) => {
+        const day = new Date(today);
+        day.setDate(day.getDate() + shift);
+        return day.toISOString().slice(0, 10);
+      };
+      const dayLabel = (date) =>
+        date === iso(0) ? "Сегодня" : date === iso(1) ? "Завтра" : date.split("-").reverse().slice(0, 2).join(".");
+      const typeDot = (type) => el("span", { className: "dot", style: `background:${type.color}` });
+
+      /* ── состояние ─────────────────────────────────────────── */
+      const makeState = () => ({ type: "auto", date: null, time: null, priority: "normal", tags: [] });
+      function resetSettings(state) {
+        if (state.type !== "todo") {
+          state.date = null;
+          state.time = null;
+          state.priority = "normal";
+        }
+      }
+      function renderPayload(state) {
+        const parts = ["raw"];
+        if (state.type !== "auto") parts.push(`primaryType: "${state.type}"`);
+        if (state.date) parts.push(`due: { date: "${state.date}"${state.time ? `, time: "${state.time}"` : ""} }`);
+        if (state.type === "todo" && state.priority !== "normal") parts.push(`priority: "${state.priority}"`);
+        if (state.tags.length) parts.push(`tags: [${state.tags.map((tag) => `"${tag}"`).join(", ")}]`);
+        return { text: `{ ${parts.join(", ")} }`, empty: parts.length === 1 };
+      }
+
+      /* ── переиспользуемые поля ─────────────────────────────── */
+      function createTags(state, onChange, { placeholder = "добавить тег…" } = {}) {
+        const host = el("div", { className: "tags" });
+        const input = el("input", { className: "tag-input", placeholder, "aria-label": "Теги" });
+        const suggest = el("div", { className: "tag-suggest", hidden: true });
+        let cursor = 0;
+        const add = (value) => {
+          const tag = value.trim().replace(/^#/, "").toLowerCase();
+          if (!tag || state.tags.includes(tag) || state.tags.length >= 8) return;
+          state.tags.push(tag);
+          input.value = "";
+          close();
+          render();
+          onChange();
+        };
+        const remove = (tag) => {
+          state.tags = state.tags.filter((item) => item !== tag);
+          render();
+          onChange();
+        };
+        function close() {
+          suggest.hidden = true;
+          cursor = 0;
+        }
+        function open() {
+          const query = input.value.trim().replace(/^#/, "").toLowerCase();
+          const matches = KNOWN_TAGS.filter((tag) => !state.tags.includes(tag) && (!query || tag.startsWith(query))).slice(0, 5);
+          if (!matches.length) return close();
+          suggest.replaceChildren(
+            ...matches.map((tag, index) => {
+              const option = el("button", { type: "button", textContent: `#${tag}`, className: index === cursor ? "cursor" : "" });
+              option.addEventListener("mousedown", (event) => {
+                event.preventDefault();
+                add(tag);
+              });
+              return option;
+            }),
+          );
+          suggest.style.top = `${input.offsetTop + input.offsetHeight + 6}px`;
+          suggest.style.left = `${input.offsetLeft}px`;
+          suggest.hidden = false;
+        }
+        input.addEventListener("input", () => {
+          cursor = 0;
+          open();
+        });
+        input.addEventListener("focus", open);
+        input.addEventListener("blur", () => setTimeout(close, 80));
+        input.addEventListener("keydown", (event) => {
+          const options = [...suggest.querySelectorAll("button")];
+          if (event.key === "Enter") {
+            event.preventDefault();
+            add(!suggest.hidden && options[cursor] ? options[cursor].textContent : input.value);
+          } else if (event.key === "Backspace" && !input.value && state.tags.length) {
+            remove(state.tags[state.tags.length - 1]);
+          } else if (event.key === "Escape") {
+            close();
+          } else if ((event.key === "ArrowDown" || event.key === "ArrowUp") && !suggest.hidden) {
+            event.preventDefault();
+            cursor = (cursor + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
+            options.forEach((option, index) => option.classList.toggle("cursor", index === cursor));
+          }
+        });
+        function render() {
+          host.replaceChildren(
+            ...state.tags.map((tag) => {
+              const drop = el("button", { type: "button", textContent: "✕", "aria-label": `Убрать тег ${tag}` });
+              drop.addEventListener("click", () => remove(tag));
+              return el("span", { className: "tag" }, document.createTextNode(`#${tag}`), drop);
+            }),
+            input,
+            suggest,
+          );
+        }
+        render();
+        return { host, render, focus: () => input.focus() };
+      }
+
+      function createDueField(state, onChange, { label = null } = {}) {
+        const dateInput = el("input", { type: "date", "aria-label": "Дата" });
+        const timeInput = el("input", { type: "time", "aria-label": "Время" });
+        const quick = el("div", { className: "quick" });
+        for (const [text, shift] of [["Сегодня", 0], ["Завтра", 1], ["Через неделю", 7]]) {
+          const button = el("button", { type: "button", textContent: text });
+          button.dataset.date = iso(shift);
+          button.addEventListener("click", () => {
+            state.date = state.date === iso(shift) ? null : iso(shift);
+            sync();
+            onChange();
+          });
+          quick.append(button);
+        }
+        dateInput.addEventListener("change", () => {
+          state.date = dateInput.value || null;
+          sync();
+          onChange();
+        });
+        timeInput.addEventListener("change", () => {
+          state.time = timeInput.value || null;
+          sync();
+          onChange();
+        });
+        function sync() {
+          dateInput.value = state.date || "";
+          timeInput.value = state.time || "";
+          for (const button of quick.querySelectorAll("button"))
+            button.setAttribute("aria-pressed", String(button.dataset.date === state.date));
+        }
+        sync();
+        return {
+          quick,
+          fields: el("div", { className: "field" }, label ? el("span", { textContent: label }) : null, dateInput, el("span", { textContent: "в" }), timeInput),
+          sync,
+        };
+      }
+
+      function createPriority(state, onChange) {
+        const host = el("div", { className: "prio", role: "group", "aria-label": "Важность" });
+        for (const level of PRIORITIES) {
+          const button = el("button", { type: "button", textContent: `${level.mark} ${level.label}` });
+          button.dataset.value = level.value;
+          button.addEventListener("click", () => {
+            state.priority = level.value;
+            sync();
+            onChange();
+          });
+          host.append(button);
+        }
+        function sync() {
+          host.style.setProperty("--prio-color", byPriority(state.priority).color);
+          for (const button of host.querySelectorAll("button"))
+            button.setAttribute("aria-pressed", String(button.dataset.value === state.priority));
+        }
+        sync();
+        return { host, sync };
+      }
+
+      /* ── бланк: подписанные строки ─────────────────────────── */
+      function createRowsBlank(state, paint) {
+        const host = el("div", { className: "form-grid" });
+        const due = createDueField(state, paint);
+        const priority = createPriority(state, paint);
+        const tags = createTags(state, paint);
+        const lineDue = el("div", { className: "form-line" }, el("span", { className: "key", textContent: "Срок" }), due.fields, due.quick);
+        const linePriority = el("div", { className: "form-line" }, el("span", { className: "key", textContent: "Важность" }), priority.host);
+        const lineTags = el("div", { className: "form-line" }, el("span", { className: "key", textContent: "Теги" }), tags.host);
+        function sync() {
+          host.replaceChildren(...(state.type === "todo" ? [lineDue, linePriority, lineTags] : [lineTags]));
+          due.sync();
+          priority.sync();
+        }
+        return { host, sync };
+      }
+
+      /* ── бланк: строка пилюль ──────────────────────────────── */
+      function createPillsBlank(state, paint) {
+        const host = el("div", { className: "pill-row" });
+        const due = createDueField(state, paint);
+        const priority = createPriority(state, paint);
+        const tags = createTags(state, paint, { placeholder: "#тег и Enter" });
+
+        function pillMenu(summaryText, isSet, popoverNodes, onOpen) {
+          const details = el("details", { className: "menu" });
+          const summary = el("summary", { className: `pill${isSet ? " set" : ""}` });
+          summary.append(document.createTextNode(summaryText), el("span", { className: "caret", textContent: "▾" }));
+          details.append(summary, el("div", { className: "popover" }, ...popoverNodes));
+          if (onOpen) details.addEventListener("toggle", () => details.open && onOpen());
+          return details;
+        }
+
+        function sync() {
+          const nodes = [];
+          if (state.type === "todo") {
+            nodes.push(
+              pillMenu(
+                state.date ? `◔ ${dayLabel(state.date)}${state.time ? ` ${state.time}` : ""}` : "◔ Срок",
+                Boolean(state.date),
+                [el("p", { className: "label", textContent: "Когда" }), el("div", { className: "row" }, due.quick), el("div", { className: "row" }, due.fields)],
+              ),
+              pillMenu(
+                state.priority === "normal" ? "⚑ Важность" : `${byPriority(state.priority).mark} ${byPriority(state.priority).label}`,
+                state.priority !== "normal",
+                [el("p", { className: "label", textContent: "Важность" }), el("div", { className: "row" }, priority.host)],
+              ),
+            );
+          }
+          nodes.push(
+            pillMenu(
+              state.tags.length ? `# ${state.tags.join(", ")}` : "# Теги",
+              state.tags.length > 0,
+              [el("p", { className: "label", textContent: "Теги" }), el("div", { className: "row" }, tags.host)],
+              () => tags.focus(),
+            ),
+          );
+          host.replaceChildren(...nodes);
+          due.sync();
+          priority.sync();
+        }
+        return { host, sync };
+      }
+
+      /* ── переключатели типа ────────────────────────────────── */
+      function createSwitch(state, paint, kind) {
+        const host = el("div", {
+          className: { underline: "tabs", segment: "segment", rail: "rail", filled: "filled-head" }[kind],
+          role: kind === "rail" ? "tablist" : "tablist",
+          "aria-label": "Тип записи",
+          "aria-orientation": kind === "rail" ? "vertical" : "horizontal",
+        });
+        for (const type of TYPES) {
+          const button = el("button", { type: "button", role: "tab" });
+          button.dataset.value = type.value;
+          if (kind === "underline") button.textContent = `${type.mark} ${type.label}`;
+          else {
+            button.append(
+              type.value === "auto" ? el("span", { textContent: "✦" }) : typeDot(type),
+              document.createTextNode(type.label),
+            );
+          }
+          button.addEventListener("click", () => {
+            state.type = type.value;
+            resetSettings(state);
+            paint();
+          });
+          host.append(button);
+        }
+        function sync() {
+          for (const button of host.querySelectorAll("button"))
+            button.setAttribute("aria-selected", String(button.dataset.value === state.type));
+        }
+        return { host, sync };
+      }
+
+      /* ── сборка одной вариации ─────────────────────────────── */
+      function mount(name, { chrome, blank, layout }) {
+        const root = document.querySelector(`[data-variation="${name}"]`);
+        const state = makeState();
+        const area = el("textarea", { id: `${name}-input`, placeholder: byType("auto").placeholder });
+        const hint = el("span");
+        const form = el("form", { className: "capture" });
+        form.addEventListener("submit", (event) => event.preventDefault());
+        const readoutNode = el("p", { className: "state-readout" });
+
+        const paint = () => render();
+        const typeSwitch = createSwitch(state, paint, chrome);
+        const blankPart = blank === "rows" ? createRowsBlank(state, paint) : createPillsBlank(state, paint);
+        const foot = el(
+          "div",
+          { className: "capture-foot" },
+          hint,
+          el("button", { className: "send", type: "submit", "aria-label": "Сохранить запись", textContent: "→" }),
+        );
+        const label = el("label", { className: "sr-only", htmlFor: `${name}-input`, textContent: "Новая запись" });
+
+        /* раскладка */
+        let outside = null;
+        const body = el("div", { className: "body" });
+        if (layout === "top") {
+          form.classList.add("top-accent");
+          form.append(typeSwitch.host, body);
+          body.append(label, area, blankPart.host, foot);
+        } else if (layout === "outside") {
+          outside = el("div", { className: "segment-wrap" }, typeSwitch.host);
+          form.append(body);
+          body.append(label, area, blankPart.host, foot);
+        } else if (layout === "rail") {
+          form.classList.add("rail-card");
+          form.append(typeSwitch.host, body);
+          body.append(label, area, blankPart.host, foot);
+        } else if (layout === "bottom") {
+          form.append(body);
+          body.append(
+            label,
+            area,
+            el("div", { className: "capture-foot", style: "margin-top:8px" }, typeSwitch.host),
+            blankPart.host,
+            foot,
+          );
+        }
+        root.append(outside || document.createComment(""), form, readoutNode);
+
+        function render() {
+          const type = byType(state.type);
+          typeSwitch.sync();
+          blankPart.sync();
+          area.placeholder = type.placeholder;
+          hint.textContent = `${type.foot} · ${cmd} Enter`;
+          form.style.setProperty("--accent", state.type === "auto" ? "transparent" : type.color);
+          typeSwitch.host.style.setProperty("--accent", type.color);
+          typeSwitch.host.style.setProperty("--tint", state.type === "auto" ? "#fcfbfa" : type.tint);
+          typeSwitch.host.style.setProperty("--tint-line", state.type === "auto" ? "#e9e9e7" : type.tintLine);
+          typeSwitch.host.style.setProperty("--accent-ink", state.type === "auto" ? "#222" : type.color);
+          const payload = renderPayload(state);
+          readoutNode.innerHTML = payload.empty
+            ? 'POST /api/captures → <b>{ raw }</b> — тип, срок и теги определит модель'
+            : `POST /api/captures → <b>${payload.text}</b>`;
+        }
+        render();
+      }
+
+      mount("a", { chrome: "underline", blank: "rows", layout: "top" });
+      mount("b", { chrome: "segment", blank: "rows", layout: "outside" });
+      mount("c", { chrome: "rail", blank: "rows", layout: "rail" });
+      mount("d", { chrome: "filled", blank: "rows", layout: "top" });
+      mount("e", { chrome: "segment", blank: "pills", layout: "bottom" });
+      mount("f", { chrome: "underline", blank: "pills", layout: "top" });
+
+      for (const button of document.querySelectorAll("[data-viewport]")) {
+        button.addEventListener("click", () => {
+          document.body.classList.toggle("mobile", button.dataset.viewport === "mobile");
+          for (const other of document.querySelectorAll("[data-viewport]"))
+            other.setAttribute("aria-pressed", String(other === button));
+        });
+      }
+    </script>
+  </body>
+</html>

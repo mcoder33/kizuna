@@ -1,0 +1,1461 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Pagent — варианты карточки ввода</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='28' fill='%23ff385c'/%3E%3Ccircle cx='32' cy='32' r='9' fill='white'/%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        --ink: #222;
+        --muted: #6a6a6a;
+        --line: #e9e9e7;
+        --paper: #fff;
+        --wash: #fbfaf9;
+        --coral: #ff385c;
+        --pink: #fdf0f4;
+        --green: #11775e;
+        --focus: #1c68d4;
+        --shadow: 0 18px 42px rgba(34, 34, 34, 0.08);
+      }
+      * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
+      body {
+        margin: 0;
+        background: var(--wash);
+        color: var(--ink);
+        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.45;
+      }
+      main { max-width: 1080px; margin: auto; padding: 56px 24px 110px; }
+      .page-head { max-width: 730px; margin-bottom: 34px; }
+      .eyebrow {
+        font-size: 10px; font-weight: 800; letter-spacing: 1.3px;
+        color: #96918e; margin: 0 0 11px; text-transform: uppercase;
+      }
+      h1 { font-size: 34px; line-height: 1.15; margin: 0 0 14px; letter-spacing: -0.5px; }
+      .page-head p { color: var(--muted); font-size: 15px; margin: 0 0 10px; }
+      .page-head strong { color: var(--ink); }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.9em; background: #f2f0ee; border-radius: 4px; padding: 1px 4px;
+      }
+
+      /* ── модель данных ─────────────────────────────────────────── */
+      .model {
+        display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+        gap: 14px; margin-bottom: 42px;
+      }
+      .model-card {
+        background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 16px 17px;
+        border-top: 3px solid var(--accent);
+      }
+      .model-card h3 { font-size: 15px; margin: 0 0 4px; }
+      .model-card .was { font-size: 11px; color: #a8a5a2; margin: 0 0 11px; }
+      .model-card ul { margin: 0; padding-left: 16px; font-size: 12.5px; color: #4a4744; }
+      .model-card li { margin-bottom: 4px; }
+      .model-card li::marker { color: #c9c6c3; }
+
+      /* ── навигация ─────────────────────────────────────────────── */
+      .toc {
+        position: sticky; top: 0; z-index: 8;
+        display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+        margin: 0 -24px 40px; padding: 12px 24px;
+        background: rgba(251, 250, 249, 0.92);
+        backdrop-filter: blur(8px);
+        border-bottom: 1px solid var(--line);
+      }
+      .toc a {
+        font-size: 12px; text-decoration: none; color: var(--muted);
+        border: 1px solid var(--line); background: #fff;
+        border-radius: 99px; padding: 6px 12px; white-space: nowrap;
+      }
+      .toc a:hover { color: var(--ink); border-color: #cfcfcd; }
+      .toc .spacer { flex: 1; }
+      .viewport-switch { display: flex; gap: 4px; border: 1px solid var(--line); background: #fff; border-radius: 99px; padding: 3px; }
+      .viewport-switch button {
+        font: inherit; font-size: 12px; cursor: pointer;
+        border: 0; background: none; color: var(--muted);
+        border-radius: 99px; padding: 4px 12px;
+      }
+      .viewport-switch button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+
+      /* ── секция варианта ───────────────────────────────────────── */
+      .variant { margin-bottom: 64px; scroll-margin-top: 76px; }
+      .variant-head { display: flex; gap: 14px; align-items: baseline; margin-bottom: 6px; }
+      .variant-no {
+        font-size: 12px; font-weight: 800; color: var(--coral);
+        border: 1px solid var(--pink); background: var(--pink);
+        border-radius: 99px; padding: 3px 10px;
+      }
+      .variant h2 { font-size: 22px; margin: 0; letter-spacing: -0.3px; }
+      .variant > p.lead { color: var(--muted); font-size: 14px; margin: 0 0 22px; max-width: 680px; }
+      .try {
+        font-size: 12px; color: #8d8a87; margin: 0 0 14px;
+        border-left: 2px solid var(--line); padding-left: 10px; max-width: 680px;
+      }
+
+      .stage {
+        background: #f4f2f0; border: 1px solid var(--line); border-radius: 22px;
+        padding: 34px; display: flex; justify-content: center;
+      }
+      .stage-inner { width: 100%; max-width: 640px; transition: max-width 0.25s ease; }
+      body.mobile .stage-inner { max-width: 342px; }
+      body.mobile .stage { padding: 24px 18px; }
+
+      /* ── база карточки (public/app.css) ────────────────────────── */
+      .capture {
+        background: #fff; border: 1px solid #e3e3e1; border-radius: 18px;
+        padding: 14px; box-shadow: var(--shadow); text-align: left;
+      }
+      .capture:focus-within { border-color: #cfcfcd; box-shadow: var(--shadow), 0 0 0 3px rgba(28, 104, 212, 0.16); }
+      .capture textarea {
+        width: 100%; min-height: 72px; resize: vertical;
+        border: 0; outline: 0; font: inherit; font-size: 15px; padding: 5px;
+        color: var(--ink); background: transparent;
+      }
+      .capture textarea::placeholder { color: #b3b0ad; }
+      .capture-foot {
+        display: flex; justify-content: space-between; align-items: center;
+        color: #aaa; font-size: 12px; gap: 10px; flex-wrap: wrap;
+      }
+      .send {
+        border: 0; background: var(--coral); color: #fff; border-radius: 99px;
+        font: inherit; font-weight: 700; padding: 10px 16px; cursor: pointer; line-height: 1;
+      }
+      .send:hover { background: #ec2f53; }
+
+      /* ── чипы типов ────────────────────────────────────────────── */
+      .type-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+      .type-chip {
+        font: inherit; font-size: 12px; cursor: pointer;
+        border: 1px solid var(--line); background: #fff; color: var(--muted);
+        border-radius: 99px; padding: 5px 11px; display: inline-flex; gap: 6px; align-items: center;
+        white-space: nowrap;
+      }
+      .type-chip:hover { border-color: #cfcfcd; color: var(--ink); }
+      .type-chip[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #fff; font-weight: 600; }
+      .type-chip.auto[aria-pressed="true"] { background: var(--coral); border-color: var(--coral); }
+      .dot { width: 7px; height: 7px; border-radius: 99px; background: currentColor; flex: none; }
+      .divider-v { width: 1px; height: 18px; align-self: center; background: var(--line); margin: 0 4px; }
+
+      /* ── строка настроек (дата/время/важность) ─────────────────── */
+      .settings-row {
+        display: flex; flex-wrap: wrap; gap: 7px; align-items: center;
+        margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line);
+        animation: drop 0.16s ease-out;
+      }
+      @keyframes drop { from { opacity: 0; transform: translateY(-3px); } }
+      .field {
+        display: inline-flex; align-items: center; gap: 6px;
+        border: 1px solid var(--line); border-radius: 10px; padding: 4px 8px; background: #fff;
+        font-size: 12px; color: var(--muted);
+      }
+      .field:focus-within { border-color: #b9c9e6; box-shadow: 0 0 0 3px rgba(28, 104, 212, 0.1); }
+      .field > span { white-space: nowrap; }
+      .field input {
+        font: inherit; font-size: 12px; border: 0; outline: 0; background: none; color: var(--ink);
+        padding: 1px 0; min-width: 0;
+      }
+      .field input[type="date"] { width: 118px; }
+      .field input[type="time"] { width: 60px; }
+      .quick { display: inline-flex; gap: 4px; }
+      .quick button {
+        font: inherit; font-size: 11.5px; cursor: pointer; color: var(--muted);
+        border: 1px solid var(--line); background: #fff; border-radius: 99px; padding: 3px 9px;
+      }
+      .quick button:hover { color: var(--ink); border-color: #cfcfcd; }
+      .quick button[aria-pressed="true"] { background: #f2f0ee; color: var(--ink); border-color: #ddd9d6; font-weight: 600; }
+
+      .prio { display: inline-flex; border: 1px solid var(--line); border-radius: 99px; padding: 2px; background: #fff; }
+      .prio button {
+        font: inherit; font-size: 11.5px; cursor: pointer; color: var(--muted);
+        border: 0; background: none; border-radius: 99px; padding: 3px 10px;
+        display: inline-flex; align-items: center; gap: 5px;
+      }
+      .prio button:hover { color: var(--ink); }
+      .prio button[aria-pressed="true"] { color: #fff; font-weight: 600; background: var(--prio-color, var(--ink)); }
+
+      /* ── теги ──────────────────────────────────────────────────── */
+      .tags {
+        display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+        font-size: 12px; min-width: 130px;
+      }
+      .tag {
+        display: inline-flex; align-items: center; gap: 5px;
+        background: #f2f5fa; border: 1px solid #dfe6f1; color: #35538a;
+        border-radius: 7px; padding: 3px 5px 3px 8px; font-size: 11.5px; font-weight: 600;
+      }
+      .tag button {
+        border: 0; background: none; cursor: pointer; color: inherit;
+        font: inherit; font-size: 12px; line-height: 1; opacity: 0.5; padding: 0 1px;
+      }
+      .tag button:hover { opacity: 1; }
+      .tag-input {
+        font: inherit; font-size: 12px; border: 0; outline: 0; background: none;
+        min-width: 88px; flex: 1; color: var(--ink); padding: 3px 0;
+      }
+      .tag-input::placeholder { color: #bdbab7; }
+      .tag-suggest {
+        position: absolute; z-index: 7; display: grid; gap: 1px; min-width: 170px; padding: 6px;
+        border: 1px solid var(--line); border-radius: 12px; background: #fff; box-shadow: 0 10px 28px #24140a1a;
+      }
+      .tag-suggest button {
+        font: inherit; font-size: 12.5px; text-align: left; cursor: pointer;
+        border: 0; background: none; color: var(--ink); padding: 6px 9px; border-radius: 7px;
+      }
+      .tag-suggest button:hover, .tag-suggest button.cursor { background: var(--wash); }
+
+      /* ── поповер-меню ──────────────────────────────────────────── */
+      .menu { position: relative; }
+      .menu > summary {
+        list-style: none; cursor: pointer; display: inline-flex; gap: 6px; align-items: center;
+        font-size: 12px; color: var(--muted);
+        border: 1px solid var(--line); border-radius: 99px; padding: 5px 11px; background: #fff;
+        white-space: nowrap;
+      }
+      .menu > summary::-webkit-details-marker { display: none; }
+      .menu[open] > summary, .menu > summary:hover { color: var(--ink); border-color: #cfcfcd; }
+      .menu > summary.set { color: var(--ink); border-color: #d7d3d0; background: #faf9f8; font-weight: 600; }
+      .caret { font-size: 9px; opacity: 0.55; }
+      .popover {
+        position: absolute; top: calc(100% + 8px); left: 0; z-index: 6;
+        display: grid; min-width: 210px; padding: 8px; gap: 2px;
+        border: 1px solid var(--line); border-radius: 14px; background: #fff;
+        box-shadow: 0 10px 28px #24140a1a;
+      }
+      .popover.right { left: auto; right: 0; }
+      .popover .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 2px; }
+      .popover > button {
+        font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+        border: 0; background: none; color: var(--ink);
+        padding: 8px 10px; border-radius: 8px; display: flex; align-items: center; gap: 9px;
+      }
+      .popover > button:hover { background: var(--wash); }
+      .popover > button[aria-checked="true"]::after { content: "✓"; margin-left: auto; color: var(--coral); font-weight: 700; }
+      .popover > button[aria-checked="true"] .kbd { display: none; }
+      .popover .kbd { margin-left: auto; }
+      .popover hr { border: 0; border-top: 1px solid var(--line); margin: 5px 2px; width: 100%; }
+      .popover .label {
+        font-size: 10px; font-weight: 800; letter-spacing: 0.8px; text-transform: uppercase;
+        color: #a8a5a2; padding: 5px 8px 2px; margin: 0;
+      }
+      .kbd {
+        font-size: 10px; color: #a8a5a2; border: 1px solid var(--line);
+        border-radius: 5px; padding: 1px 5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
+      /* ── вариант 3: вкладки ────────────────────────────────────── */
+      .capture.tabbed { padding: 0; overflow: hidden; border-top: 3px solid var(--accent, transparent); transition: border-color 0.2s; }
+      .tabs {
+        display: flex; gap: 2px; padding: 6px 8px 0; overflow-x: auto;
+        border-bottom: 1px solid var(--line); background: #fcfbfa; scrollbar-width: none;
+      }
+      .tabs::-webkit-scrollbar { display: none; }
+      .tabs button {
+        font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap;
+        border: 0; background: none; color: #8d8a87;
+        padding: 10px 12px 9px; border-bottom: 2px solid transparent; margin-bottom: -1px;
+      }
+      .tabs button:hover { color: var(--ink); }
+      .tabs button[aria-selected="true"] { color: var(--ink); font-weight: 700; border-bottom-color: var(--accent, var(--coral)); }
+      .tabbed .body { padding: 12px 14px 14px; }
+      .form-grid { display: grid; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+      .form-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+      .form-line > .key { width: 74px; flex: none; color: #96918e; }
+      body.mobile .form-line > .key { width: 100%; }
+
+      /* ── вариант 4: токены и слэш ──────────────────────────────── */
+      .composer { position: relative; }
+      .token-line { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 9px; }
+      .token {
+        display: inline-flex; align-items: center; gap: 6px;
+        font-size: 11.5px; font-weight: 600; color: var(--ink);
+        background: #f7f5f3; border: 1px solid #e6e2df; border-radius: 8px; padding: 3px 5px 3px 9px;
+      }
+      .token.auto { background: #f2f5fa; border-color: #dfe6f1; color: #35538a; }
+      .token button {
+        border: 0; background: none; cursor: pointer; color: inherit;
+        font: inherit; font-size: 12px; line-height: 1; opacity: 0.5; padding: 0 1px;
+      }
+      .token button:hover { opacity: 1; }
+      .slash-menu {
+        position: absolute; left: 6px; top: calc(100% - 42px); z-index: 6;
+        display: grid; gap: 1px; min-width: 258px; padding: 7px;
+        border: 1px solid var(--line); border-radius: 14px; background: #fff; box-shadow: 0 10px 28px #24140a1a;
+      }
+      .slash-menu .label {
+        font-size: 10px; color: #a8a5a2; padding: 4px 10px 6px;
+        letter-spacing: 0.6px; text-transform: uppercase; font-weight: 800; margin: 0;
+      }
+      .slash-menu button {
+        font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+        border: 0; background: none; color: var(--ink); padding: 8px 10px; border-radius: 8px;
+        display: flex; align-items: center; gap: 9px;
+      }
+      .slash-menu button:hover, .slash-menu button.cursor { background: var(--wash); }
+      .slash-menu button code { margin-left: auto; background: none; color: var(--muted); }
+
+      /* ── вариант 5: строка после разбора ───────────────────────── */
+      .result-strip {
+        display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+        margin-top: 12px; padding: 11px 12px;
+        border: 1px solid var(--line); border-radius: 14px; background: #fcfbfa;
+        font-size: 12.5px; color: var(--muted);
+      }
+      .result-strip .menu > summary { border-style: dashed; }
+      .result-strip .menu > summary.set { border-style: solid; }
+      .result-strip .undo {
+        margin-left: auto; color: var(--focus); cursor: pointer; background: none;
+        border: 0; font: inherit; font-size: 12px; text-decoration: underline;
+      }
+      .thinking { display: inline-flex; align-items: center; gap: 8px; }
+      .spinner {
+        width: 11px; height: 11px; border-radius: 99px;
+        border: 2px solid var(--pink); border-top-color: var(--coral);
+        animation: spin 0.7s linear infinite; display: inline-block;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      /* ── заметки под вариантом ─────────────────────────────────── */
+      .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 22px; margin-top: 24px; }
+      body.mobile .notes { grid-template-columns: 1fr; }
+      .notes h3 {
+        font-size: 10px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase;
+        color: #96918e; margin: 0 0 9px;
+      }
+      .notes ul { margin: 0; padding-left: 17px; font-size: 13.5px; color: #4a4744; }
+      .notes li { margin-bottom: 6px; }
+      .notes li::marker { color: #c9c6c3; }
+      .notes .plus li::marker { color: var(--green); }
+      .notes .minus li::marker { color: var(--coral); }
+      .state-readout {
+        margin-top: 14px; font-size: 12px; color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: #fff; border: 1px solid var(--line); border-radius: 10px;
+        padding: 9px 12px; overflow-x: auto; white-space: pre;
+      }
+      .state-readout b { color: var(--ink); font-weight: 700; }
+
+      .closing { border-top: 1px solid var(--line); padding-top: 34px; margin-top: 20px; }
+      .closing h2 { font-size: 20px; margin: 0 0 16px; }
+      table { border-collapse: collapse; width: 100%; font-size: 13px; }
+      th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+      th { font-size: 10px; letter-spacing: 0.9px; text-transform: uppercase; color: #96918e; font-weight: 800; }
+      td:first-child { font-weight: 700; white-space: nowrap; }
+      .scroll-x { overflow-x: auto; }
+      .sr-only {
+        position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+        overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+      }
+      @media (max-width: 640px) {
+        main { padding: 34px 16px 80px; }
+        h1 { font-size: 27px; }
+        .toc { margin: 0 -16px 30px; padding: 10px 16px; }
+        .stage { padding: 20px 14px; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="page-head">
+        <p class="eyebrow">Pagent · карточка ввода</p>
+        <h1>Три типа, настройки типа и теги</h1>
+        <p>
+          Типов теперь три — <strong>ТУДУ</strong>, <strong>Результат</strong>,
+          <strong>Заметка</strong> — плюс <strong>Авто</strong>: тип определяет
+          модель, как сейчас. У ТУДУ есть свои настройки — дата, время и
+          важность. Теги общие для всех трёх типов.
+        </p>
+        <p>
+          Ниже пять вариантов того, как всё это уместить в карточку, не превратив
+          «просто напиши» в анкету. Ручной выбор нигде не отключает разбор: модель
+          по-прежнему достаёт дату, участников и предлагает теги — человек лишь
+          перебивает то, что задал сам.
+        </p>
+      </div>
+
+      <div class="model">
+        <div class="model-card" style="--accent: #d4691c">
+          <h3>◐ ТУДУ</h3>
+          <p class="was">было: task + meeting_event</p>
+          <ul>
+            <li>Дата и время — вместе или только дата</li>
+            <li>Важность: низкая · обычная · высокая</li>
+            <li>Теги</li>
+            <li>Закрывается чекбоксом, живёт в TODO-буфере</li>
+          </ul>
+        </div>
+        <div class="model-card" style="--accent: #11775e">
+          <h3>✓ Результат</h3>
+          <p class="was">было: outcome_decision + completed</p>
+          <ul>
+            <li>Решение или отчёт о сделанном</li>
+            <li>Теги</li>
+            <li>Ни срока, ни важности — событие уже в прошлом</li>
+            <li>Живёт в «Что делал»</li>
+          </ul>
+        </div>
+        <div class="model-card" style="--accent: #6a6a6a">
+          <h3>◇ Заметка</h3>
+          <p class="was">было: note + idea_question</p>
+          <ul>
+            <li>Наблюдение, идея, вопрос, контекст</li>
+            <li>Теги</li>
+            <li>Ни срока, ни важности</li>
+            <li>Живёт в «Заметках»</li>
+          </ul>
+        </div>
+        <div class="model-card" style="--accent: #ff385c">
+          <h3>✦ Авто</h3>
+          <p class="was">состояние по умолчанию</p>
+          <ul>
+            <li>Тип, дату, время и теги предлагает модель</li>
+            <li>Важность по умолчанию обычная</li>
+            <li>Любое поле, заданное руками, модель не перебивает</li>
+          </ul>
+        </div>
+      </div>
+
+      <nav class="toc" aria-label="Варианты">
+        <a href="#v1">1 · Чипы</a>
+        <a href="#v2">2 · Пилюли</a>
+        <a href="#v3">3 · Бланк</a>
+        <a href="#v4">4 · Слэш</a>
+        <a href="#v5">5 · После разбора</a>
+        <span class="spacer"></span>
+        <div class="viewport-switch" role="group" aria-label="Ширина превью">
+          <button type="button" data-viewport="desktop" aria-pressed="true">Десктоп</button>
+          <button type="button" data-viewport="mobile" aria-pressed="false">390px</button>
+        </div>
+      </nav>
+
+      <!-- ── ВАРИАНТ 1 ─────────────────────────────────────────── -->
+      <section class="variant" id="v1">
+        <div class="variant-head">
+          <span class="variant-no">01</span>
+          <h2>Чипы типов, настройки раскрываются</h2>
+        </div>
+        <p class="lead">
+          Четыре чипа под полем. Пока выбран не ТУДУ, карточка почти не растёт:
+          виден ряд типов и строка тегов. Выбор ТУДУ раскрывает срок и важность —
+          настройки появляются ровно у того типа, которому нужны.
+        </p>
+        <p class="try">Попробуйте: нажмите «ТУДУ» — под чипами появится строка срока и важности. Теги вводятся текстом, <code>Enter</code> добавляет, <code>Backspace</code> в пустом поле стирает последний.</p>
+        <div class="stage">
+          <div class="stage-inner">
+            <form class="capture" data-demo="chips" onsubmit="return false">
+              <label class="sr-only" for="v1-input">Новая запись</label>
+              <textarea id="v1-input" placeholder="Запишите мысль, план или итог дня"></textarea>
+              <div class="type-row" data-role="chips" role="group" aria-label="Тип записи"></div>
+              <div data-role="settings"></div>
+              <div class="settings-row" data-role="tagline">
+                <span style="color: #96918e; font-size: 12px">Теги</span>
+                <div data-role="tags" style="flex: 1"></div>
+              </div>
+              <div class="capture-foot" style="margin-top: 12px">
+                <span data-role="hint">⌘ Enter — сохранить</span>
+                <button class="send" type="submit" aria-label="Сохранить запись">→</button>
+              </div>
+            </form>
+            <p class="state-readout" data-role="readout"></p>
+          </div>
+        </div>
+        <div class="notes">
+          <div class="plus">
+            <h3>Сильные стороны</h3>
+            <ul>
+              <li>Всё на виду: и типы, и то, что у ТУДУ есть срок с важностью.</li>
+              <li>Настройки появляются только у ТУДУ — «Результат» и «Заметка» остаются лёгкими.</li>
+              <li>Один клик до типа, один — обратно в «Авто».</li>
+            </ul>
+          </div>
+          <div class="minus">
+            <h3>Слабые стороны</h3>
+            <ul>
+              <li>Карточка прыгает по высоте при переключении типа.</li>
+              <li>Строка тегов висит всегда, даже когда теги не нужны.</li>
+              <li>На 390px чипы и настройки складываются в четыре ряда.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Кому подходит</h3>
+            <ul>
+              <li>Если ТУДУ — основной тип и срок ставят часто руками.</li>
+              <li>Если важно, чтобы про теги и важность узнали без обучения.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── ВАРИАНТ 2 ─────────────────────────────────────────── -->
+      <section class="variant" id="v2">
+        <div class="variant-head">
+          <span class="variant-no">02</span>
+          <h2>Пилюли в подвале, детали — в поповерах</h2>
+        </div>
+        <p class="lead">
+          Подвал держит четыре кнопки: тип, срок, важность, теги. Заданное
+          значение подписывается прямо на пилюле — «Завтра 15:00», «Высокая»,
+          «2 тега», — а всё остальное спрятано. На десктопе карточка не меняет
+          высоту вообще.
+        </p>
+        <p class="try">Попробуйте: «Авто ▾» → ТУДУ — рядом появятся «Срок» и «Важность». Пилюля показывает значение, крестик на ней сбрасывает.</p>
+        <div class="stage">
+          <div class="stage-inner">
+            <form class="capture" data-demo="pills" onsubmit="return false">
+              <label class="sr-only" for="v2-input">Новая запись</label>
+              <textarea id="v2-input" placeholder="Запишите мысль, план или итог дня"></textarea>
+              <div class="capture-foot" style="margin-top: 8px">
+                <div class="type-row" data-role="pills"></div>
+                <div style="display: flex; align-items: center; gap: 10px">
+                  <span data-role="hint">⌘ Enter</span>
+                  <button class="send" type="submit" aria-label="Сохранить запись">→</button>
+                </div>
+              </div>
+            </form>
+            <p class="state-readout" data-role="readout"></p>
+          </div>
+        </div>
+        <div class="notes">
+          <div class="plus">
+            <h3>Сильные стороны</h3>
+            <ul>
+              <li>Карточка остаётся такой же тихой и невысокой, как сейчас.</li>
+              <li>Пилюля одновременно кнопка и индикатор: заданное видно, не открывая.</li>
+              <li>Настройки ТУДУ появляются в подвале и исчезают вместе с типом.</li>
+              <li>Приём уже живёт в шапке приложения — новых правил не вводим.</li>
+            </ul>
+          </div>
+          <div class="minus">
+            <h3>Слабые стороны</h3>
+            <ul>
+              <li>До каждого значения два действия: открыть, выбрать.</li>
+              <li>Про теги и важность можно не узнать — они выглядят как второстепенные кнопки.</li>
+              <li>Открытый поповер накрывает то, что под карточкой.</li>
+              <li>На 390px четыре пилюли складываются в два ряда — там карточка всё-таки подрастает.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Кому подходит</h3>
+            <ul>
+              <li>Если ручные настройки — правка «когда автомат промахнулся», а не норма.</li>
+              <li>Мой выбор: единственный вариант, где три типа и четыре настройки не утяжеляют ввод.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── ВАРИАНТ 3 ─────────────────────────────────────────── -->
+      <section class="variant" id="v3">
+        <div class="variant-head">
+          <span class="variant-no">03</span>
+          <h2>Вкладки и бланк типа</h2>
+        </div>
+        <p class="lead">
+          Тип выбирается до текста и перестраивает форму: у ТУДУ появляются
+          подписанные поля срока, времени и важности, у остальных — только теги.
+          Ввод перестаёт быть одним полем и становится бланком.
+        </p>
+        <p class="try">Попробуйте: переключите вкладки — меняются поля, плейсхолдер и цвет верхней кромки.</p>
+        <div class="stage">
+          <div class="stage-inner">
+            <form class="capture tabbed" data-demo="tabs" onsubmit="return false">
+              <div class="tabs" data-role="tabs" role="tablist" aria-label="Тип записи"></div>
+              <div class="body">
+                <label class="sr-only" for="v3-input">Новая запись</label>
+                <textarea id="v3-input" placeholder="Запишите мысль, план или итог дня"></textarea>
+                <div class="form-grid" data-role="form"></div>
+                <div class="capture-foot" style="margin-top: 12px">
+                  <span data-role="hint">Тип и срок определит модель</span>
+                  <button class="send" type="submit" aria-label="Сохранить запись">→</button>
+                </div>
+              </div>
+            </form>
+            <p class="state-readout" data-role="readout"></p>
+          </div>
+        </div>
+        <div class="notes">
+          <div class="plus">
+            <h3>Сильные стороны</h3>
+            <ul>
+              <li>Единственный вариант, где поля подписаны — ничего не надо угадывать.</li>
+              <li>Легко растить: у типа появится новое поле — появится новая строка бланка.</li>
+              <li>Цвет кромки даёт обратную связь без чтения.</li>
+            </ul>
+          </div>
+          <div class="minus">
+            <h3>Слабые стороны</h3>
+            <ul>
+              <li>Спорит с «освободи память»: сперва классифицируй, потом пиши.</li>
+              <li>Бланк ТУДУ высокий — на телефоне поле текста уезжает под клавиатуру.</li>
+              <li>Люди начнут выбирать тип руками там, где автомат справлялся.</li>
+              <li>Самая крупная переверстка карточки из пяти.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Кому подходит</h3>
+            <ul>
+              <li>Если у типов будет расходиться набор полей (и это надолго).</li>
+              <li>Если ставка сместится с автоматики на дисциплину ввода.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── ВАРИАНТ 4 ─────────────────────────────────────────── -->
+      <section class="variant" id="v4">
+        <div class="variant-head">
+          <span class="variant-no">04</span>
+          <h2>Всё с клавиатуры: <code>/</code>, <code>#</code>, <code>!</code></h2>
+        </div>
+        <p class="lead">
+          Карточка внешне не меняется. <code>/</code> задаёт тип и срок,
+          <code>#</code> — тег, <code>!</code> — важность. Выбранное уходит из
+          текста и превращается в токен над полем: запись остаётся чистой, руки —
+          на клавиатуре.
+        </p>
+        <p class="try">Попробуйте прямо в поле: <code>/туду</code>, затем <code>/завтра</code>, <code>#hub</code>, <code>!важно</code>. Стрелки листают, <code>Enter</code> выбирает, <code>Esc</code> закрывает.</p>
+        <div class="stage">
+          <div class="stage-inner">
+            <form class="capture composer" data-demo="slash" onsubmit="return false">
+              <div class="token-line" data-role="tokens"></div>
+              <label class="sr-only" for="v4-input">Новая запись</label>
+              <textarea id="v4-input" placeholder="Запишите мысль… «/» — тип и срок, «#» — тег, «!» — важность"></textarea>
+              <div class="slash-menu" data-role="slash" hidden></div>
+              <div class="capture-foot" style="margin-top: 6px">
+                <span data-role="hint">⌘ Enter — сохранить</span>
+                <button class="send" type="submit" aria-label="Сохранить запись">→</button>
+              </div>
+            </form>
+            <p class="state-readout" data-role="readout"></p>
+          </div>
+        </div>
+        <div class="notes">
+          <div class="plus">
+            <h3>Сильные стороны</h3>
+            <ul>
+              <li>Ноль постоянного UI: карточка остаётся ровно такой, как сейчас.</li>
+              <li>Самый быстрый ввод: тип, срок, важность и теги — не отрывая рук.</li>
+              <li><code>#</code> для тегов — привычка из десятка других приложений.</li>
+            </ul>
+          </div>
+          <div class="minus">
+            <h3>Слабые стороны</h3>
+            <ul>
+              <li>Невидимая функция: без подсказки о ней не узнают.</li>
+              <li>Мышью и с телефона неудобно — нужен запасной способ.</li>
+              <li>Дорого: разбор ввода, каретка, клавиатурная навигация, экранирование «/», «#» и «!» в обычном тексте.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Кому подходит</h3>
+            <ul>
+              <li>Как ускоритель поверх варианта 1 или 2, а не вместо них.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── ВАРИАНТ 5 ─────────────────────────────────────────── -->
+      <section class="variant" id="v5">
+        <div class="variant-head">
+          <span class="variant-no">05</span>
+          <h2>Разобрал — покажи и дай поправить</h2>
+        </div>
+        <p class="lead">
+          До отправки настроек нет вовсе: карточка ровно такая, как сейчас.
+          Результат разбора возвращается строкой под ней — тип, срок, важность и
+          теги отдельными кнопками. Правится там же, без открытия карточки записи.
+        </p>
+        <p class="try">Попробуйте: нажмите «→» ещё раз — разбор проиграется заново. Любую кнопку в строке можно нажать и переопределить.</p>
+        <div class="stage">
+          <div class="stage-inner">
+            <form class="capture" data-demo="after" onsubmit="return false">
+              <label class="sr-only" for="v5-input">Новая запись</label>
+              <textarea id="v5-input" placeholder="Запишите мысль, план или итог дня">Созвониться с Даниилом по Hub завтра в 15:00, это горит</textarea>
+              <div class="capture-foot" style="margin-top: 6px">
+                <span data-role="hint">⌘ Enter — сохранить</span>
+                <button class="send" type="submit" aria-label="Сохранить запись">→</button>
+              </div>
+            </form>
+            <div class="result-strip" data-role="strip"></div>
+            <p class="state-readout" data-role="readout"></p>
+          </div>
+        </div>
+        <div class="notes">
+          <div class="plus">
+            <h3>Сильные стороны</h3>
+            <ul>
+              <li>Ввод остаётся однополосным: обещание «просто напиши» не нарушено.</li>
+              <li>Человек правит, только увидев ошибку, — и правит, уже видя текст.</li>
+              <li>Показывает, что модель вообще умеет доставать срок, важность и теги.</li>
+            </ul>
+          </div>
+          <div class="minus">
+            <h3>Слабые стороны</h3>
+            <ul>
+              <li>Задать настройки заранее нельзя — только исправить постфактум.</li>
+              <li>Окно правки узкое: строка уходит, дальше — карточка записи.</li>
+              <li>Без модели (fallback) чинить нечего: строка пуста.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Кому подходит</h3>
+            <ul>
+              <li>Если промахи модели редки, а боль — «увидел ошибку, лень открывать карточку».</li>
+              <li>Хорошо складывается с 2: пилюли до отправки, строка правки после.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── ИТОГ ──────────────────────────────────────────────── -->
+      <section class="closing">
+        <h2>Сравнение</h2>
+        <div class="scroll-x">
+          <table>
+            <thead>
+              <tr>
+                <th>Вариант</th>
+                <th>Высота карточки</th>
+                <th>До срока ТУДУ</th>
+                <th>Заметность тегов</th>
+                <th>390px</th>
+                <th>Объём правки</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>1 · Чипы</td><td>Прыгает от типа</td><td>1 клик + поле</td><td>Высокая</td><td>Четыре ряда</td><td>Средний</td></tr>
+              <tr><td>2 · Пилюли</td><td>Не меняется на десктопе</td><td>2 действия</td><td>Средняя</td><td>Пилюли в два ряда</td><td>Средний</td></tr>
+              <tr><td>3 · Бланк</td><td>Самая высокая</td><td>Поле на виду</td><td>Высокая</td><td>Поле уезжает под клавиатуру</td><td>Большой</td></tr>
+              <tr><td>4 · Слэш</td><td>Не меняется</td><td>Пара клавиш</td><td>Нулевая без обучения</td><td>Нужен запасной способ</td><td>Большой</td></tr>
+              <tr><td>5 · После разбора</td><td>Не меняется</td><td>Только постфактум</td><td>Высокая (после)</td><td>Строка под карточкой</td><td>Средний</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 style="margin-top: 34px">Что меняется под капотом (одинаково во всех вариантах)</h2>
+        <div class="notes" style="grid-template-columns: repeat(auto-fit, minmax(250px, 1fr))">
+          <div>
+            <h3>Типы</h3>
+            <ul>
+              <li><code>primaryTypes</code> в <code>server/classifier.js</code> сокращается до трёх: <code>todo</code>, <code>outcome</code>, <code>note</code>. Тот же enum правится в схеме и промпте <code>server/cli-providers.js</code> и в валидации коррекций.</li>
+              <li>Старые записи не переписываются — журнал append-only. Читатель раскладывает прежние пять в три: <code>task</code>/<code>meeting_event</code> → ТУДУ, <code>outcome_decision</code> → Результат, <code>note</code>/<code>idea_question</code> → Заметка.</li>
+              <li><code>additionalTypes</code> при трёх типах почти теряет смысл — стоит решить, оставляем ли его вообще.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Настройки ТУДУ</h3>
+            <ul>
+              <li>Срок уже есть — это <code>entities.when {date, time}</code> и <code>schedule</code>; нового поля не нужно.</li>
+              <li>Важность — новое: <code>priority: "low" | "normal" | "high"</code> в классификации и в патче коррекции. По умолчанию <code>normal</code>, модель поднимает её только на явных словах («горит», «срочно»).</li>
+              <li>Важность имеет смысл только у ТУДУ: у остальных типов поле не показывается и не пишется.</li>
+              <li>Сортировка TODO-буфера становится двухключевой: сначала срок, потом важность, — иначе «высокая» без срока потеряется.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Теги</h3>
+            <ul>
+              <li>Теги общие для трёх типов: <code>tags: string[]</code>, нормализация в нижний регистр, дедупликация, потолок в 8 штук.</li>
+              <li>Главный вопрос: теги и <code>entities.projects</code> — одно и то же или разное. Рекомендую поглотить: проект становится тегом, отдельного поля не остаётся, иначе человек будет гадать, куда класть «Hub».</li>
+              <li>Тег от человека проходит без заземления в тексте; тег от модели — по нынешнему правилу, только если слово есть в записи.</li>
+              <li>Подсказки берутся из уже использованных тегов, а не из зашитого списка.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>API</h3>
+            <ul>
+              <li>Варианты 1–4: <code>POST /api/captures</code> получает необязательные <code>primaryType</code>, <code>due</code>, <code>priority</code>, <code>tags</code>. Ничего не передали — это «Авто» и нынешнее поведение.</li>
+              <li>Вариант 5 нового API почти не требует: <code>POST /api/captures/:id/corrections</code> уже принимает патч с типом и сроком — добавить только <code>priority</code> и <code>tags</code>.</li>
+              <li>Заданное руками поле помечается как факт (<code>kind: "fact"</code>, <code>confidence: 1</code>, провайдер <code>manual</code>) и снимает <code>ambiguity</code> по этому полю — ровно как сейчас в коррекциях.</li>
+              <li>После отправки все настройки сбрасываются: залипшая «высокая важность» молча испортила бы следующие записи.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module">
+      /* ── общие данные ──────────────────────────────────────── */
+      const TYPES = [
+        { value: "auto", label: "Авто", mark: "✦", color: "#ff385c", hint: "Определит модель", key: "0",
+          placeholder: "Запишите мысль, план или итог дня", foot: "Тип, срок и теги определит модель" },
+        { value: "todo", label: "ТУДУ", mark: "◐", color: "#d4691c", hint: "То, что предстоит сделать", key: "1", slash: "/туду",
+          placeholder: "Что нужно сделать — и когда", foot: "Срок можно не писать: вытащит модель" },
+        { value: "outcome", label: "Результат", mark: "✓", color: "#11775e", hint: "Решение или отчёт о сделанном", key: "2", slash: "/результат",
+          placeholder: "Что решили или что уже сделано", foot: "Запись не откроет дело" },
+        { value: "note", label: "Заметка", mark: "◇", color: "#6a6a6a", hint: "Наблюдение, идея, вопрос", key: "3", slash: "/заметка",
+          placeholder: "Наблюдение, идея, открытый вопрос", foot: "Останется в «Заметках»" },
+      ];
+      const PRIORITIES = [
+        { value: "low", label: "Низкая", mark: "⌄", color: "#7b8794" },
+        { value: "normal", label: "Обычная", mark: "–", color: "#4a4744" },
+        { value: "high", label: "Высокая", mark: "⌃", color: "#d43b3b" },
+      ];
+      const KNOWN_TAGS = ["hub", "tcam", "монетизация", "cp", "созвон", "релиз", "личное"];
+      const byType = (value) => TYPES.find((t) => t.value === value);
+      const byPriority = (value) => PRIORITIES.find((p) => p.value === value);
+      const MANUAL = TYPES.filter((t) => t.value !== "auto");
+      const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+      const cmd = isMac ? "⌘" : "Ctrl +";
+      const $ = (root, role) => root.querySelector(`[data-role="${role}"]`);
+      const el = (tag, props = {}, ...children) => {
+        const node = Object.assign(document.createElement(tag), props);
+        node.append(...children.filter(Boolean));
+        return node;
+      };
+
+      const today = new Date();
+      const iso = (shift = 0) => {
+        const day = new Date(today);
+        day.setDate(day.getDate() + shift);
+        return day.toISOString().slice(0, 10);
+      };
+      const dayLabel = (date) =>
+        date === iso(0) ? "Сегодня" : date === iso(1) ? "Завтра" : date.split("-").reverse().slice(0, 2).join(".");
+
+      /* ── состояние одной карточки ──────────────────────────── */
+      function makeState() {
+        return { type: "auto", date: null, time: null, priority: "normal", tags: [] };
+      }
+      function resetSettings(state) {
+        if (state.type !== "todo") {
+          state.date = null;
+          state.time = null;
+          state.priority = "normal";
+        }
+      }
+      function payload(state) {
+        const body = { raw: "…" };
+        if (state.type !== "auto") body.primaryType = state.type;
+        if (state.date) body.due = state.time ? { date: state.date, time: state.time } : { date: state.date };
+        if (state.type === "todo" && state.priority !== "normal") body.priority = state.priority;
+        if (state.tags.length) body.tags = state.tags;
+        return body;
+      }
+      function renderPayload(body, omitRaw) {
+        const parts = omitRaw ? [] : ["raw"];
+        if (body.primaryType) parts.push(`primaryType: "${body.primaryType}"`);
+        if (body.due)
+          parts.push(`due: { date: "${body.due.date}"${body.due.time ? `, time: "${body.due.time}"` : ""} }`);
+        if (body.priority) parts.push(`priority: "${body.priority}"`);
+        if (body.tags) parts.push(`tags: [${body.tags.map((tag) => `"${tag}"`).join(", ")}]`);
+        return `{ ${parts.join(", ")} }`;
+      }
+      function readout(root, state, mode) {
+        const node = $(root.closest(".stage-inner"), "readout");
+        if (!node) return;
+        const body = payload(state);
+        const empty = Object.keys(body).every((key) => key === "raw");
+        if (mode === "correction")
+          node.innerHTML = empty
+            ? 'POST /api/captures → <b>{ raw }</b> — всё определила модель'
+            : `POST /api/captures/:id/corrections → <b>{ patch: ${renderPayload(body, true)} }</b>`;
+        else
+          node.innerHTML = empty
+            ? 'POST /api/captures → <b>{ raw }</b> — тип, срок и теги определит модель'
+            : `POST /api/captures → <b>${renderPayload(body, false)}</b>`;
+      }
+
+      /* ── переиспользуемые кусочки ──────────────────────────── */
+      function typeDot(type) {
+        return el("span", { className: "dot" , style: `background:${type.color}` });
+      }
+
+      /* поле тегов: чипы + живой инпут с подсказками */
+      function createTags(state, onChange, { placeholder = "добавить тег…" } = {}) {
+        const host = el("div", { className: "tags" });
+        const input = el("input", { className: "tag-input", placeholder, "aria-label": "Теги" });
+        const suggest = el("div", { className: "tag-suggest", hidden: true });
+        let cursor = 0;
+        host.style.position = "relative";
+
+        const add = (value) => {
+          const tag = value.trim().replace(/^#/, "").toLowerCase();
+          if (!tag || state.tags.includes(tag) || state.tags.length >= 8) return;
+          state.tags.push(tag);
+          input.value = "";
+          closeSuggest();
+          render();
+          onChange();
+        };
+        const remove = (tag) => {
+          state.tags = state.tags.filter((item) => item !== tag);
+          render();
+          onChange();
+        };
+        function closeSuggest() {
+          suggest.hidden = true;
+          cursor = 0;
+        }
+        function openSuggest() {
+          const query = input.value.trim().replace(/^#/, "").toLowerCase();
+          const matches = KNOWN_TAGS.filter((tag) => !state.tags.includes(tag) && (!query || tag.startsWith(query))).slice(0, 5);
+          if (!matches.length) return closeSuggest();
+          suggest.replaceChildren(
+            ...matches.map((tag, index) => {
+              const option = el("button", { type: "button", textContent: `#${tag}`, className: index === cursor ? "cursor" : "" });
+              option.addEventListener("mousedown", (event) => {
+                event.preventDefault();
+                add(tag);
+              });
+              return option;
+            }),
+          );
+          suggest.style.top = `${input.offsetTop + input.offsetHeight + 6}px`;
+          suggest.style.left = `${input.offsetLeft}px`;
+          suggest.hidden = false;
+        }
+        input.addEventListener("input", () => {
+          cursor = 0;
+          openSuggest();
+        });
+        input.addEventListener("focus", openSuggest);
+        input.addEventListener("blur", () => setTimeout(closeSuggest, 80));
+        input.addEventListener("keydown", (event) => {
+          const options = [...suggest.querySelectorAll("button")];
+          if (event.key === "Enter") {
+            event.preventDefault();
+            const picked = !suggest.hidden && options[cursor] ? options[cursor].textContent : input.value;
+            add(picked);
+          } else if (event.key === "Backspace" && !input.value && state.tags.length) {
+            remove(state.tags[state.tags.length - 1]);
+          } else if (event.key === "Escape") {
+            closeSuggest();
+          } else if ((event.key === "ArrowDown" || event.key === "ArrowUp") && !suggest.hidden) {
+            event.preventDefault();
+            cursor = (cursor + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
+            options.forEach((option, index) => option.classList.toggle("cursor", index === cursor));
+          }
+        });
+
+        function render() {
+          host.replaceChildren(
+            ...state.tags.map((tag) => {
+              const remove_ = el("button", { type: "button", textContent: "✕", "aria-label": `Убрать тег ${tag}` });
+              remove_.addEventListener("click", () => remove(tag));
+              return el("span", { className: "tag" }, document.createTextNode(`#${tag}`), remove_);
+            }),
+            input,
+            suggest,
+          );
+        }
+        render();
+        return { host, render, focus: () => input.focus() };
+      }
+
+      /* быстрые кнопки срока + поля даты и времени */
+      function createDueField(state, onChange, { label = "Срок" } = {}) {
+        const dateInput = el("input", { type: "date", "aria-label": "Дата" });
+        const timeInput = el("input", { type: "time", "aria-label": "Время" });
+        const quick = el("div", { className: "quick" });
+        for (const [label, shift] of [["Сегодня", 0], ["Завтра", 1], ["Через неделю", 7]]) {
+          const button = el("button", { type: "button", textContent: label });
+          button.addEventListener("click", () => {
+            state.date = state.date === iso(shift) ? null : iso(shift);
+            sync();
+            onChange();
+          });
+          button.dataset.date = iso(shift);
+          quick.append(button);
+        }
+        dateInput.addEventListener("change", () => {
+          state.date = dateInput.value || null;
+          sync();
+          onChange();
+        });
+        timeInput.addEventListener("change", () => {
+          state.time = timeInput.value || null;
+          sync();
+          onChange();
+        });
+        function sync() {
+          dateInput.value = state.date || "";
+          timeInput.value = state.time || "";
+          for (const button of quick.querySelectorAll("button"))
+            button.setAttribute("aria-pressed", String(button.dataset.date === state.date));
+        }
+        sync();
+        return {
+          quick,
+          fields: el(
+            "div",
+            { className: "field" },
+            label ? el("span", { textContent: label }) : null,
+            dateInput,
+            el("span", { textContent: "в" }),
+            timeInput,
+          ),
+          sync,
+        };
+      }
+
+      function createPriority(state, onChange) {
+        const host = el("div", { className: "prio", role: "group", "aria-label": "Важность" });
+        for (const level of PRIORITIES) {
+          const button = el("button", { type: "button" }, document.createTextNode(`${level.mark} ${level.label}`));
+          button.dataset.value = level.value;
+          button.addEventListener("click", () => {
+            state.priority = level.value;
+            sync();
+            onChange();
+          });
+          host.append(button);
+        }
+        function sync() {
+          host.style.setProperty("--prio-color", byPriority(state.priority).color);
+          for (const button of host.querySelectorAll("button"))
+            button.setAttribute("aria-pressed", String(button.dataset.value === state.priority));
+        }
+        sync();
+        return { host, sync };
+      }
+
+      /* ── 1. чипы + раскрывающиеся настройки ────────────────── */
+      {
+        const form = document.querySelector('[data-demo="chips"]');
+        const state = makeState();
+        const chips = $(form, "chips");
+        const settingsHost = $(form, "settings");
+        const tags = createTags(state, () => paint());
+        $(form, "tags").append(tags.host);
+
+        TYPES.forEach((type, index) => {
+          if (index === 1) chips.append(el("span", { className: "divider-v" }));
+          const chip = el("button", {
+            type: "button",
+            className: `type-chip${type.value === "auto" ? " auto" : ""}`,
+            title: type.hint,
+          });
+          chip.append(
+            type.value === "auto" ? document.createTextNode("✦ Авто") : typeDot(type),
+            type.value === "auto" ? document.createTextNode("") : document.createTextNode(type.label),
+          );
+          chip.dataset.value = type.value;
+          chip.addEventListener("click", () => {
+            state.type = state.type === type.value && type.value !== "auto" ? "auto" : type.value;
+            resetSettings(state);
+            paint();
+          });
+          chips.append(chip);
+        });
+
+        const due = createDueField(state, () => paint());
+        const priority = createPriority(state, () => paint());
+        const row = el(
+          "div",
+          { className: "settings-row" },
+          due.fields,
+          due.quick,
+          el("span", { className: "divider-v" }),
+          priority.host,
+        );
+
+        function paint() {
+          for (const chip of chips.querySelectorAll("button"))
+            chip.setAttribute("aria-pressed", String(chip.dataset.value === state.type));
+          const showSettings = state.type === "todo";
+          if (showSettings && !row.isConnected) settingsHost.append(row);
+          if (!showSettings && row.isConnected) row.remove();
+          due.sync();
+          priority.sync();
+          form.querySelector("textarea").placeholder = byType(state.type).placeholder;
+          $(form, "hint").textContent = `${cmd} Enter — сохранить`;
+          readout(form, state);
+        }
+        paint();
+      }
+
+      /* ── 2. пилюли в подвале ───────────────────────────────── */
+      {
+        const form = document.querySelector('[data-demo="pills"]');
+        const state = makeState();
+        const host = $(form, "pills");
+
+        /* тип */
+        const typeMenu = el("details", { className: "menu" });
+        const typeSummary = el("summary");
+        const typeOptions = el("div", { className: "popover" });
+        TYPES.forEach((type, index) => {
+          if (index === 1) typeOptions.append(el("hr"));
+          const option = el("button", { type: "button", role: "menuitemradio" });
+          option.dataset.value = type.value;
+          option.append(
+            type.value === "auto" ? el("span", { textContent: "✦", style: "width:8px" }) : typeDot(type),
+            document.createTextNode(type.label),
+            el("span", { className: "kbd", textContent: type.key }),
+          );
+          option.addEventListener("click", () => {
+            state.type = type.value;
+            resetSettings(state);
+            typeMenu.open = false;
+            paint();
+          });
+          typeOptions.append(option);
+        });
+        typeMenu.append(typeSummary, typeOptions);
+
+        /* срок */
+        const dueMenu = el("details", { className: "menu" });
+        const dueSummary = el("summary");
+        const due = createDueField(state, () => paint(), { label: null });
+        const dueClear = el("button", { type: "button", className: "kbd", textContent: "Очистить", style: "cursor:pointer" });
+        dueClear.addEventListener("click", () => {
+          state.date = null;
+          state.time = null;
+          due.sync();
+          paint();
+        });
+        dueMenu.append(
+          dueSummary,
+          el(
+            "div",
+            { className: "popover" },
+            el("p", { className: "label", textContent: "Когда" }),
+            el("div", { className: "row" }, due.quick),
+            el("div", { className: "row" }, due.fields),
+            el("div", { className: "row" }, dueClear),
+          ),
+        );
+
+        /* важность */
+        const prioMenu = el("details", { className: "menu" });
+        const prioSummary = el("summary");
+        const priority = createPriority(state, () => paint());
+        prioMenu.append(
+          prioSummary,
+          el("div", { className: "popover" }, el("p", { className: "label", textContent: "Важность" }), el("div", { className: "row" }, priority.host)),
+        );
+
+        /* теги */
+        const tagMenu = el("details", { className: "menu" });
+        const tagSummary = el("summary");
+        const tags = createTags(state, () => paint(), { placeholder: "#тег и Enter" });
+        tagMenu.append(
+          tagSummary,
+          el("div", { className: "popover" }, el("p", { className: "label", textContent: "Теги" }), el("div", { className: "row" }, tags.host)),
+        );
+        tagMenu.addEventListener("toggle", () => tagMenu.open && tags.focus());
+
+        host.append(typeMenu, dueMenu, prioMenu, tagMenu);
+
+        function paint() {
+          const type = byType(state.type);
+          typeSummary.replaceChildren(
+            state.type === "auto" ? el("span", { textContent: "✦" }) : typeDot(type),
+            document.createTextNode(type.label),
+            el("span", { className: "caret", textContent: "▾" }),
+          );
+          typeSummary.classList.toggle("set", state.type !== "auto");
+          for (const option of typeOptions.querySelectorAll("button"))
+            option.setAttribute("aria-checked", String(option.dataset.value === state.type));
+
+          const isTodo = state.type === "todo" || state.type === "auto";
+          dueMenu.hidden = !isTodo;
+          prioMenu.hidden = state.type !== "todo";
+          const dueText = state.date ? `${dayLabel(state.date)}${state.time ? ` ${state.time}` : ""}` : "Срок";
+          dueSummary.replaceChildren(document.createTextNode(`◔ ${dueText}`), el("span", { className: "caret", textContent: "▾" }));
+          dueSummary.classList.toggle("set", Boolean(state.date));
+
+          const level = byPriority(state.priority);
+          prioSummary.replaceChildren(
+            document.createTextNode(state.priority === "normal" ? "⚑ Важность" : `${level.mark} ${level.label}`),
+            el("span", { className: "caret", textContent: "▾" }),
+          );
+          prioSummary.classList.toggle("set", state.priority !== "normal");
+
+          tagSummary.replaceChildren(
+            document.createTextNode(state.tags.length ? `# ${state.tags.map((tag) => tag).join(", ")}` : "# Теги"),
+            el("span", { className: "caret", textContent: "▾" }),
+          );
+          tagSummary.classList.toggle("set", state.tags.length > 0);
+
+          due.sync();
+          priority.sync();
+          $(form, "hint").textContent = `${cmd} Enter`;
+          readout(form, state);
+        }
+        paint();
+      }
+
+      /* ── 3. вкладки и бланк ────────────────────────────────── */
+      {
+        const form = document.querySelector('[data-demo="tabs"]');
+        const state = makeState();
+        const tabs = $(form, "tabs");
+        const grid = $(form, "form");
+        const area = form.querySelector("textarea");
+
+        for (const type of TYPES) {
+          const tab = el("button", { type: "button", role: "tab" });
+          tab.dataset.value = type.value;
+          tab.textContent = `${type.mark} ${type.label}`;
+          tab.addEventListener("click", () => {
+            state.type = type.value;
+            resetSettings(state);
+            paint();
+            area.focus();
+          });
+          tabs.append(tab);
+        }
+
+        const due = createDueField(state, () => paint(), { label: null });
+        const priority = createPriority(state, () => paint());
+        const tags = createTags(state, () => paint());
+        const lineDue = el("div", { className: "form-line" }, el("span", { className: "key", textContent: "Срок" }), due.fields, due.quick);
+        const linePriority = el("div", { className: "form-line" }, el("span", { className: "key", textContent: "Важность" }), priority.host);
+        const lineTags = el("div", { className: "form-line" }, el("span", { className: "key", textContent: "Теги" }), tags.host);
+
+        function paint() {
+          const type = byType(state.type);
+          for (const tab of tabs.querySelectorAll("button"))
+            tab.setAttribute("aria-selected", String(tab.dataset.value === state.type));
+          form.style.setProperty("--accent", state.type === "auto" ? "transparent" : type.color);
+          tabs.style.setProperty("--accent", type.color);
+          area.placeholder = type.placeholder;
+          const lines = state.type === "todo" ? [lineDue, linePriority, lineTags] : [lineTags];
+          grid.replaceChildren(...lines);
+          due.sync();
+          priority.sync();
+          $(form, "hint").textContent = type.foot;
+          readout(form, state);
+        }
+        paint();
+      }
+
+      /* ── 4. клавиатурные команды ───────────────────────────── */
+      {
+        const form = document.querySelector('[data-demo="slash"]');
+        const state = makeState();
+        const area = form.querySelector("textarea");
+        const menu = $(form, "slash");
+        const tokens = $(form, "tokens");
+        let cursor = 0;
+        let items = [];
+
+        const COMMANDS = {
+          "/": () => [
+            { group: "Тип", options: MANUAL.map((type) => ({ label: type.label, hint: type.slash, dot: type.color, run: () => { state.type = type.value; resetSettings(state); } })) },
+            { group: "Срок", options: [
+              { label: "Сегодня", hint: "/сегодня", run: () => { state.type = "todo"; state.date = iso(0); } },
+              { label: "Завтра", hint: "/завтра", run: () => { state.type = "todo"; state.date = iso(1); } },
+              { label: "Через неделю", hint: "/неделя", run: () => { state.type = "todo"; state.date = iso(7); } },
+            ] },
+          ],
+          "#": () => [
+            { group: "Теги", options: KNOWN_TAGS.filter((tag) => !state.tags.includes(tag)).map((tag) => ({ label: `#${tag}`, run: () => state.tags.push(tag) })) },
+          ],
+          "!": () => [
+            { group: "Важность", options: PRIORITIES.map((level) => ({ label: level.label, hint: `!${level.label.toLowerCase()}`, run: () => { state.type = "todo"; state.priority = level.value; } })) },
+          ],
+        };
+
+        function closeMenu() {
+          menu.hidden = true;
+          items = [];
+          cursor = 0;
+        }
+        function openMenu(trigger, query) {
+          const groups = COMMANDS[trigger]();
+          menu.replaceChildren();
+          items = [];
+          for (const group of groups) {
+            const matching = group.options.filter((option) => {
+              if (!query) return true;
+              const label = option.label.toLowerCase().replace(/^[#/!]/, "");
+              return label.startsWith(query) || Boolean(option.hint?.slice(1).startsWith(query));
+            });
+            if (!matching.length) continue;
+            menu.append(el("p", { className: "label", textContent: group.group }));
+            for (const option of matching) {
+              const button = el("button", { type: "button" });
+              button.append(
+                option.dot ? el("span", { className: "dot", style: `background:${option.dot}` }) : document.createTextNode(""),
+                document.createTextNode(option.label),
+                option.hint ? el("code", { textContent: option.hint }) : document.createTextNode(""),
+              );
+              button.addEventListener("mousedown", (event) => {
+                event.preventDefault();
+                pick(option);
+              });
+              menu.append(button);
+              items.push({ option, button });
+            }
+          }
+          if (!items.length) return closeMenu();
+          cursor = Math.min(cursor, items.length - 1);
+          highlight();
+          menu.hidden = false;
+        }
+        function highlight() {
+          items.forEach((item, index) => item.button.classList.toggle("cursor", index === cursor));
+        }
+        function pick(option) {
+          option.run();
+          area.value = area.value.replace(/(^|[\s\n])[/#!][^\s\n]*$/, "$1");
+          closeMenu();
+          paint();
+          area.focus();
+        }
+        function currentTrigger() {
+          const before = area.value.slice(0, area.selectionStart);
+          const match = before.match(/(?:^|[\s\n])([/#!])([^\s\n]*)$/);
+          return match ? { trigger: match[1], query: match[2].toLowerCase() } : null;
+        }
+
+        area.addEventListener("input", () => {
+          const found = currentTrigger();
+          if (!found) return closeMenu();
+          cursor = 0;
+          openMenu(found.trigger, found.query);
+        });
+        area.addEventListener("keydown", (event) => {
+          if (menu.hidden) return;
+          if (event.key === "Escape") { event.preventDefault(); return closeMenu(); }
+          if (event.key === "Enter" || event.key === "Tab") {
+            event.preventDefault();
+            return pick(items[cursor].option);
+          }
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            cursor = (cursor + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+            highlight();
+          }
+        });
+        area.addEventListener("blur", () => setTimeout(closeMenu, 80));
+
+        function token(text, className, onRemove) {
+          const remove = onRemove && el("button", { type: "button", textContent: "✕", "aria-label": `Убрать ${text}` });
+          if (remove) remove.addEventListener("click", () => { onRemove(); paint(); });
+          return el("span", { className: `token ${className || ""}` }, document.createTextNode(text), remove || document.createTextNode(""));
+        }
+        function paint() {
+          const type = byType(state.type);
+          const nodes = [];
+          if (state.type === "auto" && !state.date && !state.tags.length && state.priority === "normal")
+            nodes.push(token("✦ Авто · тип, срок и теги определит модель", "auto"));
+          else {
+            if (state.type !== "auto")
+              nodes.push(token(`${type.mark} ${type.label}`, "", () => { state.type = "auto"; resetSettings(state); }));
+            if (state.date)
+              nodes.push(token(`◔ ${dayLabel(state.date)}${state.time ? ` ${state.time}` : ""}`, "", () => { state.date = null; state.time = null; }));
+            if (state.priority !== "normal")
+              nodes.push(token(`${byPriority(state.priority).mark} ${byPriority(state.priority).label}`, "", () => { state.priority = "normal"; }));
+            for (const tag of [...state.tags])
+              nodes.push(token(`#${tag}`, "auto", () => { state.tags = state.tags.filter((item) => item !== tag); }));
+          }
+          tokens.replaceChildren(...nodes);
+          $(form, "hint").textContent = `«/» тип и срок · «#» тег · «!» важность · ${cmd} Enter`;
+          readout(form, state);
+        }
+        paint();
+      }
+
+      /* ── 5. правка после разбора ───────────────────────────── */
+      {
+        const form = document.querySelector('[data-demo="after"]');
+        const strip = $(form.closest(".stage-inner"), "strip");
+        const state = makeState();
+        let touched = false;
+        let timer = 0;
+
+        const guess = () => {
+          state.type = "todo";
+          state.date = iso(1);
+          state.time = "15:00";
+          state.priority = "high";
+          state.tags = ["hub", "созвон"];
+        };
+
+        function think() {
+          clearTimeout(timer);
+          touched = false;
+          state.type = "auto";
+          state.date = null;
+          state.time = null;
+          state.priority = "normal";
+          state.tags = [];
+          strip.replaceChildren(el("span", { className: "thinking" }, el("span", { className: "spinner" }), document.createTextNode("Разбираю…")));
+          readout(form, state, "correction");
+          timer = setTimeout(() => { guess(); paint(); }, 1200);
+        }
+
+        function menu(summaryNodes, popoverNodes, isSet) {
+          const details = el("details", { className: "menu" });
+          const summary = el("summary");
+          summary.append(...summaryNodes, el("span", { className: "caret", textContent: "▾" }));
+          summary.classList.toggle("set", Boolean(isSet));
+          details.append(summary, el("div", { className: "popover" }, ...popoverNodes));
+          return details;
+        }
+
+        function paint() {
+          const type = byType(state.type);
+          const level = byPriority(state.priority);
+          const due = createDueField(state, () => { touched = true; paint(); }, { label: null });
+          const priority = createPriority(state, () => { touched = true; paint(); });
+          const tags = createTags(state, () => { touched = true; paint(); }, { placeholder: "#тег" });
+
+          const typeOptions = MANUAL.map((item) => {
+            const option = el("button", { type: "button" }, typeDot(item), document.createTextNode(item.label));
+            option.setAttribute("aria-checked", String(item.value === state.type));
+            option.addEventListener("click", () => {
+              state.type = item.value;
+              resetSettings(state);
+              touched = true;
+              paint();
+            });
+            return option;
+          });
+
+          const parts = [
+            document.createTextNode(touched ? "Поправлено:" : "Записал как"),
+            menu([typeDot(type), document.createTextNode(type.label)], typeOptions, true),
+          ];
+          if (state.type === "todo") {
+            parts.push(
+              menu(
+                [document.createTextNode(`◔ ${state.date ? dayLabel(state.date) : "без срока"}${state.time ? ` ${state.time}` : ""}`)],
+                [el("p", { className: "label", textContent: "Когда" }), el("div", { className: "row" }, due.quick), el("div", { className: "row" }, due.fields)],
+                Boolean(state.date),
+              ),
+              menu(
+                [document.createTextNode(`${level.mark} ${level.label}`)],
+                [el("p", { className: "label", textContent: "Важность" }), el("div", { className: "row" }, priority.host)],
+                state.priority !== "normal",
+              ),
+            );
+          }
+          parts.push(
+            menu(
+              [document.createTextNode(state.tags.length ? `# ${state.tags.join(", ")}` : "# без тегов")],
+              [el("p", { className: "label", textContent: "Теги" }), el("div", { className: "row" }, tags.host)],
+              state.tags.length > 0,
+            ),
+          );
+          const undo = el("button", { type: "button", className: "undo", textContent: "Отменить" });
+          undo.addEventListener("click", think);
+          parts.push(undo);
+          strip.replaceChildren(...parts);
+          readout(form, state, "correction");
+        }
+
+        form.addEventListener("submit", think);
+        think();
+      }
+
+      /* ── переключатель ширины превью ───────────────────────── */
+      for (const button of document.querySelectorAll("[data-viewport]")) {
+        button.addEventListener("click", () => {
+          document.body.classList.toggle("mobile", button.dataset.viewport === "mobile");
+          for (const other of document.querySelectorAll("[data-viewport]"))
+            other.setAttribute("aria-pressed", String(other === button));
+        });
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Кизуна — Сегодня</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='2' y='2' width='60' height='60' rx='14' fill='%23c73e3a'/%3E%3Cg fill='none' stroke='white' stroke-linecap='round' stroke-width='6'%3E%3Cpath d='M8 17q24 -6 48 0'/%3E%3Cline x1='14' y1='27' x2='50' y2='27'/%3E%3Cline x1='19' y1='22' x2='21' y2='54'/%3E%3Cline x1='45' y1='22' x2='43' y2='54'/%3E%3C/g%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/public/app.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#capture-input">К полю записи</a>
+    <header>
+      <a class="brand" href="#today"
+        ><svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true" focusable="false"
+          ><rect class="hanko-pad" x="2" y="2" width="60" height="60" rx="14" fill="#c73e3a" /><g
+            class="torii"
+            fill="none"
+            stroke-linecap="round"
+            stroke-width="6"
+            ><path class="roof" d="M8 17q24 -6 48 0" /><line x1="14" y1="27" x2="50" y2="27" /><line
+              x1="19"
+              y1="22"
+              x2="21"
+              y2="54"
+            /><line x1="45" y1="22" x2="43" y2="54" /></g></svg
+        ><span class="brand-word">Кизуна</span></a
+      >
+      <nav aria-label="Разделы">
+        <a class="active" href="#today">Сегодня</a>
+        <details class="history-menu">
+          <summary>Журнал</summary>
+          <div class="history-menu-popover">
+            <a href="#history-work">Что делал</a>
+            <a href="#history-todo">TODO</a>
+            <a href="#history-notes">Заметки</a>
+          </div>
+        </details>
+      </nav>
+      <details class="ai-menu">
+        <summary id="ai-summary" aria-label="Модель и провайдер">ИИ</summary>
+        <div class="ai-menu-popover">
+          <label class="provider-picker" for="ai-provider"
+            ><span>Провайдер</span
+            ><select id="ai-provider" aria-label="Провайдер ИИ"></select></label
+          ><label class="provider-picker model-picker" for="ai-model" hidden
+            ><span>Модель</span
+            ><select id="ai-model" aria-label="Модель ИИ"></select></label
+          ><span id="ai-status" class="status" role="status">Проверяем ИИ…</span>
+        </div>
+      </details>
+    </header>
+    <aside
+      id="capture-notifications"
+      class="capture-notifications"
+      aria-label="Обработка записей"
+      aria-live="polite"
+      aria-relevant="additions text"
+    ></aside>
+    <main>
+      <section class="app-page today-page" id="today">
+        <section class="hero">
+          <div class="today-intro">
+            <h1>Освободи память</h1>
+          </div>
+          <form id="capture-form" class="capture">
+            <label class="sr-only" for="capture-input">Новая запись</label
+            ><textarea
+              id="capture-input"
+              maxlength="10000"
+              placeholder="Запишите мысль, план, встречу или итог дня"
+            ></textarea>
+            <div id="capture-todo-line" class="todo-line" hidden></div>
+            <div class="capture-foot">
+              <div
+                id="capture-types"
+                class="type-dots"
+                role="tablist"
+                aria-label="Тип записи"
+              ></div>
+              <span class="foot-sep" aria-hidden="true"></span>
+              <div id="capture-tags" class="tags"></div>
+              <button
+                id="capture-submit"
+                type="submit"
+                aria-label="Сохранить запись"
+                title="Сохранить запись — ⌘/Ctrl + Enter"
+              >
+                →
+              </button>
+            </div>
+          </form>
+        </section>
+        <section class="dashboard" aria-label="Дневная сводка">
+          <article class="preview-card">
+            <h2><a class="preview-title" href="#history-work">Что делал</a></h2>
+            <div id="journal" class="stack">
+              <p class="empty">Пока нет зафиксированной работы за сегодня.</p>
+            </div>
+          </article>
+          <article class="preview-card">
+            <h2><a class="preview-title" href="#history-todo">TODO буфер</a></h2>
+            <div id="todo" class="stack">
+              <p class="empty">Открытых дел нет.</p>
+            </div>
+          </article>
+          <article class="preview-card">
+            <h2><a class="preview-title" href="#history-notes">Заметки</a></h2>
+            <div id="notes" class="stack">
+              <p class="empty">Заметки появятся здесь.</p>
+            </div>
+          </article>
+        </section>
+      </section>
+      <section id="history-work" class="app-page history-page" hidden>
+        <div class="page-heading">
+          <p class="eyebrow">ЖУРНАЛ · ИСТОРИЯ</p>
+          <h2>Что делал</h2>
+          <p>Зафиксированная работа, сгруппированная по дням.</p>
+        </div>
+        <div id="history-work-list" class="history-groups"></div>
+      </section>
+      <section id="history-todo" class="app-page history-page" hidden>
+        <div class="page-heading">
+          <p class="eyebrow">ЖУРНАЛ · ИСТОРИЯ</p>
+          <h2>TODO</h2>
+          <p>Открытые дела по сроку, закрытые — в конце.</p>
+        </div>
+        <div id="history-todo-list" class="history-groups"></div>
+      </section>
+      <section id="history-notes" class="app-page history-page" hidden>
+        <div class="page-heading">
+          <p class="eyebrow">ЖУРНАЛ · ИСТОРИЯ</p>
+          <h2>Заметки</h2>
+          <p>Наблюдения и контекст, сгруппированные по дням.</p>
+        </div>
+        <div id="history-notes-list" class="history-groups"></div>
+      </section>
+      <datalist id="known-projects">
+        <option value="Hub"></option>
+        <option value="TCAM"></option>
+        <option value="Монетизация"></option>
+        <option value="CP"></option>
+      </datalist>
+      <section id="brief" class="app-page" hidden>
+        <section id="daily-brief" class="daily-brief" aria-live="polite">
+          <div class="daily-brief-head">
+            <div>
+              <p class="eyebrow">УТРЕННЯЯ СВОДКА</p>
+              <h2>Ежедневный отчёт</h2>
+            </div>
+            <button id="daily-brief-refresh" class="secondary" type="button">
+              Обновить
+            </button>
+          </div>
+          <p class="empty daily-brief-loading">
+            <span class="spinner"></span>Готовим отчёт…
+          </p>
+        </section>
+      </section>
+      <section id="memory" class="app-page" hidden>
+        <section class="memory">
+          <div>
+            <p class="eyebrow">ПАМЯТЬ С ИСТОЧНИКАМИ</p>
+            <h2>Спросите о прошлом</h2>
+            <p>Ответ опирается только на сохранённые записи.</p>
+          </div>
+          <form id="memory-form">
+            <label class="sr-only" for="memory-input">Вопрос к памяти</label
+            ><input
+              id="memory-input"
+              placeholder="Что решили по Hub?"
+            /><button>Спросить</button>
+          </form>
+          <div
+            id="memory-result"
+            class="memory-result"
+            aria-live="polite"
+          ></div>
+        </section>
+      </section>
+      <section id="settings" class="app-page" hidden>
+        <section class="settings">
+          <div>
+            <p class="eyebrow">ДАННЫЕ</p>
+            <h2>Ваш личный журнал</h2>
+            <p>
+              Записи хранятся локально в SQLite на этом компьютере. Экспорт JSON
+              версии 2 — это ваши локальные персональные данные: он содержит
+              исходные записи, их версии, отчёты и историю обработки.
+            </p>
+            <p class="provider-note">
+              Codex CLI и Claude CLI используют лимиты и кредиты авторизованного
+              локального аккаунта. При недоступности выбранного провайдера
+              Кизуна сохранит запись без разбора, не меняя ваш выбор.
+            </p>
+          </div>
+          <div class="settings-actions">
+            <a class="secondary" href="/api/export">Экспорт JSON</a
+            ><button id="reset-button" class="danger">Очистить данные</button>
+          </div>
+        </section>
+      </section>
+    </main>
+    <dialog id="review-dialog" tabindex="-1" aria-label="Карточка записи">
+      <button id="review-close" class="dialog-close" type="button" aria-label="Закрыть карточку"></button>
+      <section id="review" class="review" aria-live="polite"></section>
+    </dialog>
+    <dialog id="reset-dialog">
+      <form method="dialog">
+        <h2>Удалить все локальные данные?</h2>
+        <p>
+          Это необратимо удалит записи, ежедневные отчёты, завершения и историю
+          обработки с этого компьютера. Сначала скачайте экспорт.
+        </p>
+        <label
+          >Введите <strong>СБРОСИТЬ КИЗУНА</strong
+          ><input id="reset-confirmation" autocomplete="off"
+        /></label>
+        <div>
+          <button value="cancel" class="secondary">Отмена</button
+          ><button id="reset-submit" value="default" class="danger">
+            Удалить всё
+          </button>
+        </div>
+      </form>
+    </dialog>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/public/app.js"></script>
+    <script type="module" src="/public/daily-brief.js"></script>
+  </body>
+</html>

@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Раппорто — варианты логотипа</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='24' fill='none' stroke='%231f1d1b' stroke-width='6' stroke-linecap='round' stroke-dasharray='118 33'/%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        --ink: #1f1d1b;
+        --muted: #6a6a6a;
+        --line: #e9e9e7;
+        --wash: #faf9f7;
+        --paper: #fffefc;
+        --accent: #e11d74;
+        --logo: #1f1d1b;
+        --shadow: 0 14px 34px rgba(31, 29, 27, 0.07);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--wash); color: var(--ink); line-height: 1.5;
+        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        transition: background 0.25s;
+      }
+      body.dark { --wash: #211f1d; --paper: #2a2825; --line: #3a3733; --ink: #f2efe9; --muted: #a39e96; --shadow: 0 14px 34px rgba(0,0,0,.35); }
+      body.dark { background: var(--wash); color: var(--ink); }
+      main { max-width: 1120px; margin: auto; padding: 56px 24px 110px; }
+      .page-head { max-width: 740px; margin-bottom: 30px; }
+      .eyebrow {
+        font-size: 10px; font-weight: 800; letter-spacing: 1.3px;
+        color: #96918e; margin: 0 0 11px; text-transform: uppercase;
+      }
+      h1 { font-size: 34px; line-height: 1.15; margin: 0 0 14px; letter-spacing: -0.5px; }
+      .page-head p { color: var(--muted); font-size: 15px; margin: 0 0 10px; }
+      .page-head strong { color: var(--ink); }
+
+      .toolbar {
+        position: sticky; top: 0; z-index: 8;
+        display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+        margin: 0 -24px 36px; padding: 12px 24px;
+        background: color-mix(in srgb, var(--wash) 92%, transparent);
+        backdrop-filter: blur(8px);
+        border-bottom: 1px solid var(--line);
+        font-size: 12px; color: var(--muted);
+      }
+      .toolbar .group { display: flex; gap: 4px; border: 1px solid var(--line); background: var(--paper); border-radius: 99px; padding: 3px; }
+      .toolbar button {
+        font: inherit; font-size: 12px; cursor: pointer; border: 0; background: none;
+        color: var(--muted); border-radius: 99px; padding: 4px 12px;
+        display: inline-flex; align-items: center; gap: 6px;
+      }
+      .toolbar button:hover { color: var(--ink); }
+      .toolbar button[aria-pressed="true"] { background: var(--ink); color: var(--wash); }
+      .toolbar .chip { width: 10px; height: 10px; border-radius: 99px; display: inline-block; }
+      .spacer { flex: 1; }
+
+      h2.section { font-size: 15px; margin: 44px 0 16px; letter-spacing: 0.2px; color: var(--muted); font-weight: 700; }
+
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+      .card {
+        background: var(--paper); border: 1px solid var(--line); border-radius: 18px;
+        padding: 22px 22px 16px; box-shadow: var(--shadow); position: relative;
+      }
+      .lockup { display: flex; align-items: center; gap: 16px; min-height: 84px; }
+      .mark { width: 64px; height: 64px; flex: none; color: var(--logo); }
+      .word { font-size: 24px; font-weight: 650; letter-spacing: -0.3px; }
+      .word.lower { font-weight: 400; letter-spacing: 3.5px; font-size: 19px; text-transform: lowercase; }
+      .card h3 { font-size: 13px; margin: 14px 0 3px; }
+      .card p { font-size: 12px; color: var(--muted); margin: 0 0 12px; min-height: 34px; }
+      .previews {
+        display: flex; align-items: center; gap: 14px; border-top: 1px dashed var(--line);
+        padding-top: 11px; color: #96918e; font-size: 10.5px;
+      }
+      .previews .mark { width: 24px; height: 24px; }
+      .tab-mock {
+        display: inline-flex; align-items: center; gap: 6px;
+        background: var(--wash); border: 1px solid var(--line);
+        border-radius: 8px 8px 0 0; padding: 4px 10px; font-size: 10.5px; color: var(--muted);
+      }
+      .tab-mock .mark { width: 14px; height: 14px; }
+      .num {
+        position: absolute; top: 14px; right: 16px; font-size: 10px; font-weight: 800;
+        color: #b9b4ae; letter-spacing: 1px;
+      }
+
+      /* типографика внизу */
+      .type-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+      .type-card {
+        background: var(--paper); border: 1px solid var(--line); border-radius: 18px;
+        padding: 26px 24px; box-shadow: var(--shadow); text-align: center;
+      }
+      .type-card p { font-size: 11px; color: var(--muted); margin: 14px 0 0; }
+      .t1 { font-size: 27px; font-weight: 700; letter-spacing: -0.5px; }
+      .t2 { font-size: 21px; font-weight: 400; letter-spacing: 5px; text-transform: lowercase; }
+      .t3 { font-size: 25px; font-weight: 300; letter-spacing: 1px; }
+      .t3 b { font-weight: 800; }
+      .t4 { font-size: 23px; font-weight: 600; letter-spacing: -0.2px; }
+      .t4 .dot { color: var(--logo); }
+      @media (max-width: 640px) {
+        main { padding: 34px 16px 80px; }
+        h1 { font-size: 27px; }
+        .toolbar { margin: 0 -16px 28px; padding: 10px 16px; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="page-head">
+        <p class="eyebrow">Раппорто · логотип</p>
+        <h1>Знак: дзен, тишина, связь</h1>
+        <p>
+          Двадцать знаков в одной интонации — минимализм, японская сдержанность,
+          медитация. Смыслы, от которых они растут: <strong>раппорт</strong> —
+          связь и взаимопонимание; <strong>запись</strong> — мысль, отпущенная в
+          тишину; <strong>память</strong> — круги на воде. Каждый знак показан в
+          связке со словом, в малом размере и во вкладке браузера.
+        </p>
+      </div>
+
+      <nav class="toolbar" aria-label="Настройки просмотра">
+        <span>Тушь:</span>
+        <div class="group" role="group" aria-label="Цвет знака">
+          <button type="button" data-color="#1f1d1b" aria-pressed="true"><span class="chip" style="background:#1f1d1b"></span>Суми</button>
+          <button type="button" data-color="#c73e3a" aria-pressed="false"><span class="chip" style="background:#c73e3a"></span>Киноварь</button>
+          <button type="button" data-color="#e11d74" aria-pressed="false"><span class="chip" style="background:#e11d74"></span>Конфетный</button>
+          <button type="button" data-color="#7c3aed" aria-pressed="false"><span class="chip" style="background:#7c3aed"></span>Ирис</button>
+        </div>
+        <span class="spacer"></span>
+        <div class="group" role="group" aria-label="Фон">
+          <button type="button" data-bg="light" aria-pressed="true">Свет</button>
+          <button type="button" data-bg="dark" aria-pressed="false">Тьма</button>
+        </div>
+      </nav>
+
+      <h2 class="section">Круг и пустота</h2>
+      <div class="grid" data-zone="enso"></div>
+
+      <h2 class="section">Вода и память</h2>
+      <div class="grid" data-zone="water"></div>
+
+      <h2 class="section">Сад и камень</h2>
+      <div class="grid" data-zone="garden"></div>
+
+      <h2 class="section">Связь</h2>
+      <div class="grid" data-zone="bond"></div>
+
+      <h2 class="section">Штрих и буква</h2>
+      <div class="grid" data-zone="stroke"></div>
+
+      <h2 class="section">Слово без знака — типографика</h2>
+      <div class="type-row">
+        <div class="type-card"><div class="t1">Раппорто</div><p>Т1 · как сейчас: плотный гротеск, уверенный вес</p></div>
+        <div class="type-card"><div class="t2">раппорто</div><p>Т2 · строчные с большой разрядкой — самый «дзенский» набор</p></div>
+        <div class="type-card"><div class="t3"><b>ра</b>ппорто</div><p>Т3 · тонкий вес, ударный первый слог</p></div>
+        <div class="type-card"><div class="t4">раппорто<span class="dot">.</span></div><p>Т4 · точка туши в конце — знак прячется в пунктуации</p></div>
+      </div>
+    </main>
+
+    <script type="module">
+      /* Все знаки нарисованы в viewBox 0 0 64 64, цвет — currentColor. */
+      const MARKS = [
+        /* ── круг и пустота ── */
+        { zone: "enso", name: "Энсо", idea: "Круг одним движением кисти, незамкнутый: завершённость без перфекционизма.",
+          svg: `<circle cx='32' cy='32' r='23' fill='none' stroke='currentColor' stroke-width='6.5' stroke-linecap='round' stroke-dasharray='113 32' transform='rotate(-64 32 32)'/>` },
+        { zone: "enso", name: "Энсо с искрой", idea: "Незамкнутый круг и точка внутри — мысль, пойманная в тишине.",
+          svg: `<circle cx='32' cy='32' r='23' fill='none' stroke='currentColor' stroke-width='6' stroke-linecap='round' stroke-dasharray='108 37' transform='rotate(-64 32 32)'/><circle cx='32' cy='32' r='5.5' fill='currentColor'/>` },
+        { zone: "enso", name: "Хиномару", idea: "Просто круг. Смелее всех: знаку нечего доказывать.",
+          svg: `<circle cx='32' cy='32' r='17' fill='currentColor'/>` },
+        { zone: "enso", name: "Луна", idea: "Круг, из которого вычтен круг. Память хранит и то, чего уже не видно.",
+          svg: `<path d='M39 8a26 26 0 1 0 0 48 26.5 26.5 0 0 1 0-48z' fill='currentColor'/>` },
+        { zone: "enso", name: "Дыхание", idea: "Три линии, короче и короче, — выдох перед записью.",
+          svg: `<g stroke='currentColor' stroke-width='6' stroke-linecap='round'><line x1='14' y1='20' x2='50' y2='20'/><line x1='19' y1='33' x2='45' y2='33'/><line x1='25' y1='46' x2='39' y2='46'/></g>` },
+
+        /* ── вода и память ── */
+        { zone: "water", name: "Капля", idea: "Запись падает в память. Одна капля над поверхностью.",
+          svg: `<path d='M32 10c8 11 13 17.5 13 25a13 13 0 1 1-26 0c0-7.5 5-14 13-25z' fill='currentColor'/>` },
+        { zone: "water", name: "Рябь", idea: "Точка и расходящиеся дуги: одна мысль — круги по всей памяти.",
+          svg: `<circle cx='32' cy='30' r='5.5' fill='currentColor'/><g fill='none' stroke='currentColor' stroke-width='4.5' stroke-linecap='round'><path d='M18 42a17.5 8.5 0 0 0 28 0'/><path d='M10 50a26 12 0 0 0 44 0'/></g>` },
+        { zone: "water", name: "Тихая вода", idea: "Полукруг над линией: солнце и его отражение — запись и воспоминание.",
+          svg: `<path d='M15 34a17 17 0 0 1 34 0z' fill='currentColor'/><line x1='10' y1='42' x2='54' y2='42' stroke='currentColor' stroke-width='5' stroke-linecap='round'/><line x1='20' y1='51' x2='44' y2='51' stroke='currentColor' stroke-width='5' stroke-linecap='round' opacity='.45'/>` },
+        { zone: "water", name: "Волна", idea: "Один изгиб кисти — течение, которому доверяешь записанное.",
+          svg: `<path d='M8 38c8-14 16-14 24 0s16 14 24 0' fill='none' stroke='currentColor' stroke-width='6.5' stroke-linecap='round'/>` },
+
+        /* ── сад и камень ── */
+        { zone: "garden", name: "Сад камней", idea: "Камень и грабли по песку: порядок вокруг одной мысли.",
+          svg: `<circle cx='24' cy='24' r='8' fill='currentColor'/><g fill='none' stroke='currentColor' stroke-width='4' stroke-linecap='round'><path d='M10 42h44'/><path d='M10 51h44' opacity='.55'/></g>` },
+        { zone: "garden", name: "Три камня", idea: "Баланс: большое держится на малом. Иерархия без насилия.",
+          svg: `<ellipse cx='32' cy='15' rx='9' ry='7' fill='currentColor'/><ellipse cx='32' cy='31' rx='13' ry='8.5' fill='currentColor'/><ellipse cx='32' cy='49' rx='17' ry='9' fill='currentColor'/>` },
+        { zone: "garden", name: "Тропа", idea: "Камни-шаги по диагонали: путь из записей, по одному шагу.",
+          svg: `<circle cx='18' cy='47' r='8.5' fill='currentColor'/><circle cx='34' cy='32' r='7' fill='currentColor' opacity='.75'/><circle cx='47' cy='18' r='5.5' fill='currentColor' opacity='.5'/>` },
+        { zone: "garden", name: "Гора и солнце", idea: "Два штриха горы, точка солнца. Постоянное и мимолётное.",
+          svg: `<path d='M12 50L30 22l10 15 6-8 8 21' fill='none' stroke='currentColor' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/><circle cx='47' cy='15' r='6' fill='currentColor'/>` },
+        { zone: "garden", name: "Бамбук", idea: "Стебель с узлами: растёт по одному колену, как журнал по одному дню.",
+          svg: `<g stroke='currentColor' stroke-width='9' stroke-linecap='round'><line x1='32' y1='10' x2='32' y2='24'/><line x1='32' y1='31' x2='32' y2='45'/><line x1='32' y1='52' x2='32' y2='55'/></g><line x1='41' y1='14' x2='50' y2='7' stroke='currentColor' stroke-width='5' stroke-linecap='round'/>` },
+
+        /* ── связь ── */
+        { zone: "bond", name: "Раппорт", idea: "Два круга и общая часть: взаимопонимание буквально.",
+          svg: `<g fill='none' stroke='currentColor' stroke-width='5.5'><circle cx='25' cy='32' r='14'/><circle cx='39' cy='32' r='14'/></g><path d='M32 21.7a14 14 0 0 1 0 20.6 14 14 0 0 1 0-20.6z' fill='currentColor' opacity='.35'/>` },
+        { zone: "bond", name: "Мусуби", idea: "Узел-восьмёрка: то, что связано бережно, не развяжется.",
+          svg: `<path d='M13 32c0-7 7-10 12-5l14 10c5 5 12 2 12-5s-7-10-12-5L25 37c-5 5-12 2-12-5z' fill='none' stroke='currentColor' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/>` },
+        { zone: "bond", name: "Мост", idea: "Дуга через воду: раппорт — мост между сегодня и завтра.",
+          svg: `<path d='M9 42c6-17 40-17 46 0' fill='none' stroke='currentColor' stroke-width='6.5' stroke-linecap='round'/><g stroke='currentColor' stroke-width='5' stroke-linecap='round' opacity='.5'><line x1='16' y1='51' x2='26' y2='51'/><line x1='38' y1='51' x2='48' y2='51'/></g>` },
+        { zone: "bond", name: "Тории", idea: "Ворота в тихое место. Порог между шумом и памятью.",
+          svg: `<g stroke='currentColor' stroke-width='6' stroke-linecap='round'><path d='M8 17q24 -6 48 0'/><line x1='14' y1='27' x2='50' y2='27'/><line x1='19' y1='22' x2='21' y2='54'/><line x1='45' y1='22' x2='43' y2='54'/></g>` },
+
+        /* ── штрих и буква ── */
+        { zone: "stroke", name: "Точка туши", idea: "Одно касание кисти. Самый тихий знак из возможных.",
+          svg: `<path d='M32 14c11-2 19 6 18 17s-9 20-19 19-17-9-16-19 7-15 17-17z' fill='currentColor'/>` },
+        { zone: "stroke", name: "Иероглиф Р", idea: "«Р» одним-двумя движениями кисти — латиницы и кириллицы разом.",
+          svg: `<path d='M22 55V12' stroke='currentColor' stroke-width='8' stroke-linecap='round'/><path d='M24 14c12-4 21 2 20 9s-9 11-19 10' fill='none' stroke='currentColor' stroke-width='7' stroke-linecap='round'/>` },
+      ];
+
+      const zones = {};
+      for (const zone of document.querySelectorAll("[data-zone]")) zones[zone.dataset.zone] = zone;
+      MARKS.forEach((mark, index) => {
+        const number = String(index + 1).padStart(2, "0");
+        const svg = (cls) => `<svg class="mark ${cls || ""}" viewBox="0 0 64 64" aria-hidden="true">${mark.svg}</svg>`;
+        const card = document.createElement("figure");
+        card.className = "card";
+        card.style.margin = "0";
+        card.innerHTML = `
+          <span class="num">${number}</span>
+          <div class="lockup">${svg()}<span class="word ${index % 2 ? "lower" : ""}">${index % 2 ? "раппорто" : "Раппорто"}</span></div>
+          <h3>${mark.name}</h3>
+          <p>${mark.idea}</p>
+          <div class="previews">
+            ${svg()}
+            <span class="tab-mock">${svg()}Раппорто — Сегодня</span>
+          </div>`;
+        zones[mark.zone].append(card);
+      });
+
+      for (const button of document.querySelectorAll("[data-color]")) {
+        button.addEventListener("click", () => {
+          document.documentElement.style.setProperty("--logo", button.dataset.color);
+          for (const other of document.querySelectorAll("[data-color]"))
+            other.setAttribute("aria-pressed", String(other === button));
+        });
+      }
+      for (const button of document.querySelectorAll("[data-bg]")) {
+        button.addEventListener("click", () => {
+          document.body.classList.toggle("dark", button.dataset.bg === "dark");
+          for (const other of document.querySelectorAll("[data-bg]"))
+            other.setAttribute("aria-pressed", String(other === button));
+        });
+      }
+    </script>
+  </body>
+</html>

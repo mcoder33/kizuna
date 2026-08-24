@@ -1,0 +1,11 @@
+Use case: stylized-concept
+Asset type: 16:9 presentation cover visual for a personal AI assistant product
+Primary request: transform the idea behind the reference screenshot—a person continuously dropping raw daily notes, tasks, ideas, and meeting fragments into one calm intelligent system—into a premium abstract product visualization.
+Input images: Image 1 is a conceptual reference for the current dark daily-note workflow only; do not copy its interface or text.
+Scene/backdrop: deep charcoal near-black background with generous negative space on the left for a presentation title.
+Subject: on the right, one warm luminous capture point receiving small fragments, then softly organizing them into four recognizable but abstract streams: calendar, tasks, long-term memory, and active projects; suggest that relevant context flows back toward the person before a meeting.
+Style/medium: refined editorial 3D interface illustration, calm spatial computing aesthetic, tactile translucent layers, subtle grain, crisp but not sterile.
+Composition/framing: 16:9 wide, visual cluster on the right 55%, left 45% mostly empty.
+Lighting/mood: intelligent, calm, private, quietly proactive; warm amber focal light with muted violet and cool graphite accents.
+Color palette: #0B0B0D, graphite, warm amber, restrained violet, soft ivory highlights.
+Constraints: no people, no logos, no words, no letters, no numbers, no watermark; avoid generic robot imagery, brains, chat bubbles, dashboards, neon cyberpunk, and excessive glow.

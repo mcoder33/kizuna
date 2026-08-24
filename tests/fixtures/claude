@@ -1,0 +1,9 @@
+#!/usr/bin/env node
+import fs from 'node:fs';
+const args=process.argv.slice(2);
+if(args[0]==='--version'){console.log('claude fixture v0.1.0');process.exit(0)}
+if(args.includes('--max-turns'))process.exit(2);
+const prompt=fs.readFileSync(0,'utf8');
+if(prompt.includes('fixture-fallback'))process.exit(1);
+const sourceId=prompt.match(/\[([^\]]+)\]/)?.[1]||'source-a';const output=prompt.includes('untrusted-sources')?{answer:'Контекст из источника.',citationIds:[sourceId]}:{primaryType:'meeting_event',entities:{projects:['Hub'],people:['BE'],when:null,followUp:null},additionalTypes:[],summary:'Созвон по Hub',proposedActions:[],completed:false,ambiguity:null};
+console.log(JSON.stringify({is_error:false,structured_output:output}));

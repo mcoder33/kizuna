@@ -1,0 +1,598 @@
+import Database from 'better-sqlite3';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { makeProjections, gateClassification, shouldMaterializeProjections } from './classifier.js';
+
+export function openDatabase(filename) {
+  fs.mkdirSync(path.dirname(filename), { recursive: true });
+  const db = new Database(filename);
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  migrate(db);
+  repairMissingProjections(db);
+  return db;
+}
+
+function migrate(db) {
+  db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS captures (id TEXT PRIMARY KEY, raw TEXT NOT NULL, modality TEXT NOT NULL DEFAULT 'text', occurred_at TEXT NOT NULL, created_at TEXT NOT NULL, privacy_scope TEXT NOT NULL DEFAULT 'private', deleted_at TEXT);
+      CREATE TABLE IF NOT EXISTS interpretations (id TEXT PRIMARY KEY, capture_id TEXT NOT NULL REFERENCES captures(id), version INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN ('active','superseded','rejected')), provider TEXT NOT NULL CHECK(provider IN ('openai','openrouter','fallback','codex-cli','claude-cli','manual')), model TEXT, classification_json TEXT NOT NULL, field_confidence_json TEXT NOT NULL, created_at TEXT NOT NULL, supersedes_id TEXT REFERENCES interpretations(id));
+    CREATE UNIQUE INDEX IF NOT EXISTS interpretations_active_capture ON interpretations(capture_id) WHERE status='active';
+    CREATE TABLE IF NOT EXISTS corrections (id TEXT PRIMARY KEY, capture_id TEXT NOT NULL REFERENCES captures(id), interpretation_id TEXT NOT NULL REFERENCES interpretations(id), correction_json TEXT NOT NULL, note TEXT, created_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS projections (id TEXT PRIMARY KEY, capture_id TEXT NOT NULL REFERENCES captures(id), interpretation_id TEXT NOT NULL REFERENCES interpretations(id), projection_type TEXT NOT NULL, payload_json TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('active','reverted')), undo_group_id TEXT NOT NULL, created_at TEXT NOT NULL, reverted_at TEXT);
+    CREATE TABLE IF NOT EXISTS activity_events (id TEXT PRIMARY KEY, type TEXT NOT NULL, payload_json TEXT NOT NULL, created_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS capture_jobs (
+      id TEXT PRIMARY KEY,
+      capture_id TEXT NOT NULL REFERENCES captures(id),
+      selected_provider TEXT NOT NULL CHECK(selected_provider IN ('fallback','openai','openrouter','codex-cli','claude-cli')),
+      state TEXT NOT NULL CHECK(state IN ('pending','running','succeeded','failed','cancelled')),
+      stage TEXT NOT NULL CHECK(stage IN ('queued','classifying','complete','failed','cancelled')),
+      retryable INTEGER NOT NULL DEFAULT 0 CHECK(retryable IN (0,1)),
+      retry_of_id TEXT REFERENCES capture_jobs(id),
+      idempotency_key TEXT UNIQUE,
+      request_fingerprint TEXT,
+      lease_owner TEXT,
+      lease_token TEXT,
+      lease_fence INTEGER NOT NULL DEFAULT 0,
+      lease_expires_at TEXT,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      error_code TEXT,
+      used_provider TEXT CHECK(used_provider IS NULL OR used_provider IN ('fallback','openai','openrouter','codex-cli','claude-cli')),
+      model TEXT,
+      created_at TEXT NOT NULL,
+      started_at TEXT,
+      finished_at TEXT,
+      cancelled_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS capture_jobs_claimable ON capture_jobs(state, lease_expires_at, created_at);
+    CREATE INDEX IF NOT EXISTS capture_jobs_capture_id ON capture_jobs(capture_id, created_at);
+    CREATE TABLE IF NOT EXISTS capture_job_events (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL REFERENCES capture_jobs(id),
+      event_type TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS capture_job_events_job_id ON capture_job_events(job_id, created_at);
+    CREATE TABLE IF NOT EXISTS ledger_events (
+      id TEXT PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      capture_id TEXT REFERENCES captures(id),
+      job_id TEXT REFERENCES capture_jobs(id),
+      projection_id TEXT REFERENCES projections(id),
+      interpretation_id TEXT REFERENCES interpretations(id),
+      actor TEXT,
+      occurred_at TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS ledger_events_capture_id ON ledger_events(capture_id, created_at);
+    CREATE TABLE IF NOT EXISTS daily_briefs (
+      id TEXT PRIMARY KEY,
+      brief_date TEXT NOT NULL,
+      time_zone TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      generated_at TEXT NOT NULL,
+      content_json TEXT NOT NULL,
+      effective_fingerprint TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(brief_date, time_zone, revision),
+      UNIQUE(brief_date, time_zone, effective_fingerprint)
+    );
+    CREATE TABLE IF NOT EXISTS daily_brief_sources (
+      id TEXT PRIMARY KEY,
+      daily_brief_id TEXT NOT NULL REFERENCES daily_briefs(id),
+      section_key TEXT NOT NULL,
+      item_key TEXT NOT NULL,
+      source_type TEXT NOT NULL CHECK(source_type IN ('capture','projection','interpretation','ledger_event')),
+      source_id TEXT NOT NULL,
+      capture_id TEXT REFERENCES captures(id),
+      projection_id TEXT REFERENCES projections(id),
+      interpretation_id TEXT REFERENCES interpretations(id),
+      ledger_event_id TEXT REFERENCES ledger_events(id),
+      created_at TEXT NOT NULL,
+      UNIQUE(daily_brief_id, section_key, item_key, source_type, source_id)
+    );
+    CREATE INDEX IF NOT EXISTS daily_brief_sources_capture_id ON daily_brief_sources(capture_id, created_at);`);
+    const dailyBriefColumns = new Set(db.prepare('PRAGMA table_info(daily_briefs)').all().map(column => column.name));
+    if (!dailyBriefColumns.has('revision')) migrateLegacyDailyBriefs(db, dailyBriefColumns);
+    db.exec('CREATE INDEX IF NOT EXISTS daily_briefs_latest ON daily_briefs(brief_date, time_zone, revision DESC)');
+    const ledgerColumns = new Set(db.prepare('PRAGMA table_info(ledger_events)').all().map(column => column.name));
+    for (const [name, definition] of [['projection_id','TEXT REFERENCES projections(id)'],['interpretation_id','TEXT REFERENCES interpretations(id)'],['actor','TEXT'],['occurred_at','TEXT']]) if (!ledgerColumns.has(name)) db.exec(`ALTER TABLE ledger_events ADD COLUMN ${name} ${definition}`);
+    migrateLedgerEventProvenance(db);
+    createLedgerEventGuards(db);
+    const interpretationSql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='interpretations'").get()?.sql || '';
+    if (!interpretationSql.includes("'codex-cli'")) {
+      db.exec(`PRAGMA foreign_keys = OFF;
+        CREATE TABLE interpretations_next (id TEXT PRIMARY KEY, capture_id TEXT NOT NULL REFERENCES captures(id), version INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN ('active','superseded','rejected')), provider TEXT NOT NULL CHECK(provider IN ('openai','openrouter','fallback','codex-cli','claude-cli','manual')), model TEXT, classification_json TEXT NOT NULL, field_confidence_json TEXT NOT NULL, created_at TEXT NOT NULL, supersedes_id TEXT REFERENCES interpretations(id));
+        INSERT INTO interpretations_next SELECT * FROM interpretations;
+        DROP INDEX IF EXISTS interpretations_active_capture;
+        DROP TABLE interpretations;
+        ALTER TABLE interpretations_next RENAME TO interpretations;
+        CREATE UNIQUE INDEX interpretations_active_capture ON interpretations(capture_id) WHERE status='active';
+        PRAGMA foreign_keys = ON;`);
+    }
+    const correctionColumns = new Set(db.prepare('PRAGMA table_info(corrections)').all().map(column => column.name));
+    if (!correctionColumns.has('operation_key')) db.exec('ALTER TABLE corrections ADD COLUMN operation_key TEXT');
+    if (!correctionColumns.has('request_fingerprint')) db.exec('ALTER TABLE corrections ADD COLUMN request_fingerprint TEXT');
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS corrections_capture_operation ON corrections(capture_id, operation_key) WHERE operation_key IS NOT NULL');
+    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(4, now());
+    migrateOpenRouterProvider(db);
+    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(5, now());
+    // Миграция 6: пользовательские заметки к записи. Отдельная сущность, а не
+    // правка capture.raw: контракт памяти запрещает менять источник, поэтому
+    // тело версионируется append-only со ссылкой supersedes, как интерпретации.
+    db.exec(`CREATE TABLE IF NOT EXISTS capture_notes (
+      id TEXT PRIMARY KEY,
+      capture_id TEXT NOT NULL REFERENCES captures(id),
+      version INTEGER NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('active','superseded')),
+      body TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      supersedes_id TEXT REFERENCES capture_notes(id)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS capture_notes_active ON capture_notes(capture_id) WHERE status='active';
+    CREATE INDEX IF NOT EXISTS capture_notes_capture ON capture_notes(capture_id, created_at);`);
+    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(6, now());
+    // Миграция 7: ручные параметры записи (тип/срок/важность/теги из карточки
+    // ввода) сохраняются с заданием и накладываются после разбора моделью.
+    const overrideColumns = new Set(db.prepare('PRAGMA table_info(capture_jobs)').all().map(column => column.name));
+    if (!overrideColumns.has('overrides_json')) db.exec('ALTER TABLE capture_jobs ADD COLUMN overrides_json TEXT');
+    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(7, now());
+}
+
+export const NOTE_BODY_LIMIT = 20000;
+
+export function activeNote(db, captureId) {
+  return db.prepare("SELECT id,version,body,created_at FROM capture_notes WHERE capture_id=? AND status='active'").get(captureId) || null;
+}
+
+export function saveNote(db, captureId, body) {
+  const createdAt = now();
+  return withImmediateTransaction(db, () => {
+    const capture = db.prepare('SELECT id FROM captures WHERE id=? AND deleted_at IS NULL').get(captureId);
+    if (!capture) return { notFound: true };
+    const previous = db.prepare("SELECT id,version FROM capture_notes WHERE capture_id=? AND status='active'").get(captureId);
+    if (previous) db.prepare("UPDATE capture_notes SET status='superseded' WHERE id=?").run(previous.id);
+    const trimmed = String(body).slice(0, NOTE_BODY_LIMIT);
+    const noteId = id();
+    db.prepare('INSERT INTO capture_notes(id,capture_id,version,status,body,created_at,supersedes_id) VALUES(?,?,?,?,?,?,?)')
+      .run(noteId, captureId, (previous?.version || 0) + 1, 'active', trimmed, createdAt, previous?.id || null);
+    insertLedgerEvent(db, 'note_saved', captureId, null, createdAt);
+    return { note: activeNote(db, captureId) };
+  });
+}
+
+// Миграция 5: провайдер openrouter в CHECK-ограничениях и выбранная модель у
+// задания. Ограничения переписываются копированием таблицы — ALTER TABLE в
+// SQLite не умеет менять CHECK; данные переносятся как есть.
+function migrateOpenRouterProvider(db) {
+  const interpretationSql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='interpretations'").get()?.sql || '';
+  if (!interpretationSql.includes("'openrouter'")) {
+    db.exec(`PRAGMA foreign_keys = OFF;
+      CREATE TABLE interpretations_next (id TEXT PRIMARY KEY, capture_id TEXT NOT NULL REFERENCES captures(id), version INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN ('active','superseded','rejected')), provider TEXT NOT NULL CHECK(provider IN ('openai','openrouter','fallback','codex-cli','claude-cli','manual')), model TEXT, classification_json TEXT NOT NULL, field_confidence_json TEXT NOT NULL, created_at TEXT NOT NULL, supersedes_id TEXT REFERENCES interpretations(id));
+      INSERT INTO interpretations_next SELECT * FROM interpretations;
+      DROP INDEX IF EXISTS interpretations_active_capture;
+      DROP TABLE interpretations;
+      ALTER TABLE interpretations_next RENAME TO interpretations;
+      CREATE UNIQUE INDEX interpretations_active_capture ON interpretations(capture_id) WHERE status='active';
+      PRAGMA foreign_keys = ON;`);
+  }
+  const jobColumns = new Set(db.prepare('PRAGMA table_info(capture_jobs)').all().map(column => column.name));
+  if (!jobColumns.has('selected_model')) db.exec('ALTER TABLE capture_jobs ADD COLUMN selected_model TEXT');
+  const jobSql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='capture_jobs'").get()?.sql || '';
+  if (!jobSql.includes("'openrouter'")) {
+    const columns = db.prepare('PRAGMA table_info(capture_jobs)').all().map(column => column.name).join(',');
+    db.exec(`PRAGMA foreign_keys = OFF;
+      DROP INDEX IF EXISTS capture_jobs_claimable;
+      DROP INDEX IF EXISTS capture_jobs_capture_id;
+      CREATE TABLE capture_jobs_next (
+        id TEXT PRIMARY KEY,
+        capture_id TEXT NOT NULL REFERENCES captures(id),
+        selected_provider TEXT NOT NULL CHECK(selected_provider IN ('fallback','openai','openrouter','codex-cli','claude-cli')),
+        state TEXT NOT NULL CHECK(state IN ('pending','running','succeeded','failed','cancelled')),
+        stage TEXT NOT NULL CHECK(stage IN ('queued','classifying','complete','failed','cancelled')),
+        retryable INTEGER NOT NULL DEFAULT 0 CHECK(retryable IN (0,1)),
+        retry_of_id TEXT REFERENCES capture_jobs(id),
+        idempotency_key TEXT UNIQUE,
+        request_fingerprint TEXT,
+        lease_owner TEXT,
+        lease_token TEXT,
+        lease_fence INTEGER NOT NULL DEFAULT 0,
+        lease_expires_at TEXT,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        error_code TEXT,
+        used_provider TEXT CHECK(used_provider IS NULL OR used_provider IN ('fallback','openai','openrouter','codex-cli','claude-cli')),
+        model TEXT,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        cancelled_at TEXT,
+        selected_model TEXT
+      );
+      INSERT INTO capture_jobs_next(${columns}) SELECT ${columns} FROM capture_jobs;
+      DROP TABLE capture_jobs;
+      ALTER TABLE capture_jobs_next RENAME TO capture_jobs;
+      CREATE INDEX IF NOT EXISTS capture_jobs_claimable ON capture_jobs(state, lease_expires_at, created_at);
+      CREATE INDEX IF NOT EXISTS capture_jobs_capture_id ON capture_jobs(capture_id, created_at);
+      PRAGMA foreign_keys = ON;`);
+  }
+}
+
+function createLedgerEventGuards(db) {
+  db.exec("CREATE TRIGGER IF NOT EXISTS ledger_events_no_update BEFORE UPDATE ON ledger_events BEGIN SELECT RAISE(ABORT, 'ledger events are append-only'); END; CREATE TRIGGER IF NOT EXISTS ledger_events_no_delete BEFORE DELETE ON ledger_events BEGIN SELECT RAISE(ABORT, 'ledger events are append-only'); END;");
+}
+
+function migrateLedgerEventProvenance(db) {
+  const ledgerSql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='ledger_events'").get()?.sql || '';
+  if (!/ON DELETE SET NULL/i.test(ledgerSql)) return;
+  db.pragma('foreign_keys = OFF');
+  try {
+    withImmediateTransaction(db, () => {
+      db.exec(`DROP TRIGGER IF EXISTS ledger_events_no_update;
+        DROP TRIGGER IF EXISTS ledger_events_no_delete;
+        ALTER TABLE daily_brief_sources RENAME TO daily_brief_sources_legacy;
+        ALTER TABLE ledger_events RENAME TO ledger_events_legacy;
+        CREATE TABLE ledger_events (
+          id TEXT PRIMARY KEY, event_type TEXT NOT NULL, capture_id TEXT REFERENCES captures(id), job_id TEXT REFERENCES capture_jobs(id),
+          projection_id TEXT REFERENCES projections(id), interpretation_id TEXT REFERENCES interpretations(id), actor TEXT, occurred_at TEXT, created_at TEXT NOT NULL
+        );
+        CREATE TABLE daily_brief_sources (
+          id TEXT PRIMARY KEY, daily_brief_id TEXT NOT NULL REFERENCES daily_briefs(id), section_key TEXT NOT NULL, item_key TEXT NOT NULL,
+          source_type TEXT NOT NULL CHECK(source_type IN ('capture','projection','interpretation','ledger_event')), source_id TEXT NOT NULL,
+          capture_id TEXT REFERENCES captures(id), projection_id TEXT REFERENCES projections(id), interpretation_id TEXT REFERENCES interpretations(id), ledger_event_id TEXT REFERENCES ledger_events(id), created_at TEXT NOT NULL,
+          UNIQUE(daily_brief_id, section_key, item_key, source_type, source_id)
+        );
+        INSERT INTO ledger_events(id,event_type,capture_id,job_id,projection_id,interpretation_id,actor,occurred_at,created_at)
+          SELECT id,event_type,capture_id,job_id,projection_id,interpretation_id,actor,occurred_at,created_at FROM ledger_events_legacy;
+        INSERT INTO daily_brief_sources(id,daily_brief_id,section_key,item_key,source_type,source_id,capture_id,projection_id,interpretation_id,ledger_event_id,created_at)
+          SELECT id,daily_brief_id,section_key,item_key,source_type,source_id,capture_id,projection_id,interpretation_id,ledger_event_id,created_at FROM daily_brief_sources_legacy;
+        DROP TABLE daily_brief_sources_legacy;
+        DROP TABLE ledger_events_legacy;
+        CREATE INDEX ledger_events_capture_id ON ledger_events(capture_id, created_at);
+        CREATE INDEX IF NOT EXISTS daily_brief_sources_capture_id ON daily_brief_sources(capture_id, created_at);`);
+      createLedgerEventGuards(db);
+    });
+  } finally { db.pragma('foreign_keys = ON'); }
+  if (db.prepare('PRAGMA foreign_key_check').all().length) throw new Error('Ledger provenance migration failed foreign-key validation.');
+}
+function migrateLegacyDailyBriefs(db, columns) {
+  const requiredBriefColumns=['id','brief_date','time_zone','content_json','created_at','updated_at'];
+  const sourceColumns=new Set(db.prepare('PRAGMA table_info(daily_brief_sources)').all().map(column=>column.name));
+  if (!requiredBriefColumns.every(column=>columns.has(column)) || !['id','daily_brief_id','capture_id','created_at'].every(column=>sourceColumns.has(column))) throw new Error('Unsupported legacy daily brief schema; export the database before upgrading.');
+  const invalidSource=db.prepare(`SELECT 1 FROM daily_brief_sources s LEFT JOIN daily_briefs b ON b.id=s.daily_brief_id LEFT JOIN captures c ON c.id=s.capture_id WHERE b.id IS NULL OR c.id IS NULL LIMIT 1`).get();
+  if (invalidSource) throw new Error('Legacy daily brief sources are inconsistent; repair or export the database before upgrading.');
+  db.pragma('foreign_keys = OFF');
+  try { withImmediateTransaction(db,()=>{
+    const legacyBriefs=db.prepare('SELECT * FROM daily_briefs ORDER BY created_at,id').all();
+    const legacySources=db.prepare('SELECT * FROM daily_brief_sources ORDER BY created_at,id').all();
+    db.exec(`ALTER TABLE daily_brief_sources RENAME TO daily_brief_sources_legacy;
+      ALTER TABLE daily_briefs RENAME TO daily_briefs_legacy;
+      CREATE TABLE daily_briefs (
+        id TEXT PRIMARY KEY, brief_date TEXT NOT NULL, time_zone TEXT NOT NULL, revision INTEGER NOT NULL,
+        generated_at TEXT NOT NULL, content_json TEXT NOT NULL, effective_fingerprint TEXT NOT NULL, created_at TEXT NOT NULL,
+        UNIQUE(brief_date, time_zone, revision), UNIQUE(brief_date, time_zone, effective_fingerprint)
+      );
+      CREATE TABLE daily_brief_sources (
+        id TEXT PRIMARY KEY, daily_brief_id TEXT NOT NULL REFERENCES daily_briefs(id), section_key TEXT NOT NULL, item_key TEXT NOT NULL,
+        source_type TEXT NOT NULL CHECK(source_type IN ('capture','projection','interpretation','ledger_event')), source_id TEXT NOT NULL,
+        capture_id TEXT REFERENCES captures(id), projection_id TEXT REFERENCES projections(id), interpretation_id TEXT REFERENCES interpretations(id), ledger_event_id TEXT REFERENCES ledger_events(id), created_at TEXT NOT NULL,
+        UNIQUE(daily_brief_id, section_key, item_key, source_type, source_id)
+      );`);
+    const insertBrief=db.prepare('INSERT INTO daily_briefs(id,brief_date,time_zone,revision,generated_at,content_json,effective_fingerprint,created_at) VALUES(?,?,?,?,?,?,?,?)');
+    for(const brief of legacyBriefs) insertBrief.run(brief.id,brief.brief_date,brief.time_zone,1,brief.updated_at||brief.created_at,brief.content_json||'{"legacy":true}',`legacy:${brief.id}`,brief.created_at);
+    const insertSource=db.prepare('INSERT INTO daily_brief_sources(id,daily_brief_id,section_key,item_key,source_type,source_id,capture_id,created_at) VALUES(?,?,?,?,?,?,?,?)');
+    for(const source of legacySources) insertSource.run(source.id,source.daily_brief_id,'legacy',source.id,'capture',source.capture_id,source.capture_id,source.created_at);
+    db.exec('DROP TABLE daily_brief_sources_legacy; DROP TABLE daily_briefs_legacy;');
+  }); } finally { db.pragma('foreign_keys = ON'); }
+  if (db.prepare('PRAGMA foreign_key_check').all().length) throw new Error('Legacy daily brief migration failed foreign-key validation.');
+}
+const id = () => crypto.randomUUID();
+const now = () => new Date().toISOString();
+
+export function createLedger(db, { raw, occurredAt, classification, provider, model = null, createProjections = true }) {
+  const captureId = id(), interpretationId = id(), undoGroupId = id(), createdAt = now();
+  const write = db.transaction(() => {
+    db.prepare('INSERT INTO captures VALUES(?,?,?,?,?,?,NULL)').run(captureId, raw, 'text', occurredAt || createdAt, createdAt, 'private');
+    db.prepare('INSERT INTO interpretations VALUES(?,?,?,?,?,?,?,?,?,NULL)').run(interpretationId, captureId, 1, 'active', provider, model, JSON.stringify(classification), JSON.stringify(classification.confidence || {}), createdAt);
+    if(createProjections) insertProjections(db, interpretationId, makeProjections(captureId, classification, undoGroupId), createdAt);
+    db.prepare('INSERT INTO activity_events VALUES(?,?,?,?)').run(id(), 'capture_created', JSON.stringify({ captureId, undoGroupId }), createdAt);
+  });
+  write(); return { captureId, interpretationId, undoGroupId };
+}
+
+function withImmediateTransaction(db, operation) {
+  db.exec('BEGIN IMMEDIATE');
+  try { const result = operation(); db.exec('COMMIT'); return result; }
+  catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+function insertJobEvent(db, jobId, eventType, createdAt) {
+  db.prepare('INSERT INTO capture_job_events(id,job_id,event_type,created_at) VALUES(?,?,?,?)').run(id(), jobId, eventType, createdAt);
+}
+
+function insertLedgerEvent(db, eventType, captureId, jobId, createdAt, { projectionId = null, interpretationId = null, actor = null, occurredAt = null } = {}) {
+  db.prepare('INSERT INTO ledger_events(id,event_type,capture_id,job_id,projection_id,interpretation_id,actor,occurred_at,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(id(), eventType, captureId, jobId, projectionId, interpretationId, actor, occurredAt, createdAt);
+}
+
+export function enqueueCaptureJob(db, { raw, occurredAt, selectedProvider, selectedModel = null, idempotencyKey = null, requestFingerprint = null, overrides = null }) {
+  const createdAt = now();
+  return withImmediateTransaction(db, () => {
+    if (idempotencyKey) {
+      const existing = db.prepare('SELECT id,capture_id,request_fingerprint FROM capture_jobs WHERE idempotency_key=?').get(idempotencyKey);
+      if (existing) {
+        if (existing.request_fingerprint !== requestFingerprint) return { conflict:true };
+        return { captureId:existing.capture_id, jobId:existing.id, state:'pending', existing:true };
+      }
+    }
+    const captureId = id(), jobId = id();
+    db.prepare('INSERT INTO captures VALUES(?,?,?,?,?,?,NULL)').run(captureId, raw, 'text', occurredAt || createdAt, createdAt, 'private');
+    db.prepare(`INSERT INTO capture_jobs(id,capture_id,selected_provider,selected_model,state,stage,retryable,retry_of_id,idempotency_key,request_fingerprint,overrides_json,created_at)
+      VALUES(?,?,?,?,'pending','queued',0,NULL,?,?,?,?)`).run(jobId, captureId, selectedProvider, selectedModel, idempotencyKey, requestFingerprint, overrides ? JSON.stringify(overrides) : null, createdAt);
+    insertJobEvent(db, jobId, 'queued', createdAt);
+    insertLedgerEvent(db, 'capture_queued', captureId, jobId, createdAt);
+    return { captureId, jobId, state:'pending', existing:false };
+  });
+}
+
+export function claimCaptureJob(db, { owner, leaseToken, leaseMs, currentTime = now() }) {
+  return withImmediateTransaction(db, () => {
+    const job = db.prepare(`SELECT * FROM capture_jobs
+      WHERE state='pending' OR (state='running' AND lease_expires_at <= ?)
+      ORDER BY created_at LIMIT 1`).get(currentTime);
+    if (!job) return null;
+    const leaseExpiresAt = new Date(new Date(currentTime).getTime() + leaseMs).toISOString();
+    const reclaimed = job.state === 'running';
+    const result = db.prepare(`UPDATE capture_jobs SET state='running',stage='classifying',lease_owner=?,lease_token=?,lease_fence=lease_fence+1,lease_expires_at=?,attempt_count=attempt_count+1,started_at=COALESCE(started_at,?)
+      WHERE id=? AND (state='pending' OR (state='running' AND lease_expires_at <= ?))`).run(owner, leaseToken, leaseExpiresAt, currentTime, job.id, currentTime);
+    if (result.changes !== 1) return null;
+    const claim = db.prepare('SELECT j.*,c.raw FROM capture_jobs j JOIN captures c ON c.id=j.capture_id WHERE j.id=?').get(job.id);
+    insertJobEvent(db, claim.id, reclaimed ? 'reclaimed' : 'started', currentTime);
+    return claim;
+  });
+}
+
+export function completeCaptureJob(db, claim, { classification, provider, model = null }) {
+  const completedAt = now();
+  return withImmediateTransaction(db, () => {
+    const current = db.prepare(`SELECT * FROM capture_jobs WHERE id=? AND state='running' AND lease_owner=? AND lease_token=? AND lease_fence=? AND lease_expires_at > ?`).get(claim.id, claim.lease_owner, claim.lease_token, claim.lease_fence, completedAt);
+    if (!current) return null;
+    const review = gateClassification(classification);
+    const interpretationId = id(), undoGroupId = id();
+    db.prepare('INSERT INTO interpretations VALUES(?,?,?,?,?,?,?,?,?,NULL)').run(interpretationId, claim.capture_id, 1, 'active', provider, model, JSON.stringify(classification), JSON.stringify(classification.confidence || {}), completedAt);
+    if (shouldMaterializeProjections(classification)) insertProjections(db, interpretationId, makeProjections(claim.capture_id, classification, undoGroupId), completedAt);
+    db.prepare(`UPDATE capture_jobs SET state='succeeded',stage='complete',retryable=0,used_provider=?,model=?,lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,finished_at=?
+      WHERE id=? AND state='running' AND lease_owner=? AND lease_token=? AND lease_fence=?`).run(provider, model, completedAt, claim.id, claim.lease_owner, claim.lease_token, claim.lease_fence);
+    insertJobEvent(db, claim.id, 'succeeded', completedAt);
+    insertLedgerEvent(db, 'capture_classified', claim.capture_id, claim.id, completedAt);
+    return { interpretationId, undoGroupId };
+  });
+}
+
+export function renewCaptureJobLease(db, claim, { leaseMs, currentTime = now() }) {
+  const leaseExpiresAt = new Date(new Date(currentTime).getTime() + leaseMs).toISOString();
+  const result = db.prepare(`UPDATE capture_jobs SET lease_expires_at=?
+    WHERE id=? AND state='running' AND lease_owner=? AND lease_token=? AND lease_fence=?`).run(leaseExpiresAt, claim.id, claim.lease_owner, claim.lease_token, claim.lease_fence);
+  return result.changes === 1;
+}
+
+const safeJobErrors = new Set(['unavailable','busy','timeout','aborted','nonzero','malformed_output','absent_output','oversize_output','schema_invalid','rate_limited','invalid_provider','not_configured']);
+
+export function failCaptureJob(db, claim, errorCode = 'unavailable') {
+  const finishedAt = now(), safeError = safeJobErrors.has(errorCode) ? errorCode : 'unavailable';
+  return withImmediateTransaction(db, () => {
+    const result = db.prepare(`UPDATE capture_jobs SET state='failed',stage='failed',retryable=1,error_code=?,lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,finished_at=?
+      WHERE id=? AND state='running' AND lease_owner=? AND lease_token=? AND lease_fence=?`).run(safeError, finishedAt, claim.id, claim.lease_owner, claim.lease_token, claim.lease_fence);
+    if (result.changes !== 1) return false;
+    insertJobEvent(db, claim.id, 'failed', finishedAt);
+    insertLedgerEvent(db, 'capture_failed', claim.capture_id, claim.id, finishedAt);
+    return true;
+  });
+}
+
+export function releaseCaptureJob(db, claim) {
+  const releasedAt = now();
+  return withImmediateTransaction(db, () => {
+    const result = db.prepare(`UPDATE capture_jobs SET state='pending',stage='queued',lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL
+      WHERE id=? AND state='running' AND lease_owner=? AND lease_token=? AND lease_fence=?`).run(claim.id, claim.lease_owner, claim.lease_token, claim.lease_fence);
+    if (result.changes !== 1) return false;
+    insertJobEvent(db, claim.id, 'released', releasedAt);
+    return true;
+  });
+}
+
+export function cancelCaptureJob(db, jobId) {
+  const cancelledAt = now();
+  return withImmediateTransaction(db, () => {
+    const job = db.prepare('SELECT * FROM capture_jobs WHERE id=?').get(jobId);
+    if (!job) return null;
+    if (['succeeded','failed','cancelled'].includes(job.state)) return { job, changed:false };
+    db.prepare(`UPDATE capture_jobs SET state='cancelled',stage='cancelled',retryable=1,lease_owner=NULL,lease_token=NULL,lease_fence=lease_fence+1,lease_expires_at=NULL,cancelled_at=?,finished_at=? WHERE id=?`).run(cancelledAt, cancelledAt, jobId);
+    insertJobEvent(db, jobId, 'cancelled', cancelledAt);
+    insertLedgerEvent(db, 'capture_cancelled', job.capture_id, jobId, cancelledAt);
+    return { job:db.prepare('SELECT * FROM capture_jobs WHERE id=?').get(jobId), changed:true };
+  });
+}
+
+export function retryCaptureJob(db, jobId) {
+  const createdAt = now();
+  return withImmediateTransaction(db, () => {
+    const previous = db.prepare('SELECT * FROM capture_jobs WHERE id=?').get(jobId);
+    if (!previous) return null;
+    if (!['failed','cancelled'].includes(previous.state) || !previous.retryable) return { invalidState:true };
+    const retryId = id();
+    db.prepare(`INSERT INTO capture_jobs(id,capture_id,selected_provider,selected_model,state,stage,retryable,retry_of_id,created_at)
+      VALUES(?,?,?,?,'pending','queued',0,?,?)`).run(retryId, previous.capture_id, previous.selected_provider, previous.selected_model || null, previous.id, createdAt);
+    insertJobEvent(db, retryId, 'queued', createdAt);
+    insertLedgerEvent(db, 'capture_retry_queued', previous.capture_id, retryId, createdAt);
+    return { captureId:previous.capture_id, jobId:retryId, state:'pending' };
+  });
+}
+
+export function getCaptureJob(db, jobId) {
+  const job = db.prepare('SELECT id,capture_id,state,stage,retryable,retry_of_id,created_at,started_at,finished_at,cancelled_at,error_code,used_provider FROM capture_jobs WHERE id=?').get(jobId);
+  if (!job) return null;
+  return { id:job.id, captureId:job.capture_id, state:job.state, stage:job.stage, retryable:Boolean(job.retryable), retryOfId:job.retry_of_id, createdAt:job.created_at, startedAt:job.started_at, finishedAt:job.finished_at, cancelledAt:job.cancelled_at, error:job.error_code, usedProvider:job.used_provider };
+}
+function insertProjections(db, interpretationId, projections, createdAt) {
+  const stmt = db.prepare('INSERT INTO projections VALUES(?,?,?,?,?,?,?,?,NULL)');
+  for (const p of projections) stmt.run(id(), p.captureId, interpretationId, p.projectionType, JSON.stringify(p.payload), 'active', p.undoGroupId, createdAt);
+}
+function repairMissingProjections(db) {
+  const activeInterpretations = db.prepare(`SELECT i.id,i.capture_id,i.classification_json
+    FROM interpretations i JOIN captures c ON c.id=i.capture_id
+    WHERE i.status='active' AND c.deleted_at IS NULL`).all();
+  withImmediateTransaction(db, () => {
+    for (const interpretation of activeInterpretations) {
+      let classification;
+      try { classification = JSON.parse(interpretation.classification_json); }
+      catch { continue; }
+      if (!shouldMaterializeProjections(classification)) continue;
+      const existingTypes = new Set(db.prepare('SELECT projection_type FROM projections WHERE interpretation_id=?').all(interpretation.id).map(row => row.projection_type));
+      const missing = makeProjections(interpretation.capture_id, classification, id()).filter(projection => !existingTypes.has(projection.projectionType));
+      if (missing.length) insertProjections(db, interpretation.id, missing, now());
+    }
+  });
+}
+export function replaceInterpretation(db, captureId, classification, provider, correction = null, createProjections = true, model = null) {
+  return withImmediateTransaction(db,()=>{
+    if(correction?.operationKey){const existing=db.prepare('SELECT interpretation_id,request_fingerprint FROM corrections WHERE capture_id=? AND operation_key=?').get(captureId,correction.operationKey);if(existing){if(existing.request_fingerprint!==correction.requestFingerprint)return { conflict:true };const projection=db.prepare('SELECT undo_group_id FROM projections WHERE interpretation_id=? ORDER BY created_at LIMIT 1').get(existing.interpretation_id);return { interpretationId:existing.interpretation_id,undoGroupId:projection?.undo_group_id||null,replayed:true };}}
+    const previous = db.prepare("SELECT * FROM interpretations WHERE capture_id=? AND status='active'").get(captureId);
+    if (!previous) return null;
+    const interpretationId = id(), undoGroupId = id(), createdAt = now();
+    db.prepare("UPDATE interpretations SET status='superseded' WHERE id=?").run(previous.id);
+    db.prepare("UPDATE projections SET status='reverted', reverted_at=? WHERE interpretation_id=? AND status='active'").run(createdAt, previous.id);
+    db.prepare('INSERT INTO interpretations VALUES(?,?,?,?,?,?,?,?,?,?)').run(interpretationId, captureId, previous.version + 1, 'active', provider, provider === 'manual' ? null : model, JSON.stringify(classification), JSON.stringify(classification.confidence || {}), createdAt, previous.id);
+    if(createProjections) insertProjections(db, interpretationId, makeProjections(captureId, classification, undoGroupId), createdAt);
+    if (correction) db.prepare('INSERT INTO corrections(id,capture_id,interpretation_id,correction_json,note,created_at,operation_key,request_fingerprint) VALUES(?,?,?,?,?,?,?,?)').run(id(), captureId, interpretationId, JSON.stringify(correction.patch||correction), correction.note || null, createdAt, correction.operationKey||null, correction.requestFingerprint||null);
+    db.prepare('INSERT INTO activity_events VALUES(?,?,?,?)').run(id(), 'interpretation_replaced', JSON.stringify({ captureId, undoGroupId }), createdAt);
+    return { interpretationId, undoGroupId };
+  });
+}
+export function getAggregate(db, captureId) {
+  return db.prepare(`SELECT c.*, i.id interpretation_id, i.version, i.provider, i.model, i.classification_json, i.field_confidence_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.id=?`).get(captureId);
+}
+function completionState(db, projectionId) {
+  const event = db.prepare("SELECT event_type,occurred_at FROM ledger_events WHERE projection_id=? AND event_type IN ('completed','completion_undone') ORDER BY rowid DESC LIMIT 1").get(projectionId);
+  return { completed:event?.event_type === 'completed', completedAt:event?.event_type === 'completed' ? event.occurred_at : null, actor:event?.event_type === 'completed' ? 'user' : null };
+}
+function completionTarget(db, projectionId) {
+  const projection = db.prepare('SELECT p.*,c.deleted_at,i.status interpretation_status FROM projections p JOIN captures c ON c.id=p.capture_id JOIN interpretations i ON i.id=p.interpretation_id WHERE p.id=?').get(projectionId);
+  if (!projection) return { error:'not_found' };
+  if (projection.status !== 'active' || projection.deleted_at !== null || projection.interpretation_status !== 'active') return { error:'inactive' };
+  if (!['task','meeting_event'].includes(projection.projection_type)) return { error:'not_completable' };
+  return { projection };
+}
+export function completeProjection(db, projectionId) {
+  return withImmediateTransaction(db, () => {
+    const target = completionTarget(db, projectionId);
+    if (target.error) return target;
+    const completion = completionState(db, projectionId);
+    if (completion.completed) return { projection:target.projection, completion, changed:false };
+    const occurredAt = now();
+    insertLedgerEvent(db, 'completed', target.projection.capture_id, null, occurredAt, { projectionId, interpretationId:target.projection.interpretation_id, actor:'user', occurredAt });
+    return { projection:target.projection, completion:{ completed:true, completedAt:occurredAt, actor:'user' }, changed:true };
+  });
+}
+export function undoProjectionCompletion(db, projectionId) {
+  return withImmediateTransaction(db, () => {
+    const target = completionTarget(db, projectionId);
+    if (target.error) return target;
+    const completion = completionState(db, projectionId);
+    if (!completion.completed) return { projection:target.projection, completion, changed:false };
+    const occurredAt = now();
+    insertLedgerEvent(db, 'completion_undone', target.projection.capture_id, null, occurredAt, { projectionId, interpretationId:target.projection.interpretation_id, actor:'user', occurredAt });
+    return { projection:target.projection, completion:{ completed:false, completedAt:null, actor:null }, changed:true };
+  });
+}
+export function listEntries(db, { cursor, limit = 40 }) {
+  const rows = db.prepare(`SELECT c.*, i.id interpretation_id, i.version, i.provider, i.model, i.classification_json, i.field_confidence_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL ${cursor ? 'AND c.created_at < ?' : ''} ORDER BY c.created_at DESC LIMIT ?`).all(...(cursor ? [cursor, limit] : [limit]));
+  return { entries: rows.map(row => fullEntry(db, row)), nextCursor: rows.length === limit ? rows.at(-1).created_at : null };
+}
+export function serializeEntry(row) { return { id: row.id, raw: row.raw, occurredAt: row.occurred_at, createdAt: row.created_at, interpretation: { id: row.interpretation_id, version: row.version, provider: row.provider, model: row.model, classification: JSON.parse(row.classification_json), confidence: JSON.parse(row.field_confidence_json) }, projections: [] }; }
+export function fullEntry(db, row) { const entry = serializeEntry(row); entry.note = activeNote(db, row.id); entry.projections = db.prepare("SELECT * FROM projections WHERE capture_id=? AND status='active' ORDER BY created_at").all(row.id).map(p => ({ id:p.id,type:p.projection_type,payload:JSON.parse(p.payload_json),undoGroupId:p.undo_group_id,completion:completionState(db,p.id),completionCandidate:null })); return entry; }
+export function day(db) { const rows = db.prepare(`SELECT c.*, i.id interpretation_id, i.version, i.provider, i.model, i.classification_json, i.field_confidence_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL ORDER BY c.created_at DESC LIMIT 100`).all(); return rows.map(row=>fullEntry(db,row)); }
+export function dayView(db, date, now=new Date()) { const entries=day(db); const scheduled=entry=>entry.interpretation.classification.entities.schedule; const completable=entry=>entry.projections.find(projection=>['task','meeting_event'].includes(projection.type)); const dayEntries=entries.filter(entry=>scheduled(entry)?.date===date); const horizon=new Date(now.getTime()+48*60*60*1000); const upcoming=entries.filter(entry=>{const c=entry.interpretation.classification,s=scheduled(entry),projection=completable(entry);return !projection?.completion.completed&&['meeting_event','task'].includes(c.primaryType)&&s?.sortAt&&new Date(s.sortAt)>=now&&new Date(s.sortAt)<=horizon}).sort((a,b)=>new Date(scheduled(a).sortAt)-new Date(scheduled(b).sortAt)); const attention=entries.filter(entry=>{const c=entry.interpretation.classification,projection=completable(entry);return !projection?.completion.completed&&!c.completed&&((c.primaryType==='task'&&!scheduled(entry)?.date)||c.entities.followUp||c.primaryType==='outcome_decision')}); return {day:dayEntries,upcoming,attention}; }
+
+const dailySectionLabels = { doneYesterday:'Сделано вчера', decisions:'Решения', carried:'Перенесённое', blockers:'Блокеры', today:'Сегодня' };
+function samaraBounds(date) { const start = new Date(`${date}T00:00:00+04:00`); return { start:start.toISOString(), end:new Date(start.getTime()+86400000).toISOString() }; }
+function previousDate(date) { return new Date(new Date(`${date}T00:00:00Z`).getTime()-86400000).toISOString().slice(0,10); }
+function dailySource(sectionKey, itemKey, sourceType, sourceId, row) { return { sectionKey,itemKey,sourceType,sourceId,captureId:row.capture_id || row.id,projectionId:row.projection_id || null,interpretationId:row.interpretation_id || null,ledgerEventId:row.ledger_id || null }; }
+function dailyItem(key, text, source) { return { key, text, source:{ kind:'capture', captureId:source.captureId } }; }
+function isExplicitDecision(raw) { return !/^\s*[«"']/u.test(raw) && !raw.includes('?') && /^\s*(?:решение|решили|договорились|выбрали)\s*:/iu.test(raw); }
+function effectiveProjectionText(row) { const payload=JSON.parse(row.payload_json),schedule=payload.schedule||{},details=[schedule.time,payload.title,(payload.projects||[]).join(', '),payload.followUp].filter(Boolean); return details.join(' · '); }
+function dailyContent(db, date) {
+  const yesterday = previousDate(date), { start, end } = samaraBounds(yesterday), sections = [];
+  const doneRows = db.prepare(`SELECT e.id ledger_id,e.capture_id,e.projection_id,e.interpretation_id,c.raw FROM ledger_events e JOIN captures c ON c.id=e.capture_id
+    WHERE e.event_type='completed' AND e.actor='user' AND e.occurred_at>=? AND e.occurred_at<?
+    AND NOT EXISTS (SELECT 1 FROM ledger_events later WHERE later.projection_id=e.projection_id AND later.event_type='completion_undone' AND later.rowid>e.rowid)
+    ORDER BY e.occurred_at LIMIT 100`).all(start,end);
+  const done = doneRows.map(row => ({ item:dailyItem(`done-${row.ledger_id}`,row.raw,{captureId:row.capture_id}), sources:[dailySource('doneYesterday',`done-${row.ledger_id}`,'ledger_event',row.ledger_id,row),dailySource('doneYesterday',`done-${row.ledger_id}`,'capture',row.capture_id,row),dailySource('doneYesterday',`done-${row.ledger_id}`,'projection',row.projection_id,row)] }));
+  sections.push({ key:'doneYesterday', label:dailySectionLabels.doneYesterday, empty:'Нет подтверждённых завершений за вчера.', items:done });
+  const decisionRows = db.prepare(`SELECT c.id,c.raw,i.id interpretation_id FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active'
+    WHERE c.deleted_at IS NULL AND i.classification_json LIKE '%"primaryType":"outcome_decision"%' AND c.occurred_at>=? AND c.occurred_at<? ORDER BY c.occurred_at LIMIT 200`).all(start,end).filter(row=>isExplicitDecision(row.raw)).slice(0,100);
+  const decisions = decisionRows.map(row => ({ item:dailyItem(`decision-${row.id}`,row.raw,{captureId:row.id}), sources:[dailySource('decisions',`decision-${row.id}`,'capture',row.id,row),dailySource('decisions',`decision-${row.id}`,'interpretation',row.interpretation_id,row)] }));
+  sections.push({ key:'decisions', label:dailySectionLabels.decisions, empty:'Нет зафиксированных решений.', items:decisions });
+  const carriedRows = db.prepare(`SELECT p.id projection_id,p.capture_id,p.interpretation_id,p.payload_json,c.raw FROM projections p JOIN captures c ON c.id=p.capture_id JOIN interpretations i ON i.id=p.interpretation_id
+    WHERE p.status='active' AND c.deleted_at IS NULL AND i.status='active' AND p.projection_type IN ('task','meeting_event')
+      AND json_extract(p.payload_json,'$.schedule.date')<?
+      AND NOT EXISTS (SELECT 1 FROM ledger_events e WHERE e.projection_id=p.id AND e.event_type='completed' AND NOT EXISTS (SELECT 1 FROM ledger_events undo_e WHERE undo_e.projection_id=p.id AND undo_e.event_type='completion_undone' AND undo_e.rowid>e.rowid))
+    ORDER BY json_extract(p.payload_json,'$.schedule.date'),p.created_at LIMIT 100`).all(date);
+  const carried = carriedRows.map(row => ({ item:dailyItem(`carried-${row.projection_id}`,effectiveProjectionText(row),{captureId:row.capture_id}), sources:[dailySource('carried',`carried-${row.projection_id}`,'capture',row.capture_id,row),dailySource('carried',`carried-${row.projection_id}`,'projection',row.projection_id,row),dailySource('carried',`carried-${row.projection_id}`,'interpretation',row.interpretation_id,row)] }));
+  sections.push({ key:'carried', label:dailySectionLabels.carried, empty:'Нет незавершённых задач или встреч из прошлого.', items:carried });
+  const blockRows = db.prepare(`SELECT c.id,c.raw,i.id interpretation_id FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active'
+    WHERE c.deleted_at IS NULL AND c.occurred_at>=? AND c.occurred_at<? AND (trim(c.raw) LIKE 'Блокер:%' OR trim(c.raw) LIKE 'Блокер—%' OR trim(c.raw) LIKE 'Блокер-%' OR trim(c.raw) LIKE 'блокер:%' OR trim(c.raw) LIKE 'блокер—%' OR trim(c.raw) LIKE 'блокер-%' OR trim(c.raw) LIKE 'Блокирует:%' OR trim(c.raw) LIKE 'Блокирует—%' OR trim(c.raw) LIKE 'Блокирует-%' OR trim(c.raw) LIKE 'блокирует:%' OR trim(c.raw) LIKE 'блокирует—%' OR trim(c.raw) LIKE 'блокирует-%')
+    ORDER BY c.occurred_at LIMIT 100`).all(start,end);
+  const blockers = blockRows.map(row => ({ item:dailyItem(`blocker-${row.id}`,row.raw,{captureId:row.id}), sources:[dailySource('blockers',`blocker-${row.id}`,'capture',row.id,row),dailySource('blockers',`blocker-${row.id}`,'interpretation',row.interpretation_id,row)] }));
+  sections.push({ key:'blockers', label:dailySectionLabels.blockers, empty:'Нет зафиксированных блокеров.', items:blockers });
+  const todayRows = db.prepare(`SELECT p.id projection_id,p.capture_id,p.interpretation_id,p.payload_json,c.raw FROM projections p JOIN captures c ON c.id=p.capture_id JOIN interpretations i ON i.id=p.interpretation_id
+    WHERE p.status='active' AND c.deleted_at IS NULL AND i.status='active' AND p.projection_type IN ('task','meeting_event') AND json_extract(p.payload_json,'$.schedule.date')=?
+      AND NOT EXISTS (SELECT 1 FROM ledger_events e WHERE e.projection_id=p.id AND e.event_type='completed' AND NOT EXISTS (SELECT 1 FROM ledger_events undo_e WHERE undo_e.projection_id=p.id AND undo_e.event_type='completion_undone' AND undo_e.rowid>e.rowid))
+    ORDER BY json_extract(p.payload_json,'$.schedule.time'),p.created_at LIMIT 100`).all(date);
+  const today = todayRows.map(row => ({ item:dailyItem(`today-${row.projection_id}`,effectiveProjectionText(row),{captureId:row.capture_id}), sources:[dailySource('today',`today-${row.projection_id}`,'capture',row.capture_id,row),dailySource('today',`today-${row.projection_id}`,'projection',row.projection_id,row),dailySource('today',`today-${row.projection_id}`,'interpretation',row.interpretation_id,row)] }));
+  sections.push({ key:'today', label:dailySectionLabels.today, empty:'На сегодня задач и встреч нет.', items:today });
+  return { content:{ date, timeZone:'Europe/Samara', sections:sections.map(section=>({...section,items:section.items.map(entry=>entry.item)})) }, sourceRows:sections.flatMap(section=>section.items.flatMap(entry=>entry.sources)) };
+}
+function dailyFingerprint(content, sourceRows) { return crypto.createHash('sha256').update(JSON.stringify({content,sources:sourceRows.map(source=>[source.sectionKey,source.itemKey,source.sourceType,source.sourceId])})).digest('hex'); }
+function readBriefSources(db, briefId) { return db.prepare(`SELECT section_key,item_key,source_type,source_id,capture_id FROM daily_brief_sources WHERE daily_brief_id=? ORDER BY rowid`).all(briefId).map(row => ({ sectionKey:row.section_key,itemKey:row.item_key,sourceType:row.source_type,sourceId:row.source_id,action:{kind:'capture',captureId:row.capture_id} })); }
+function serializeBrief(db, row) { return { date:row.brief_date, timeZone:row.time_zone, revision:row.revision, generatedAt:row.generated_at, content:JSON.parse(row.content_json), sources:readBriefSources(db,row.id) }; }
+export function getDailyBrief(db, { date, timeZone='Europe/Samara', force=false }) {
+  return withImmediateTransaction(db,()=>{const { content, sourceRows }=dailyContent(db,date),fingerprint=dailyFingerprint(content,sourceRows),latest=db.prepare('SELECT * FROM daily_briefs WHERE brief_date=? AND time_zone=? ORDER BY revision DESC LIMIT 1').get(date,timeZone);if(latest&&latest.effective_fingerprint===fingerprint)return serializeBrief(db,latest);const generatedAt=now(),revision=(latest?.revision||0)+1,briefId=id();db.prepare('INSERT INTO daily_briefs(id,brief_date,time_zone,revision,generated_at,content_json,effective_fingerprint,created_at) VALUES(?,?,?,?,?,?,?,?)').run(briefId,date,timeZone,revision,generatedAt,JSON.stringify(content),fingerprint,generatedAt);for(const source of sourceRows)db.prepare('INSERT INTO daily_brief_sources(id,daily_brief_id,section_key,item_key,source_type,source_id,capture_id,projection_id,interpretation_id,ledger_event_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id(),briefId,source.sectionKey,source.itemKey,source.sourceType,source.sourceId,source.captureId,source.projectionId,source.interpretationId,source.ledgerEventId,generatedAt);return serializeBrief(db,db.prepare('SELECT * FROM daily_briefs WHERE id=?').get(briefId));});
+}
+export function findDailyBrief(db, { date, timeZone='Europe/Samara', revision=null }) { const row = revision === null ? db.prepare('SELECT * FROM daily_briefs WHERE brief_date=? AND time_zone=? ORDER BY revision DESC LIMIT 1').get(date,timeZone) : db.prepare('SELECT * FROM daily_briefs WHERE brief_date=? AND time_zone=? AND revision=?').get(date,timeZone,revision); return row ? serializeBrief(db,row) : null; }
+export function findDailyBriefSource(db,{date,timeZone='Europe/Samara',revision,sourceId}) { return db.prepare(`SELECT c.id,c.raw,c.occurred_at,c.created_at FROM daily_brief_sources s JOIN daily_briefs b ON b.id=s.daily_brief_id JOIN captures c ON c.id=s.capture_id WHERE b.brief_date=? AND b.time_zone=? AND b.revision=? AND s.source_id=?`).get(date,timeZone,revision,sourceId) || null; }
+export function undo(db, undoGroupId) { const result = db.prepare("UPDATE projections SET status='reverted', reverted_at=? WHERE undo_group_id=? AND status='active'").run(now(), undoGroupId); return result.changes; }
+const memoryStopwords=new Set(['что','было','по','мы','уже','про','о','об','когда','кто','где','как','я','ты','он','она','оно','они','меня','мне','тебя','тебе','его','её','ей','их','нас','нам','вас','вам','себя','свой','моя','мой','твоя','твой','наш','ваш','этот','эта','это','эти','тот','та','то','те','ли','не','да','а','и','в','во','с','со','за','для','от','до','из','на']);
+export function normalizeMemoryText(value){return String(value||'').normalize('NFKC').toLocaleLowerCase('ru-RU').replace(/[^\p{L}\p{N}]+/gu,' ').trim().replace(/\s+/g,' ')}
+function meaningfulTokens(normalized){return [...new Set(normalized.split(' ').filter(token=>token&&!memoryStopwords.has(token)))].slice(0,8)}
+export function search(db, query) { const normalizedQuery=normalizeMemoryText(query),tokens=meaningfulTokens(normalizedQuery); const rows=db.prepare('SELECT id,raw,created_at FROM captures WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?').all(500); const results=[]; for(const row of rows){const normalizedRaw=normalizeMemoryText(row.raw),rawTokens=new Set(normalizedRaw.split(' '));const matched=tokens.filter(token=>rawTokens.has(token));const exact=Boolean(normalizedQuery&&normalizedRaw.includes(normalizedQuery));if(!matched.length&&!exact)continue;const score=(exact?10000:0)+matched.length*100+(tokens.length?matched.length/tokens.length:0)*10;results.push({captureId:row.id,snippet:row.raw.slice(0,500),createdAt:row.created_at,score})}return results.sort((left,right)=>right.score-left.score||right.createdAt.localeCompare(left.createdAt)).slice(0,12).map(({score,...result})=>result); }
+const EXPORT_ROW_LIMIT = 10_000;
+const exportTables = ['captures','interpretations','corrections','projections','capture_jobs','capture_job_events','ledger_events','daily_briefs','daily_brief_sources'];
+function exportRowCount(db) { return exportTables.reduce((total, table) => total + db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count, 0); }
+export function exportLedger(db) {
+  const rowCount = exportRowCount(db);
+  if (rowCount > EXPORT_ROW_LIMIT) return { limitExceeded:true, rowCount, rowLimit:EXPORT_ROW_LIMIT };
+  return {
+    schemaVersion:2,
+    exportedAt:now(),
+    dataClassification:'local-personal-data',
+    rowLimit:EXPORT_ROW_LIMIT,
+    captures:db.prepare('SELECT * FROM captures ORDER BY created_at,id').all(),
+    interpretations:db.prepare('SELECT id,capture_id,version,status,provider,created_at,supersedes_id FROM interpretations ORDER BY created_at,id').all(),
+    corrections:db.prepare('SELECT id,capture_id,interpretation_id,correction_json,note,created_at FROM corrections ORDER BY created_at,id').all(),
+    projections:db.prepare('SELECT id,capture_id,interpretation_id,projection_type,status,undo_group_id,created_at,reverted_at FROM projections ORDER BY created_at,id').all(),
+    captureNotes:db.prepare('SELECT id,capture_id,version,status,created_at,supersedes_id FROM capture_notes ORDER BY created_at,id').all(),
+    captureJobs:db.prepare('SELECT id,capture_id,selected_provider,selected_model,state,stage,retryable,retry_of_id,attempt_count,error_code,used_provider,created_at,started_at,finished_at,cancelled_at FROM capture_jobs ORDER BY created_at,id').all(),
+    captureJobEvents:db.prepare('SELECT id,job_id,event_type,created_at FROM capture_job_events ORDER BY created_at,id').all(),
+    ledgerEvents:db.prepare('SELECT * FROM ledger_events ORDER BY created_at,id').all(),
+    dailyBriefs:db.prepare('SELECT * FROM daily_briefs ORDER BY brief_date,time_zone,revision').all(),
+    dailyBriefSources:db.prepare('SELECT * FROM daily_brief_sources ORDER BY daily_brief_id,created_at,id').all()
+  };
+}
+export function resetLedger(db) {
+  return withImmediateTransaction(db, () => {
+    db.exec('DROP TRIGGER IF EXISTS ledger_events_no_update; DROP TRIGGER IF EXISTS ledger_events_no_delete;');
+    try {
+      for (const table of ['daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','interpretations','capture_notes','activity_events','captures']) db.prepare(`DELETE FROM ${table}`).run();
+    } finally { createLedgerEventGuards(db); }
+  });
+}
