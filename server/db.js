@@ -560,6 +560,43 @@ export function getDailyBrief(db, { date, timeZone='Europe/Samara', force=false 
 }
 export function findDailyBrief(db, { date, timeZone='Europe/Samara', revision=null }) { const row = revision === null ? db.prepare('SELECT * FROM daily_briefs WHERE brief_date=? AND time_zone=? ORDER BY revision DESC LIMIT 1').get(date,timeZone) : db.prepare('SELECT * FROM daily_briefs WHERE brief_date=? AND time_zone=? AND revision=?').get(date,timeZone,revision); return row ? serializeBrief(db,row) : null; }
 export function findDailyBriefSource(db,{date,timeZone='Europe/Samara',revision,sourceId}) { return db.prepare(`SELECT c.id,c.raw,c.occurred_at,c.created_at FROM daily_brief_sources s JOIN daily_briefs b ON b.id=s.daily_brief_id JOIN captures c ON c.id=s.capture_id WHERE b.brief_date=? AND b.time_zone=? AND b.revision=? AND s.source_id=?`).get(date,timeZone,revision,sourceId) || null; }
+// Удаление записи — мягкое: строка остаётся в журнале, но помечается временем
+// удаления и пропадает из всех списков, поиска и отчётов. Контракт памяти этим
+// не нарушается: raw не переписывается, история решений сохраняется, а экспорт
+// по-прежнему отдаёт всё — «удалить» здесь значит «убрать с глаз», а не
+// «переписать прошлое».
+export function deleteCapture(db, captureId) {
+  const deletedAt = now();
+  return withImmediateTransaction(db, () => {
+    const capture = db.prepare('SELECT id FROM captures WHERE id=? AND deleted_at IS NULL').get(captureId);
+    if (!capture) return { notFound: true };
+    // Проекции снимаются тем же временем: по нему они и вернутся при отмене.
+    const reverted = db
+      .prepare("UPDATE projections SET status='reverted', reverted_at=? WHERE capture_id=? AND status='active'")
+      .run(deletedAt, captureId).changes;
+    db.prepare('UPDATE captures SET deleted_at=? WHERE id=?').run(deletedAt, captureId);
+    insertLedgerEvent(db, 'capture_deleted', captureId, null, deletedAt);
+    return { captureId, deletedAt, revertedProjections: reverted };
+  });
+}
+
+// Возврат удалённой записи: проекции поднимаются те же, что были сняты при
+// удалении — их узнаём по времени, а не по догадке.
+export function restoreCapture(db, captureId) {
+  const restoredAt = now();
+  return withImmediateTransaction(db, () => {
+    const capture = db.prepare('SELECT id, deleted_at FROM captures WHERE id=?').get(captureId);
+    if (!capture) return { notFound: true };
+    if (!capture.deleted_at) return { captureId, restored: false };
+    const restored = db
+      .prepare("UPDATE projections SET status='active', reverted_at=NULL WHERE capture_id=? AND status='reverted' AND reverted_at=?")
+      .run(captureId, capture.deleted_at).changes;
+    db.prepare('UPDATE captures SET deleted_at=NULL WHERE id=?').run(captureId);
+    insertLedgerEvent(db, 'capture_restored', captureId, null, restoredAt);
+    return { captureId, restored: true, restoredProjections: restored };
+  });
+}
+
 export function undo(db, undoGroupId) { const result = db.prepare("UPDATE projections SET status='reverted', reverted_at=? WHERE undo_group_id=? AND status='active'").run(now(), undoGroupId); return result.changes; }
 const memoryStopwords=new Set(['что','было','по','мы','уже','про','о','об','когда','кто','где','как','я','ты','он','она','оно','они','меня','мне','тебя','тебе','его','её','ей','их','нас','нам','вас','вам','себя','свой','моя','мой','твоя','твой','наш','ваш','этот','эта','это','эти','тот','та','то','те','ли','не','да','а','и','в','во','с','со','за','для','от','до','из','на']);
 export function normalizeMemoryText(value){return String(value||'').normalize('NFKC').toLocaleLowerCase('ru-RU').replace(/[^\p{L}\p{N}]+/gu,' ').trim().replace(/\s+/g,' ')}

@@ -1299,6 +1299,47 @@ dialog form > div {
 }
 #toast.show {
   opacity: 1;
+  pointer-events: auto;
+}
+#toast {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+/* Действие в тосте: «Вернуть» после удаления. */
+.toast-action {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  background: none;
+  border: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.25);
+  padding: 0 2px 0 12px;
+  cursor: pointer;
+}
+.toast-action:hover {
+  color: var(--tint-auto);
+}
+
+/* Удаление записи — внизу карточки, тихое, но не спрятанное. */
+.card-delete {
+  display: block;
+  margin: 18px 0 0;
+  padding: 7px 0;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.card-delete:hover {
+  color: var(--coral);
+}
+.card-delete:disabled {
+  cursor: wait;
+  opacity: 0.6;
 }
 .sr-only {
   position: absolute;
