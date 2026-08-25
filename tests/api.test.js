@@ -29,3 +29,45 @@ assert.deepEqual(await found('отчёт'),['проверить отчёты п�
 assert.deepEqual(await found('совсем другое слово'),[]);
 // Короткие слова по началу не сопоставляются: иначе «Hub» цеплял бы всё.
 assert.deepEqual(await found('CP'),['проверить отчёты по проекту CP']);});
+test('deleting a capture hides it everywhere but keeps it in the ledger, and it can be restored',async()=>{const api=request(app());const created=(await api.post('/api/captures').send({raw:'Завтра в 11 созвон по Hub про удаление'}).expect(201)).body.entry;
+assert.equal((await api.get('/api/entries')).body.entries.length,1);
+assert.equal((await api.post('/api/memory/search').send({query:'удаление'})).body.results.length,1);
+// Удаление: запись уходит из списков, поиска и дня, проекции снимаются.
+const deleted=(await api.delete(`/api/captures/${created.id}`).expect(200)).body;
+assert.equal(deleted.captureId,created.id);
+assert.ok(deleted.revertedProjections>=1);
+assert.equal((await api.get('/api/entries')).body.entries.length,0);
+assert.equal((await api.post('/api/memory/search').send({query:'удаление'})).body.results.length,0);
+const day=(await api.get('/api/day')).body;assert.equal(day.day.length+day.upcoming.length+day.attention.length,0);
+// Журнал ничего не забывает: запись и событие остаются в экспорте.
+const exported=(await api.get('/api/export')).body;
+assert.equal(exported.captures.filter(capture=>capture.id===created.id).length,1);
+assert.ok(exported.captures.find(capture=>capture.id===created.id).deleted_at);
+assert.ok(exported.ledgerEvents.some(event=>event.capture_id===created.id&&event.event_type==='capture_deleted'));
+// Возврат поднимает и запись, и снятые ею проекции.
+const restored=(await api.post(`/api/captures/${created.id}/restore`).expect(200)).body;
+assert.equal(restored.restored,true);
+assert.ok(restored.restoredProjections>=1);
+const back=(await api.get('/api/entries')).body.entries;
+assert.equal(back.length,1);
+assert.ok(back[0].projections.length>=1);
+assert.equal(back[0].raw,'Завтра в 11 созвон по Hub про удаление');});
+
+test('deleting is idempotent-safe and unknown captures are refused',async()=>{const api=request(app());const created=(await api.post('/api/captures').send({raw:'Нужно проверить повторное удаление'}).expect(201)).body.entry;
+await api.delete(`/api/captures/${created.id}`).expect(200);
+// Повторное удаление уже удалённой записи — не «успех», а честные 404.
+await api.delete(`/api/captures/${created.id}`).expect(404);
+await api.delete('/api/captures/00000000-0000-4000-8000-000000000000').expect(404);
+await api.post('/api/captures/00000000-0000-4000-8000-000000000000/restore').expect(404);
+// Повторный возврат ничего не ломает.
+assert.equal((await api.post(`/api/captures/${created.id}/restore`).expect(200)).body.restored,true);
+assert.equal((await api.post(`/api/captures/${created.id}/restore`).expect(200)).body.restored,false);});
+
+test('a deleted capture stays out of the daily brief and the tag list',async()=>{const api=request(app());const created=(await api.post('/api/captures').send({raw:'Решили по секретам: ротация ключей'}).expect(201)).body.entry;
+await api.post(`/api/captures/${created.id}/corrections`).send({patch:{primaryType:'note'}}).expect(200);
+await api.delete(`/api/captures/${created.id}`).expect(200);
+const tags=(await api.get('/api/tags').expect(200)).body.tags;
+assert.equal(tags.length,0);
+const brief=(await api.get('/api/daily-brief').expect(200)).body;
+const texts=brief.content.sections.flatMap(section=>section.items.map(item=>item.text)).join(' ');
+assert.equal(texts.includes('ротация ключей'),false);});

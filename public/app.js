@@ -120,11 +120,25 @@ function markdownNode(tag, text, className, { inline = false, links = true, firs
   else element.classList.add("md-block");
   return element;
 }
-function toast(text) {
+let toastTimer = 0;
+// Тост умеет нести одно действие: удаление показывается вместе с «Вернуть»,
+// поэтому подтверждать его заранее не нужно — отменить можно после.
+function toast(text, action = null) {
   const element = $("#toast");
-  element.textContent = text;
+  clear(element);
+  element.append(node("span", text));
+  if (action) {
+    const button = node("button", action.label, "toast-action");
+    button.type = "button";
+    button.addEventListener("click", async () => {
+      element.classList.remove("show");
+      await action.run();
+    });
+    element.append(button);
+  }
   element.classList.add("show");
-  setTimeout(() => element.classList.remove("show"), 2800);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => element.classList.remove("show"), action ? 6000 : 2800);
 }
 function selectedProvider() {
   return $("#ai-provider").value || "fallback";
@@ -577,6 +591,9 @@ function closeCard() {
     if (dialog.open) dialog.close();
     clear($("#review"));
     cardReturn = null;
+    // Анимация закрытия держит карточку прозрачной (fill: forwards): не снять
+    // её — и при следующем открытии карточка окажется невидимой.
+    for (const animation of dialog.getAnimations()) animation.cancel();
   };
   const target = cardReturn?.isConnected ? cardReturn.getBoundingClientRect() : null;
   const motionAllowed = !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -834,7 +851,39 @@ function showReview(entry, review, undoGroupId, provenance) {
     ),
   );
   area.append(source);
+
+  // Удаление живёт внизу карточки, отдельно от правок: это не «ещё одно
+  // уточнение», а выход из журнала.
+  const remove = node("button", "Удалить запись", "card-delete");
+  remove.type = "button";
+  remove.addEventListener("click", async () => {
+    remove.disabled = true;
+    try {
+      await request(`/api/captures/${entry.id}`, { method: "DELETE" });
+      closeCard();
+      await load();
+      toast("Запись удалена", {
+        label: "Вернуть",
+        run: async () => {
+          try {
+            await request(`/api/captures/${entry.id}/restore`, { method: "POST" });
+            await load();
+            toast("Запись возвращена");
+          } catch (error) {
+            toast(error.message);
+          }
+        },
+      });
+    } catch (error) {
+      toast(error.message);
+      remove.disabled = false;
+    }
+  });
+  area.append(remove);
   if (!dialog.open) {
+    // Прерванное закрытие могло оставить незавершённую анимацию: снимаем её,
+    // иначе карточка откроется прозрачной.
+    for (const animation of dialog.getAnimations()) animation.cancel();
     dialog.showModal();
     flowFrom(dialog, cardOrigin);
     cardReturn = cardOrigin;

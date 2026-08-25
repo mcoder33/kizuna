@@ -624,3 +624,61 @@ test("the entry card is the same sheet as the grown capture card", async ({ page
   expect(Math.round(card.width)).toBe(Math.round(sheet.width));
   expect(Math.round(card.height)).toBe(Math.round(sheet.height));
 });
+
+test("a capture can be deleted from its card and brought back from the toast", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  const raw = "запись, которую удалим и вернём";
+  await page.getByLabel("Новая запись").click();
+  await page.keyboard.type(raw);
+  await page.getByRole("button", { name: "Сохранить запись" }).click();
+
+  const card = page.locator("#today .entry").filter({ hasText: "удалим и вернём" }).first();
+  await expect(card).toBeVisible({ timeout: 15000 });
+  await card.locator(".entry-title").click();
+
+  // Удаление живёт в карточке, отдельно от правок.
+  const remove = page.locator(".card-delete");
+  await expect(remove).toHaveText("Удалить запись");
+  await remove.click();
+
+  // Карточка закрывается, запись уходит с экрана, тост предлагает вернуть.
+  await expect(page.locator("#review-dialog")).toBeHidden();
+  await expect(page.locator("#today")).not.toContainText("удалим и вернём");
+  const toast = page.locator("#toast");
+  await expect(toast).toContainText("Запись удалена");
+
+  // Журнал ничего не забыл: запись осталась в экспорте с отметкой удаления.
+  const exported = await (await request.get("/api/export")).json();
+  const stored = exported.captures.find((capture) => capture.raw === raw);
+  expect(stored).toBeTruthy();
+  expect(stored.deleted_at).toBeTruthy();
+
+  // «Вернуть» поднимает запись обратно.
+  await toast.getByRole("button", { name: "Вернуть" }).click();
+  await expect(page.locator("#today .entry").filter({ hasText: "удалим и вернём" }).first()).toBeVisible();
+  await expect(toast).toContainText("Запись возвращена");
+});
+
+test("a card reopened after closing is visible, not a ghost", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  await page.getByLabel("Новая запись").click();
+  await page.keyboard.type("запись для повторного открытия");
+  await page.getByRole("button", { name: "Сохранить запись" }).click();
+
+  const card = page.locator("#today .entry").filter({ hasText: "повторного открытия" }).first();
+  await expect(card).toBeVisible({ timeout: 15000 });
+  const dialog = page.locator("#review-dialog");
+
+  // Анимация закрытия оставляла карточку прозрачной: со второго раза она была
+  // «открыта», но невидима — размер есть, видимости нет.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await card.locator(".entry-title").click();
+    await page.waitForTimeout(750);
+    await expect(dialog).toHaveCSS("opacity", "1");
+    await page.locator("#review-close").click();
+    await page.waitForTimeout(600);
+    await expect(dialog).toBeHidden();
+  }
+});
