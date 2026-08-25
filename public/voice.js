@@ -194,6 +194,114 @@ export function createVoiceDialog({ onJournalChanged = () => {}, fetchImplementa
     }
   }
 
+  // ── живой разговор через Gemini ───────────────────────────────────────────
+  // У Google другой транспорт: вебсокет вместо WebRTC, звук ходит кусками PCM.
+  // Инструменты и правила разговора те же — меняется только способ доставки.
+  const GEMINI_INPUT_RATE = 16000;
+  const GEMINI_OUTPUT_RATE = 24000;
+
+  const encodeBase64 = (buffer) => {
+    let binary = "";
+    const bytes = new Uint8Array(buffer);
+    for (let index = 0; index < bytes.length; index += 1) binary += String.fromCharCode(bytes[index]);
+    return btoa(binary);
+  };
+  const decodeBase64 = (value) => {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return bytes;
+  };
+
+  async function startGeminiLive(session) {
+    const socket = new WebSocket(`${session.url}?access_token=${encodeURIComponent(session.clientSecret)}`);
+    socket.binaryType = "arraybuffer";
+    const context = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: GEMINI_INPUT_RATE });
+    const microphone = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const source = context.createMediaStreamSource(microphone);
+    // Микрофон отдаёт float32, а Live ждёт 16-битный PCM: пересчитываем на лету.
+    const processor = context.createScriptProcessor(4096, 1, 1);
+    processor.onaudioprocess = (event) => {
+      if (socket.readyState !== WebSocket.OPEN) return;
+      const input = event.inputBuffer.getChannelData(0);
+      const pcm = new Int16Array(input.length);
+      for (let index = 0; index < input.length; index += 1) {
+        const sample = Math.max(-1, Math.min(1, input[index]));
+        pcm[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+      }
+      socket.send(
+        JSON.stringify({
+          realtimeInput: { audio: { data: encodeBase64(pcm.buffer), mimeType: `audio/pcm;rate=${GEMINI_INPUT_RATE}` } },
+        }),
+      );
+    };
+    source.connect(processor);
+    processor.connect(context.destination);
+
+    const playback = { time: 0 };
+    socket.addEventListener("open", () => {
+      setStatus("Слушаю");
+      // Настройки уже зашиты в токен; здесь только называем модель.
+      socket.send(JSON.stringify({ setup: { model: session.model } }));
+    });
+    socket.addEventListener("message", async (event) => {
+      const raw = typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data);
+      let payload;
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        return;
+      }
+      await handleGeminiEvent(payload, socket, context, playback);
+    });
+    socket.addEventListener("error", () => {
+      setStatus("Ошибка соединения");
+    });
+    socket.addEventListener("close", () => {
+      if (state.mode === "live") setStatus("Соединение закрыто");
+    });
+
+    state.live = { socket, microphone, context, processor, source, provider: "gemini" };
+  }
+
+  async function handleGeminiEvent(payload, socket, context, playback) {
+    if (payload.setupComplete) {
+      setStatus("Слушаю");
+      return;
+    }
+    if (payload.toolCall?.functionCalls?.length) {
+      const responses = [];
+      for (const call of payload.toolCall.functionCalls) {
+        say("tool", call.name);
+        const result = await runTool(call.name, call.args || {});
+        responses.push({ name: call.name, id: call.id, response: { result } });
+      }
+      socket.send(JSON.stringify({ toolResponse: { functionResponses: responses } }));
+      setStatus("Слушаю");
+      return;
+    }
+    const content = payload.serverContent;
+    if (!content) return;
+    if (content.inputTranscription?.text) say("me", content.inputTranscription.text.trim());
+    if (content.outputTranscription?.text) say("bot", content.outputTranscription.text.trim());
+    for (const part of content.modelTurn?.parts || []) {
+      if (!part.inlineData?.data) continue;
+      // Звук приходит кусками: складываем их встык, иначе речь будет рваной.
+      const bytes = decodeBase64(part.inlineData.data);
+      const samples = new Int16Array(bytes.buffer);
+      const buffer = context.createBuffer(1, samples.length, GEMINI_OUTPUT_RATE);
+      const channel = buffer.getChannelData(0);
+      for (let index = 0; index < samples.length; index += 1) channel[index] = samples[index] / 0x8000;
+      const node = context.createBufferSource();
+      node.buffer = buffer;
+      node.connect(context.destination);
+      playback.time = Math.max(playback.time, context.currentTime);
+      node.start(playback.time);
+      playback.time += buffer.duration;
+      setStatus("Отвечает");
+    }
+  }
+
   // ── разговор без ключа ────────────────────────────────────────────────────
   async function mockTurn(text) {
     setStatus("Думаю");
@@ -276,6 +384,12 @@ export function createVoiceDialog({ onJournalChanged = () => {}, fetchImplementa
     if (!text) return;
     input.value = "";
     say("me", text);
+    if (state.mode === "live" && state.live?.provider === "gemini") {
+      // У Gemini текст идёт тем же потоком, что и речь.
+      state.live.socket.send(JSON.stringify({ realtimeInput: { text } }));
+      setStatus("Отвечает");
+      return;
+    }
     if (state.mode === "live" && state.live?.channel?.readyState === "open") {
       // В живом режиме набранная реплика идёт тем же путём, что и речь.
       state.live.channel.send(
@@ -315,7 +429,8 @@ export function createVoiceDialog({ onJournalChanged = () => {}, fetchImplementa
       return;
     }
     try {
-      await startLive(session);
+      if (session.provider === "gemini") await startGeminiLive(session);
+      else await startLive(session);
       listen.hidden = true;
       hint.textContent = "Говорите вслух — модель отвечает голосом.";
     } catch (error) {
@@ -335,6 +450,10 @@ export function createVoiceDialog({ onJournalChanged = () => {}, fetchImplementa
     if (state.live) {
       state.live.channel?.close?.();
       state.live.connection?.close?.();
+      state.live.socket?.close?.();
+      state.live.processor?.disconnect?.();
+      state.live.source?.disconnect?.();
+      state.live.context?.close?.();
       for (const track of state.live.microphone?.getTracks?.() || []) track.stop();
       state.live = null;
     }

@@ -14,7 +14,13 @@ import { enqueueCaptureJob, getAggregate, fullEntry, activeNote, saveNote, searc
 import { parseCaptureOverrides, applyUserOverrides, gateClassification, shouldMaterializeProjections } from './classifier.js';
 
 export const VOICE_MODEL = 'gpt-realtime';
+export const GEMINI_VOICE_MODEL = 'models/gemini-3.1-flash-live-preview';
 const CLIENT_SECRET_URL = 'https://api.openai.com/v1/realtime/client_secrets';
+const GEMINI_TOKEN_URL = 'https://generativelanguage.googleapis.com/v1beta/auth_tokens';
+// Живой разговор у Gemini идёт по вебсокету: браузер подключается сам, токен
+// уходит в адресе — это единственный способ, который принимает их сервер.
+export const GEMINI_LIVE_URL =
+  'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained';
 
 // Голос ведёт себя как собеседник, а не как командная строка: коротко
 // проговаривает, что записал, и не выдумывает того, чего в журнале нет.
@@ -402,22 +408,104 @@ export function mockVoiceTurn(db, text, { now = () => new Date(), timeZone = 'Eu
 }
 
 // ── Живой разговор ──────────────────────────────────────────────────────────
+// Инструменты у Gemini объявляются иначе: список функций внутри одного объекта
+// tools, без поля type. Смысл тот же — переписываем форму, а не содержание.
+export const geminiTools = (tools = VOICE_TOOLS) => [
+  {
+    functionDeclarations: tools.map(({ name, description, parameters }) => ({ name, description, parameters })),
+  },
+];
+
+// Провайдер выбирается по ключам: явный выбор сильнее, иначе берётся тот, чей
+// ключ есть. Так «добавил ключ — заработало» остаётся верным для обоих.
+export function pickVoiceProvider({ requested, openaiKey, geminiKey } = {}) {
+  if (requested === 'openai') return openaiKey ? 'openai' : null;
+  if (requested === 'gemini') return geminiKey ? 'gemini' : null;
+  if (openaiKey) return 'openai';
+  if (geminiKey) return 'gemini';
+  return null;
+}
+
 export function createVoiceService({
   apiKey = process.env.OPENAI_API_KEY,
+  geminiApiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY,
+  provider: requestedProvider = process.env.PAGENT_VOICE_PROVIDER,
   model = process.env.PAGENT_VOICE_MODEL || VOICE_MODEL,
+  geminiModel = process.env.PAGENT_GEMINI_VOICE_MODEL || GEMINI_VOICE_MODEL,
   voice = process.env.PAGENT_VOICE_NAME || 'marin',
+  geminiVoice = process.env.PAGENT_GEMINI_VOICE_NAME || 'Puck',
   fetch: fetchImplementation = globalThis.fetch,
+  now = () => new Date(),
   timeoutMs = 8000,
 } = {}) {
-  const configured = Boolean(apiKey);
+  const provider = pickVoiceProvider({ requested: requestedProvider, openaiKey: apiKey, geminiKey: geminiApiKey });
+  const configured = Boolean(provider);
+  const activeModel = provider === 'gemini' ? geminiModel : model;
+  const activeVoice = provider === 'gemini' ? geminiVoice : voice;
+
+  // Токен Gemini живёт до получаса и годен на одно подключение: браузеру
+  // достаточно, а утёкший ничего не откроет.
+  async function createGeminiSession(instructions, tools) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const expireTime = new Date(now().getTime() + 30 * 60 * 1000).toISOString();
+      const newSessionExpireTime = new Date(now().getTime() + 2 * 60 * 1000).toISOString();
+      const response = await fetchImplementation(GEMINI_TOKEN_URL, {
+        method: 'POST',
+        headers: { 'x-goog-api-key': geminiApiKey, 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          uses: 1,
+          expireTime,
+          newSessionExpireTime,
+          liveConnectConstraints: {
+            model: geminiModel,
+            config: {
+              responseModalities: ['AUDIO'],
+              systemInstruction: { parts: [{ text: instructions }] },
+              speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: geminiVoice } } },
+              inputAudioTranscription: {},
+              outputAudioTranscription: {},
+              tools: geminiTools(tools),
+            },
+          },
+        }),
+      });
+      if (!response.ok) return { mode: 'live', provider: 'gemini', error: 'unavailable', status: response.status };
+      const payload = await response.json();
+      const token = payload?.name || payload?.token?.name;
+      if (!token) return { mode: 'live', provider: 'gemini', error: 'malformed_output' };
+      return {
+        mode: 'live',
+        provider: 'gemini',
+        clientSecret: token,
+        expiresAt: expireTime,
+        model: geminiModel,
+        voice: geminiVoice,
+        url: GEMINI_LIVE_URL,
+      };
+    } catch (error) {
+      return { mode: 'live', provider: 'gemini', error: error?.name === 'AbortError' ? 'timeout' : 'unavailable' };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   return {
     status() {
-      return { configured, mode: configured ? 'live' : 'mock', model: configured ? model : null, voice: configured ? voice : null };
+      return {
+        configured,
+        provider,
+        mode: configured ? 'live' : 'mock',
+        model: configured ? activeModel : null,
+        voice: configured ? activeVoice : null,
+      };
     },
     // Короткоживущий токен для браузера: сам ключ наружу не уходит.
     async createSession({ instructions = VOICE_INSTRUCTIONS, tools = VOICE_TOOLS } = {}) {
       if (!configured) return { mode: 'mock' };
+      if (provider === 'gemini') return createGeminiSession(instructions, tools);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
@@ -440,12 +528,12 @@ export function createVoiceService({
             },
           }),
         });
-        if (!response.ok) return { mode: 'live', error: 'unavailable', status: response.status };
+        if (!response.ok) return { mode: 'live', provider: 'openai', error: 'unavailable', status: response.status };
         const payload = await response.json();
-        if (!payload?.value) return { mode: 'live', error: 'malformed_output' };
-        return { mode: 'live', clientSecret: payload.value, expiresAt: payload.expires_at ?? null, model, voice };
+        if (!payload?.value) return { mode: 'live', provider: 'openai', error: 'malformed_output' };
+        return { mode: 'live', provider: 'openai', clientSecret: payload.value, expiresAt: payload.expires_at ?? null, model, voice };
       } catch (error) {
-        return { mode: 'live', error: error?.name === 'AbortError' ? 'timeout' : 'unavailable' };
+        return { mode: 'live', provider: 'openai', error: error?.name === 'AbortError' ? 'timeout' : 'unavailable' };
       } finally {
         clearTimeout(timer);
       }

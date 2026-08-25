@@ -302,3 +302,159 @@ test("in the live mode the browser microphone button steps aside", async ({ page
   // Микрофон уже открыт для модели — вторая запись была бы лишней.
   await expect(page.locator(".voice-listen")).toBeHidden();
 });
+
+// Подставной вебсокет и звук для живого режима Gemini: настоящего ключа нет,
+// поэтому транспорт и аудио подменяются, а наш код, сервер и журнал работают
+// по-настоящему.
+const installFakeGemini = async (page) => {
+  await page.addInitScript(() => {
+    window.__geminiProbe = { sent: [], url: null, closed: false };
+    class FakeSocket {
+      constructor(url) {
+        window.__geminiProbe.url = url;
+        window.__geminiSocket = this;
+        this.readyState = 1;
+        this.listeners = {};
+        setTimeout(() => this.emit("open", {}), 0);
+      }
+      addEventListener(type, handler) {
+        (this.listeners[type] ||= []).push(handler);
+      }
+      send(payload) {
+        window.__geminiProbe.sent.push(JSON.parse(payload));
+      }
+      close() {
+        this.readyState = 3;
+        window.__geminiProbe.closed = true;
+      }
+      emit(type, event) {
+        for (const handler of this.listeners[type] || []) handler(event);
+      }
+    }
+    FakeSocket.OPEN = 1;
+    window.WebSocket = FakeSocket;
+    // Звук в тесте не нужен: важно, что микрофон открывается и отпускается.
+    window.AudioContext = class {
+      constructor() {
+        this.currentTime = 0;
+        this.destination = {};
+        window.__audioContext = this;
+      }
+      createMediaStreamSource() {
+        return { connect() {}, disconnect() {} };
+      }
+      createScriptProcessor() {
+        return { connect() {}, disconnect() {}, onaudioprocess: null };
+      }
+      createBuffer(channels, length) {
+        return { duration: length / 24000, getChannelData: () => new Float32Array(length) };
+      }
+      createBufferSource() {
+        return { buffer: null, connect() {}, start() {} };
+      }
+      close() {
+        window.__audioClosed = true;
+      }
+    };
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: async () => ({ getTracks: () => [{ stop() { window.__micStopped = true; } }] }) },
+    });
+  });
+  await page.route("**/api/voice/session", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        mode: "live",
+        provider: "gemini",
+        clientSecret: "auth_tokens/test",
+        model: "models/gemini-3.1-flash-live-preview",
+        url: "wss://generativelanguage.googleapis.com/ws/test",
+        tools: [{ type: "function", name: "create_capture" }],
+      }),
+    }),
+  );
+};
+
+test("gemini live connects over a socket, runs the tool and answers back", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await installFakeGemini(page);
+  await page.goto("/");
+  await page.locator("#capture-voice").click();
+  await expect(page.locator("#voice-hint")).toContainText("Говорите вслух");
+
+  // Токен уходит в адресе — единственный способ, который принимает Google.
+  const probe = await page.evaluate(() => window.__geminiProbe);
+  expect(probe.url).toContain("wss://generativelanguage.googleapis.com/ws/test");
+  expect(probe.url).toContain("access_token=auth_tokens%2Ftest");
+  // Первым сообщением идёт setup с моделью.
+  expect(probe.sent[0].setup.model).toBe("models/gemini-3.1-flash-live-preview");
+
+  // Модель просит записать — приходит toolCall.
+  await page.evaluate(() => {
+    window.__geminiSocket.emit("message", {
+      data: JSON.stringify({
+        toolCall: {
+          functionCalls: [
+            { name: "create_capture", id: "fc_1", args: { text: "созвон голосом через gemini", type: "todo" } },
+          ],
+        },
+      }),
+    });
+  });
+
+  const entry = page.locator("#todo .entry").filter({ hasText: "созвон голосом через gemini" }).first();
+  await expect(entry).toBeVisible({ timeout: 15000 });
+
+  // Результат вернулся тем сообщением, которое ждёт Google.
+  const sent = await page.evaluate(() => window.__geminiProbe.sent);
+  const answer = sent.find((event) => event.toolResponse);
+  expect(answer.toolResponse.functionResponses[0].id).toBe("fc_1");
+  expect(answer.toolResponse.functionResponses[0].name).toBe("create_capture");
+  expect(answer.toolResponse.functionResponses[0].response.result.saved).toBe(true);
+});
+
+test("gemini transcripts land in the log and text goes through the same stream", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await installFakeGemini(page);
+  await page.goto("/");
+  await page.locator("#capture-voice").click();
+  await expect(page.locator("#voice-hint")).toContainText("Говорите вслух");
+
+  await page.evaluate(() => {
+    window.__geminiSocket.emit("message", {
+      data: JSON.stringify({
+        serverContent: {
+          inputTranscription: { text: "что у меня сегодня" },
+          outputTranscription: { text: "Сегодня дел нет." },
+        },
+      }),
+    });
+  });
+  await expect(page.locator(".voice-me").last()).toHaveText("что у меня сегодня");
+  await expect(page.locator(".voice-bot").last()).toHaveText("Сегодня дел нет.");
+
+  // Набранная реплика уходит тем же потоком, что и речь.
+  await page.locator("#voice-input").fill("привет");
+  await page.locator("#voice-input").press("Enter");
+  const sent = await page.evaluate(() => window.__geminiProbe.sent);
+  expect(sent.at(-1).realtimeInput.text).toBe("привет");
+});
+
+test("closing a gemini dialog releases the socket, the microphone and the audio context", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await installFakeGemini(page);
+  await page.goto("/");
+  await page.locator("#capture-voice").click();
+  await expect(page.locator("#voice-hint")).toContainText("Говорите вслух");
+
+  await page.locator(".voice-close").click();
+  await expect(page.locator("#voice-panel")).toBeHidden();
+  const released = await page.evaluate(() => ({
+    socket: window.__geminiProbe.closed,
+    microphone: window.__micStopped === true,
+    audio: window.__audioClosed === true,
+  }));
+  expect(released).toEqual({ socket: true, microphone: true, audio: true });
+});
