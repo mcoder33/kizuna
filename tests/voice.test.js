@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server/index.js';
-import { createVoiceService, runVoiceTool, mockVoiceTurn, VOICE_TOOLS } from '../server/voice.js';
+import { createVoiceService, runVoiceTool, mockVoiceTurn, pickVoiceProvider, geminiTools, VOICE_TOOLS, GEMINI_LIVE_URL } from '../server/voice.js';
 import { openDatabase, createLedger } from '../server/db.js';
 import { normalizeClassification } from '../server/classifier.js';
 import { fakeModelService } from './helpers/fake-model.js';
@@ -142,9 +142,9 @@ test('a mock turn keeps plain speech as a capture and stays quiet on silence', (
   assert.match(silent.reply, /слушаю/i);
 });
 
-test('without a key the service reports the mock mode and asks for no session', async () => {
-  const service = createVoiceService({ apiKey: '' });
-  assert.deepEqual(service.status(), { configured: false, mode: 'mock', model: null, voice: null });
+test('without any key the service reports the mock mode and asks for no session', async () => {
+  const service = createVoiceService({ apiKey: '', geminiApiKey: '' });
+  assert.deepEqual(service.status(), { configured: false, provider: null, mode: 'mock', model: null, voice: null });
   assert.deepEqual(await service.createSession(), { mode: 'mock' });
 });
 
@@ -152,6 +152,7 @@ test('with a key the service asks OpenAI for an ephemeral secret and never leaks
   const requests = [];
   const service = createVoiceService({
     apiKey: 'sk-test-key',
+    geminiApiKey: '',
     model: 'gpt-realtime',
     fetch: async (url, options) => {
       requests.push({ url, options });
@@ -176,14 +177,15 @@ test('with a key the service asks OpenAI for an ephemeral secret and never leaks
 });
 
 test('a failing or slow realtime API degrades with a safe reason', async () => {
-  const failing = createVoiceService({ apiKey: 'sk-test', fetch: async () => ({ ok: false, status: 500 }) });
-  assert.deepEqual(await failing.createSession(), { mode: 'live', error: 'unavailable', status: 500 });
+  const failing = createVoiceService({ apiKey: 'sk-test', geminiApiKey: '', fetch: async () => ({ ok: false, status: 500 }) });
+  assert.deepEqual(await failing.createSession(), { mode: 'live', provider: 'openai', error: 'unavailable', status: 500 });
 
-  const malformed = createVoiceService({ apiKey: 'sk-test', fetch: async () => ({ ok: true, json: async () => ({}) }) });
+  const malformed = createVoiceService({ apiKey: 'sk-test', geminiApiKey: '', fetch: async () => ({ ok: true, json: async () => ({}) }) });
   assert.equal((await malformed.createSession()).error, 'malformed_output');
 
   const aborted = createVoiceService({
     apiKey: 'sk-test',
+    geminiApiKey: '',
     fetch: async () => {
       const error = new Error('aborted');
       error.name = 'AbortError';
@@ -194,7 +196,7 @@ test('a failing or slow realtime API degrades with a safe reason', async () => {
 });
 
 test('the api exposes status, session, tools and turns', async () => {
-  const api = request(app(createVoiceService({ apiKey: '' })));
+  const api = request(app(createVoiceService({ apiKey: '', geminiApiKey: '' })));
 
   const status = (await api.get('/api/voice/status').expect(200)).body;
   assert.equal(status.mode, 'mock');
@@ -221,6 +223,7 @@ test('the api exposes status, session, tools and turns', async () => {
 test('with a key the session endpoint hands the browser a short-lived secret only', async () => {
   const api = request(app(createVoiceService({
     apiKey: 'sk-secret-key',
+    geminiApiKey: '',
     fetch: async () => ({ ok: true, json: async () => ({ value: 'ek_browser', expires_at: 42 }) }),
   })));
   const status = (await api.get('/api/voice/status').expect(200)).body;
@@ -231,7 +234,7 @@ test('with a key the session endpoint hands the browser a short-lived secret onl
 });
 
 test('an unavailable realtime API answers 503 instead of pretending', async () => {
-  const api = request(app(createVoiceService({ apiKey: 'sk-test', fetch: async () => ({ ok: false, status: 429 }) })));
+  const api = request(app(createVoiceService({ apiKey: 'sk-test', geminiApiKey: '', fetch: async () => ({ ok: false, status: 429 }) })));
   const failed = await api.post('/api/voice/session').expect(503);
   assert.equal(failed.body.error.code, 'unavailable');
 });
@@ -285,4 +288,95 @@ test('a question is a conversation, not a silent capture', () => {
   assert.equal(asked.calls[0].name, 'search_memory');
   assert.ok(!asked.calls.some((call) => call.name === 'create_capture'));
   assert.match(asked.reply, /Не берусь рассуждать|Без модели я не рассуждаю/);
+});
+
+test('the provider is chosen by the key, and an explicit choice wins', () => {
+  // Явный выбор сильнее: с двумя ключами берётся названный.
+  assert.equal(pickVoiceProvider({ requested: 'gemini', openaiKey: 'sk', geminiKey: 'g' }), 'gemini');
+  assert.equal(pickVoiceProvider({ requested: 'openai', openaiKey: 'sk', geminiKey: 'g' }), 'openai');
+  // Названный без ключа не выбирается: молча подменять провайдера нельзя.
+  assert.equal(pickVoiceProvider({ requested: 'gemini', openaiKey: 'sk' }), null);
+  // Без явного выбора берётся тот, чей ключ есть.
+  assert.equal(pickVoiceProvider({ openaiKey: 'sk' }), 'openai');
+  assert.equal(pickVoiceProvider({ geminiKey: 'g' }), 'gemini');
+  assert.equal(pickVoiceProvider({}), null);
+});
+
+test('gemini tools carry the same contract in google shape', () => {
+  const [group] = geminiTools();
+  assert.deepEqual(group.functionDeclarations.map((tool) => tool.name), VOICE_TOOLS.map((tool) => tool.name));
+  for (const tool of group.functionDeclarations) {
+    assert.equal(typeof tool.description, 'string');
+    assert.equal(tool.parameters.type, 'object');
+    // У Google в объявлении функции нет поля type — иначе setup отвергается.
+    assert.equal(tool.type, undefined);
+  }
+});
+
+test('with a gemini key the service mints an ephemeral token and never leaks the key', async () => {
+  const requests = [];
+  const service = createVoiceService({
+    apiKey: '',
+    geminiApiKey: 'gemini-secret-key',
+    geminiModel: 'models/gemini-3.1-flash-live-preview',
+    geminiVoice: 'Puck',
+    now: () => new Date('2026-08-25T10:00:00Z'),
+    fetch: async (url, options) => {
+      requests.push({ url, options });
+      return { ok: true, json: async () => ({ name: 'auth_tokens/short-lived' }) };
+    },
+  });
+  assert.deepEqual(service.status(), {
+    configured: true,
+    provider: 'gemini',
+    mode: 'live',
+    model: 'models/gemini-3.1-flash-live-preview',
+    voice: 'Puck',
+  });
+
+  const session = await service.createSession();
+  assert.equal(session.provider, 'gemini');
+  assert.equal(session.clientSecret, 'auth_tokens/short-lived');
+  assert.equal(session.url, GEMINI_LIVE_URL);
+  assert.match(GEMINI_LIVE_URL, /^wss:\/\/generativelanguage\.googleapis\.com\/ws\//);
+
+  const [call] = requests;
+  assert.equal(call.url, 'https://generativelanguage.googleapis.com/v1beta/auth_tokens');
+  assert.equal(call.options.headers['x-goog-api-key'], 'gemini-secret-key');
+  const body = JSON.parse(call.options.body);
+  // Токен одноразовый и короткий: утёкший ничего не откроет.
+  assert.equal(body.uses, 1);
+  assert.equal(body.expireTime, '2026-08-25T10:30:00.000Z');
+  assert.equal(body.newSessionExpireTime, '2026-08-25T10:02:00.000Z');
+  // Токен привязан к модели и набору инструментов, а не выдан «на всё».
+  assert.equal(body.liveConnectConstraints.model, 'models/gemini-3.1-flash-live-preview');
+  assert.deepEqual(body.liveConnectConstraints.config.responseModalities, ['AUDIO']);
+  assert.deepEqual(
+    body.liveConnectConstraints.config.tools[0].functionDeclarations.map((tool) => tool.name),
+    VOICE_TOOLS.map((tool) => tool.name),
+  );
+  assert.match(body.liveConnectConstraints.config.systemInstruction.parts[0].text, /Кизуна/);
+});
+
+test('a failing gemini token request degrades with a safe reason', async () => {
+  const failing = createVoiceService({ apiKey: '', geminiApiKey: 'g', fetch: async () => ({ ok: false, status: 403 }) });
+  assert.deepEqual(await failing.createSession(), { mode: 'live', provider: 'gemini', error: 'unavailable', status: 403 });
+
+  const malformed = createVoiceService({ apiKey: '', geminiApiKey: 'g', fetch: async () => ({ ok: true, json: async () => ({}) }) });
+  assert.equal((await malformed.createSession()).error, 'malformed_output');
+});
+
+test('the session endpoint hands the browser a gemini token and the socket url only', async () => {
+  const api = request(app(createVoiceService({
+    apiKey: '',
+    geminiApiKey: 'gemini-secret-key',
+    fetch: async () => ({ ok: true, json: async () => ({ name: 'auth_tokens/browser' }) }),
+  })));
+  const status = (await api.get('/api/voice/status').expect(200)).body;
+  assert.equal(status.provider, 'gemini');
+  const session = (await api.post('/api/voice/session').expect(200)).body;
+  assert.equal(session.provider, 'gemini');
+  assert.equal(session.clientSecret, 'auth_tokens/browser');
+  assert.equal(session.url, GEMINI_LIVE_URL);
+  assert.equal(JSON.stringify(session).includes('gemini-secret-key'), false, 'ключ не должен уходить в браузер');
 });
