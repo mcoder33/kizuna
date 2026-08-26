@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { openDatabase, createLedger, deleteCapture, restoreCapture, saveNote, NOTE_BODY_LIMIT, readSettings, writeSettings, attachmentsFor, addAttachment, findAttachment, removeAttachment, ATTACHMENT_SIZE_LIMIT, ATTACHMENTS_PER_CAPTURE, enqueueCaptureJob, cancelCaptureJob, retryCaptureJob, getCaptureJob, getAggregate, replaceInterpretation, completeProjection, undoProjectionCompletion, dayView, getDailyBrief, findDailyBrief, findDailyBriefSource, listEntries, undo, search, exportLedger, resetLedger, fullEntry } from './db.js';
 import { createAiService } from './ai.js';
-import { createVoiceService, runVoiceTool, mockVoiceTurn, VOICE_TOOLS, VOICE_INSTRUCTIONS } from './voice.js';
+import { createVoiceService, runVoiceTool, mockVoiceTurn, VOICE_TOOLS, VOICE_INSTRUCTIONS, VOICE_CHOICES, buildVoiceInstructions } from './voice.js';
 import { CaptureJobWorker } from './capture-job-worker.js';
 import { normalizeClassification, gateClassification, shouldMaterializeProjections, parseCaptureOverrides, applyUserOverrides } from './classifier.js';
 import { validateRemoteModel } from './cli-config.js';
@@ -51,8 +51,13 @@ const SETTINGS = {
   openrouterKey: { env:'OPENROUTER_API_KEY', secret:true, check:value => typeof value === 'string' && value.length <= 400 },
   aiProvider: { env:'PAGENT_AI_PROVIDER', check:value => providerIds.has(value) },
   voiceProvider: { env:'PAGENT_VOICE_PROVIDER', check:value => value === 'openai' || value === 'gemini' },
-  voiceName: { env:'PAGENT_VOICE_NAME', check:value => typeof value === 'string' && /^[A-Za-z][A-Za-z0-9 _-]{0,40}$/.test(value) },
-  geminiVoiceName: { env:'PAGENT_GEMINI_VOICE_NAME', check:value => typeof value === 'string' && /^[A-Za-z][A-Za-z0-9 _-]{0,40}$/.test(value) },
+  // Голос выбирается из каталога: от него зависит род, в котором модель говорит
+  // о себе, поэтому произвольная строка здесь только сломала бы согласование.
+  voiceName: { env:'PAGENT_VOICE_NAME', check:value => VOICE_CHOICES.openai.some(item => item.id === value) },
+  geminiVoiceName: { env:'PAGENT_GEMINI_VOICE_NAME', check:value => VOICE_CHOICES.gemini.some(item => item.id === value) },
+  // Добавка к системному промпту разговора: правила инструментов и памяти она
+  // не отменяет, а дописывается к ним.
+  systemPrompt: { check:value => typeof value === 'string' && value.length <= 2000 },
   timeZone: { env:'PAGENT_TIMEZONE', check:value => { try { new Intl.DateTimeFormat('en-CA', { timeZone:value }); return true; } catch { return false; } } },
   // Настройки интерфейса живут здесь же: они про человека, а не про вкладку,
   // поэтому переживают смену браузера.
@@ -60,7 +65,9 @@ const SETTINGS = {
   wakeWord: { check:value => typeof value === 'string' && value.trim().length >= 2 && value.length <= 40 },
   previewLimit: { check:value => /^\d+$/.test(String(value)) && Number(value) >= 1 && Number(value) <= 20 },
 };
-const SETTING_DEFAULTS = { sleepAfterSeconds:'25', wakeWord:'кизуна', previewLimit:'3' };
+// Голоса по умолчанию те же, что и у самой службы: без них выпадающий список
+// открывался бы пустым, хотя разговор уже идёт каким-то голосом.
+const SETTING_DEFAULTS = { sleepAfterSeconds:'25', wakeWord:'кизуна', previewLimit:'3', voiceName:'marin', geminiVoiceName:'Puck', systemPrompt:'' };
 function secretHint(value) { return value ? `••••${String(value).slice(-4)}` : null; }
 // createVoiceService по умолчанию читает process.env напрямую; здесь ей отдаётся
 // то же окружение, но с настройками из приложения поверх.
@@ -168,7 +175,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   });
   // ── настройки ──
   app.get('/api/settings',(req,res)=>{
-    res.json({ settings: publicSettings(stored, process.env), voice: voice.status(), timeZone: configuredTimeZone });
+    res.json({ settings: publicSettings(stored, process.env), voice: voice.status(), voices: VOICE_CHOICES, timeZone: configuredTimeZone });
   });
   app.put('/api/settings',(req,res,next)=>{
     try {
@@ -185,7 +192,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
       writeSettings(db, next);
       rebuildServices();
       reportAudit(audit,{event:'settings_changed',result:'succeeded',keys:Object.keys(next)});
-      res.json({ settings: publicSettings(stored, process.env), voice: voice.status(), timeZone: configuredTimeZone });
+      res.json({ settings: publicSettings(stored, process.env), voice: voice.status(), voices: VOICE_CHOICES, timeZone: configuredTimeZone });
     } catch(error){ next(error); }
   });
   app.get('/api/status', async (req,res,next)=>{try{const provider=requestedProvider(req.query.selectedProvider);if(provider===null)return res.status(400).json({error:{code:'invalid_provider',message:'Некорректный провайдер.'}});res.json(await ai.status(provider));}catch(error){next(error);}});
@@ -215,14 +222,21 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   app.get('/api/tags',(req,res,next)=>{try{const counts=new Map();for(const row of db.prepare("SELECT i.classification_json FROM interpretations i JOIN captures c ON c.id=i.capture_id WHERE i.status='active' AND c.deleted_at IS NULL").all()){let tags;try{tags=JSON.parse(row.classification_json)?.tags}catch{continue}if(!Array.isArray(tags))continue;for(const tag of tags)if(typeof tag==='string')counts.set(tag,(counts.get(tag)||0)+1)}res.json({tags:[...counts.entries()].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])).slice(0,30).map(([tag])=>tag)});}catch(error){next(error);}});
   // ── голосовой диалог ──
   // Состояние: настроен ли ключ и в каком режиме пойдёт разговор.
-  app.get('/api/voice/status',(req,res)=>res.json({...voice.status(),instructions:VOICE_INSTRUCTIONS,tools:VOICE_TOOLS}));
+  // Промпт собирается на месте: он зависит от выбранного голоса и добавки из
+  // настроек, а они меняются без перезапуска.
+  const voiceInstructions = () => {
+    const state = voice.status();
+    const chosen = state.provider === 'gemini' ? state.providers?.gemini?.voice : state.providers?.openai?.voice;
+    return buildVoiceInstructions({ provider:state.provider, voice:state.voice || chosen, extra:stored.systemPrompt });
+  };
+  app.get('/api/voice/status',(req,res)=>res.json({...voice.status(),voices:VOICE_CHOICES,instructions:voiceInstructions(),tools:VOICE_TOOLS}));
   // Короткоживущий токен для браузера. Сам ключ наружу не уходит; без ключа
   // отвечаем режимом заглушки, чтобы интерфейс работал одинаково.
-  app.post('/api/voice/session',async(req,res,next)=>{try{const chosen=req.body?.provider;if(chosen!==undefined&&chosen!==null&&chosen!=='openai'&&chosen!=='gemini')return res.status(400).json({error:{code:'invalid_voice_provider',message:'Некорректный провайдер голоса.'}});const session=await voice.createSession({instructions:VOICE_INSTRUCTIONS,tools:VOICE_TOOLS,provider:chosen??null});
+  app.post('/api/voice/session',async(req,res,next)=>{try{const chosen=req.body?.provider;if(chosen!==undefined&&chosen!==null&&chosen!=='openai'&&chosen!=='gemini')return res.status(400).json({error:{code:'invalid_voice_provider',message:'Некорректный провайдер голоса.'}});const session=await voice.createSession({instructions:voiceInstructions(),tools:VOICE_TOOLS,provider:chosen??null});
     // Выбранный провайдер без ключа — это не «сервер сломался», а «так не
     // получится»: причину видно, и интерфейс может предложить другой.
     if(session.error==='not_configured')return res.status(409).json({error:{code:'voice_provider_not_configured',message:'У выбранного провайдера нет ключа.'}});
-    if(session.error)return res.status(503).json({error:{code:session.error,message:'Голосовая модель недоступна.'}});res.json({...session,instructions:VOICE_INSTRUCTIONS,tools:VOICE_TOOLS});}catch(error){next(error);}});
+    if(session.error)return res.status(503).json({error:{code:session.error,message:'Голосовая модель недоступна.'}});res.json({...session,instructions:voiceInstructions(),tools:VOICE_TOOLS});}catch(error){next(error);}});
   // Вызов инструмента моделью: журнал меняется только здесь, на сервере.
   // Сказанное вслух разбирает та же модель, что и напечатанное: провайдер
   // приходит из интерфейса, а если его не назвали — берётся тот, что выбран на

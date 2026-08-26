@@ -1912,6 +1912,7 @@ const SETTING_FIELDS = [
   "geminiVoiceName",
   "sleepAfterSeconds",
   "wakeWord",
+  "systemPrompt",
   "aiProvider",
   "timeZone",
   "previewLimit",
@@ -1921,7 +1922,27 @@ let appSettings = {};
 function settingInput(name) {
   return document.getElementById(`setting-${name}`);
 }
+// Списки голосов приходят с сервера вместе с настройками: там же и род, от
+// которого зависит, как модель говорит о себе.
+function paintVoiceChoices(catalogue) {
+  for (const [provider, field] of [
+    ["openai", "voiceName"],
+    ["gemini", "geminiVoiceName"],
+  ]) {
+    const picker = settingInput(field);
+    if (!picker || !catalogue?.[provider]) continue;
+    const chosen = picker.value;
+    clear(picker);
+    for (const voice of catalogue[provider]) {
+      const option = node("option", voice.label);
+      option.value = voice.id;
+      picker.append(option);
+    }
+    if (chosen) picker.value = chosen;
+  }
+}
 function paintSettings(payload) {
+  paintVoiceChoices(payload.voices);
   appSettings = payload.settings || {};
   for (const name of SETTING_FIELDS) {
     const input = settingInput(name);

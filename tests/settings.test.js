@@ -104,3 +104,45 @@ test('settings survive a data reset and stay out of the export', async () => {
   assert.equal(after.previewLimit, '7');
   assert.equal((await api.get('/api/entries').expect(200)).body.entries.length, 0);
 });
+
+// Род голоса и добавка к промпту: модель должна говорить о себе так же, каким
+// голосом звучит, а человек — уметь дописать своё правило, не отменяя базовых.
+test('the chosen voice sets the gender the model speaks in, and the addition is appended', async () => {
+  const api = request(app());
+  const base = (await api.get('/api/voice/status').expect(200)).body;
+  assert.ok(base.instructions.includes('Кизуна'), 'основной промпт на месте');
+  assert.ok(base.voices.gemini.some((voice) => voice.id === 'Puck'), 'каталог голосов отдаётся');
+  assert.ok(base.voices.openai.some((voice) => voice.id === 'cedar'));
+
+  // Мужской голос — мужской род.
+  await api.put('/api/settings').send({ voiceProvider: 'gemini', geminiVoiceName: 'Charon' }).expect(200);
+  const male = (await api.get('/api/voice/status').expect(200)).body;
+  assert.match(male.instructions, /мужским голосом/);
+  assert.match(male.instructions, /«записал»/);
+
+  // Женский — женский, и это именно смена, а не дописывание второй строки.
+  await api.put('/api/settings').send({ geminiVoiceName: 'Kore' }).expect(200);
+  const female = (await api.get('/api/voice/status').expect(200)).body;
+  assert.match(female.instructions, /женским голосом/);
+  assert.equal(female.instructions.includes('мужским голосом'), false);
+
+  // Добавка дописывается к основному промпту, а не заменяет его.
+  await api.put('/api/settings').send({ systemPrompt: 'Обращайся ко мне на «ты».' }).expect(200);
+  const custom = (await api.get('/api/voice/status').expect(200)).body;
+  assert.ok(custom.instructions.includes('Кизуна'), 'основные правила остались');
+  assert.ok(custom.instructions.includes('женским голосом'), 'род остался');
+  assert.match(custom.instructions, /От человека: Обращайся ко мне на «ты»\./);
+  // И то же самое уходит в сессию, а не только в статус.
+  const session = await api.post('/api/voice/session').send({});
+  if (session.status === 200) assert.match(session.body.instructions, /От человека:/);
+});
+
+test('a voice outside the catalogue is refused, because gender rides on it', async () => {
+  const api = request(app());
+  await api.put('/api/settings').send({ geminiVoiceName: 'Выдуманный' }).expect(400);
+  await api.put('/api/settings').send({ voiceName: 'nova' }).expect(400);
+  await api.put('/api/settings').send({ voiceName: 'cedar' }).expect(200);
+  assert.equal((await api.get('/api/settings').expect(200)).body.settings.voiceName, 'cedar');
+  // Слишком длинная добавка тоже отвергается.
+  await api.put('/api/settings').send({ systemPrompt: 'а'.repeat(2001) }).expect(400);
+});

@@ -36,6 +36,53 @@ export const VOICE_INSTRUCTIONS = [
   'Если человек размышляет вслух и обращается к тебе, помоги подумать: уточняющий вопрос или следующий шаг.',
 ].join(' ');
 
+// Голоса провайдеров. Род — наша разметка, а не поле их API: официально он
+// нигде не объявлен, но от него зависит, как модель говорит о себе по-русски,
+// поэтому выбор голоса и род должны совпадать.
+export const VOICE_CHOICES = {
+  openai: [
+    { id: 'marin', label: 'Marin — женский, ровный', gender: 'female' },
+    { id: 'cedar', label: 'Cedar — мужской, спокойный', gender: 'male' },
+    { id: 'alloy', label: 'Alloy — нейтральный', gender: 'neutral' },
+    { id: 'ash', label: 'Ash — мужской', gender: 'male' },
+    { id: 'ballad', label: 'Ballad — мужской, мягкий', gender: 'male' },
+    { id: 'echo', label: 'Echo — мужской, тёплый', gender: 'male' },
+    { id: 'verse', label: 'Verse — мужской, живой', gender: 'male' },
+    { id: 'coral', label: 'Coral — женский, тёплый', gender: 'female' },
+    { id: 'sage', label: 'Sage — женский, спокойный', gender: 'female' },
+    { id: 'shimmer', label: 'Shimmer — женский, звонкий', gender: 'female' },
+  ],
+  gemini: [
+    { id: 'Puck', label: 'Puck — мужской, бодрый', gender: 'male' },
+    { id: 'Charon', label: 'Charon — мужской, обстоятельный', gender: 'male' },
+    { id: 'Fenrir', label: 'Fenrir — мужской, напористый', gender: 'male' },
+    { id: 'Orus', label: 'Orus — мужской, твёрдый', gender: 'male' },
+    { id: 'Kore', label: 'Kore — женский, твёрдый', gender: 'female' },
+    { id: 'Aoede', label: 'Aoede — женский, лёгкий', gender: 'female' },
+    { id: 'Leda', label: 'Leda — женский, молодой', gender: 'female' },
+    { id: 'Zephyr', label: 'Zephyr — женский, светлый', gender: 'female' },
+  ],
+};
+export function voiceGender(provider, name) {
+  const list = VOICE_CHOICES[provider === 'gemini' ? 'gemini' : 'openai'];
+  const found = list.find(item => item.id.toLowerCase() === String(name || '').toLowerCase());
+  return found?.gender || 'neutral';
+}
+// Что уходит модели как системный промпт: общие правила разговора, род голоса и
+// добавка из настроек. Добавка именно добавляется — правила инструментов и
+// памяти ею не отменяются.
+export function buildVoiceInstructions({ provider, voice, extra } = {}) {
+  const gender = voiceGender(provider, voice);
+  const genderLine =
+    gender === 'male'
+      ? 'Ты говоришь мужским голосом: о себе говори в мужском роде — «записал», «нашёл», «понял».'
+      : gender === 'female'
+        ? 'Ты говоришь женским голосом: о себе говори в женском роде — «записала», «нашла», «поняла».'
+        : 'Голос нейтральный: старайся обходиться без указания рода — «готово», «сохранено», «нашлось».';
+  const addition = typeof extra === 'string' && extra.trim() ? `\nОт человека: ${extra.trim()}` : '';
+  return `${VOICE_INSTRUCTIONS} ${genderLine}${addition}`;
+}
+
 // Контракт инструментов. Один и тот же список уходит в Realtime-сессию и
 // используется заглушкой, поэтому режимы не расходятся.
 export const VOICE_TOOLS = [

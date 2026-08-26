@@ -317,12 +317,17 @@
             ></label>
             <label class="setting" for="setting-voiceName"
               ><span class="setting-name">Голос OpenAI</span
-              ><input id="setting-voiceName" type="text" placeholder="marin" /></label
-            >
+              ><select id="setting-voiceName"></select
+            ></label>
             <label class="setting" for="setting-geminiVoiceName"
               ><span class="setting-name">Голос Gemini</span
-              ><input id="setting-geminiVoiceName" type="text" placeholder="Puck" /></label
-            >
+              ><select id="setting-geminiVoiceName"></select
+            ></label>
+            <p class="setting-hint">
+              Род голоса подсказывается модели: с мужским она говорит о себе
+              «записал», с женским — «записала», с нейтральным обходится без
+              рода.
+            </p>
             <label class="setting" for="setting-sleepAfterSeconds"
               ><span class="setting-name">Засыпать после тишины, с</span
               ><input
@@ -337,6 +342,18 @@
               ><span class="setting-name">Слово пробуждения</span
               ><input id="setting-wakeWord" type="text" placeholder="кизуна" /></label
             >
+            <label class="setting setting-wide" for="setting-systemPrompt"
+              ><span class="setting-name">Добавка к промпту</span
+              ><textarea
+                id="setting-systemPrompt"
+                rows="4"
+                placeholder="Например: обращайся ко мне на «ты», отвечай короче, спрашивай про проект"
+              ></textarea
+            ></label>
+            <p class="setting-hint">
+              Добавка дописывается к основному промпту разговора, а не заменяет
+              его: правила инструментов и памяти остаются в силе.
+            </p>
           </fieldset>
 
           <fieldset class="settings-group">

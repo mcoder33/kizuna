@@ -1625,6 +1625,22 @@ body.capture-large-open::before {
 .setting-name {
   color: var(--muted);
 }
+/* Длинному полю — вся ширина строки: промпт в узкой колонке не читается. */
+.setting-wide {
+  grid-template-columns: minmax(0, 1fr);
+}
+.setting textarea {
+  font: inherit;
+  font-size: 13px;
+  width: 100%;
+  min-height: 82px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+  resize: vertical;
+}
 .setting input,
 .setting select {
   font: inherit;

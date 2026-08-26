@@ -1139,3 +1139,44 @@ test("некорректная настройка не сохраняется и
   const saved = await (await request.get("/api/settings")).json();
   expect(saved.settings.timeZone).not.toBe("Не/Зона");
 });
+
+// Голос выбирается списком, а не набирается руками: от него зависит род, в
+// котором модель говорит о себе, и произвольная строка это согласование ломала.
+test("голос выбирается из списка, а добавка к промпту дописывается к основному", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/#settings");
+  const gemini = page.locator("#setting-geminiVoiceName");
+  await expect(gemini).toBeVisible();
+  // В списке видно и имя, и род — выбирают осознанно.
+  await expect(gemini.locator("option")).toContainText([/Puck — мужской/, /Charon — мужской/]);
+  await expect(page.locator("#setting-voiceName option").first()).toContainText("Marin — женский");
+
+  // Род берётся у голоса того провайдера, которым разговор идёт сейчас. В этом
+  // прогоне ключей нет, поэтому проверяем голос OpenAI — он и считается
+  // действующим.
+  await gemini.selectOption("Charon");
+  await page.locator("#setting-voiceName").selectOption("cedar");
+  await page.locator("#setting-systemPrompt").fill("Отвечай короче и по делу.");
+  await page.locator("#settings-save").click();
+  await expect(page.locator("#settings-status")).toHaveText("Сохранено");
+
+  const voice = await (await request.get("/api/voice/status")).json();
+  expect(voice.instructions).toContain("мужским голосом");
+  expect(voice.instructions).toContain("От человека: Отвечай короче и по делу.");
+  // Основные правила разговора добавка не отменяет.
+  expect(voice.instructions).toContain("Кизуна");
+
+  // Женский голос меняет род, а не дописывает вторую строку.
+  await page.locator("#setting-voiceName").selectOption("sage");
+  await page.locator("#settings-save").click();
+  await expect(page.locator("#settings-status")).toHaveText("Сохранено");
+  const female = await (await request.get("/api/voice/status")).json();
+  expect(female.instructions).toContain("женским голосом");
+  expect(female.instructions).not.toContain("мужским голосом");
+
+  await request.put("/api/settings", {
+    data: { geminiVoiceName: "", voiceName: "", systemPrompt: "" },
+  });
+});
