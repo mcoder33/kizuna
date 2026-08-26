@@ -1820,42 +1820,11 @@ function onModelChange() {
 // модели разбора: голос и характер у них разные. Список показывается, только
 // если выбирать есть из чего, а ключей в браузере всё так же нет — сервер
 // присылает лишь признак «настроен».
-const voiceProviderNames = { openai: "OpenAI", gemini: "Google Gemini" };
-const VOICE_PROVIDER_KEY = "pagent.voice-provider";
+// Провайдер голоса выбирается в настройках и хранится на сервере: это про
+// человека, а не про вкладку, поэтому localStorage здесь больше не нужен.
 function selectedVoiceProvider() {
-  const picker = $("#voice-provider");
-  return picker.options.length && picker.value ? picker.value : null;
+  return appSettings.voiceProvider || null;
 }
-async function voiceStatus() {
-  const label = $(".voice-picker"),
-    picker = $("#voice-provider");
-  let data;
-  try {
-    data = await request("/api/voice/status");
-  } catch {
-    label.hidden = true;
-    return;
-  }
-  const available = Object.entries(data.providers || {}).filter(([, info]) => info?.configured);
-  clear(picker);
-  // Один ключ — выбирать нечего, и лишняя строка в поповере только мешает.
-  if (available.length < 2) {
-    label.hidden = true;
-    return;
-  }
-  for (const [id] of available) {
-    const option = node("option", voiceProviderNames[id] || id);
-    option.value = id;
-    picker.append(option);
-  }
-  const stored = localStorage.getItem(VOICE_PROVIDER_KEY);
-  picker.value = available.some(([id]) => id === stored) ? stored : data.provider;
-  label.hidden = false;
-}
-$("#voice-provider").addEventListener("change", () => {
-  const chosen = selectedVoiceProvider();
-  if (chosen) localStorage.setItem(VOICE_PROVIDER_KEY, chosen);
-});
 async function status() {
   const stored = localStorage.getItem("pagent.ai-provider"),
     data = await request(
@@ -1880,9 +1849,6 @@ async function status() {
     ? chosen
     : "fallback";
   renderModelPicker(data);
-  // Список голосов спрашиваем отдельно: он зависит от голосовых ключей, а не
-  // от провайдера разбора.
-  voiceStatus();
   const available =
       selectedProvider() === "fallback" ||
       data.providers[selectedProvider()]?.available,

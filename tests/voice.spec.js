@@ -687,41 +687,34 @@ test("выбор провайдера голоса появляется при �
   });
   await page.goto("/");
 
-  // Выбор живёт в поповере шапки — его сначала открывают, как и человек.
-  await page.locator(".ai-menu summary").click();
-  const picker = page.locator("#voice-provider");
+  // Выбор живёт в настройках, куда ведёт шестерёнка в шапке.
+  await page.locator(".settings-link").click();
+  const picker = page.locator("#setting-voiceProvider");
   await expect(picker).toBeVisible();
-  await expect(picker).toHaveValue("openai");
   await picker.selectOption("gemini");
-  await page.locator(".ai-menu summary").click();
+  await page.locator("#settings-save").click();
+  await expect(page.locator("#settings-status")).toHaveText("Сохранено");
+  await page.locator('nav a[href="#today"]').click();
 
   await page.locator("#capture-voice").click();
   await expect(page.locator("#voice-panel")).toBeVisible();
   await expect.poll(() => asked.length).toBeGreaterThan(0);
   expect(asked[0].provider).toBe("gemini");
 
-  // Выбор переживает перезагрузку: он про человека, а не про вкладку.
+  // Выбор переживает перезагрузку: он хранится на сервере, а не во вкладке.
   await page.reload();
-  await page.locator(".ai-menu summary").click();
-  await expect(page.locator("#voice-provider")).toHaveValue("gemini");
+  await page.goto("/#settings");
+  await expect(page.locator("#setting-voiceProvider")).toHaveValue("gemini");
 });
 
-test("с одним ключом выбора голоса в шапке нет", async ({ page, request }) => {
+test("в настройках видно, каким голосом идёт разговор сейчас", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
-  await page.route("**/api/voice/status", (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        configured: true,
-        provider: "gemini",
-        mode: "live",
-        providers: { openai: { configured: false }, gemini: { configured: true } },
-      }),
-    }),
+  await page.goto("/#settings");
+  // Строка под выбором говорит, что работает на самом деле: выбор может быть
+  // пустым («выбирает ключ»), а разговор всё равно идёт чем-то конкретным.
+  await expect(page.locator("#state-voiceProvider")).toHaveText(
+    /сейчас .+|ключа нет — разговор без модели/,
   );
-  await page.goto("/");
-  await expect(page.locator(".voice-picker")).toBeHidden();
 });
 
 // Экран разговора по макету: шапка с историей, знаком и настройками, кольцо с
