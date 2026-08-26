@@ -4,7 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { openDatabase, createLedger, deleteCapture, restoreCapture, saveNote, NOTE_BODY_LIMIT, attachmentsFor, addAttachment, findAttachment, removeAttachment, ATTACHMENT_SIZE_LIMIT, ATTACHMENTS_PER_CAPTURE, enqueueCaptureJob, cancelCaptureJob, retryCaptureJob, getCaptureJob, getAggregate, replaceInterpretation, completeProjection, undoProjectionCompletion, dayView, getDailyBrief, findDailyBrief, findDailyBriefSource, listEntries, undo, search, exportLedger, resetLedger, fullEntry } from './db.js';
+import { openDatabase, createLedger, deleteCapture, restoreCapture, saveNote, NOTE_BODY_LIMIT, readSettings, writeSettings, attachmentsFor, addAttachment, findAttachment, removeAttachment, ATTACHMENT_SIZE_LIMIT, ATTACHMENTS_PER_CAPTURE, enqueueCaptureJob, cancelCaptureJob, retryCaptureJob, getCaptureJob, getAggregate, replaceInterpretation, completeProjection, undoProjectionCompletion, dayView, getDailyBrief, findDailyBrief, findDailyBriefSource, listEntries, undo, search, exportLedger, resetLedger, fullEntry } from './db.js';
 import { createAiService } from './ai.js';
 import { createVoiceService, runVoiceTool, mockVoiceTurn, VOICE_TOOLS, VOICE_INSTRUCTIONS } from './voice.js';
 import { CaptureJobWorker } from './capture-job-worker.js';
@@ -41,6 +41,60 @@ function validJobId(value) { return typeof value === 'string' && /^[0-9a-f]{8}-[
 function validProjectionId(value) { return validJobId(value); }
 function completionError(res, error) { const errors={not_found:[404,'not_found','Проекция не найдена.'],inactive:[409,'projection_inactive','Проекция больше не активна.'],not_completable:[409,'projection_not_completable','Завершать можно только задачи и встречи.']}; const [status,code,message]=errors[error]; return res.status(status).json({error:{code,message}}); }
 function jobStatusUrl(jobId) { return `/api/jobs/${jobId}`; }
+// Настройки приложения. Раньше всё это жило только в .env и правилось руками с
+// перезапуском; здесь описано одним списком: как зовётся, как проверяется и
+// секрет ли это. Секреты наружу не отдаются никогда — только признак «настроен»
+// и последние четыре знака, чтобы человек узнал свой ключ.
+const SETTINGS = {
+  openaiKey: { env:'OPENAI_API_KEY', secret:true, check:value => typeof value === 'string' && value.length <= 400 },
+  geminiKey: { env:'GEMINI_API_KEY', secret:true, check:value => typeof value === 'string' && value.length <= 400 },
+  openrouterKey: { env:'OPENROUTER_API_KEY', secret:true, check:value => typeof value === 'string' && value.length <= 400 },
+  aiProvider: { env:'PAGENT_AI_PROVIDER', check:value => providerIds.has(value) },
+  voiceProvider: { env:'PAGENT_VOICE_PROVIDER', check:value => value === 'openai' || value === 'gemini' },
+  voiceName: { env:'PAGENT_VOICE_NAME', check:value => typeof value === 'string' && /^[A-Za-z][A-Za-z0-9 _-]{0,40}$/.test(value) },
+  geminiVoiceName: { env:'PAGENT_GEMINI_VOICE_NAME', check:value => typeof value === 'string' && /^[A-Za-z][A-Za-z0-9 _-]{0,40}$/.test(value) },
+  timeZone: { env:'PAGENT_TIMEZONE', check:value => { try { new Intl.DateTimeFormat('en-CA', { timeZone:value }); return true; } catch { return false; } } },
+  // Настройки интерфейса живут здесь же: они про человека, а не про вкладку,
+  // поэтому переживают смену браузера.
+  sleepAfterSeconds: { check:value => /^\d+$/.test(String(value)) && Number(value) >= 10 && Number(value) <= 600 },
+  wakeWord: { check:value => typeof value === 'string' && value.trim().length >= 2 && value.length <= 40 },
+  previewLimit: { check:value => /^\d+$/.test(String(value)) && Number(value) >= 1 && Number(value) <= 20 },
+};
+const SETTING_DEFAULTS = { sleepAfterSeconds:'25', wakeWord:'кизуна', previewLimit:'3' };
+function secretHint(value) { return value ? `••••${String(value).slice(-4)}` : null; }
+// createVoiceService по умолчанию читает process.env напрямую; здесь ей отдаётся
+// то же окружение, но с настройками из приложения поверх.
+function voiceOptions(env) {
+  return {
+    apiKey: env.OPENAI_API_KEY,
+    geminiApiKey: env.GEMINI_API_KEY || env.GOOGLE_API_KEY,
+    provider: env.PAGENT_VOICE_PROVIDER,
+    model: env.PAGENT_VOICE_MODEL || undefined,
+    geminiModel: env.PAGENT_GEMINI_VOICE_MODEL || undefined,
+    voice: env.PAGENT_VOICE_NAME || undefined,
+    geminiVoice: env.PAGENT_GEMINI_VOICE_NAME || undefined,
+  };
+}
+// То, что уходит в браузер: значения без секретов и «настроен» вместо ключа.
+function publicSettings(stored, env) {
+  const out = {};
+  for (const [name, rule] of Object.entries(SETTINGS)) {
+    const value = stored[name] ?? (rule.env ? env[rule.env] : undefined) ?? SETTING_DEFAULTS[name] ?? null;
+    if (rule.secret) out[name] = { configured: Boolean(value), hint: secretHint(value), fromEnvironment: !stored[name] && Boolean(rule.env && env[rule.env]) };
+    else out[name] = value;
+  }
+  return out;
+}
+// Окружение для служб: настройки поверх .env. Ключ, введённый в приложении,
+// сильнее того, что лежит в файле, — иначе правка в интерфейсе не работала бы.
+function environmentWith(stored, env) {
+  const merged = { ...env };
+  for (const [name, rule] of Object.entries(SETTINGS)) {
+    if (!rule.env) continue;
+    if (stored[name] !== undefined) merged[rule.env] = stored[name];
+  }
+  return merged;
+}
 // Что показываем прямо в браузере, а что отдаём файлом. Всё, чего нет в этом
 // списке, уходит как поток байтов с Content-Disposition: attachment — браузер
 // такой ответ не выполнит и не покажет как страницу.
@@ -61,11 +115,18 @@ function correctedClassification(original,patch){const entities={...original.ent
 function applyCorrection(db,req,res,next,notify=()=>{}){try{const active=getAggregate(db,req.params.id);if(!active)return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}});const body=req.body||{},patch=body.patch||body,providedKey=req.get('Idempotency-Key');if(providedKey!==undefined&&!validIdempotencyKey(providedKey))return res.status(400).json({error:{code:'invalid_idempotency_key',message:'Некорректный ключ идемпотентности.'}});if(patch.primaryType!==undefined&&!['meeting_event','task','note','outcome_decision','idea_question'].includes(patch.primaryType))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректный тип записи.'}});if(patch.schedule!==undefined&&!validSchedule(patch.schedule))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректная дата или время.'}});if(patch.project!==undefined&&patch.project!==null&&(typeof patch.project!=='string'||patch.project.length>120))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректный проект.'}});if(patch.people!==undefined&&(!Array.isArray(patch.people)||patch.people.length>8||patch.people.some(person=>typeof person!=='string'||person.length>120)))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректные участники.'}});if(patch.followUp!==undefined&&patch.followUp!==null&&(typeof patch.followUp!=='string'||patch.followUp.length>500))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректное действие.'}}); if(patch.completed!==undefined&&typeof patch.completed!=='boolean')return res.status(400).json({error:{code:'invalid_patch',message:'Некорректный признак выполнения.'}});const requestFingerprint=correctionRequestFingerprint(patch),operationKey=providedKey||`correction-${requestFingerprint}`,classification=correctedClassification(JSON.parse(active.classification_json),patch),review=gateClassification(classification),replacement=replaceInterpretation(db,req.params.id,classification,'manual',{...patch,patch,operationKey,requestFingerprint},shouldMaterializeProjections(classification));if(replacement?.conflict)return res.status(409).json({error:{code:'idempotency_conflict',message:'Ключ уже использован для другого уточнения.'}});const row=getAggregate(db,req.params.id);notify();res.json({entry:fullEntry(db,row),undoGroupId:replacement.undoGroupId,review,replayed:Boolean(replacement.replayed)});}catch(error){next(error);}}
 async function snapshotProvider(ai, requested) { if (requested) return requested; const status = await ai.status(); return providerIds.has(status?.selectedProvider) ? status.selectedProvider : providerIds.has(status?.defaultProvider) ? status.defaultProvider : 'fallback'; }
 export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.join(__dirname, '..', 'data', 'pagent.sqlite'), aiService, voiceService, timeZone = process.env.PAGENT_TIMEZONE || 'Europe/Samara', now = () => new Date(), workerOptions, audit = () => {} } = {}) {
-  const configuredTimeZone = validateTimeZone(timeZone); const db = openDatabase(databasePath);
+  const db = openDatabase(databasePath);
+  // Настройки читаются из базы поверх окружения: то, что человек поменял в
+  // приложении, сильнее того, что лежит в .env, и применяется без перезапуска.
+  let stored = readSettings(db);
+  const environment = () => environmentWith(stored, process.env);
+  let configuredTimeZone = validateTimeZone(stored.timeZone || timeZone);
   // Файлы вложений лежат рядом с базой: те же данные, тот же локальный каталог.
   const attachmentsDirectory = path.join(path.dirname(databasePath), 'attachments');
   fs.mkdirSync(attachmentsDirectory, { recursive: true });
-  const attachmentPath = attachmentId => path.join(attachmentsDirectory, attachmentId); const ai = aiService || createAiService({ timeZone:configuredTimeZone, now }); const app = express();
+  const attachmentPath = attachmentId => path.join(attachmentsDirectory, attachmentId);
+  let ai = aiService || createAiService({ timeZone:configuredTimeZone, now, env:environment() });
+  const app = express();
   // Живое обновление журнала: страница подписывается на поток и перерисовывает
   // карточки сама. Без этого запись, сделанную голосом или дочитанную разбором
   // в фоне, приходилось ждать до перезагрузки страницы.
@@ -77,7 +138,17 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   // Разбор заканчивается в воркере, а не в запросе: там журнал и меняется.
   const workerAudit = (event) => { try { audit(event); } finally { if (event?.event === 'capture_job_succeeded' || event?.event === 'capture_job_failed') notifyJournal('job'); } };
   const captureJobWorker = new CaptureJobWorker({ db, ai, now, audit: workerAudit, ...workerOptions });
-  const voice = voiceService || createVoiceService();
+  let voice = voiceService || createVoiceService(voiceOptions(environment()));
+  // Смена ключа, голоса или пояса пересобирает службы на месте: перезапускать
+  // сервер ради строчки в настройках человек не должен.
+  function rebuildServices() {
+    stored = readSettings(db);
+    const env = environment();
+    try { configuredTimeZone = validateTimeZone(stored.timeZone || timeZone); } catch {}
+    if (!aiService) ai = createAiService({ timeZone:configuredTimeZone, now, env });
+    if (!voiceService) voice = createVoiceService(voiceOptions(env));
+    captureJobWorker.ai = ai;
+  }
   app.captureJobWorker = captureJobWorker;
   app.disable('x-powered-by');
   app.use(express.json({ limit:'32kb' }));
@@ -94,6 +165,28 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     const drop = () => { clearInterval(beat); journalListeners.delete(res); };
     req.on('close', drop);
     res.on('close', drop);
+  });
+  // ── настройки ──
+  app.get('/api/settings',(req,res)=>{
+    res.json({ settings: publicSettings(stored, process.env), voice: voice.status(), timeZone: configuredTimeZone });
+  });
+  app.put('/api/settings',(req,res,next)=>{
+    try {
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      const next = {};
+      for (const [name, value] of Object.entries(body)) {
+        const rule = SETTINGS[name];
+        if (!rule) return res.status(400).json({error:{code:'unknown_setting',message:`Неизвестная настройка: ${name}.`}});
+        // Пустая строка и null означают «вернуть значение из окружения».
+        if (value === null || value === '') { next[name] = null; continue; }
+        if (!rule.check(value)) return res.status(400).json({error:{code:'invalid_setting',message:`Некорректное значение настройки: ${name}.`}});
+        next[name] = String(value).trim();
+      }
+      writeSettings(db, next);
+      rebuildServices();
+      reportAudit(audit,{event:'settings_changed',result:'succeeded',keys:Object.keys(next)});
+      res.json({ settings: publicSettings(stored, process.env), voice: voice.status(), timeZone: configuredTimeZone });
+    } catch(error){ next(error); }
   });
   app.get('/api/status', async (req,res,next)=>{try{const provider=requestedProvider(req.query.selectedProvider);if(provider===null)return res.status(400).json({error:{code:'invalid_provider',message:'Некорректный провайдер.'}});res.json(await ai.status(provider));}catch(error){next(error);}});
   app.post('/api/captures/:id/corrections',(req,res,next)=>applyCorrection(db,req,res,next,()=>notifyJournal('correction')));

@@ -481,7 +481,8 @@ function appendEntries(container, entries, emptyText, options) {
   if (!container.childNodes.length)
     container.append(node("p", emptyText, "empty"));
 }
-const previewLimit = 3;
+// Сколько записей показывать в колонке — настройка, а не константа.
+let previewLimit = 3;
 // Колонка показывает первые записи, а не все. Раньше об этом было сказано
 // только заголовком-ссылкой, и запись, ушедшая за границу превью (например,
 // дело, которому передвинули срок вперёд), выглядела пропавшей.
@@ -1661,6 +1662,9 @@ const voiceDialog = createVoiceDialog({
   onJournalChanged: () => load(),
   // Разговор начинается тем провайдером, которого выбрали в шапке.
   voiceProvider: () => selectedVoiceProvider(),
+  // Через сколько тишины засыпать и по какому слову просыпаться — из настроек.
+  sleepAfterMs: () => Number(appSettings.sleepAfterSeconds || 25) * 1000,
+  wakeWord: () => appSettings.wakeWord || "кизуна",
   // А сказанное разбирает та же модель, что и напечатанное.
   captureProvider: () => (providerReady() ? selectedProvider() : null),
   // Кнопка разговора показывает состояние панели, а закрыть панель можно и
@@ -1920,7 +1924,7 @@ async function bootstrap() {
     bootstrapQueued = false;
     bootstrapInFlight = true;
     try {
-      await Promise.all([status(), load()]);
+      await Promise.all([status(), load(), loadSettings()]);
       resumeCapture();
     } catch {
       toast("Не удалось загрузить данные. Повторим при восстановлении сети.");
@@ -1929,6 +1933,100 @@ async function bootstrap() {
     }
   } while (bootstrapQueued);
 }
+// ── настройки приложения ─────────────────────────────────────────────────────
+// Всё, что раньше правилось в .env с перезапуском: ключи, провайдеры, голос,
+// поведение разговора и вид журнала. Ключи наружу не отдаются — с сервера
+// приходит только признак «настроен» и последние знаки.
+const SETTING_FIELDS = [
+  "openaiKey",
+  "geminiKey",
+  "openrouterKey",
+  "voiceProvider",
+  "voiceName",
+  "geminiVoiceName",
+  "sleepAfterSeconds",
+  "wakeWord",
+  "aiProvider",
+  "timeZone",
+  "previewLimit",
+];
+const SECRET_FIELDS = ["openaiKey", "geminiKey", "openrouterKey"];
+let appSettings = {};
+function settingInput(name) {
+  return document.getElementById(`setting-${name}`);
+}
+function paintSettings(payload) {
+  appSettings = payload.settings || {};
+  for (const name of SETTING_FIELDS) {
+    const input = settingInput(name);
+    if (!input) continue;
+    const value = appSettings[name];
+    if (SECRET_FIELDS.includes(name)) {
+      // Поле ключа всегда пустое: показывать нечего, а подпись рядом говорит,
+      // настроен он и откуда взялся.
+      input.value = "";
+      const state = document.getElementById(`state-${name}`);
+      if (state)
+        state.textContent = value?.configured
+          ? `${value.hint}${value.fromEnvironment ? " · из .env" : ""}`
+          : "не настроен";
+      continue;
+    }
+    input.value = value ?? "";
+  }
+  const voiceState = document.getElementById("state-voiceProvider");
+  if (voiceState)
+    voiceState.textContent = payload.voice?.configured
+      ? `сейчас ${providerNames[payload.voice.provider] || payload.voice.provider}`
+      : "ключа нет — разговор без модели";
+  // Настройки вида применяются сразу, без перезагрузки страницы.
+  const limit = Number(appSettings.previewLimit);
+  if (Number.isFinite(limit) && limit > 0 && limit !== previewLimit) {
+    previewLimit = limit;
+    load().catch(() => {});
+  }
+}
+async function loadSettings() {
+  if (!settingInput("timeZone")) return;
+  try {
+    paintSettings(await request("/api/settings"));
+  } catch {
+    // Настройки не открылись — приложение всё равно работает на прежних.
+  }
+}
+async function saveSettings(patch) {
+  const status = $("#settings-status");
+  status.textContent = "Сохраняем…";
+  try {
+    paintSettings(
+      await request("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
+    );
+    status.textContent = "Сохранено";
+    toast("Настройки сохранены");
+  } catch (error) {
+    status.textContent = "";
+    toast(error.message);
+  }
+}
+$("#settings-save")?.addEventListener("click", () => {
+  const patch = {};
+  for (const name of SETTING_FIELDS) {
+    const input = settingInput(name);
+    if (!input) continue;
+    const value = input.value.trim();
+    // Пустое поле ключа значит «не трогать», пустое обычное — «как в .env».
+    if (SECRET_FIELDS.includes(name)) {
+      if (value) patch[name] = value;
+      continue;
+    }
+    patch[name] = value;
+  }
+  saveSettings(patch);
+});
+$("#settings-forget")?.addEventListener("click", () => {
+  saveSettings(Object.fromEntries(SECRET_FIELDS.map((name) => [name, ""])));
+});
+
 // Предпросмотр закрывается крестиком, кликом по фону и Esc — как и карточка.
 $("#preview-close").addEventListener("click", () => $("#preview-dialog").close());
 $("#preview-dialog").addEventListener("click", (event) => {

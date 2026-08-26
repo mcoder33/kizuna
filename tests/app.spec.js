@@ -1081,3 +1081,55 @@ test("колонка честно говорит, сколько записей 
   for (const response of created)
     await request.delete(`/api/captures/${(await response.json()).entry.id}`);
 });
+
+// Настройки в приложении: раньше это правилось только в .env с перезапуском.
+test("настройки меняются в приложении и применяются сразу", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/#settings");
+  await expect(page.locator("#settings")).toBeVisible();
+
+  // Ключ показывается признаком, а не значением.
+  await expect(page.locator("#setting-openaiKey")).toHaveValue("");
+  await expect(page.locator("#state-openaiKey")).toHaveText(/не настроен|••••/);
+
+  // Меняем поведение разговора и вид журнала.
+  await page.locator("#setting-sleepAfterSeconds").fill("60");
+  await page.locator("#setting-wakeWord").fill("журнал");
+  await page.locator("#setting-previewLimit").fill("5");
+  await page.locator("#settings-save").click();
+  await expect(page.locator("#settings-status")).toHaveText("Сохранено");
+
+  // Сохранилось на сервере, а не только на экране.
+  const saved = await (await request.get("/api/settings")).json();
+  expect(saved.settings.sleepAfterSeconds).toBe("60");
+  expect(saved.settings.wakeWord).toBe("журнал");
+  expect(saved.settings.previewLimit).toBe("5");
+
+  // Колонка сразу показывает пять записей вместо трёх — без перезагрузки.
+  const created = [];
+  for (const name of ["дело 1", "дело 2", "дело 3", "дело 4", "дело 5", "дело 6"])
+    created.push(await request.post("/api/captures", { data: { raw: name, primaryType: "todo" } }));
+  await page.locator('nav a[href="#today"]').click();
+  await expect(page.locator("#todo .entry")).toHaveCount(5, { timeout: 15000 });
+  await expect(page.locator("#todo .preview-more")).toHaveText("Ещё 1 — весь список →");
+
+  // Новое слово пробуждения видно в подсказке разговора.
+  await page.locator("#capture-voice").click();
+  await expect(page.locator("#voice-hint")).toContainText("Ключа нет");
+
+  // Возвращаем как было и убираем записи.
+  await request.put("/api/settings", {
+    data: { sleepAfterSeconds: "", wakeWord: "", previewLimit: "" },
+  });
+  for (const response of created)
+    await request.delete(`/api/captures/${(await response.json()).entry.id}`);
+});
+
+test("некорректная настройка не сохраняется и объясняет причину", async ({ page, request }) => {
+  await page.goto("/#settings");
+  await page.locator("#setting-timeZone").fill("Не/Зона");
+  await page.locator("#settings-save").click();
+  await expect(page.locator("#toast")).toContainText("Некорректное значение");
+  const saved = await (await request.get("/api/settings")).json();
+  expect(saved.settings.timeZone).not.toBe("Не/Зона");
+});

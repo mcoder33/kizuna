@@ -132,6 +132,14 @@ function migrate(db) {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS capture_notes_active ON capture_notes(capture_id) WHERE status='active';
     CREATE INDEX IF NOT EXISTS capture_notes_capture ON capture_notes(capture_id, created_at);`);
+  // Настройки приложения: то, что раньше жило только в .env и правилось руками.
+  // Отдельная таблица, а не часть журнала: это конфигурация, а не записи —
+  // поэтому она не попадает в экспорт и переживает очистку данных.
+  db.exec(`CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );`);
   // Вложения: сами файлы лежат на диске в data/attachments, в базе — только
   // описание. Байты в SQLite раздули бы и базу, и экспорт; на диске файл
   // называется своим id, а человеческое имя хранится отдельно — значит, из
@@ -157,6 +165,25 @@ function migrate(db) {
 
 export const NOTE_BODY_LIMIT = 20000;
 
+export function readSettings(db) {
+  const out = {};
+  for (const row of db.prepare('SELECT key,value FROM app_settings').all()) out[row.key] = row.value;
+  return out;
+}
+export function writeSettings(db, values) {
+  const at = now();
+  const upsert = db.prepare('INSERT INTO app_settings(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at');
+  const drop = db.prepare('DELETE FROM app_settings WHERE key=?');
+  return withImmediateTransaction(db, () => {
+    for (const [key, value] of Object.entries(values)) {
+      // Пустое значение — это «вернуть как было», то есть снова брать из
+      // окружения: хранить пустую строку значило бы «нет ключа навсегда».
+      if (value === null || value === '') drop.run(key);
+      else upsert.run(key, String(value), at);
+    }
+    return readSettings(db);
+  });
+}
 export const ATTACHMENT_SIZE_LIMIT = 10 * 1024 * 1024;
 export const ATTACHMENTS_PER_CAPTURE = 10;
 export function attachmentsFor(db, captureId) {

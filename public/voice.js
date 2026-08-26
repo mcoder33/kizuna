@@ -18,7 +18,7 @@ const element = (tag, className, text) => {
   return node;
 };
 
-export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () => {}, voiceProvider = () => null, captureProvider = () => null, fetchImplementation = fetch } = {}) {
+export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () => {}, voiceProvider = () => null, captureProvider = () => null, sleepAfterMs = () => 25000, wakeWord = () => "кизуна", fetchImplementation = fetch } = {}) {
   const panel = element("section", "voice-panel");
   panel.id = "voice-panel";
   panel.hidden = true;
@@ -129,11 +129,20 @@ export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () =
   };
 
   // Через столько тишины разговор засыпает сам: человек отвлёкся, а слушать
-  // комнату дальше незачем.
-  const SLEEP_AFTER_MS = 25000;
+  // комнату дальше незачем. Значение приходит из настроек приложения.
+  const sleepDelay = () => {
+    const value = Number(sleepAfterMs());
+    return Number.isFinite(value) && value >= 5000 ? value : 25000;
+  };
   // Обращение по имени будит разговор. Распознавание местами слышит имя криво,
-  // поэтому вариантов несколько — все они означают «это ко мне».
-  const WAKE_WORDS = /(кизун|кидзун|кизу́н|kizuna)/i;
+  // поэтому сравниваем по корню слова, а не по точному совпадению.
+  const wakeMatcher = () => {
+    const word = String(wakeWord() || "кизуна").trim().toLowerCase();
+    // Хвост слова отбрасываем: «кизуна», «кизуну», «кизуной» — одно обращение.
+    const root = word.length > 5 ? word.slice(0, word.length - 1) : word;
+    const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(escaped, "i");
+  };
   // «Спасибо, всё» — вежливый способ закончить, а не новая запись.
   const SLEEP_WORDS = /^(спасибо|хватит|всё|все|пока|отбой|стоп)[.!]?$/i;
 
@@ -142,7 +151,7 @@ export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () =
     listening: "Слушаю",
     thinking: "Думаю",
     speaking: "Отвечает",
-    sleeping: "Сплю — позовите «Кизуна»",
+    sleeping: "Сплю — позовите по имени",
     muted: "Микрофон выключен",
     idle: "Готов слушать",
   };
@@ -291,7 +300,7 @@ export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () =
   function resetSleepTimer() {
     clearTimeout(state.sleepTimer);
     if (state.mode !== "live" || !state.awake) return;
-    state.sleepTimer = setTimeout(sleepConversation, SLEEP_AFTER_MS);
+    state.sleepTimer = setTimeout(sleepConversation, sleepDelay());
   }
 
   // Имя слушает сам браузер: во сне звук наружу не уходит, поэтому пробуждение
@@ -310,7 +319,7 @@ export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () =
     recognition.addEventListener("result", (event) => {
       for (let index = event.resultIndex ?? 0; index < event.results.length; index += 1) {
         const said = event.results[index]?.[0]?.transcript || "";
-        if (WAKE_WORDS.test(said)) {
+        if (wakeMatcher().test(said)) {
           wakeConversation();
           return;
         }
@@ -861,7 +870,7 @@ export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () =
       document.documentElement.classList.add("voice-live-open");
       document.body.classList.add("voice-live-open");
       hint.textContent = SpeechRecognitionApi
-        ? "Говорите вслух. Замолчите — разговор уснёт и перестанет слушать комнату; позовите «Кизуна», и он вернётся."
+        ? `Говорите вслух. Замолчите — разговор уснёт и перестанет слушать комнату; позовите «${wakeWord()}», и он вернётся.`
         : "Говорите вслух. Замолчите — разговор уснёт; чтобы разбудить, нажмите на круг.";
     } catch (error) {
       state.mode = "mock";

@@ -242,6 +242,136 @@
         </section>
       </section>
       <section id="settings" class="app-page" hidden>
+        <section class="settings-form" aria-label="Настройки приложения">
+          <div class="page-heading">
+            <p class="eyebrow">НАСТРОЙКИ</p>
+            <h2>Как работает Кизуна</h2>
+            <p>
+              Раньше это правилось только в файле <code>.env</code> с
+              перезапуском. Здесь всё применяется сразу; ключи хранятся на этом
+              компьютере и в браузер не возвращаются — видно только последние
+              знаки.
+            </p>
+          </div>
+
+          <fieldset class="settings-group">
+            <legend>Ключи</legend>
+            <label class="setting" for="setting-openaiKey"
+              ><span class="setting-name">OpenAI</span
+              ><input
+                id="setting-openaiKey"
+                type="password"
+                autocomplete="off"
+                placeholder="sk-…"
+              /><span class="setting-state" id="state-openaiKey"></span
+            ></label>
+            <label class="setting" for="setting-geminiKey"
+              ><span class="setting-name">Google Gemini</span
+              ><input
+                id="setting-geminiKey"
+                type="password"
+                autocomplete="off"
+                placeholder="AI…"
+              /><span class="setting-state" id="state-geminiKey"></span
+            ></label>
+            <label class="setting" for="setting-openrouterKey"
+              ><span class="setting-name">OpenRouter</span
+              ><input
+                id="setting-openrouterKey"
+                type="password"
+                autocomplete="off"
+                placeholder="sk-or-…"
+              /><span class="setting-state" id="state-openrouterKey"></span
+            ></label>
+            <p class="setting-hint">
+              Пустое поле оставляет ключ как есть. Чтобы убрать введённый здесь
+              ключ и снова взять его из <code>.env</code>, нажмите «Забыть».
+            </p>
+          </fieldset>
+
+          <fieldset class="settings-group">
+            <legend>Разговор</legend>
+            <label class="setting" for="setting-voiceProvider"
+              ><span class="setting-name">Провайдер голоса</span
+              ><select id="setting-voiceProvider">
+                <option value="">Выбирает ключ</option>
+                <option value="openai">OpenAI</option>
+                <option value="gemini">Google Gemini</option>
+              </select><span class="setting-state" id="state-voiceProvider"></span
+            ></label>
+            <label class="setting" for="setting-voiceName"
+              ><span class="setting-name">Голос OpenAI</span
+              ><input id="setting-voiceName" type="text" placeholder="marin" /></label
+            >
+            <label class="setting" for="setting-geminiVoiceName"
+              ><span class="setting-name">Голос Gemini</span
+              ><input id="setting-geminiVoiceName" type="text" placeholder="Puck" /></label
+            >
+            <label class="setting" for="setting-sleepAfterSeconds"
+              ><span class="setting-name">Засыпать после тишины, с</span
+              ><input
+                id="setting-sleepAfterSeconds"
+                type="number"
+                min="10"
+                max="600"
+                step="5"
+              /></label
+            >
+            <label class="setting" for="setting-wakeWord"
+              ><span class="setting-name">Слово пробуждения</span
+              ><input id="setting-wakeWord" type="text" placeholder="кизуна" /></label
+            >
+          </fieldset>
+
+          <fieldset class="settings-group">
+            <legend>Журнал</legend>
+            <label class="setting" for="setting-aiProvider"
+              ><span class="setting-name">Разбирает записи</span
+              ><select id="setting-aiProvider">
+                <option value="fallback">Без модели</option>
+                <option value="openai">OpenAI</option>
+                <option value="openrouter">OpenRouter</option>
+                <option value="codex-cli">Codex CLI</option>
+                <option value="claude-cli">Claude CLI</option>
+              </select></label
+            >
+            <label class="setting" for="setting-timeZone"
+              ><span class="setting-name">Часовой пояс</span
+              ><input
+                id="setting-timeZone"
+                type="text"
+                list="known-timezones"
+                placeholder="Europe/Samara"
+              /></label
+            >
+            <label class="setting" for="setting-previewLimit"
+              ><span class="setting-name">Записей в колонке</span
+              ><input id="setting-previewLimit" type="number" min="1" max="20" /></label
+            >
+          </fieldset>
+
+          <div class="settings-bar">
+            <button id="settings-save" class="primary" type="button">
+              Сохранить настройки
+            </button>
+            <button id="settings-forget" class="secondary" type="button">
+              Забыть ключи
+            </button>
+            <span id="settings-status" class="setting-state" role="status"></span>
+          </div>
+        </section>
+        <datalist id="known-timezones">
+          <option value="Europe/Samara"></option>
+          <option value="Europe/Moscow"></option>
+          <option value="Europe/Kaliningrad"></option>
+          <option value="Asia/Yekaterinburg"></option>
+          <option value="Asia/Novosibirsk"></option>
+          <option value="Asia/Vladivostok"></option>
+          <option value="Europe/Berlin"></option>
+          <option value="Europe/London"></option>
+          <option value="America/New_York"></option>
+          <option value="Asia/Tbilisi"></option>
+        </datalist>
         <section class="settings">
           <div>
             <p class="eyebrow">ДАННЫЕ</p>
