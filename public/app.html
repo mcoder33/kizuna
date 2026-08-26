@@ -39,6 +39,20 @@
           </div>
         </details>
       </nav>
+      <div class="header-tail">
+      <details class="ai-menu">
+        <summary id="ai-summary" aria-label="Модель и провайдер">ИИ</summary>
+        <div class="ai-menu-popover">
+          <label class="provider-picker" for="ai-provider"
+            ><span>Провайдер</span
+            ><select id="ai-provider" aria-label="Провайдер ИИ"></select></label
+          ><label class="provider-picker model-picker" for="ai-model" hidden
+            ><span>Модель</span
+            ><select id="ai-model" aria-label="Модель ИИ"></select></label
+          ><span id="ai-status" class="status" role="status">Проверяем ИИ…</span>
+          <a class="ai-menu-more" href="#settings">Все настройки →</a>
+        </div>
+      </details>
       <a class="settings-link" href="#settings" aria-label="Настройки">
         <svg
           viewBox="0 0 24 24"
@@ -54,8 +68,8 @@
             d="M19.2 14.4a1.5 1.5 0 0 0 .3 1.7l.1.1a1.8 1.8 0 1 1-2.6 2.6l-.1-.1a1.5 1.5 0 0 0-2.5 1v.2a1.8 1.8 0 1 1-3.6 0v-.1a1.5 1.5 0 0 0-2.6-1l-.1.1a1.8 1.8 0 1 1-2.6-2.6l.1-.1a1.5 1.5 0 0 0-1-2.5H4.4a1.8 1.8 0 1 1 0-3.6h.1a1.5 1.5 0 0 0 1-2.6l-.1-.1a1.8 1.8 0 1 1 2.6-2.6l.1.1a1.5 1.5 0 0 0 1.7.3h.1a1.5 1.5 0 0 0 .9-1.4V4.4a1.8 1.8 0 1 1 3.6 0v.1a1.5 1.5 0 0 0 2.5 1l.1-.1a1.8 1.8 0 1 1 2.6 2.6l-.1.1a1.5 1.5 0 0 0 1 2.5h.2a1.8 1.8 0 1 1 0 3.6h-.1a1.5 1.5 0 0 0-1.4.9z"
           />
         </svg>
-        <span id="ai-summary" class="settings-model" aria-live="polite"></span>
       </a>
+      </div>
     </header>
     <aside
       id="capture-notifications"
@@ -323,24 +337,6 @@
               ><span class="setting-name">Слово пробуждения</span
               ><input id="setting-wakeWord" type="text" placeholder="кизуна" /></label
             >
-          </fieldset>
-
-          <fieldset class="settings-group">
-            <legend>Разбор записей</legend>
-            <label class="setting" for="ai-provider"
-              ><span class="setting-name">Провайдер</span
-              ><select id="ai-provider" aria-label="Провайдер ИИ"></select
-            ></label>
-            <label class="setting model-picker" for="ai-model" hidden
-              ><span class="setting-name">Модель</span
-              ><select id="ai-model" aria-label="Модель ИИ"></select
-            ></label>
-            <span id="ai-status" class="status" role="status">Проверяем ИИ…</span>
-            <p class="setting-hint">
-              Выбор действует сразу и для новых записей, и для сказанного вслух.
-              «Разбирает записи по умолчанию» ниже — то, с чем приложение
-              запускается.
-            </p>
           </fieldset>
 
           <fieldset class="settings-group">

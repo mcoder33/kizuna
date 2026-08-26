@@ -34,22 +34,23 @@ test("async capture shows a short success notification and adds the entry to the
   page,
 }) => {
   await page.goto("/");
-  // В шапке осталась шестерёнка с коротким именем модели; всё остальное — в
-  // настройках, куда она и ведёт.
+  // В шапке остались обе двери: быстрый выбор модели и шестерёнка во все
+  // настройки.
   await expect(page.locator("#ai-summary")).toHaveText("fast");
   await expect(page.locator(".settings-link")).toHaveAttribute("href", "#settings");
-  await page.locator(".settings-link").click();
+  await page.locator(".ai-menu summary").click();
   await expect(page.getByText("Выбран: OpenRouter")).toBeVisible();
-  await page.locator('nav a[href="#today"]').click();
+  await expect(page.locator(".ai-menu-more")).toHaveAttribute("href", "#settings");
+  await page.locator(".ai-menu summary").click();
   await capture(page, "Завтра в 11 созвон по Hub");
   await expect(page.locator("#capture-notifications")).toContainText("Готово");
   await expect(page.locator("#todo")).toContainText("созвон по Hub");
   await page.screenshot({ path: "tmp/screenshots/async-capture-ready.png" });
 });
 test("medium-confidence Codex classification remains visible in Plan", async ({ page }) => {
-  await page.goto("/#settings");
+  await page.goto("/");
+  await page.locator(".ai-menu summary").click();
   await page.getByLabel("Провайдер ИИ").selectOption("codex-cli");
-  await page.locator('nav a[href="#today"]').click();
   await capture(page, "Завтра в 11 созвон по Hub");
   await expect(page.locator("#todo")).toContainText("Созвон по Hub");
 });
@@ -292,7 +293,8 @@ test("an unavailable requested provider is labelled unavailable", async ({
   await page.addInitScript(() =>
     localStorage.setItem("pagent.ai-provider", "openai"),
   );
-  await page.goto("/#settings");
+  await page.goto("/");
+  await page.locator(".ai-menu summary").click();
   await expect(page.locator("#ai-status")).toContainText("OpenAI — недоступен");
 });
 test("reload resumes one pending poller without a second capture POST", async ({
@@ -579,7 +581,7 @@ test("provider selection has one stable listener after failed and repeated onlin
   await expect.poll(() => statusReads).toBe(2);
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
   await expect.poll(() => statusReads).toBe(3);
-  await page.locator(".settings-link").click();
+  await page.locator(".ai-menu summary").click();
   await page.getByLabel("Провайдер ИИ").selectOption("fallback");
   await expect.poll(() => statusReads).toBe(4);
   expect(
