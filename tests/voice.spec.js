@@ -145,6 +145,9 @@ test("with a key the live path connects, runs the tool and returns the result to
   // Первым делом сессии сообщают доступные инструменты.
   expect(probe.sent[0].type).toBe("session.update");
   expect(probe.sent[0].session.tool_choice).toBe("auto");
+  // Без session.type Realtime API отвечает «Missing required parameter» и
+  // инструменты остаются необъявленными.
+  expect(probe.sent[0].session.type).toBe("realtime");
 
   // Модель просит записать заметку — как это приходит по каналу событий.
   await page.evaluate(() => {
@@ -807,4 +810,74 @@ test("разговор показывает, что записал и в как�
     });
   }, captureId);
   await expect(page.locator(".voice-line.voice-done").last()).toContainText("Вернул запись");
+});
+
+// Переключение голоса из шапки: «чем сейчас говорить» — такое же быстрое
+// решение, как и выбор модели разбора, поэтому живёт там же.
+test("голос переключается прямо из шапки", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.route("**/api/settings", async (route) => {
+    if (route.request().method() === "PUT") {
+      saved = JSON.parse(route.request().postData() || "{}");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          settings: { ...base.settings, voiceProvider: saved.voiceProvider },
+          voice: base.voice,
+          voices: base.voices,
+          timeZone: "Europe/Samara",
+        }),
+      });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(base) });
+  });
+  let saved = null;
+  const base = {
+    settings: { voiceProvider: "openai", sleepAfterSeconds: "25", wakeWord: "кизуна", previewLimit: "3" },
+    voice: {
+      configured: true,
+      provider: "openai",
+      mode: "live",
+      providers: { openai: { configured: true }, gemini: { configured: true } },
+    },
+    voices: { openai: [{ id: "marin", label: "Marin", gender: "female" }], gemini: [{ id: "Puck", label: "Puck", gender: "male" }] },
+    timeZone: "Europe/Samara",
+  };
+  await page.goto("/");
+
+  await page.locator(".ai-menu summary").click();
+  const picker = page.locator("#voice-quick-provider");
+  await expect(picker).toBeVisible();
+  await expect(picker).toHaveValue("openai");
+
+  await picker.selectOption("gemini");
+  await expect.poll(() => saved?.voiceProvider).toBe("gemini");
+  await expect(page.locator("#toast")).toContainText("Голос: Google Gemini");
+});
+
+test("с одним ключом переключать голос нечем", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.route("**/api/settings", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        settings: { voiceProvider: "gemini", sleepAfterSeconds: "25", wakeWord: "кизуна", previewLimit: "3" },
+        voice: {
+          configured: true,
+          provider: "gemini",
+          mode: "live",
+          providers: { openai: { configured: false }, gemini: { configured: true } },
+        },
+        voices: { openai: [], gemini: [] },
+        timeZone: "Europe/Samara",
+      }),
+    }),
+  );
+  await page.goto("/");
+  await page.locator(".ai-menu summary").click();
+  // Выбора нет — и строки нет: пустой список только мешал бы.
+  await expect(page.locator(".voice-quick-picker")).toBeHidden();
 });

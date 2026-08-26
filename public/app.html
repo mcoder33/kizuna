@@ -50,6 +50,13 @@
             ><span>Модель</span
             ><select id="ai-model" aria-label="Модель ИИ"></select></label
           ><span id="ai-status" class="status" role="status">Проверяем ИИ…</span>
+          <label class="provider-picker voice-quick-picker" for="voice-quick-provider" hidden
+            ><span>Голос</span
+            ><select id="voice-quick-provider" aria-label="Провайдер голоса">
+              <option value="openai">OpenAI</option>
+              <option value="gemini">Google Gemini</option>
+            </select></label
+          >
           <a class="ai-menu-more" href="#settings">Все настройки →</a>
         </div>
       </details>
@@ -315,6 +322,23 @@
                 <option value="gemini">Google Gemini</option>
               </select><span class="setting-state" id="state-voiceProvider"></span
             ></label>
+            <label class="setting" for="setting-voiceModel"
+              ><span class="setting-name">Модель OpenAI</span
+              ><input
+                id="setting-voiceModel"
+                type="text"
+                list="known-voice-models"
+                placeholder="gpt-realtime"
+              /></label
+            >
+            <label class="setting" for="setting-geminiVoiceModel"
+              ><span class="setting-name">Модель Gemini</span
+              ><input
+                id="setting-geminiVoiceModel"
+                type="text"
+                placeholder="models/gemini-3.1-flash-live-preview"
+              /></label
+            >
             <label class="setting" for="setting-voiceName"
               ><span class="setting-name">Голос OpenAI</span
               ><select id="setting-voiceName"></select
@@ -393,6 +417,14 @@
             <span id="settings-status" class="setting-state" role="status"></span>
           </div>
         </section>
+        <datalist id="known-voice-models">
+          <option value="gpt-realtime"></option>
+          <option value="gpt-realtime-mini"></option>
+          <option value="gpt-realtime-mini-2025-12-15"></option>
+          <option value="gpt-audio-mini"></option>
+          <option value="gpt-audio-mini-2025-12-15"></option>
+          <option value="gpt-audio"></option>
+        </datalist>
         <datalist id="known-timezones">
           <option value="Europe/Samara"></option>
           <option value="Europe/Moscow"></option>

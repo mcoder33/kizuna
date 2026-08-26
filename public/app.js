@@ -1673,7 +1673,7 @@ const voiceDialog = createVoiceDialog({
 });
 $("#capture-form").after(voiceDialog.element);
 const voiceButton = $("#capture-voice");
-voiceButton.addEventListener("click", () => {
+function toggleVoice() {
   if (voiceDialog.isOpen()) {
     voiceDialog.stop();
     voiceButton.setAttribute("aria-pressed", "false");
@@ -1682,7 +1682,8 @@ voiceButton.addEventListener("click", () => {
   }
   voiceButton.setAttribute("aria-pressed", "true");
   voiceDialog.open();
-});
+}
+voiceButton.addEventListener("click", toggleVoice);
 
 function idempotencyKey() {
   return `capture-${crypto.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`}`;
@@ -1820,6 +1821,7 @@ function onModelChange() {
 // модели разбора: голос и характер у них разные. Список показывается, только
 // если выбирать есть из чего, а ключей в браузере всё так же нет — сервер
 // присылает лишь признак «настроен».
+const voiceProviderNames = { openai: "OpenAI", gemini: "Google Gemini" };
 // Провайдер голоса выбирается в настройках и хранится на сервере: это про
 // человека, а не про вкладку, поэтому localStorage здесь больше не нужен.
 function selectedVoiceProvider() {
@@ -1908,6 +1910,8 @@ const SETTING_FIELDS = [
   "geminiKey",
   "openrouterKey",
   "voiceProvider",
+  "voiceModel",
+  "geminiVoiceModel",
   "voiceName",
   "geminiVoiceName",
   "sleepAfterSeconds",
@@ -1941,8 +1945,22 @@ function paintVoiceChoices(catalogue) {
     if (chosen) picker.value = chosen;
   }
 }
+// Быстрое переключение голоса живёт там же, где выбор модели: и то и другое —
+// «чем сейчас работать». Показывается, только когда есть из чего выбирать.
+function paintVoiceQuickPicker(payload) {
+  const label = document.querySelector(".voice-quick-picker"),
+    picker = $("#voice-quick-provider");
+  if (!label || !picker) return;
+  const configured = Object.entries(payload.voice?.providers || {})
+    .filter(([, info]) => info?.configured)
+    .map(([id]) => id);
+  for (const option of picker.options) option.hidden = !configured.includes(option.value);
+  label.hidden = configured.length < 2;
+  picker.value = payload.settings?.voiceProvider || payload.voice?.provider || configured[0] || "openai";
+}
 function paintSettings(payload) {
   paintVoiceChoices(payload.voices);
+  paintVoiceQuickPicker(payload);
   appSettings = payload.settings || {};
   for (const name of SETTING_FIELDS) {
     const input = settingInput(name);
@@ -1981,7 +1999,7 @@ async function loadSettings() {
     // Настройки не открылись — приложение всё равно работает на прежних.
   }
 }
-async function saveSettings(patch) {
+async function saveSettings(patch, { announce = "Настройки сохранены" } = {}) {
   const status = $("#settings-status");
   status.textContent = "Сохраняем…";
   try {
@@ -1989,7 +2007,7 @@ async function saveSettings(patch) {
       await request("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
     );
     status.textContent = "Сохранено";
-    toast("Настройки сохранены");
+    if (announce) toast(announce);
   } catch (error) {
     status.textContent = "";
     toast(error.message);
@@ -2009,6 +2027,14 @@ $("#settings-save")?.addEventListener("click", () => {
     patch[name] = value;
   }
   saveSettings(patch);
+});
+// Переключение из шапки — это та же настройка, только одним движением.
+$("#voice-quick-provider")?.addEventListener("change", (event) => {
+  const chosen = event.target.value;
+  saveSettings(
+    { voiceProvider: chosen },
+    { announce: `Голос: ${voiceProviderNames[chosen] || chosen}` },
+  );
 });
 $("#settings-forget")?.addEventListener("click", () => {
   saveSettings(Object.fromEntries(SECRET_FIELDS.map((name) => [name, ""])));

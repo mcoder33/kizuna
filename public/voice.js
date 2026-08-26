@@ -516,7 +516,14 @@ export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () =
     channel.addEventListener("open", () => {
       // Инструменты и голос уже заданы при выпуске токена; здесь только
       // подтверждаем их, чтобы сессия точно знала, чем может пользоваться.
-      channel.send(JSON.stringify({ type: "session.update", session: { tools: session.tools, tool_choice: "auto" } }));
+      // session.type обязателен: без него Realtime API отвечает «Missing
+      // required parameter» и объявление инструментов не применяется.
+      channel.send(
+        JSON.stringify({
+          type: "session.update",
+          session: { type: "realtime", tools: session.tools, tool_choice: "auto" },
+        }),
+      );
       wakeConversation();
     });
 
@@ -527,7 +534,16 @@ export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () =
       headers: { Authorization: `Bearer ${session.clientSecret}`, "Content-Type": "application/sdp" },
       body: offer.sdp,
     });
-    if (!answer.ok) throw new Error("Не удалось соединиться с голосовой моделью.");
+    if (!answer.ok) {
+      // Провайдер объясняет отказ словами — их и показываем: «модель не
+      // поддерживает живой режим» полезнее общего «не удалось соединиться».
+      const reason = await answer.text().catch(() => "");
+      let message = "";
+      try {
+        message = JSON.parse(reason)?.error?.message || "";
+      } catch {}
+      throw new Error(message || "Не удалось соединиться с голосовой моделью.");
+    }
     await connection.setRemoteDescription({ type: "answer", sdp: await answer.text() });
     state.live = { connection, channel, microphone, audio, meterContext };
   }

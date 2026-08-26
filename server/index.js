@@ -55,6 +55,10 @@ const SETTINGS = {
   // о себе, поэтому произвольная строка здесь только сломала бы согласование.
   voiceName: { env:'PAGENT_VOICE_NAME', check:value => VOICE_CHOICES.openai.some(item => item.id === value) },
   geminiVoiceName: { env:'PAGENT_GEMINI_VOICE_NAME', check:value => VOICE_CHOICES.gemini.some(item => item.id === value) },
+  // Модель голоса: у OpenAI живой режим принимает и realtime-, и audio-модели,
+  // поэтому список открытый — проверяем только форму имени.
+  voiceModel: { env:'PAGENT_VOICE_MODEL', check:value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,60}$/.test(value) },
+  geminiVoiceModel: { env:'PAGENT_GEMINI_VOICE_MODEL', check:value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,80}$/.test(value) },
   // Добавка к системному промпту разговора: правила инструментов и памяти она
   // не отменяет, а дописывается к ним.
   systemPrompt: { check:value => typeof value === 'string' && value.length <= 2000 },
@@ -67,7 +71,7 @@ const SETTINGS = {
 };
 // Голоса по умолчанию те же, что и у самой службы: без них выпадающий список
 // открывался бы пустым, хотя разговор уже идёт каким-то голосом.
-const SETTING_DEFAULTS = { sleepAfterSeconds:'25', wakeWord:'кизуна', previewLimit:'3', voiceName:'marin', geminiVoiceName:'Puck', systemPrompt:'' };
+const SETTING_DEFAULTS = { sleepAfterSeconds:'25', wakeWord:'кизуна', previewLimit:'3', voiceName:'marin', geminiVoiceName:'Puck', systemPrompt:'', voiceModel:'gpt-realtime', geminiVoiceModel:'models/gemini-3.1-flash-live-preview' };
 function secretHint(value) { return value ? `••••${String(value).slice(-4)}` : null; }
 // createVoiceService по умолчанию читает process.env напрямую; здесь ей отдаётся
 // то же окружение, но с настройками из приложения поверх.
