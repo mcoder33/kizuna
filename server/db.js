@@ -132,6 +132,20 @@ function migrate(db) {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS capture_notes_active ON capture_notes(capture_id) WHERE status='active';
     CREATE INDEX IF NOT EXISTS capture_notes_capture ON capture_notes(capture_id, created_at);`);
+  // Расход на модели: сколько запросов и токенов ушло и во что это обошлось.
+  // Деньги хранятся отдельным полем и могут быть пустыми: цену знает не каждый
+  // провайдер, и выдумывать её нельзя.
+  db.exec(`CREATE TABLE IF NOT EXISTS usage_events (
+      id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      model TEXT,
+      kind TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS usage_events_time ON usage_events(created_at);`);
   // Настройки приложения: то, что раньше жило только в .env и правилось руками.
   // Отдельная таблица, а не часть журнала: это конфигурация, а не записи —
   // поэтому она не попадает в экспорт и переживает очистку данных.
@@ -165,6 +179,47 @@ function migrate(db) {
 
 export const NOTE_BODY_LIMIT = 20000;
 
+// Запись расхода: молча и никогда не мешая основному делу — если что-то в
+// цифрах не сошлось, запись просто не появится, а разбор не сорвётся.
+export function recordUsage(db, { provider, model = null, kind = 'classify', inputTokens = 0, outputTokens = 0, costUsd = null } = {}) {
+  if (!provider) return null;
+  const at = now();
+  const cost = Number.isFinite(costUsd) ? costUsd : null;
+  db.prepare('INSERT INTO usage_events(id,provider,model,kind,input_tokens,output_tokens,cost_usd,created_at) VALUES(?,?,?,?,?,?,?,?)')
+    .run(id(), provider, model, kind, Math.max(0, Math.round(inputTokens) || 0), Math.max(0, Math.round(outputTokens) || 0), cost, at);
+  return { provider, model, kind, at };
+}
+function usageSince(db, since) {
+  const rows = db
+    .prepare(`SELECT provider, model, COUNT(*) AS calls, SUM(input_tokens) AS input, SUM(output_tokens) AS output,
+        SUM(COALESCE(cost_usd,0)) AS cost, SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END) AS unpriced
+      FROM usage_events WHERE created_at >= ? GROUP BY provider, model ORDER BY calls DESC`)
+    .all(since);
+  const rows_ = rows.map(row => ({
+    provider: row.provider,
+    model: row.model,
+    calls: row.calls,
+    inputTokens: row.input || 0,
+    outputTokens: row.output || 0,
+    costUsd: row.cost || 0,
+    // Сколько вызовов без известной цены: без этого сумма выглядела бы полной,
+    // хотя часть расхода в неё не вошла.
+    unpriced: row.unpriced || 0,
+  }));
+  return {
+    calls: rows_.reduce((total, row) => total + row.calls, 0),
+    inputTokens: rows_.reduce((total, row) => total + row.inputTokens, 0),
+    outputTokens: rows_.reduce((total, row) => total + row.outputTokens, 0),
+    costUsd: rows_.reduce((total, row) => total + row.costUsd, 0),
+    unpriced: rows_.reduce((total, row) => total + row.unpriced, 0),
+    rows: rows_,
+  };
+}
+export function usageSummary(db, { now: at = new Date() } = {}) {
+  const day = new Date(at.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const week = new Date(at.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  return { day: usageSince(db, day), week: usageSince(db, week), total: usageSince(db, '') };
+}
 export function readSettings(db) {
   const out = {};
   for (const row of db.prepare('SELECT key,value FROM app_settings').all()) out[row.key] = row.value;
@@ -717,7 +772,7 @@ export function resetLedger(db) {
   return withImmediateTransaction(db, () => {
     db.exec('DROP TRIGGER IF EXISTS ledger_events_no_update; DROP TRIGGER IF EXISTS ledger_events_no_delete;');
     try {
-      for (const table of ['daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','interpretations','capture_attachments','capture_notes','activity_events','captures']) db.prepare(`DELETE FROM ${table}`).run();
+      for (const table of ['daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','interpretations','capture_attachments','capture_notes','activity_events','usage_events','captures']) db.prepare(`DELETE FROM ${table}`).run();
     } finally { createLedgerEventGuards(db); }
   });
 }

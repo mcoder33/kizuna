@@ -1,7 +1,11 @@
 import { CliRunnerError } from './cli-runner.js';
 import { OPENROUTER_MODEL_LIMIT, validateRemoteModel } from './cli-config.js';
 
+// Ответ модели должен быть коротким — там JSON по схеме. А вот каталог моделей
+// у OpenRouter весит под мегабайт, и общий лимит его резал: без каталога не
+// работали ни выбор модели, ни подсчёт денег.
 const maximumResponseBytes = 200_000;
+const maximumCatalogueBytes = 8_000_000;
 
 // OpenRouter досылает keep-alive строки вида «: OPENROUTER PROCESSING» перед
 // телом ответа — они не JSON, поэтому снимаются до разбора.
@@ -36,7 +40,7 @@ function rankedCatalogue(payload) {
     const prompt = Number(row?.pricing?.prompt);
     const completion = Number(row?.pricing?.completion);
     if (!Number.isFinite(prompt) || !Number.isFinite(completion)) continue;
-    usable.push({ id, name: typeof row?.name === 'string' ? row.name.slice(0, 120) : id, cost: prompt + completion });
+    usable.push({ id, name: typeof row?.name === 'string' ? row.name.slice(0, 120) : id, cost: prompt + completion, promptPrice: prompt, completionPrice: completion });
   }
   return usable.sort((left, right) => left.cost - right.cost || left.id.localeCompare(right.id));
 }
@@ -46,7 +50,7 @@ export function createOpenRouterProvider({ config, fetch: fetchImplementation = 
   const requestTimeout = timeoutMs || config.remoteTimeoutMs || 30000;
   let catalogue = null;
 
-  async function request(path, { method = 'GET', body = null, signal, authenticated = true } = {}) {
+  async function request(path, { method = 'GET', body = null, signal, authenticated = true, maxBytes = maximumResponseBytes } = {}) {
     if (authenticated && !settings.apiKey) throw configError('not_configured');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), requestTimeout);
@@ -66,7 +70,7 @@ export function createOpenRouterProvider({ config, fetch: fetchImplementation = 
       });
       if (!response.ok) throw statusError(response.status);
       const text = await response.text();
-      if (text.length > maximumResponseBytes) throw new CliRunnerError('oversize_output');
+      if (text.length > maxBytes) throw new CliRunnerError('oversize_output');
       return parseJson(text);
     } catch (error) {
       if (error instanceof CliRunnerError) throw error;
@@ -86,7 +90,7 @@ export function createOpenRouterProvider({ config, fetch: fetchImplementation = 
       return catalogue;
     }
     try {
-      const payload = await request('/models', { authenticated: false });
+      const payload = await request('/models', { authenticated: false, maxBytes: maximumCatalogueBytes });
       catalogue = rankedCatalogue(payload).slice(0, OPENROUTER_MODEL_LIMIT);
     } catch {
       // Осечку сети не запоминаем: пустой кэш живёт до перезапуска, и один
@@ -97,6 +101,40 @@ export function createOpenRouterProvider({ config, fetch: fetchImplementation = 
     return catalogue;
   }
 
+  // Цены нужны и тогда, когда список моделей задан руками: иначе расход был бы
+  // виден в токенах, но не в деньгах. Поэтому прайс живёт отдельно от каталога
+  // выбора и берётся у OpenRouter один раз.
+  let priceList = null;
+  async function prices() {
+    if (priceList) return priceList;
+    try {
+      const payload = await request('/models', { authenticated: false, maxBytes: maximumCatalogueBytes });
+      const rows = Array.isArray(payload?.data) ? payload.data : [];
+      const map = new Map();
+      for (const row of rows) {
+        const prompt = Number(row?.pricing?.prompt);
+        const completion = Number(row?.pricing?.completion);
+        if (typeof row?.id === 'string' && Number.isFinite(prompt) && Number.isFinite(completion))
+          map.set(row.id, { prompt, completion });
+      }
+      // Осечку не запоминаем: без цены расход просто останется в токенах.
+      if (!map.size) return null;
+      priceList = map;
+    } catch {
+      return null;
+    }
+    return priceList;
+  }
+  // Расход считаем по цене за токен от самого провайдера. Нет цены — нет и
+  // суммы: выдумывать её нельзя.
+  function usageOf(payload, usedModel, price) {
+    const usage = payload?.usage;
+    if (!usage) return null;
+    const inputTokens = Number(usage.prompt_tokens) || 0;
+    const outputTokens = Number(usage.completion_tokens) || 0;
+    const costUsd = price ? inputTokens * price.prompt + outputTokens * price.completion : null;
+    return { inputTokens, outputTokens, costUsd };
+  }
   function allows(model) {
     if (settings.allowedModels.length) return settings.allowedModels.includes(model);
     // Каталог неизвестен (запрос не удался) — решать не нам: слаг проверит сам
@@ -134,7 +172,9 @@ export function createOpenRouterProvider({ config, fetch: fetchImplementation = 
     if (typeof content !== 'string' || !content.trim()) throw new CliRunnerError('absent_output');
     const candidate = parseJson(content);
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) throw new CliRunnerError('malformed_output');
-    return { candidate, model: typeof payload?.model === 'string' ? payload.model.slice(0, 120) : selected };
+    const usedModel = typeof payload?.model === 'string' ? payload.model.slice(0, 120) : selected;
+    const price = (await prices())?.get(usedModel) || (await prices())?.get(selected) || null;
+    return { candidate, model: usedModel, usage: usageOf(payload, usedModel, price) };
   }
 
   return { invoke, models, defaultModel, configured: () => Boolean(settings.apiKey) };

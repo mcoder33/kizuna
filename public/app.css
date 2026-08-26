@@ -1670,6 +1670,55 @@ body.capture-large-open::before {
   font-size: 11.5px;
   color: #96918e;
 }
+/* Расходы: три строки итогов и разбивка по моделям под ними. */
+.usage {
+  display: grid;
+  gap: 2px;
+  font-size: 12.5px;
+}
+.usage-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px 130px 110px;
+  gap: 10px;
+  align-items: baseline;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.usage-row:nth-child(3) {
+  border-bottom: 1px solid var(--line);
+  font-weight: 700;
+}
+.usage-detail {
+  color: var(--muted);
+  font-size: 11.5px;
+  border-bottom: 0;
+  padding: 4px 0;
+}
+.usage-when {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.usage-calls,
+.usage-tokens {
+  color: var(--muted);
+}
+.usage-money {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.usage .empty {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+@media (max-width: 620px) {
+  .usage-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .usage-tokens {
+    display: none;
+  }
+}
 .settings-bar {
   display: flex;
   flex-wrap: wrap;

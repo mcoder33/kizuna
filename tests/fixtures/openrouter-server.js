@@ -48,7 +48,13 @@ http.createServer(async (request, response) => {
       const known = catalogue.data.some(entry => entry.id === payload.model);
       if (!known) return send(400, { error: 'unknown model' });
       const content = user.includes('<untrusted-sources>') ? answerFor(user) : classificationFor(user);
-      return send(200, { model: payload.model, choices: [{ message: { content: JSON.stringify(content) } }] });
+      // Настоящий OpenRouter возвращает расход вместе с ответом — заглушка
+      // тоже, иначе учёт токенов и денег нечем проверить.
+      return send(200, {
+        model: payload.model,
+        choices: [{ message: { content: JSON.stringify(content) } }],
+        usage: { prompt_tokens: 1200, completion_tokens: 180, total_tokens: 1380 },
+      });
     }
     send(404, { error: 'not found' });
   } catch (error) {

@@ -18,7 +18,9 @@ const providerNames = {
   "claude-cli": "Claude CLI",
 };
 const modelStorageKey = "pagent.ai-model";
-const modelCapableProviders = new Set(["openrouter"]);
+// У кого можно выбирать модель прямо в шапке. У OpenAI каталог приходит из их
+// же API, у OpenRouter — из своего; у CLI-провайдеров модель задаёт окружение.
+const modelCapableProviders = new Set(["openrouter", "openai"]);
 const fallbackNames = {
   unavailable: "недоступен",
   not_configured: "не настроен",
@@ -196,6 +198,9 @@ function updatePageFromHash() {
   const historyMenu = document.querySelector(".history-menu");
   historyMenu?.classList.toggle("active", activePage.startsWith("history-"));
   if (activePage !== pageId) history.replaceState(null, "", "#today");
+  // Открыли настройки — перечитываем расход: он меняется от каждой записи, а
+  // страница может висеть открытой долго.
+  if (activePage === "settings") loadUsage();
   // Запрос из ссылки сразу уходит в поиск: человек щёлкнул по имени, а не по
   // пустой странице памяти.
   const query = activePage === "memory" ? params.get("query")?.trim() : "";
@@ -1991,10 +1996,60 @@ function paintSettings(payload) {
     load().catch(() => {});
   }
 }
+// Расходы: сколько ушло токенов и денег. Показываем три окна — сутки, неделя,
+// всё время, — потому что «сколько я трачу» это вопрос про темп, а не про сумму.
+const usageKinds = { classify: "разбор", answer: "память", voice_session: "разговор" };
+function money(value) {
+  if (!value) return "$0";
+  return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
+}
+function tokens(value) {
+  if (value >= 1000000) return `${(value / 1000000).toFixed(1)} млн`;
+  if (value >= 1000) return `${Math.round(value / 1000)} тыс.`;
+  return String(value);
+}
+function usageRow(title, slice) {
+  const row = node("div", undefined, "usage-row");
+  row.append(
+    node("span", title, "usage-when"),
+    node("span", `${slice.calls} вызовов`, "usage-calls"),
+    node("span", `${tokens(slice.inputTokens)} → ${tokens(slice.outputTokens)}`, "usage-tokens"),
+    node("span", money(slice.costUsd), "usage-money"),
+  );
+  return row;
+}
+async function loadUsage() {
+  const box = $("#usage-table");
+  if (!box) return;
+  let data;
+  try {
+    data = await request("/api/usage");
+  } catch {
+    return;
+  }
+  clear(box);
+  box.append(usageRow("За сутки", data.day), usageRow("За неделю", data.week), usageRow("Всего", data.total));
+  if (!data.total.calls) {
+    box.append(node("p", "Пока ничего не потрачено.", "empty"));
+    return;
+  }
+  // Разбивка по моделям: видно, что именно съедает деньги.
+  for (const row of data.total.rows.slice(0, 6)) {
+    const line = node("div", undefined, "usage-row usage-detail");
+    line.append(
+      node("span", `${providerNames[row.provider] || row.provider} · ${row.model || "—"}`, "usage-when"),
+      node("span", `${row.calls}`, "usage-calls"),
+      node("span", `${tokens(row.inputTokens)} → ${tokens(row.outputTokens)}`, "usage-tokens"),
+      node("span", row.unpriced ? `${money(row.costUsd)} · ${row.unpriced} без цены` : money(row.costUsd), "usage-money"),
+    );
+    box.append(line);
+  }
+}
 async function loadSettings() {
   if (!settingInput("timeZone")) return;
   try {
     paintSettings(await request("/api/settings"));
+    loadUsage();
   } catch {
     // Настройки не открылись — приложение всё равно работает на прежних.
   }

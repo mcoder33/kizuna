@@ -146,3 +146,58 @@ test('a voice outside the catalogue is refused, because gender rides on it', asy
   // Слишком длинная добавка тоже отвергается.
   await api.put('/api/settings').send({ systemPrompt: 'а'.repeat(2001) }).expect(400);
 });
+
+// Расходы: сколько ушло токенов и денег. Токены берём у провайдера, деньги — по
+// его же цене; где цены нет, вызов честно считается «без цены».
+test('usage is counted per provider and priced only where the price is known', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pagent-usage-'));
+  const databasePath = path.join(dir, 'test.sqlite');
+  const application = createApp({
+    databasePath,
+    aiService: {
+      status: async () => ({ mode: 'openrouter', providers: {}, defaultProvider: 'openrouter', selectedProvider: 'openrouter' }),
+      classify: async (raw) => ({
+        classification: {
+          primaryType: 'note',
+          entities: { projects: [], people: [], schedule: null, followUp: null },
+          additionalTypes: [], summary: raw, proposedActions: [], claims: [], confidence: {}, conflicts: {},
+        },
+        provider: 'openrouter', requestedProvider: 'openrouter', usedProvider: 'openrouter',
+        model: 'google/gemini-3.7-flash', fallbackReason: null,
+        usage: { inputTokens: 1000, outputTokens: 200, costUsd: 0.00075 },
+      }),
+      answer: async () => ({
+        answer: 'ответ', citationIds: [], provider: 'openai', requestedProvider: 'openai', usedProvider: 'openai',
+        model: 'gpt-5.6-luna', usage: { inputTokens: 500, outputTokens: 100, costUsd: null },
+      }),
+    },
+  });
+  const api = request(application);
+  const empty = (await api.get('/api/usage').expect(200)).body;
+  assert.equal(empty.total.calls, 0);
+
+  await api.post('/api/captures').send({ raw: 'Нужно посчитать расход' }).expect(201);
+  await api.post('/api/memory/answer').send({ query: 'что было?' }).expect(200);
+
+  const usage = (await api.get('/api/usage').expect(200)).body;
+  assert.equal(usage.total.calls, 2);
+  assert.equal(usage.total.inputTokens, 1500);
+  assert.equal(usage.total.outputTokens, 300);
+  // Деньги только там, где провайдер назвал цену.
+  assert.ok(Math.abs(usage.total.costUsd - 0.00075) < 1e-9);
+  assert.equal(usage.total.unpriced, 1, 'вызов без цены посчитан отдельно');
+  // Разбивка по моделям — видно, что именно тратит.
+  const byModel = Object.fromEntries(usage.total.rows.map((row) => [row.model, row]));
+  assert.equal(byModel['google/gemini-3.7-flash'].calls, 1);
+  assert.equal(byModel['gpt-5.6-luna'].unpriced, 1);
+  // Сутки и неделя видят те же вызовы: они только что случились.
+  assert.equal(usage.day.calls, 2);
+  assert.equal(usage.week.calls, 2);
+
+  // Расход — операционные данные: в экспорт он не попадает, а «очистить
+  // данные» его уносит вместе с записями.
+  const exported = (await api.get('/api/export').expect(200)).body;
+  assert.equal(JSON.stringify(exported).includes('gemini-3.7-flash'), false);
+  await api.post('/api/reset').send({ confirmation: 'СБРОСИТЬ КИЗУНА' }).expect(200);
+  assert.equal((await api.get('/api/usage').expect(200)).body.total.calls, 0);
+});

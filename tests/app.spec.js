@@ -1180,3 +1180,27 @@ test("голос выбирается из списка, а добавка к п
     data: { geminiVoiceName: "", voiceName: "", systemPrompt: "" },
   });
 });
+
+// Расходы должны быть видны, а не выясняться в личном кабинете провайдера.
+test("расходы видно в настройках", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/#settings");
+  const table = page.locator("#usage-table");
+  await expect(table).toContainText("За сутки");
+  await expect(table).toContainText("За неделю");
+  await expect(table).toContainText("Всего");
+  // Пока ничего не потрачено — так и сказано.
+  await expect(table).toContainText("Пока ничего не потрачено");
+
+  // После разбора записи расход появляется сам, без перезагрузки настроек.
+  await page.goto("/");
+  await capture(page, "Завтра в 11 созвон по Hub");
+  // Сначала убеждаемся, что расход вообще записан: иначе непонятно, врёт
+  // страница или его правда нет.
+  await expect
+    .poll(async () => (await (await request.get("/api/usage")).json()).total.calls, { timeout: 15000 })
+    .toBeGreaterThan(0);
+  await page.goto("/#settings");
+  await expect(page.locator("#usage-table")).not.toContainText("Пока ничего не потрачено");
+  await expect(page.locator("#usage-table .usage-detail")).toContainText("fake/fast");
+});

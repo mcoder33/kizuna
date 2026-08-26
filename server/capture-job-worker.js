@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { claimCaptureJob, completeCaptureJob, failCaptureJob, releaseCaptureJob, renewCaptureJobLease } from './db.js';
+import { claimCaptureJob, completeCaptureJob, failCaptureJob, releaseCaptureJob, renewCaptureJobLease, recordUsage } from './db.js';
 import { applyUserOverrides } from './classifier.js';
 
 const safeErrorCodes = new Set(['unavailable','busy','timeout','aborted','nonzero','malformed_output','absent_output','oversize_output','schema_invalid','rate_limited','invalid_provider','not_configured']);
@@ -58,6 +58,12 @@ export class CaptureJobWorker {
     controller.signal.addEventListener('abort', stopHeartbeat, { once:true });
     try {
       const result = await this.ai.classify(claim.raw, claim.selected_provider, controller.signal, claim.selected_model || null);
+      // Разбор идёт здесь, значит и расход считается здесь: без этого учёт
+      // видел бы только записи, сохранённые синхронно.
+      try {
+        if (result?.usage && result.usedProvider && result.usedProvider !== 'fallback')
+          recordUsage(this.db, { provider:result.usedProvider, model:result.model || null, kind:'classify', inputTokens:result.usage.inputTokens, outputTokens:result.usage.outputTokens, costUsd:result.usage.costUsd });
+      } catch {}
       if (controller.signal.aborted || this.stopping) return;
       // Ручные параметры карточки ввода перекрывают разбор модели.
       if (claim.overrides_json) {
