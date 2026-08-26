@@ -174,3 +174,19 @@ test('status exposes the catalogue so the interface can offer a choice', async (
   assert.deepEqual(status.providers.openrouter.models.map(entry => entry.id), ['cheap/model', 'pricey/model']);
   assert.equal(status.model, 'cheap/model');
 });
+
+// Пустой каталог после сетевой осечки не должен становиться приговором: он жил
+// до перезапуска сервера, из-за чего один неудачный запрос гасил выбор моделей
+// и помечал провайдера недоступным даже после того, как сеть возвращалась.
+test('a failed catalogue request is not cached and recovers on the next call', async () => {
+  let failing = true;
+  const stub = stubFetch({ '/models': () => (failing ? { ok: false, status: 500 } : ok(catalogue)) });
+  const config = createCliConfig({ OPENROUTER_API_KEY: 'key' });
+  const provider = createOpenRouterProvider({ config, fetch: stub.fetch });
+  assert.deepEqual(await provider.models(), [], 'осечка отдаёт пустой список');
+  failing = false;
+  assert.deepEqual((await provider.models()).map(entry => entry.id), ['cheap/model', 'pricey/model'], 'каталог возвращается сам');
+  assert.equal(stub.calls.filter(call => String(call.url).endsWith('/models')).length, 2, 'второй запрос действительно уходит');
+  assert.deepEqual((await provider.models()).map(entry => entry.id), ['cheap/model', 'pricey/model'], 'удачный каталог кэшируется');
+  assert.equal(stub.calls.filter(call => String(call.url).endsWith('/models')).length, 2, 'третьего запроса уже нет');
+});

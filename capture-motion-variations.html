@@ -1,0 +1,740 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Кизуна — вариации движения</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='2' y='2' width='60' height='60' rx='14' fill='%23c73e3a'/%3E%3Cg fill='none' stroke='white' stroke-linecap='round' stroke-width='6'%3E%3Cpath d='M8 17q24 -6 48 0'/%3E%3Cline x1='14' y1='27' x2='50' y2='27'/%3E%3Cline x1='19' y1='22' x2='21' y2='54'/%3E%3Cline x1='45' y1='22' x2='43' y2='54'/%3E%3C/g%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        --ink: #222;
+        --muted: #6a6a6a;
+        --line: #e9e9e7;
+        --hairline: #f2f0ee;
+        --wash: #fbfaf9;
+        --coral: #ff385c;
+        --pink: #fdf0f4;
+        --focus: #1c68d4;
+        --type-auto: #e11d74;
+        --type-todo: #7c3aed;
+        --type-outcome: #0891b2;
+        --type-note: #94a3b8;
+        --shadow: 0 18px 42px rgba(34, 34, 34, 0.08);
+      }
+      * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
+      body {
+        margin: 0; background: var(--wash); color: var(--ink); line-height: 1.45;
+        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main { max-width: 1080px; margin: auto; padding: 52px 24px 120px; }
+      .page-head { max-width: 720px; margin-bottom: 30px; }
+      .eyebrow {
+        font-size: 10px; font-weight: 800; letter-spacing: 1.3px;
+        color: #96918e; margin: 0 0 11px; text-transform: uppercase;
+      }
+      h1 { font-size: 34px; line-height: 1.15; margin: 0 0 14px; letter-spacing: -0.5px; }
+      .page-head p { color: var(--muted); font-size: 15px; margin: 0 0 10px; }
+      .page-head strong { color: var(--ink); }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.88em; background: #f2f0ee; border-radius: 4px; padding: 1px 4px;
+      }
+
+      /* ── шапка со скоростью: движение выбирают глазами, поэтому его надо
+           уметь замедлить ────────────────────────────────────────────── */
+      .toc {
+        position: sticky; top: 0; z-index: 8;
+        display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+        margin: 0 -24px 38px; padding: 12px 24px;
+        background: rgba(251, 250, 249, 0.92); backdrop-filter: blur(8px);
+        border-bottom: 1px solid var(--line);
+      }
+      .toc a {
+        font-size: 12px; text-decoration: none; color: var(--muted);
+        border: 1px solid var(--line); background: #fff;
+        border-radius: 99px; padding: 6px 11px; white-space: nowrap;
+      }
+      .toc a:hover { color: var(--ink); border-color: #cfcfcd; }
+      .toc .spacer { flex: 1; }
+      .speed { display: flex; gap: 4px; border: 1px solid var(--line); background: #fff; border-radius: 99px; padding: 3px; }
+      .speed button {
+        font: inherit; font-size: 12px; cursor: pointer; border: 0; background: none;
+        color: var(--muted); border-radius: 99px; padding: 4px 11px;
+      }
+      .speed button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+
+      .variant { margin-bottom: 58px; scroll-margin-top: 76px; }
+      .variant-head { display: flex; gap: 12px; align-items: baseline; margin-bottom: 6px; flex-wrap: wrap; }
+      .variant-no {
+        font-size: 12px; font-weight: 800; color: var(--coral);
+        border: 1px solid var(--pink); background: var(--pink); border-radius: 99px; padding: 3px 10px;
+      }
+      .tag {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
+        color: var(--muted); border: 1px solid var(--line); background: #fff;
+        border-radius: 99px; padding: 3px 9px;
+      }
+      .variant h2 { font-size: 21px; margin: 0; letter-spacing: -0.3px; }
+      .variant > p.lead { color: var(--muted); font-size: 14px; margin: 0 0 8px; max-width: 700px; }
+      .params { font-size: 12px; color: #96918e; margin: 0 0 18px; }
+
+      /* ── стенд ────────────────────────────────────────────────────── */
+      .stage {
+        position: relative; overflow: hidden; height: 470px;
+        background: #f4f2f0; border: 1px solid var(--line); border-radius: 22px; padding: 26px;
+      }
+      .stage-inner { width: min(430px, 100%); margin: 0 auto; }
+      .journal-head {
+        font-size: 11px; font-weight: 800; letter-spacing: 0.9px; text-transform: uppercase;
+        color: #96918e; margin: 0 0 10px;
+      }
+      .entry {
+        display: flex; gap: 9px; align-items: center; width: 100%; text-align: left;
+        background: #fff; border: 1px solid #ececeb; border-radius: 12px;
+        padding: 11px 12px; font: inherit; font-size: 13px; color: var(--ink);
+        cursor: pointer; margin-bottom: 8px;
+      }
+      .entry:hover { border-color: #d8d6d3; }
+      .entry span.txt { flex: 1; }
+      .entry time { color: #a8a5a2; font-size: 11px; flex: none; }
+      .dot { width: 7px; height: 7px; border-radius: 99px; flex: none; }
+      .t-outcome { background: var(--type-outcome); }
+      .t-todo { background: var(--type-todo); }
+      .t-note { background: var(--type-note); }
+
+      .hint { position: absolute; left: 0; right: 0; bottom: 12px; text-align: center; font-size: 11px; color: #a8a5a2; }
+      /* В стенде поля лист занимает низ целиком — подсказке место сверху. */
+      .stage.field .hint { bottom: auto; top: 12px; }
+
+      .backdrop {
+        position: absolute; inset: 0; background: rgba(34, 34, 34, 0.3);
+        opacity: 0; pointer-events: none; transition: opacity 0.24s ease;
+      }
+      .backdrop.on { opacity: 1; pointer-events: auto; }
+
+      /* лист: те же пропорции 1 : 1.3, что у настоящего */
+      .sheet {
+        position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+        width: 300px; height: 390px; background: #fff; border-radius: 16px;
+        box-shadow: 0 26px 60px rgba(34, 34, 34, 0.24);
+      }
+      .sheet-inner { height: 100%; }
+      .sheet-content { height: 100%; padding: 18px; position: relative; }
+      .sheet .x {
+        position: absolute; right: 12px; top: 10px; border: 0; background: none;
+        font: inherit; font-size: 18px; line-height: 1; color: #b3b0ad; cursor: pointer; padding: 4px;
+      }
+      .sheet .x:hover { color: var(--ink); }
+      .sheet .kicker { font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: var(--type-outcome); margin: 0 0 8px; }
+      .sheet h3 { font-size: 17px; margin: 0 0 14px; padding-right: 22px; letter-spacing: -0.2px; }
+      .sheet .prop { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; padding: 7px 0; border-top: 1px solid var(--hairline); }
+      .sheet .prop span { color: #96918e; }
+      .sheet .body { font-size: 13px; color: #4a4a4a; margin: 14px 0 0; }
+      .sheet .foot { position: absolute; left: 18px; right: 18px; bottom: 14px; font-size: 11px; color: #a8a5a2; border-top: 1px solid var(--hairline); padding-top: 9px; }
+
+      /* ── стенд для поля ввода ─────────────────────────────────────── */
+      /* Полю нужен стенд повыше: развёрнутый лист должен быть больше обычного
+         поля во всех измерениях, иначе «рост» читается как сжатие. */
+      .stage.field { height: 520px; perspective: 1400px; }
+      .capture {
+        position: absolute; background: #fff; border: 1px solid #e3e3e1;
+        border-radius: 16px; box-shadow: var(--shadow); overflow: hidden;
+      }
+      .capture .field-body { padding: 14px 15px; font-size: 14px; color: var(--ink); }
+      .capture .field-body .ph { color: #b3b0ad; }
+      .capture .field-foot {
+        display: flex; gap: 8px; align-items: center; padding: 9px 15px 11px;
+        border-top: 1px solid var(--hairline); font-size: 12px; color: var(--muted);
+        position: absolute; left: 0; right: 0; bottom: 0; background: #fff;
+      }
+      .capture .field-foot .grow { flex: 1; }
+      .capture .chip { border: 1px solid var(--line); border-radius: 99px; padding: 3px 9px; font-size: 11px; }
+      .capture .icon-btn {
+        width: 26px; height: 26px; border: 0; border-radius: 8px; background: none;
+        color: #c9c4be; cursor: pointer; display: grid; place-items: center; padding: 0;
+      }
+      .capture .icon-btn:hover { color: var(--muted); background: var(--hairline); }
+      .capture .icon-btn svg { width: 15px; height: 15px; }
+
+      /* ── View Transitions: своя длительность для перетекающего листа ── */
+      ::view-transition-group(kz-sheet) {
+        animation-duration: 0.62s;
+        animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      ::view-transition-old(kz-sheet),
+      ::view-transition-new(kz-sheet) {
+        animation-duration: 0.62s;
+        animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+      }
+
+      .note {
+        border-left: 2px solid var(--line); padding: 2px 0 2px 12px;
+        font-size: 12.5px; color: var(--muted); margin: 14px 0 0;
+      }
+      .verdict { margin-top: 44px; padding: 22px 24px; background: #fff; border: 1px solid var(--line); border-radius: 18px; }
+      .verdict h2 { font-size: 18px; margin: 0 0 12px; }
+      .verdict ul { margin: 0; padding-left: 18px; font-size: 14px; color: var(--muted); }
+      .verdict li { margin-bottom: 7px; }
+      .verdict strong { color: var(--ink); }
+
+      @media (prefers-reduced-motion: reduce) {
+        .rm-warning { display: block !important; }
+      }
+      .rm-warning {
+        display: none; margin: 0 0 26px; padding: 12px 14px; border-radius: 12px;
+        background: #fffaf1; border: 1px solid #eddfc6; font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="page-head">
+        <p class="eyebrow">Кизуна · движение</p>
+        <h1>Как открывается лист</h1>
+        <p>
+          Десять вариантов движения для карточки записи и для разворота поля ввода.
+          Вариант <strong>0</strong> — то, что в приложении сейчас
+          (<code>flowBetween()</code>, <code>public/app.js:1409</code>): 680 мс,
+          <code>cubic-bezier(0.16, 1, 0.3, 1)</code>, движение ведёт, масштаб отстаёт.
+        </p>
+        <p>
+          Щёлкайте по записи в стенде — лист выйдет оттуда. Закрыть — крестик или фон.
+          Скорость переключается в шапке: на <strong>¼×</strong> видно то, что на полной
+          скорости только чувствуется.
+        </p>
+      </div>
+
+      <p class="rm-warning">
+        В системе включено «уменьшение движения». В приложении анимация при этом
+        выключается целиком — здесь она специально работает, иначе сравнивать нечего.
+      </p>
+
+      <div class="toc" id="toc">
+        <span class="spacer"></span>
+        <div class="speed" role="group" aria-label="Скорость">
+          <button type="button" data-slow="1" aria-pressed="true">1×</button>
+          <button type="button" data-slow="2" aria-pressed="false">½×</button>
+          <button type="button" data-slow="4" aria-pressed="false">¼×</button>
+        </div>
+      </div>
+
+      <div id="variants"></div>
+
+      <section class="verdict">
+        <h2>Что с чем сочетается</h2>
+        <ul>
+          <li><strong>Дёшево и почти беспроигрышно:</strong> 4, 8, 10 — их можно взять все три поверх нынешнего движения, они не спорят друг с другом.</li>
+          <li><strong>Самый заметный эффект:</strong> 1, 2, 3. Первые два — взаимоисключающие способы одного и того же морфинга; 3 ложится поверх любого.</li>
+          <li><strong>Для поля ввода:</strong> 6 честнее по смыслу («тот же предмет растёт»), 7 эффектнее, но мылит текст на повороте.</li>
+          <li><strong>Рискованные:</strong> 9 — тактильно, но спорит с дзен-интонацией; проверять только глазами на ¼×.</li>
+        </ul>
+      </section>
+    </main>
+
+    <script>
+      const EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
+      // Замедление стенда: все длительности умножаются на этот множитель.
+      let slow = 1;
+      const D = (ms) => ms * slow;
+
+      const el = (tag, cls, text) => {
+        const n = document.createElement(tag);
+        if (cls) n.className = cls;
+        if (text !== undefined) n.textContent = text;
+        return n;
+      };
+
+      // Путь от прежнего прямоугольника к новому — тот же приём, что в app.js:
+      // позицию считает раскладка, анимация только показывает переход.
+      function flow(node, from, to, base = "", opts = {}) {
+        const { dur = 680, ease = EASE, scale = 0.94, fade = 0.34 } = opts;
+        const sx = from.left + from.width / 2 - (to.left + to.width / 2);
+        const sy = from.top + from.height / 2 - (to.top + to.height / 2);
+        const nudge = Math.abs(sy) < 24 ? 24 : 0;
+        return node.animate(
+          [
+            { transform: `${base} translate(${sx}px, ${sy + nudge}px) scale(${scale})`, opacity: 0, offset: 0 },
+            { opacity: 1, offset: fade },
+            { transform: base || "none", opacity: 1, offset: 1 },
+          ],
+          { duration: D(dur), easing: ease },
+        );
+      }
+
+      // Обратный ход: лист уезжает туда, откуда вышел, и только потом прячется.
+      function flowBack(node, to, base = "", dur = 420) {
+        const from = node.getBoundingClientRect();
+        const sx = to.left + to.width / 2 - (from.left + from.width / 2);
+        const sy = to.top + to.height / 2 - (from.top + from.height / 2);
+        return node.animate(
+          [
+            { transform: base || "none", opacity: 1, offset: 0 },
+            { opacity: 1, offset: 0.5 },
+            { transform: `${base} translate(${sx}px, ${sy}px) scale(0.94)`, opacity: 0, offset: 1 },
+          ],
+          { duration: D(dur), easing: EASE, fill: "forwards" },
+        );
+      }
+
+      const show = (c) => {
+        c.sheet.hidden = false;
+        c.backdrop.classList.add("on");
+      };
+      const hide = (c) => {
+        for (const a of c.sheet.getAnimations()) a.cancel();
+        for (const a of c.inner.getAnimations()) a.cancel();
+        c.sheet.hidden = true;
+        c.sheet.style.clipPath = "";
+        c.backdrop.classList.remove("on");
+      };
+      const closeBase = (c, dur = 420) => {
+        const to = c.origin.getBoundingClientRect();
+        flowBack(c.sheet, to, "translate(-50%, -50%)", dur).finished.then(() => hide(c), () => hide(c));
+      };
+
+      // Пружина: кейфреймы считаются заранее, потому что WAAPI не умеет
+      // spring-кривые. Небольшой недолёт-возврат в конце — вся суть приёма.
+      function springTrack(steps = 70, stiffness = 150, damping = 17, mass = 1) {
+        const out = [];
+        let x = 1, v = 0;
+        const dt = 1 / 60;
+        for (let i = 0; i < steps; i++) {
+          const a = (-stiffness * x - damping * v) / mass;
+          v += a * dt;
+          x += v * dt;
+          out.push(1 - x);
+        }
+        out[out.length - 1] = 1;
+        return out;
+      }
+
+      const VARIANTS = [
+        {
+          no: "0",
+          tag: "как сейчас",
+          kind: "card",
+          title: "Нынешнее движение",
+          lead: "Лист выезжает из записи: transform + opacity, масштаб 0.94 → 1 чуть отстаёт от движения, прозрачность набирается к 34 % пути.",
+          params: "680 мс · cubic-bezier(0.16, 1, 0.3, 1) · обратный ход 420 мс",
+          open(c) {
+            const from = c.origin.getBoundingClientRect();
+            show(c);
+            flow(c.sheet, from, c.sheet.getBoundingClientRect(), "translate(-50%, -50%)");
+          },
+          close: (c) => closeBase(c),
+        },
+        {
+          no: "1",
+          tag: "карточка",
+          kind: "card",
+          title: "Раскрытие через clip-path",
+          lead: "Лист не масштабируется, а раскрывается: анимируется окно clip-path от прямоугольника записи до полного листа. Текст всё время в масштабе 1 : 1 — ничего не мылится.",
+          params: "clip-path: inset(...) + border-radius · 620 мс · та же кривая",
+          open(c) {
+            const o = c.origin.getBoundingClientRect();
+            show(c);
+            const s = c.sheet.getBoundingClientRect();
+            // Окно старта — проекция записи на лист; если запись лежит за краем,
+            // окно прижимается к ближайшей границе, но лист доезжает до неё сам.
+            const top = Math.max(0, Math.min(s.height - 12, o.top - s.top));
+            const left = Math.max(0, Math.min(s.width - 12, o.left - s.left));
+            const right = Math.max(0, Math.min(s.width - left - 12, s.right - o.right));
+            const bottom = Math.max(0, Math.min(s.height - top - 12, s.bottom - o.bottom));
+            const winX = s.left + left + (s.width - left - right) / 2;
+            const winY = s.top + top + (s.height - top - bottom) / 2;
+            const dx = o.left + o.width / 2 - winX;
+            const dy = o.top + o.height / 2 - winY;
+            c.sheet.animate(
+              [
+                {
+                  clipPath: `inset(${top}px ${right}px ${bottom}px ${left}px round 12px)`,
+                  transform: `translate(-50%, -50%) translate(${dx}px, ${dy}px)`,
+                  offset: 0,
+                },
+                { clipPath: "inset(0px round 16px)", transform: "translate(-50%, -50%)", offset: 1 },
+              ],
+              { duration: D(620), easing: EASE },
+            );
+            c.content.animate([{ opacity: 0 }, { opacity: 1, offset: 0.45 }, { opacity: 1 }], {
+              duration: D(620),
+              easing: "ease-out",
+            });
+          },
+          close: (c) => closeBase(c, 380),
+        },
+        {
+          no: "2",
+          tag: "карточка",
+          kind: "card",
+          title: "View Transitions: запись перетекает в лист",
+          lead: "Браузер сам строит морфинг между строкой журнала и листом — общий элемент, а не два независимых прямоугольника. Кода почти нет, но нужен фолбэк там, где API нет.",
+          params: "document.startViewTransition() + view-transition-name · ::view-transition-group",
+          note: "В стенде лист на время перехода поднимается в top layer и выходит за границы стенда — в приложении на весь экран этого не будет.",
+          open(c) {
+            if (!document.startViewTransition) {
+              VARIANTS[0].open(c);
+              return;
+            }
+            c.origin.style.viewTransitionName = "kz-sheet";
+            const vt = document.startViewTransition(() => {
+              c.origin.style.viewTransitionName = "";
+              show(c);
+              c.sheet.style.viewTransitionName = "kz-sheet";
+            });
+            vt.finished.finally(() => {
+              c.sheet.style.viewTransitionName = "";
+            });
+          },
+          close(c) {
+            if (!document.startViewTransition) return closeBase(c);
+            c.sheet.style.viewTransitionName = "kz-sheet";
+            const vt = document.startViewTransition(() => {
+              c.sheet.style.viewTransitionName = "";
+              hide(c);
+              c.origin.style.viewTransitionName = "kz-sheet";
+            });
+            vt.finished.finally(() => {
+              c.origin.style.viewTransitionName = "";
+            });
+          },
+        },
+        {
+          no: "3",
+          tag: "карточка",
+          kind: "card",
+          title: "Каскад содержимого",
+          lead: "Лист едет как сейчас, но заголовок, свойства, тело и подвал входят по очереди. Перестаёт читаться как прилетевшая картинка, начинает — как собирающийся документ.",
+          params: "движение 680 мс · содержимое: translateY(8px) → 0, шаг 38 мс, длительность 260 мс",
+          open(c) {
+            const from = c.origin.getBoundingClientRect();
+            show(c);
+            flow(c.sheet, from, c.sheet.getBoundingClientRect(), "translate(-50%, -50%)");
+            c.content.querySelectorAll(".st").forEach((n, i) => {
+              n.animate(
+                [
+                  { opacity: 0, transform: "translateY(8px)" },
+                  { opacity: 1, transform: "none" },
+                ],
+                { duration: D(260), delay: D(150 + i * 38), easing: "cubic-bezier(0.2, 0.8, 0.3, 1)", fill: "backwards" },
+              );
+            });
+          },
+          close: (c) => closeBase(c),
+        },
+        {
+          no: "4",
+          tag: "карточка · закрытие",
+          kind: "card",
+          title: "Закрытие: сначала гаснет текст",
+          lead: "Сейчас в обратный ход уезжает целая страница текста — тяжело. Здесь содержимое гаснет за 120 мс, и в запись возвращается уже пустой лист.",
+          params: "содержимое 120 мс ease-in → лист 400 мс · открытие обычное",
+          open(c) {
+            const from = c.origin.getBoundingClientRect();
+            show(c);
+            flow(c.sheet, from, c.sheet.getBoundingClientRect(), "translate(-50%, -50%)");
+          },
+          close(c) {
+            c.content.animate([{ opacity: 1 }, { opacity: 0 }], {
+              duration: D(120),
+              easing: "ease-in",
+              fill: "forwards",
+            }).finished.then(() => {
+              const to = c.origin.getBoundingClientRect();
+              flowBack(c.sheet, to, "translate(-50%, -50%)", 400).finished.then(
+                () => {
+                  for (const a of c.content.getAnimations()) a.cancel();
+                  hide(c);
+                },
+                () => hide(c),
+              );
+            });
+          },
+        },
+        {
+          no: "5",
+          tag: "карточка",
+          kind: "card",
+          title: "Старт из точки клика",
+          lead: "Точка отсчёта — не центр строки, а место, куда щёлкнули. На длинных записях разница заметная: лист выезжает буквально из-под пальца.",
+          params: "event.clientX / clientY вместо центра прямоугольника · остальное как в варианте 0",
+          open(c) {
+            const o = c.origin.getBoundingClientRect();
+            const p = c.point || { x: o.left + o.width / 2, y: o.top + o.height / 2 };
+            const from = { left: p.x - o.width / 2, top: p.y - o.height / 2, width: o.width, height: o.height };
+            show(c);
+            flow(c.sheet, from, c.sheet.getBoundingClientRect(), "translate(-50%, -50%)");
+          },
+          close: (c) => closeBase(c),
+        },
+        {
+          no: "6",
+          tag: "поле ввода",
+          kind: "field",
+          title: "Рост, а не перелёт",
+          lead: "Поле не улетает новым окном, а растягивается: анимируются размеры и положение, не масштаб. Текст не мылится, подвал с типами и тегами просто едет вниз — «тот же предмет», как и обещано в README.",
+          params: "left / top / width / height · 640 мс · та же кривая · без transform",
+          open(c) {
+            const from = c.capture.getBoundingClientRect();
+            c.toggle();
+            const to = c.capture.getBoundingClientRect();
+            const st = c.stage.getBoundingClientRect();
+            c.capture.animate(
+              [
+                {
+                  left: `${from.left - st.left}px`, top: `${from.top - st.top}px`,
+                  width: `${from.width}px`, height: `${from.height}px`,
+                },
+                {
+                  left: `${to.left - st.left}px`, top: `${to.top - st.top}px`,
+                  width: `${to.width}px`, height: `${to.height}px`,
+                },
+              ],
+              { duration: D(640), easing: EASE },
+            );
+          },
+        },
+        {
+          no: "7",
+          tag: "поле ввода",
+          kind: "field",
+          title: "Бумажный сгиб",
+          lead: "Лист ложится на стол: к движению добавлен поворот по X. Эффектно, но в момент поворота текст мылится — на слабых экранах и на мобильном стоит отключать.",
+          params: "perspective 1400px · rotateX(-9deg) → 0 · 700 мс",
+          open(c) {
+            const from = c.capture.getBoundingClientRect();
+            c.toggle();
+            const to = c.capture.getBoundingClientRect();
+            const sx = from.left + from.width / 2 - (to.left + to.width / 2);
+            const sy = from.top + from.height / 2 - (to.top + to.height / 2);
+            const k = from.width / to.width;
+            c.capture.animate(
+              [
+                { transform: `translate(${sx}px, ${sy}px) scale(${k}) rotateX(-9deg)`, opacity: 0.72, offset: 0 },
+                { opacity: 1, offset: 0.4 },
+                { transform: "none", opacity: 1, offset: 1 },
+              ],
+              { duration: D(700), easing: EASE },
+            );
+          },
+        },
+        {
+          no: "8",
+          tag: "общее",
+          kind: "card",
+          title: "Тень и фон — отдельными дорожками",
+          lead: "Сейчас тень статичная, лист появляется уже висящим. Здесь фон затемняется быстро и линейно, а тень набирается медленно — лист отрывается от стола.",
+          params: "backdrop 200 мс linear · box-shadow плоская → глубокая, 520 мс",
+          open(c) {
+            const from = c.origin.getBoundingClientRect();
+            show(c);
+            flow(c.sheet, from, c.sheet.getBoundingClientRect(), "translate(-50%, -50%)");
+            c.sheet.animate(
+              [
+                { boxShadow: "0 1px 2px rgba(34, 34, 34, 0.14)" },
+                { boxShadow: "0 26px 60px rgba(34, 34, 34, 0.24)" },
+              ],
+              { duration: D(520), easing: "ease-out" },
+            );
+          },
+          close: (c) => closeBase(c),
+        },
+        {
+          no: "9",
+          tag: "общее",
+          kind: "card",
+          title: "Пружина вместо безье",
+          lead: "Кривая заменена на пружину с недолётом около двух процентов. Тактильно ближе к листам iOS; спорит ли это с тихой интонацией остального — решать глазами.",
+          params: "stiffness 150 · damping 17 · ~70 кадров, easing: linear",
+          open(c) {
+            const o = c.origin.getBoundingClientRect();
+            show(c);
+            const s = c.sheet.getBoundingClientRect();
+            const sx = o.left + o.width / 2 - (s.left + s.width / 2);
+            const sy = o.top + o.height / 2 - (s.top + s.height / 2);
+            const track = springTrack();
+            const frames = track.map((p, i) => ({
+              transform: `translate(-50%, -50%) translate(${sx * (1 - p)}px, ${sy * (1 - p)}px) scale(${0.94 + 0.06 * p})`,
+              opacity: Math.min(1, p * 3),
+              offset: i / (track.length - 1),
+            }));
+            c.sheet.animate(frames, { duration: D(track.length * 16.7), easing: "linear" });
+          },
+          close: (c) => closeBase(c, 360),
+        },
+        {
+          no: "10",
+          tag: "общее",
+          kind: "card",
+          title: "Разные кривые для движения и масштаба",
+          lead: "Приём «масштаб отстаёт» доведён до конца: движение остаётся длинным и мягким, масштаб заканчивается заметно раньше и по своей кривой. Уходит остаточная резиновость.",
+          params: "движение 680 мс cubic-bezier(0.16, 1, 0.3, 1) · масштаб 420 мс cubic-bezier(0.34, 1.2, 0.4, 1)",
+          open(c) {
+            const o = c.origin.getBoundingClientRect();
+            show(c);
+            const s = c.sheet.getBoundingClientRect();
+            const sx = o.left + o.width / 2 - (s.left + s.width / 2);
+            const sy = o.top + o.height / 2 - (s.top + s.height / 2);
+            c.sheet.animate(
+              [
+                { transform: `translate(-50%, -50%) translate(${sx}px, ${sy}px)`, opacity: 0, offset: 0 },
+                { opacity: 1, offset: 0.34 },
+                { transform: "translate(-50%, -50%)", opacity: 1, offset: 1 },
+              ],
+              { duration: D(680), easing: EASE },
+            );
+            c.inner.animate([{ transform: "scale(0.94)" }, { transform: "scale(1)" }], {
+              duration: D(420),
+              easing: "cubic-bezier(0.34, 1.2, 0.4, 1)",
+            });
+          },
+          close: (c) => closeBase(c),
+        },
+      ];
+
+      const ENTRIES = [
+        { type: "t-outcome", text: "Починил доставку в Hub — падал ретрай", time: "14:20" },
+        { type: "t-todo", text: "Согласовать лимиты с монетизацией до пятницы", time: "12:05" },
+        { type: "t-note", text: "TCAM: очередь копится не из-за базы, а из-за локов", time: "09:41" },
+      ];
+
+      function sheetNode() {
+        const sheet = el("div", "sheet");
+        sheet.hidden = true;
+        sheet.innerHTML =
+          '<div class="sheet-inner"><div class="sheet-content">' +
+          '<button class="x" type="button" aria-label="Закрыть">×</button>' +
+          '<p class="kicker st">Что делал · 14:20</p>' +
+          '<h3 class="st">Починил доставку в Hub</h3>' +
+          '<div class="prop st"><span>Проект</span><b>Hub</b></div>' +
+          '<div class="prop st"><span>Тип</span><b>Результат</b></div>' +
+          '<div class="prop st"><span>Срок</span><b>—</b></div>' +
+          '<p class="body st">Ретрай падал на пустом теле ответа: обработчик считал его валидным и уходил в цикл. Починено в очереди доставки, добавлена проверка.</p>' +
+          '<div class="foot st">Источник · версия 2</div>' +
+          "</div></div>";
+        return sheet;
+      }
+
+      function captureNode() {
+        const cap = el("div", "capture");
+        cap.innerHTML =
+          '<div class="field-body">Ретрай падал на пустом теле ответа<span class="ph"> — дописать, что проверили…</span></div>' +
+          '<div class="field-foot">' +
+          '<span class="chip">Результат</span><span class="chip">#hub</span><span class="grow"></span>' +
+          '<button class="icon-btn" type="button" aria-label="Развернуть"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4.5H6.5a2 2 0 0 0-2 2V9"/><path d="M15 4.5h2.5a2 2 0 0 1 2 2V9"/><path d="M9 19.5H6.5a2 2 0 0 1-2-2V15"/><path d="M15 19.5h2.5a2 2 0 0 0 2-2V15"/></svg></button>' +
+          "</div>";
+        return cap;
+      }
+
+      function buildCardStage(v) {
+        const stage = el("div", "stage");
+        const inner = el("div", "stage-inner");
+        inner.append(el("p", "journal-head", "Что делал · сегодня"));
+        const rows = [];
+        for (const e of ENTRIES) {
+          const row = el("button", "entry");
+          row.type = "button";
+          row.append(el("span", "dot " + e.type), el("span", "txt", e.text), el("time", undefined, e.time));
+          inner.append(row);
+          rows.push(row);
+        }
+        const backdrop = el("div", "backdrop");
+        const sheet = sheetNode();
+        stage.append(inner, backdrop, sheet);
+        stage.append(el("p", "hint", "щёлкните по записи · закрыть — крестик или фон"));
+
+        const ctx = {
+          stage, sheet, backdrop,
+          inner: sheet.querySelector(".sheet-inner"),
+          content: sheet.querySelector(".sheet-content"),
+          origin: rows[0],
+          point: null,
+        };
+        for (const row of rows) {
+          row.addEventListener("click", (event) => {
+            if (!sheet.hidden) return;
+            ctx.origin = row;
+            ctx.point = { x: event.clientX, y: event.clientY };
+            v.open(ctx);
+          });
+        }
+        const close = () => {
+          if (sheet.hidden) return;
+          v.close(ctx);
+        };
+        backdrop.addEventListener("click", close);
+        sheet.querySelector(".x").addEventListener("click", close);
+        return stage;
+      }
+
+      function buildFieldStage(v) {
+        const stage = el("div", "stage field");
+        const capture = captureNode();
+        stage.append(capture);
+        stage.append(el("p", "hint", "кнопка в углу поля разворачивает и сворачивает лист"));
+
+        let big = false;
+        const layout = () => {
+          const st = stage.getBoundingClientRect();
+          if (big) {
+            const w = 360, h = 468;
+            Object.assign(capture.style, {
+              width: w + "px", height: h + "px",
+              left: (st.width - w) / 2 + "px", top: (st.height - h) / 2 + "px",
+            });
+          } else {
+            const w = Math.min(300, st.width - 52);
+            const h = 116;
+            Object.assign(capture.style, {
+              width: w + "px", height: h + "px",
+              left: (st.width - w) / 2 + "px", top: st.height - 60 - h + "px",
+            });
+          }
+        };
+        // Разворот и сворачивание — одно и то же движение в обе стороны:
+        // раскладка считает новый прямоугольник, вариант его показывает.
+        const ctx = {
+          stage, capture,
+          toggle() {
+            big = !big;
+            layout();
+          },
+        };
+        requestAnimationFrame(layout);
+        window.addEventListener("resize", layout);
+        capture.querySelector(".icon-btn").addEventListener("click", () => v.open(ctx));
+        return stage;
+      }
+
+      const host = document.getElementById("variants");
+      const toc = document.getElementById("toc");
+      VARIANTS.forEach((v) => {
+        const id = "v" + v.no;
+        const section = el("section", "variant");
+        section.id = id;
+        const head = el("div", "variant-head");
+        head.append(el("span", "variant-no", v.no), el("h2", undefined, v.title), el("span", "tag", v.tag));
+        section.append(head, el("p", "lead", v.lead), el("p", "params", v.params));
+        section.append(v.kind === "field" ? buildFieldStage(v) : buildCardStage(v));
+        if (v.note) section.append(el("p", "note", v.note));
+        host.append(section);
+
+        const link = el("a", undefined, v.no + " · " + v.title);
+        link.href = "#" + id;
+        toc.insertBefore(link, toc.querySelector(".spacer"));
+      });
+
+      document.querySelectorAll(".speed button").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          slow = Number(btn.dataset.slow);
+          document.querySelectorAll(".speed button").forEach((b) => {
+            b.setAttribute("aria-pressed", String(b === btn));
+          });
+        });
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,615 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Кизуна — рисунок разговора</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='2' y='2' width='60' height='60' rx='14' fill='%23c73e3a'/%3E%3Cg fill='none' stroke='white' stroke-linecap='round' stroke-width='6'%3E%3Cpath d='M8 17q24 -6 48 0'/%3E%3Cline x1='14' y1='27' x2='50' y2='27'/%3E%3Cline x1='19' y1='22' x2='21' y2='54'/%3E%3Cline x1='45' y1='22' x2='43' y2='54'/%3E%3C/g%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        --ink: #222;
+        --muted: #6a6a6a;
+        --line: #e9e9e7;
+        --hairline: #f2f0ee;
+        --wash: #fbfaf9;
+        --coral: #ff385c;
+        --pink: #fdf0f4;
+        --focus: #1c68d4;
+      }
+      * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
+      body {
+        margin: 0; background: var(--wash); color: var(--ink); line-height: 1.45;
+        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main { max-width: 1120px; margin: auto; padding: 52px 24px 120px; }
+      .page-head { max-width: 720px; margin-bottom: 28px; }
+      .eyebrow {
+        font-size: 10px; font-weight: 800; letter-spacing: 1.3px;
+        color: #96918e; margin: 0 0 11px; text-transform: uppercase;
+      }
+      h1 { font-size: 34px; line-height: 1.15; margin: 0 0 14px; letter-spacing: -0.5px; }
+      .page-head p { color: var(--muted); font-size: 15px; margin: 0 0 10px; }
+      .page-head strong { color: var(--ink); }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.88em; background: #f2f0ee; border-radius: 4px; padding: 1px 4px;
+      }
+
+      .controls {
+        position: sticky; top: 0; z-index: 8;
+        display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+        margin: 0 -24px 34px; padding: 12px 24px;
+        background: rgba(251, 250, 249, 0.94); backdrop-filter: blur(8px);
+        border-bottom: 1px solid var(--line);
+      }
+      .switch { display: flex; gap: 4px; border: 1px solid var(--line); background: #fff; border-radius: 99px; padding: 3px; }
+      .switch button {
+        font: inherit; font-size: 12px; cursor: pointer; border: 0; background: none;
+        color: var(--muted); border-radius: 99px; padding: 5px 12px;
+      }
+      .switch button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+      .controls .spacer { flex: 1; }
+      .mic {
+        font: inherit; font-size: 12px; cursor: pointer;
+        border: 1px solid var(--line); background: #fff; color: var(--muted);
+        border-radius: 99px; padding: 6px 13px;
+      }
+      .mic[aria-pressed="true"] { border-color: #cfcfcd; color: var(--ink); }
+      .controls .note { font-size: 12px; color: #a8a5a2; }
+
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 22px; }
+      .variant {
+        background: #fff; border: 1px solid var(--line); border-radius: 20px;
+        padding: 20px 20px 16px; display: grid; gap: 4px;
+      }
+      .variant-head { display: flex; gap: 10px; align-items: baseline; }
+      .variant-no {
+        font-size: 11px; font-weight: 800; color: var(--coral);
+        border: 1px solid var(--pink); background: var(--pink); border-radius: 99px; padding: 2px 9px;
+      }
+      .variant h2 { font-size: 16px; margin: 0; letter-spacing: -0.2px; }
+      .variant p.lead { color: var(--muted); font-size: 12.5px; margin: 2px 0 0; min-height: 34px; }
+      .stage {
+        height: 260px; display: grid; place-items: center; margin-top: 6px;
+        border-radius: 16px; background: #fff;
+      }
+      .caption {
+        font-size: 10.5px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase;
+        color: #b3b0ba; text-align: center; margin: 0;
+      }
+
+      /* ── общий холст: у каждого варианта свой рисунок, размер один ── */
+      .art { position: relative; width: 168px; height: 168px; display: grid; place-items: center; }
+      canvas { width: 168px; height: 168px; display: block; }
+
+      /* A. тихий диск: только масштаб и мягкая тень */
+      .disc {
+        width: 96px; height: 96px; border-radius: 50%;
+        background: radial-gradient(circle at 36% 32%, #fff 0%, #dfe3ee 76%);
+        box-shadow: 0 12px 34px rgba(120, 130, 160, 0.2);
+      }
+
+      /* C. орбита: точки по кругу */
+      .orbit { position: absolute; inset: 0; }
+      .orbit i {
+        position: absolute; left: 50%; top: 50%; width: 7px; height: 7px; margin: -3.5px;
+        border-radius: 50%; background: #8e9bbd;
+      }
+
+      /* D. штрихи, как эквалайзер голосового помощника */
+      .bars { display: flex; align-items: center; gap: 7px; height: 96px; }
+      .bars i { width: 7px; border-radius: 99px; background: #8e9bbd; height: 14px; }
+
+      /* E. жидкое кольцо — деформация border-radius */
+      .liquid {
+        width: 122px; height: 122px; border: 1.5px solid #9aa6c6;
+        background: rgba(154, 166, 198, 0.07);
+      }
+
+      /* G. дым: мягкое пятно без края — форму задаёт шум, а не окружность.
+         Ни обрезки по кругу, ни ровной границы: край должен быть рваным. */
+      .smoke { position: absolute; inset: -10%; }
+      .smoke i {
+        position: absolute; inset: 4%; border-radius: 38% 62% 55% 45% / 48% 38% 62% 52%;
+        filter: blur(16px); opacity: 0.75;
+      }
+
+      /* I. клякса: матовая, без блика, всё время меняет форму */
+      .blob-shape { width: 118px; height: 118px; background: #97a3c4; }
+
+      /* K. зерно: круг, набранный точками */
+      .grain { position: absolute; inset: 0; }
+      /* Точки считают своё место от левого верхнего угла: без left/top каждая
+         вставала бы в своё место в потоке, и круг рассыпался бы в кучу. */
+      .grain i { position: absolute; left: 0; top: 0; width: 3px; height: 3px; border-radius: 50%; background: #8e9bbd; }
+
+      .verdict { margin-top: 40px; padding: 20px 22px; background: #fff; border: 1px solid var(--line); border-radius: 18px; }
+      .verdict h2 { font-size: 17px; margin: 0 0 10px; }
+      .verdict ul { margin: 0; padding-left: 18px; font-size: 13.5px; color: var(--muted); }
+      .verdict li { margin-bottom: 6px; }
+      .verdict strong { color: var(--ink); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="page-head">
+        <p class="eyebrow">Кизуна · разговор</p>
+        <h1>Другой рисунок круга</h1>
+        <p>
+          Одиннадцать приёмов вместо переливающегося шара. Все живые: по умолчанию их
+          двигает ровный синтетический сигнал, кнопкой <strong>«Слушать микрофон»</strong>
+          можно отдать им настоящий голос — тогда видно, как рисунок отвечает на речь.
+          Варианты <strong>G–K</strong> — без гладкого шара вовсе: дым, обод, клякса,
+          линия и зерно.
+        </p>
+        <p>
+          Состояние переключается в шапке: <code>слушает</code>, <code>думает</code>,
+          <code>отвечает</code>, <code>спит</code>. Выберите рисунок — поставлю его
+          в приложение и приведу к той же интонации движение листа и карточки.
+        </p>
+      </div>
+
+      <div class="controls">
+        <div class="switch" role="group" aria-label="Состояние">
+          <button type="button" data-state="listening" aria-pressed="true">Слушает</button>
+          <button type="button" data-state="thinking" aria-pressed="false">Думает</button>
+          <button type="button" data-state="speaking" aria-pressed="false">Отвечает</button>
+          <button type="button" data-state="sleeping" aria-pressed="false">Спит</button>
+        </div>
+        <button class="mic" type="button" id="mic" aria-pressed="false">Слушать микрофон</button>
+        <span class="spacer"></span>
+        <span class="note" id="mic-note">Сейчас двигает синтетический сигнал</span>
+      </div>
+
+      <div class="grid" id="grid"></div>
+
+      <section class="verdict">
+        <h2>Чем они отличаются по смыслу</h2>
+        <ul>
+          <li><strong>A, E</strong> — движение внутри предмета: круг остаётся кругом, меняется только его дыхание. Самое тихое.</li>
+          <li><strong>B, D, J</strong> — движение как показание прибора: видно громкость и ритм речи, но предмет не «живёт» сам по себе.</li>
+          <li><strong>C, F</strong> — движение вокруг предмета: центр неподвижен, говорит окружение. Хорошо отделяет «слушаю» от «отвечаю».</li>
+          <li><strong>G, I, K</strong> — предмет без ровной поверхности: форму задаёт шум, течение или плотность точек. Гладкого шара нет ни в одном состоянии.</li>
+          <li><strong>H</strong> — только граница: середина пустая, и разговор читается одной неровной линией.</li>
+        </ul>
+      </section>
+    </main>
+
+    <script>
+      // Общий источник уровня: либо микрофон, либо ровный синтетический сигнал —
+      // рисунки должны сравниваться на одном и том же звуке.
+      const source = { level: 0, spectrum: new Float32Array(24).fill(0), meter: null };
+      let phase = 0;
+      function synthetic(time) {
+        // Похоже на речь: несколько несинхронных волн и паузы между ними.
+        const wave =
+          0.45 * Math.sin(time * 1.7) +
+          0.3 * Math.sin(time * 3.9 + 1.2) +
+          0.25 * Math.sin(time * 7.3 + 0.4);
+        const gate = Math.max(0, Math.sin(time * 0.55));
+        return Math.max(0, Math.abs(wave) * gate);
+      }
+
+      let state = "listening";
+      const PALETTE = {
+        listening: { ink: "#8e9bbd", soft: "rgba(142, 155, 189, 0.18)", caption: "Слушаю" },
+        thinking: { ink: "#a894d8", soft: "rgba(168, 148, 216, 0.18)", caption: "Думаю" },
+        speaking: { ink: "#6fb6cf", soft: "rgba(111, 182, 207, 0.2)", caption: "Отвечает" },
+        sleeping: { ink: "#cfd0d8", soft: "rgba(207, 208, 216, 0.14)", caption: "Спит" },
+      };
+      const quiet = () => state === "sleeping";
+
+      const VARIANTS = [
+        {
+          no: "A",
+          title: "Тихий диск",
+          lead: "Круг ничем не заполнен и не переливается: на голос отвечает только его размер и глубина тени. Ничего не движется, пока молчат.",
+          build(art) {
+            const disc = document.createElement("div");
+            disc.className = "disc";
+            art.append(disc);
+            return (level, time, palette) => {
+              const breath = quiet() ? 1 + 0.03 * Math.sin(time * 0.9) : 1 + level * 0.16;
+              disc.style.transform = `scale(${breath.toFixed(3)})`;
+              disc.style.background = `radial-gradient(circle at 36% 32%, #fff 0%, ${palette.ink} 88%)`;
+              disc.style.boxShadow = `0 ${(12 + level * 16).toFixed(1)}px ${(34 + level * 26).toFixed(1)}px ${palette.soft}`;
+            };
+          },
+        },
+        {
+          no: "B",
+          title: "Кольцо-эквалайзер",
+          lead: "Круг неподвижен, говорит обод: каждый сегмент кольца отходит на свою громкость. Центр остаётся тихим местом.",
+          build(art) {
+            const canvas = document.createElement("canvas");
+            canvas.width = 336;
+            canvas.height = 336;
+            art.append(canvas);
+            const context = canvas.getContext("2d");
+            const segments = 56;
+            return (level, time, palette) => {
+              context.clearRect(0, 0, 336, 336);
+              const base = 96;
+              context.lineCap = "round";
+              context.strokeStyle = palette.ink;
+              for (let index = 0; index < segments; index += 1) {
+                const angle = (index / segments) * Math.PI * 2 - Math.PI / 2;
+                const wobble = source.spectrum[index % source.spectrum.length];
+                const reach = quiet() ? 3 : 3 + (level * 26 + wobble * 16) * (0.55 + 0.45 * Math.sin(index * 0.7 + time * 2));
+                const inner = base;
+                const outer = base + Math.max(2, reach);
+                context.lineWidth = 2;
+                context.globalAlpha = quiet() ? 0.4 : 0.75;
+                context.beginPath();
+                context.moveTo(168 + Math.cos(angle) * inner, 168 + Math.sin(angle) * inner);
+                context.lineTo(168 + Math.cos(angle) * outer, 168 + Math.sin(angle) * outer);
+                context.stroke();
+              }
+              context.globalAlpha = 1;
+              const gradient = context.createRadialGradient(150, 142, 8, 168, 168, 92);
+              gradient.addColorStop(0, "#ffffff");
+              gradient.addColorStop(1, palette.ink);
+              context.fillStyle = gradient;
+              context.beginPath();
+              context.arc(168, 168, 88, 0, Math.PI * 2);
+              context.fill();
+            };
+          },
+        },
+        {
+          no: "C",
+          title: "Орбита",
+          lead: "Три точки обходят неподвижный центр: быстрее — когда слушает, медленно и широко — когда думает. Речь видно по ритму, а не по амплитуде.",
+          build(art) {
+            const disc = document.createElement("div");
+            disc.className = "disc";
+            disc.style.width = "72px";
+            disc.style.height = "72px";
+            const orbit = document.createElement("div");
+            orbit.className = "orbit";
+            const dots = [0, 1, 2].map(() => {
+              const dot = document.createElement("i");
+              orbit.append(dot);
+              return dot;
+            });
+            art.append(disc, orbit);
+            return (level, time, palette) => {
+              disc.style.background = `radial-gradient(circle at 36% 32%, #fff 0%, ${palette.ink} 88%)`;
+              const speed = quiet() ? 0.25 : 0.8 + level * 2.4;
+              phase += speed * 0.016;
+              dots.forEach((dot, index) => {
+                const angle = phase + (index / dots.length) * Math.PI * 2;
+                const radius = quiet() ? 58 : 62 + level * 14;
+                dot.style.transform = `translate(${(Math.cos(angle) * radius).toFixed(1)}px, ${(Math.sin(angle) * radius).toFixed(1)}px)`;
+                dot.style.background = palette.ink;
+                dot.style.opacity = quiet() ? 0.5 : 0.9;
+              });
+            };
+          },
+        },
+        {
+          no: "D",
+          title: "Пять штрихов",
+          lead: "Ни шара, ни кольца — только столбики уровня, как у голосового помощника в телефоне. Самый прямой способ показать, что вас слышат.",
+          build(art) {
+            const bars = document.createElement("div");
+            bars.className = "bars";
+            const items = [0, 1, 2, 3, 4].map(() => {
+              const bar = document.createElement("i");
+              bars.append(bar);
+              return bar;
+            });
+            art.append(bars);
+            return (level, time, palette) => {
+              items.forEach((bar, index) => {
+                const offset = Math.sin(time * 3.1 + index * 0.9) * 0.5 + 0.5;
+                const height = quiet() ? 10 : 14 + level * 70 * (0.45 + 0.55 * offset);
+                bar.style.height = `${height.toFixed(1)}px`;
+                bar.style.background = palette.ink;
+                bar.style.opacity = quiet() ? 0.45 : 1;
+              });
+            };
+          },
+        },
+        {
+          no: "E",
+          title: "Жидкое кольцо",
+          lead: "Тонкий контур медленно теряет и возвращает форму круга. Голос слегка растягивает его, но рисунок остаётся одной линией.",
+          build(art) {
+            const liquid = document.createElement("div");
+            liquid.className = "liquid";
+            art.append(liquid);
+            return (level, time, palette) => {
+              const amount = quiet() ? 4 : 8 + level * 22;
+              const radii = [0, 1, 2, 3].map((index) => 50 + Math.sin(time * (0.6 + index * 0.17) + index) * amount);
+              liquid.style.borderRadius = `${radii[0]}% ${100 - radii[0]}% ${radii[1]}% ${100 - radii[1]}% / ${radii[2]}% ${radii[3]}% ${100 - radii[3]}% ${100 - radii[2]}%`;
+              liquid.style.borderColor = palette.ink;
+              liquid.style.background = palette.soft;
+              liquid.style.transform = `scale(${(1 + level * 0.08).toFixed(3)})`;
+            };
+          },
+        },
+        {
+          no: "F",
+          title: "Расходящийся круг",
+          lead: "От края уходит одна тонкая волна — ровно на сказанное. Тишина — и на экране пусто, только контур.",
+          build(art) {
+            const canvas = document.createElement("canvas");
+            canvas.width = 336;
+            canvas.height = 336;
+            art.append(canvas);
+            const context = canvas.getContext("2d");
+            const waves = [];
+            let last = 0;
+            return (level, time, palette) => {
+              context.clearRect(0, 0, 336, 336);
+              if (!quiet() && level > 0.18 && time - last > 0.55) {
+                waves.push({ born: time, power: level });
+                last = time;
+              }
+              for (let index = waves.length - 1; index >= 0; index -= 1) {
+                const wave = waves[index];
+                const age = (time - wave.born) / 2.4;
+                if (age > 1) {
+                  waves.splice(index, 1);
+                  continue;
+                }
+                context.beginPath();
+                context.arc(168, 168, 86 + age * 74, 0, Math.PI * 2);
+                context.strokeStyle = palette.ink;
+                context.globalAlpha = (1 - age) * 0.5 * (0.4 + wave.power);
+                context.lineWidth = 1.5;
+                context.stroke();
+              }
+              context.globalAlpha = 1;
+              const gradient = context.createRadialGradient(150, 142, 8, 168, 168, 90);
+              gradient.addColorStop(0, "#ffffff");
+              gradient.addColorStop(1, palette.ink);
+              context.fillStyle = gradient;
+              context.beginPath();
+              context.arc(168, 168, 84, 0, Math.PI * 2);
+              context.fill();
+            };
+          },
+        },
+        {
+          no: "G",
+          title: "Дым",
+          lead: "Ни шара, ни контура: мягкое пятно без края, у которого форму задаёт медленный шум. Голос сгущает его к центру.",
+          build(art) {
+            const smoke = document.createElement("div");
+            smoke.className = "smoke";
+            const puffs = [0, 1, 2].map(() => {
+              const puff = document.createElement("i");
+              smoke.append(puff);
+              return puff;
+            });
+            art.append(smoke);
+            return (level, time, palette) => {
+              puffs.forEach((puff, index) => {
+                const drift = time * (0.16 + index * 0.06);
+                const x = Math.sin(drift + index * 2.1) * (12 + level * 10);
+                const y = Math.cos(drift * 0.8 + index) * (10 + level * 12);
+                const scale = (quiet() ? 0.72 : 0.9 + level * 0.3) - index * 0.08;
+                puff.style.transform = `translate(${x.toFixed(1)}%, ${y.toFixed(1)}%) scale(${scale.toFixed(3)}) rotate(${(drift * 18).toFixed(1)}deg)`;
+                puff.style.background = `radial-gradient(circle at ${40 + index * 8}% ${38 + index * 6}%, ${palette.ink} 0%, transparent 68%)`;
+                puff.style.opacity = quiet() ? 0.4 : 0.55 + level * 0.4;
+              });
+            };
+          },
+        },
+        {
+          no: "H",
+          title: "Только обод",
+          lead: "Середина пустая — ни заливки, ни блика. Разговор виден одним кольцом переменной толщины: тише говорят — тоньше линия.",
+          build(art) {
+            const canvas = document.createElement("canvas");
+            canvas.width = 336;
+            canvas.height = 336;
+            art.append(canvas);
+            const context = canvas.getContext("2d");
+            return (level, time, palette) => {
+              context.clearRect(0, 0, 336, 336);
+              context.strokeStyle = palette.ink;
+              const steps = 180;
+              context.beginPath();
+              for (let index = 0; index <= steps; index += 1) {
+                const angle = (index / steps) * Math.PI * 2 - Math.PI / 2;
+                const noise =
+                  Math.sin(angle * 3 + time * 1.1) * 0.5 +
+                  Math.sin(angle * 5 - time * 0.7) * 0.3 +
+                  Math.sin(angle * 8 + time * 1.7) * 0.2;
+                const radius = 104 + noise * (quiet() ? 2 : 4 + level * 16);
+                const point = [168 + Math.cos(angle) * radius, 168 + Math.sin(angle) * radius];
+                if (index === 0) context.moveTo(point[0], point[1]);
+                else context.lineTo(point[0], point[1]);
+              }
+              context.closePath();
+              context.lineWidth = quiet() ? 1 : 1 + level * 5;
+              context.globalAlpha = quiet() ? 0.45 : 0.9;
+              context.stroke();
+              context.globalAlpha = 1;
+            };
+          },
+        },
+        {
+          no: "I",
+          title: "Матовая клякса",
+          lead: "Форма всё время течёт и никогда не бывает ровным кругом. Плоский цвет без градиента и блика — предмет, а не стеклянный шарик.",
+          build(art) {
+            const blob = document.createElement("div");
+            blob.className = "blob-shape";
+            art.append(blob);
+            return (level, time, palette) => {
+              const amount = quiet() ? 6 : 12 + level * 20;
+              const r = [0, 1, 2, 3].map((index) => 50 + Math.sin(time * (0.5 + index * 0.23) + index * 1.7) * amount);
+              blob.style.borderRadius = `${r[0]}% ${100 - r[0]}% ${r[1]}% ${100 - r[1]}% / ${r[2]}% ${r[3]}% ${100 - r[3]}% ${100 - r[2]}%`;
+              blob.style.background = palette.ink;
+              blob.style.opacity = quiet() ? 0.5 : 0.9;
+              blob.style.transform = `rotate(${(time * 6).toFixed(1)}deg) scale(${(1 + level * 0.1).toFixed(3)})`;
+            };
+          },
+        },
+        {
+          no: "J",
+          title: "Осциллограмма",
+          lead: "Совсем без круга: одна линия поперёк экрана, которая рисует речь. Тишина — прямая, речь — волна; ничего лишнего.",
+          build(art) {
+            const canvas = document.createElement("canvas");
+            canvas.width = 336;
+            canvas.height = 336;
+            art.append(canvas);
+            const context = canvas.getContext("2d");
+            return (level, time, palette) => {
+              context.clearRect(0, 0, 336, 336);
+              context.strokeStyle = palette.ink;
+              context.lineWidth = 2;
+              context.lineCap = "round";
+              context.beginPath();
+              for (let x = 20; x <= 316; x += 3) {
+                const t = (x - 20) / 296;
+                const envelope = Math.sin(t * Math.PI);
+                const wave =
+                  Math.sin(t * 18 + time * 5) * 0.6 + Math.sin(t * 31 - time * 3.3) * 0.4;
+                const y = 168 + wave * envelope * (quiet() ? 1.5 : 6 + level * 62);
+                if (x === 20) context.moveTo(x, y);
+                else context.lineTo(x, y);
+              }
+              context.stroke();
+            };
+          },
+        },
+        {
+          no: "K",
+          title: "Зерно",
+          lead: "Круг набран из отдельных точек — они дышат к центру и от него. Поверхности нет вовсе, есть плотность.",
+          build(art) {
+            const grain = document.createElement("div");
+            grain.className = "grain";
+            const dots = Array.from({ length: 90 }, () => {
+              const dot = document.createElement("i");
+              grain.append(dot);
+              return dot;
+            });
+            art.append(grain);
+            // Золотой угол и корень из доли — так точки ложатся ровным диском,
+            // а не спицами: с обычным шагом угла они собираются в лучи.
+            const seeds = dots.map((_, index) => ({
+              angle: index * 2.399963,
+              radius: 12 + 58 * Math.sqrt((index + 0.5) / dots.length),
+              speed: 0.4 + ((index * 13) % 7) / 10,
+            }));
+            return (level, time, palette) => {
+              dots.forEach((dot, index) => {
+                const seed = seeds[index];
+                const pulse = quiet() ? 0 : level * 22 * Math.sin(time * seed.speed + index);
+                const radius = seed.radius + pulse;
+                const angle = seed.angle + time * 0.05 * seed.speed;
+                dot.style.transform = `translate(${(84 + Math.cos(angle) * radius).toFixed(1)}px, ${(84 + Math.sin(angle) * radius).toFixed(1)}px)`;
+                dot.style.background = palette.ink;
+                dot.style.opacity = quiet() ? 0.28 : 0.4 + level * 0.5;
+              });
+            };
+          },
+        },
+      ];
+
+      const grid = document.getElementById("grid");
+      const painters = [];
+      const captions = [];
+      for (const variant of VARIANTS) {
+        const card = document.createElement("section");
+        card.className = "variant";
+        const head = document.createElement("div");
+        head.className = "variant-head";
+        const no = document.createElement("span");
+        no.className = "variant-no";
+        no.textContent = variant.no;
+        const title = document.createElement("h2");
+        title.textContent = variant.title;
+        head.append(no, title);
+        const lead = document.createElement("p");
+        lead.className = "lead";
+        lead.textContent = variant.lead;
+        const stage = document.createElement("div");
+        stage.className = "stage";
+        const art = document.createElement("div");
+        art.className = "art";
+        stage.append(art);
+        const caption = document.createElement("p");
+        caption.className = "caption";
+        caption.textContent = PALETTE[state].caption;
+        captions.push(caption);
+        card.append(head, lead, stage, caption);
+        grid.append(card);
+        painters.push(variant.build(art));
+      }
+
+      function frame(now) {
+        const time = now / 1000;
+        let level = source.meter ? source.meter() : synthetic(time);
+        if (quiet()) level = 0;
+        source.level = level;
+        if (!source.meter) {
+          for (let index = 0; index < source.spectrum.length; index += 1)
+            source.spectrum[index] = Math.abs(Math.sin(time * (1.3 + index * 0.21) + index)) * level;
+        }
+        const palette = PALETTE[state];
+        for (const paint of painters) paint(level, time, palette);
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+
+      for (const button of document.querySelectorAll(".switch button")) {
+        button.addEventListener("click", () => {
+          state = button.dataset.state;
+          for (const other of document.querySelectorAll(".switch button"))
+            other.setAttribute("aria-pressed", String(other === button));
+          for (const caption of captions) caption.textContent = PALETTE[state].caption;
+        });
+      }
+
+      const micButton = document.getElementById("mic");
+      const micNote = document.getElementById("mic-note");
+      micButton.addEventListener("click", async () => {
+        if (source.meter) {
+          source.meter = null;
+          micButton.setAttribute("aria-pressed", "false");
+          micNote.textContent = "Сейчас двигает синтетический сигнал";
+          return;
+        }
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const context = new (window.AudioContext || window.webkitAudioContext)();
+          const analyser = context.createAnalyser();
+          analyser.fftSize = 512;
+          analyser.smoothingTimeConstant = 0.72;
+          context.createMediaStreamSource(stream).connect(analyser);
+          const wave = new Uint8Array(analyser.frequencyBinCount);
+          const bins = new Uint8Array(analyser.frequencyBinCount);
+          source.meter = () => {
+            analyser.getByteTimeDomainData(wave);
+            analyser.getByteFrequencyData(bins);
+            let sum = 0;
+            for (let index = 0; index < wave.length; index += 1) {
+              const value = (wave[index] - 128) / 128;
+              sum += value * value;
+            }
+            const step = Math.floor(bins.length / source.spectrum.length);
+            for (let index = 0; index < source.spectrum.length; index += 1)
+              source.spectrum[index] = bins[index * step] / 255;
+            return Math.min(1, Math.max(0, (Math.sqrt(sum / wave.length) - 0.02) * 6));
+          };
+          micButton.setAttribute("aria-pressed", "true");
+          micNote.textContent = "Двигает ваш голос";
+        } catch {
+          micNote.textContent = "Микрофон недоступен — остаётся синтетический сигнал";
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -923,3 +923,161 @@ test("morning brief safely opens an exact source after the bounded entry cache m
     page.getByRole("button", { name: "Открыть карточку" }),
   ).toHaveCount(0);
 });
+
+// Внутренняя ссылка Obsidian ведёт в память с запросом. Раньше роутер искал
+// страницу с идентификатором «memory?query=Hub», не находил её и выбрасывал
+// человека на «Сегодня» — щелчок по [[ссылке]] не делал ничего.
+test("an obsidian wikilink opens memory with its query already searched", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await capture(page, "Завтра в 11 созвон по Hub");
+  await page.goto("/#memory?query=Hub");
+  await expect(page.locator("#memory")).toBeVisible();
+  await expect(page.locator("#today")).toBeHidden();
+  await expect(page.locator("#memory-input")).toHaveValue("Hub");
+  await expect(page.locator("#memory-result")).toContainText("Hub", {
+    timeout: 7000,
+  });
+  expect(page.url()).toContain("#memory?query=Hub");
+
+  // Несуществующая страница по-прежнему возвращает на «Сегодня».
+  await page.goto("/#nope");
+  await expect(page.locator("#today")).toBeVisible();
+  expect(page.url()).toContain("#today");
+});
+
+// Карточки обновляются сами: журнал меняет не только эта вкладка — запись может
+// прийти голосом, разбор закончиться в фоне, правка прилететь из другого окна.
+test("карточки обновляются в реальном времени, без перезагрузки страницы", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/");
+  await expect(page.locator("#notes .empty")).toBeVisible();
+
+  // Запись создаётся мимо этой вкладки — как это делает голос или другое окно.
+  const created = await request.post("/api/captures", {
+    data: { raw: "мысль про поток обновлений", primaryType: "note" },
+  });
+  expect(created.status()).toBe(201);
+
+  // Ничего не перезагружаем: карточка должна появиться сама.
+  await expect(page.locator("#notes .entry").first()).toContainText("поток обновлений", {
+    timeout: 15000,
+  });
+
+  // Удаление тоже видно сразу.
+  const entry = (await created.json()).entry;
+  await request.delete(`/api/captures/${entry.id}`);
+  await expect(page.locator("#notes .entry")).toHaveCount(0, { timeout: 15000 });
+});
+
+// Карточка отвечает на «когда это было» и «к чему относится»: время записи
+// видно всегда, срок и проект — когда они есть.
+test("карточка показывает время записи, срок и проект", async ({ page, request }) => {
+  await page.goto("/");
+  const created = await request.post("/api/captures", {
+    data: {
+      raw: "созвон по Hub",
+      primaryType: "todo",
+      due: { date: "2026-08-27", time: "11:00" },
+    },
+  });
+  expect(created.status()).toBe(201);
+  const entry = page.locator("#todo .entry").filter({ hasText: "созвон по Hub" }).first();
+  await expect(entry).toBeVisible({ timeout: 15000 });
+
+  // Время записи — всегда, с днём: «сегодня, 13:57», а не голые часы.
+  await expect(entry.locator(".entry-meta")).toContainText(/сегодня, \d{2}:\d{2}/);
+  // Срок назван сроком, а не просто датой рядом с типом.
+  await expect(entry.locator(".entry-meta")).toContainText("срок:");
+  // Проект — отдельной меткой.
+  await expect(entry.locator(".entry-meta .tag.project")).toHaveText("Hub");
+
+  await request.delete(`/api/captures/${(await created.json()).entry.id}`);
+});
+
+// Просрочено или нет должно быть видно на карточке, а не вычисляться в уме:
+// у дела со сроком — состояние, у дела без срока — прямое «без срока».
+test("карточка говорит, просрочено дело или нет", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+
+  // Сроки берём рядом с сегодняшним днём: далёкие даты приложение не принимает,
+  // а разбег в три дня переживает любой часовой пояс.
+  const day = (shift) => {
+    const at = new Date();
+    at.setDate(at.getDate() + shift);
+    return at.toISOString().slice(0, 10);
+  };
+  const late = await request.post("/api/captures", {
+    data: { raw: "сдать отчёт", primaryType: "todo", due: { date: day(-3) } },
+  });
+  const soon = await request.post("/api/captures", {
+    data: { raw: "созвон по релизу", primaryType: "todo", due: { date: day(3) } },
+  });
+  const undated = await request.post("/api/captures", {
+    data: { raw: "купить кофе", primaryType: "todo" },
+  });
+
+  const card = (text) => page.locator("#todo .entry").filter({ hasText: text }).first();
+  await expect(card("сдать отчёт")).toBeVisible({ timeout: 15000 });
+  await expect(card("сдать отчёт")).toHaveClass(/overdue/);
+  // Красным помечены обе половины: и сам срок, и слово «просрочено».
+  await expect(card("сдать отчёт").locator(".tag.due.late")).toContainText("срок:");
+  await expect(card("сдать отчёт").locator(".tag.late:not(.due)")).toHaveText("просрочено");
+
+  await expect(card("созвон по релизу").locator(".tag.ontime")).toHaveText("в срок");
+  await expect(card("созвон по релизу").locator(".tag.late")).toHaveCount(0);
+  await expect(card("созвон по релизу")).not.toHaveClass(/overdue/);
+
+  // Без срока просрочки быть не может — и это сказано словами, а не пустотой.
+  await expect(card("купить кофе").locator(".tag.undated")).toHaveText("без срока");
+
+  // В самой карточке видно, когда запись сделана.
+  await card("купить кофе").locator(".entry-title").click();
+  await expect(page.locator(".card-written")).toContainText(/Записано: сегодня, \d{2}:\d{2}/);
+  // И ни одной подчёркнутой кнопки: подчёркивание читалось как ссылка.
+  const underlined = await page.evaluate(() =>
+    [...document.querySelectorAll("#review-dialog button, #review-dialog a")].filter((node) =>
+      getComputedStyle(node).textDecorationLine.includes("underline"),
+    ).length,
+  );
+  expect(underlined).toBe(0);
+  await page.locator("#review-close").click();
+
+  for (const response of [late, soon, undated])
+    await request.delete(`/api/captures/${(await response.json()).entry.id}`);
+});
+
+// Колонка на «Сегодня» показывает только первые записи. Раньше об этом было
+// сказано лишь заголовком-ссылкой: дело, которому передвинули срок вперёд,
+// уходило за границу превью и выглядело пропавшим — «не сохранилось».
+test("колонка честно говорит, сколько записей осталось за границей превью", async ({
+  page,
+  request,
+}) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+
+  const created = [];
+  for (const name of ["первое дело", "второе дело", "третье дело", "четвёртое дело"])
+    created.push(
+      await request.post("/api/captures", { data: { raw: name, primaryType: "todo" } }),
+    );
+
+  const todo = page.locator("#todo");
+  await expect(todo.locator(".entry")).toHaveCount(3, { timeout: 15000 });
+  const more = todo.locator(".preview-more");
+  await expect(more).toHaveText("Ещё 1 — весь список →");
+  await expect(more).toHaveAttribute("href", "#history-todo");
+
+  // Полный список открывается по этой же ссылке — и там все четыре.
+  await more.click();
+  await expect(page.locator("#history-todo")).toBeVisible();
+  await expect(page.locator("#history-todo-list .entry")).toHaveCount(4);
+
+  for (const response of created)
+    await request.delete(`/api/captures/${(await response.json()).entry.id}`);
+});

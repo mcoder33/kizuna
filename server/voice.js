@@ -10,7 +10,7 @@
 //
 // Инструменты — единственный способ менять журнал: и модель, и заглушка ходят
 // через них, поэтому поведение совпадает, а контракт памяти не обходится.
-import { enqueueCaptureJob, getAggregate, fullEntry, activeNote, saveNote, search, day, replaceInterpretation } from './db.js';
+import { enqueueCaptureJob, getAggregate, fullEntry, activeNote, saveNote, search, day, replaceInterpretation, deleteCapture, restoreCapture } from './db.js';
 import { parseCaptureOverrides, applyUserOverrides, gateClassification, shouldMaterializeProjections } from './classifier.js';
 
 export const VOICE_MODEL = 'gpt-realtime';
@@ -25,11 +25,15 @@ export const GEMINI_LIVE_URL =
 // Голос ведёт себя как собеседник, а не как командная строка: коротко
 // проговаривает, что записал, и не выдумывает того, чего в журнале нет.
 export const VOICE_INSTRUCTIONS = [
-  'Ты — Кизуна, тихий помощник личного журнала. Говори по-русски, коротко и по делу.',
-  'Записывать, искать и править записи можно только инструментами — не выдумывай содержимое журнала.',
+  'Ты — Кизуна, тихий помощник личного журнала. Говори по-русски, коротко и живо, как человек в разговоре, а не как справка.',
+  'Обращаются не всегда к тебе. Если реплика — фоновая речь, чужой разговор или мысль вслух не для тебя, молчи: ничего не отвечай и не вызывай инструменты.',
+  'Журнал меняется только инструментами — не выдумывай ни записи, ни их содержимое.',
   'Записал — назови одной фразой, что сохранил и каким типом.',
-  'Если человек размышляет вслух, помоги подумать: задай уточняющий вопрос или предложи следующий шаг.',
+  'После create_capture загляни в read_capture. Если разбор неясен — нет типа, срока или пришёл вопрос, — спроси коротко одним вопросом и применённый ответ положи через update_capture. Не выдумывай тип и срок за человека.',
+  'Удаление подтверждай вслух до вызова: назови, что удаляешь, и дождись согласия. После delete_capture скажи, что запись можно вернуть.',
+  'Не уверен, о какой записи речь, — найди search_memory или list_today и переспроси, а не угадывай.',
   'Не читай длинные списки целиком: назови сколько нашлось и самое важное.',
+  'Если человек размышляет вслух и обращается к тебе, помоги подумать: уточняющий вопрос или следующий шаг.',
 ].join(' ');
 
 // Контракт инструментов. Один и тот же список уходит в Realtime-сессию и
@@ -83,6 +87,36 @@ export const VOICE_TOOLS = [
   },
   {
     type: 'function',
+    name: 'read_capture',
+    description: 'Прочитать запись целиком: текст, заметку, разбор и то, чего в разборе не хватает. После сохранения новой записи — способ узнать, о чём переспросить.',
+    parameters: {
+      type: 'object',
+      properties: { captureId: { type: 'string' } },
+      required: ['captureId'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'delete_capture',
+    description: 'Убрать запись из журнала. Удаление мягкое: запись можно вернуть restore_capture. Вызывать только после подтверждения человеком.',
+    parameters: {
+      type: 'object',
+      properties: { captureId: { type: 'string' } },
+      required: ['captureId'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'restore_capture',
+    description: 'Вернуть удалённую запись обратно в журнал.',
+    parameters: {
+      type: 'object',
+      properties: { captureId: { type: 'string' } },
+      required: ['captureId'],
+    },
+  },
+  {
+    type: 'function',
     name: 'update_capture',
     description: 'Поправить разбор записи: тип, срок, важность, проект или отметку «сделано».',
     parameters: {
@@ -119,6 +153,12 @@ function latestCapture(db) {
   return db.prepare('SELECT id, raw FROM captures WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 1').get() || null;
 }
 
+// «Верни» относится к тому, что убрали последним, а не к первому попавшемуся
+// удалённому: человек отменяет своё же только что сказанное.
+function latestDeletedCapture(db) {
+  return db.prepare('SELECT id, raw FROM captures WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 1').get() || null;
+}
+
 const typeNames = { task: 'задача', meeting_event: 'встреча', outcome_decision: 'результат', note: 'заметка', idea_question: 'идея' };
 const shortText = (value, limit = 140) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, limit);
 
@@ -130,11 +170,17 @@ function entrySummary(entry) {
     summary: shortText(classification.summary || entry.raw),
     due: classification.entities.schedule?.display || null,
     tags: classification.tags || [],
+    // Признак «сделано» решает, в какую колонку журнала ляжет запись, поэтому
+    // он нужен и в ответе инструмента: разговор говорит человеку, куда записал.
+    completed: Boolean(classification.completed),
   };
 }
 
 /** Исполнение одного инструмента. Общее для живого разговора и для заглушки. */
-export function runVoiceTool(db, name, args = {}, { now = () => new Date(), timeZone = 'Europe/Samara' } = {}) {
+// provider — тот же разбор, что и у записи из карточки ввода. Раньше здесь
+// стояло жёсткое 'fallback': сказанное вслух разбирали правила, а не модель, и
+// отчёт о сделанном («поговорил с парнями») уходил в заметки вместо «Что делал».
+export function runVoiceTool(db, name, args = {}, { now = () => new Date(), timeZone = 'Europe/Samara', provider = 'fallback' } = {}) {
   if (name === 'create_capture') {
     const text = typeof args.text === 'string' ? args.text.trim() : '';
     if (!text || text.length > 10000) return { error: 'Нужен текст записи от 1 до 10 000 символов.' };
@@ -151,7 +197,7 @@ export function runVoiceTool(db, name, args = {}, { now = () => new Date(), time
     const queued = enqueueCaptureJob(db, {
       raw: text,
       occurredAt: undefined,
-      selectedProvider: 'fallback',
+      selectedProvider: provider,
       overrides: parsed.overrides,
     });
     return { captureId: queued.captureId, jobId: queued.jobId, saved: true };
@@ -204,6 +250,58 @@ export function runVoiceTool(db, name, args = {}, { now = () => new Date(), time
     return { captureId: args.captureId, version: saved.note?.version ?? null, appended: true };
   }
 
+  // Полное состояние записи: что в ней написано, что понял разбор и чего ему
+  // не хватает. Из этого модель узнаёт, о чём переспросить, — гадать про тип и
+  // срок она не должна.
+  if (name === 'read_capture') {
+    const row = db.prepare('SELECT id, raw, created_at, deleted_at FROM captures WHERE id=?').get(args.captureId);
+    if (!row) return { error: 'Запись не найдена.' };
+    const active = getAggregate(db, args.captureId);
+    const note = activeNote(db, args.captureId)?.body || null;
+    if (!active)
+      return {
+        captureId: row.id,
+        raw: shortText(row.raw, 600),
+        note: note ? shortText(note, 600) : null,
+        deleted: Boolean(row.deleted_at),
+        parsed: false,
+        clarity: { clear: false, question: 'Запись ещё разбирается — тип пока неизвестен.', field: 'type' },
+      };
+    const classification = JSON.parse(active.classification_json);
+    const review = gateClassification(classification);
+    const entry = fullEntry(db, active);
+    return {
+      captureId: row.id,
+      raw: shortText(row.raw, 600),
+      note: note ? shortText(note, 600) : null,
+      deleted: Boolean(row.deleted_at),
+      parsed: true,
+      ...entrySummary(entry),
+      project: classification.entities.projects?.[0] || null,
+      people: classification.entities.people || [],
+      completed: Boolean(classification.completed),
+      // Ясен ли разбор: если нет — здесь же лежит вопрос, который стоит задать.
+      clarity: {
+        clear: review.level === 'high',
+        question: review.question,
+        field: review.field,
+      },
+    };
+  }
+
+  if (name === 'delete_capture') {
+    const result = deleteCapture(db, args.captureId);
+    if (result.notFound) return { error: 'Запись не найдена или уже удалена.' };
+    return { captureId: result.captureId, deleted: true, restorable: true };
+  }
+
+  if (name === 'restore_capture') {
+    const result = restoreCapture(db, args.captureId);
+    if (result.notFound) return { error: 'Запись не найдена.' };
+    if (!result.restored) return { captureId: result.captureId, restored: false, reason: 'Запись и так в журнале.' };
+    return { captureId: result.captureId, restored: true };
+  }
+
   if (name === 'update_capture') {
     const active = getAggregate(db, args.captureId);
     if (!active) {
@@ -248,7 +346,14 @@ const RULES = [
   { intent: 'list_today', re: /(что\s+(у\s+меня\s+)?(сегодня|на\s+сегодня)|какие\s+(дела|задачи)|план\s+на\s+день)/i },
   { intent: 'complete', re: /(отметь|пометь)\s+(как\s+)?(сделан|готов|выполнен)/i },
   { intent: 'reschedule', re: /(перенеси|сдвинь|отложи)\s*(?<when>.+)?/i },
+  { intent: 'delete', re: /(удали|убери|сотри)(\s+(эту\s+)?(последнюю\s+)?запись|\s+это)?\s*$/i },
+  // \b в JS не считает кириллицу буквой, поэтому граница слова — через \p{L}:
+  // с \b правило «верни» молча не срабатывало.
+  { intent: 'restore', re: /^(верни|верните|восстанови|отмени\s+удаление)(?![\p{L}])/iu },
   { intent: 'retype', re: /(это|сделай\s+это|поменяй\s+тип\s+на)\s+(?<kind>заметк\w*|задач\w*|туду|результат\w*|итог)/i },
+  // Ответ на собственный вопрос «дело или заметка?»: одно слово-тип целой
+  // репликой — это уточнение к последней записи, а не новая запись.
+  { intent: 'retype', re: /^\s*(?<kind>заметка|задача|дело|туду|результат|итог)\s*[.!]?\s*$/i },
   { intent: 'search_memory', re: /(найди|поищи|что\s+(я\s+)?(писал|говорил|решил)|напомни)\s*(про|о|об)?\s*(?<query>.+)?/i },
   { intent: 'append_note', re: /(допиши|добавь\s+к\s+записи|припиши)\s*(?<text>.+)?/i },
   { intent: 'create_capture', re: /^(запиши|заметь|сохрани|добавь)\s*(?<text>.+)?/i },
@@ -270,7 +375,14 @@ function detectIntent(text) {
 // только латиницу, и на русском тексте разбор молча промахивался.
 const word = (body) => new RegExp(`(?:^|[^\\p{L}])(?:${body})(?![\\p{L}])`, 'iu');
 const TODO_WORDS = word('задач[ауи]|туду|дело|дела');
-const OUTCOME_WORDS = word('итог|результат|решили|сделал|сделали');
+// Отчёт о сделанном звучит по-разному, и почти всегда — прошедшим временем:
+// «поговорил», «созвонились», «доделал». Без этих слов правила уводили такие
+// записи в заметки.
+const OUTCOME_WORDS = word(
+  // \w в JS не считает кириллицу буквой: с ним «созвонились» не совпадало —
+  // хвост слова описывается через \p{L}.
+  'итог|результат|решили|сделал\\p{L}*|сделано|готово|поговорил\\p{L}*|обсудил\\p{L}*|созвонил\\p{L}*|встретил\\p{L}*|доделал\\p{L}*|закончил\\p{L}*|завершил\\p{L}*|починил\\p{L}*|выкатил\\p{L}*|релизил\\p{L}*|разобрал\\p{L}*',
+);
 const NOTE_WORDS = word('заметк[ауи]|мысль|идея|идею');
 const URGENT_WORDS = word('важно|срочно|горит');
 
@@ -307,13 +419,13 @@ function relativeDate(text, now) {
 }
 
 /** Один ход разговора в режиме заглушки: реплика → инструменты → ответ. */
-export function mockVoiceTurn(db, text, { now = () => new Date(), timeZone = 'Europe/Samara' } = {}) {
+export function mockVoiceTurn(db, text, { now = () => new Date(), timeZone = 'Europe/Samara', provider = 'fallback' } = {}) {
   const said = String(text || '').trim();
   if (!said) return { reply: 'Я слушаю.', calls: [] };
   const { intent, groups } = detectIntent(said);
   const calls = [];
   const call = (name, args) => {
-    const result = runVoiceTool(db, name, args, { now, timeZone });
+    const result = runVoiceTool(db, name, args, { now, timeZone, provider });
     calls.push({ name, arguments: args, result });
     return result;
   };
@@ -362,6 +474,22 @@ export function mockVoiceTurn(db, text, { now = () => new Date(), timeZone = 'Eu
     return { reply: `Перенёс на ${result.due || due.date}: ${result.summary}`, calls };
   }
 
+  if (intent === 'delete') {
+    const recent = latestCapture(db);
+    if (!recent) return { reply: 'Удалять нечего: журнал пуст.', calls };
+    const result = call('delete_capture', { captureId: recent.id });
+    if (result.error) return { reply: result.error, calls };
+    return { reply: `Убрал: ${shortText(recent.raw, 60)}. Скажите «верни», если поспешил.`, calls };
+  }
+
+  if (intent === 'restore') {
+    const removed = latestDeletedCapture(db);
+    if (!removed) return { reply: 'Возвращать нечего: удалённых записей нет.', calls };
+    const result = call('restore_capture', { captureId: removed.id });
+    if (result.error) return { reply: result.error, calls };
+    return { reply: `Вернул: ${shortText(removed.raw, 60)}`, calls };
+  }
+
   if (intent === 'retype') {
     const recent = latestParsedCapture(db);
     if (!recent) return { reply: 'Нечего менять: разобранных записей пока нет.', calls };
@@ -404,6 +532,10 @@ export function mockVoiceTurn(db, text, { now = () => new Date(), timeZone = 'Eu
   const result = call('create_capture', { text: body, ...overrides });
   if (result.error) return { reply: result.error, calls };
   const typeWord = { todo: 'как дело', outcome: 'как результат', note: 'как заметку' }[overrides.type] || 'на разбор';
+  // Тип из реплики не следует — не выдумываем его молча, а спрашиваем: ответ
+  // одним словом («задача», «заметка») ляжет на эту же запись.
+  if (!overrides.type)
+    return { reply: `Записал: ${shortText(body, 80)}. Это дело, заметка или результат?`, calls };
   return { reply: `Записал ${typeWord}: ${shortText(body, 80)}`, calls };
 }
 
@@ -455,20 +587,24 @@ export function createVoiceService({
         method: 'POST',
         headers: { 'x-goog-api-key': geminiApiKey, 'Content-Type': 'application/json' },
         signal: controller.signal,
+        // Ограничения токена лежат в bidiGenerateContentSetup — это тот же
+        // setup, что уходит в сокет. В документации поле называется
+        // liveConnectConstraints, но API такого имени не знает и отвечает
+        // «Unknown name … Cannot find field», поэтому здесь настоящее.
         body: JSON.stringify({
           uses: 1,
           expireTime,
           newSessionExpireTime,
-          liveConnectConstraints: {
+          bidiGenerateContentSetup: {
             model: geminiModel,
-            config: {
+            generationConfig: {
               responseModalities: ['AUDIO'],
-              systemInstruction: { parts: [{ text: instructions }] },
               speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: geminiVoice } } },
-              inputAudioTranscription: {},
-              outputAudioTranscription: {},
-              tools: geminiTools(tools),
             },
+            systemInstruction: { parts: [{ text: instructions }] },
+            tools: geminiTools(tools),
+            inputAudioTranscription: {},
+            outputAudioTranscription: {},
           },
         }),
       });
@@ -500,12 +636,23 @@ export function createVoiceService({
         mode: configured ? 'live' : 'mock',
         model: configured ? activeModel : null,
         voice: configured ? activeVoice : null,
+        // Чем можно говорить прямо сейчас: выбор в интерфейсе показывается
+        // только тогда, когда выбирать действительно есть из чего.
+        providers: {
+          openai: { configured: Boolean(apiKey), model, voice },
+          gemini: { configured: Boolean(geminiApiKey), model: geminiModel, voice: geminiVoice },
+        },
       };
     },
     // Короткоживущий токен для браузера: сам ключ наружу не уходит.
-    async createSession({ instructions = VOICE_INSTRUCTIONS, tools = VOICE_TOOLS } = {}) {
-      if (!configured) return { mode: 'mock' };
-      if (provider === 'gemini') return createGeminiSession(instructions, tools);
+    // Провайдера можно выбрать на один разговор; названный без ключа не
+    // подменяется молча — приложение честно говорит, что его нет.
+    async createSession({ instructions = VOICE_INSTRUCTIONS, tools = VOICE_TOOLS, provider: chosen = null } = {}) {
+      if (chosen === 'openai' && !apiKey) return { mode: 'live', provider: 'openai', error: 'not_configured' };
+      if (chosen === 'gemini' && !geminiApiKey) return { mode: 'live', provider: 'gemini', error: 'not_configured' };
+      const wanted = chosen === 'openai' || chosen === 'gemini' ? chosen : provider;
+      if (!wanted) return { mode: 'mock' };
+      if (wanted === 'gemini') return createGeminiSession(instructions, tools);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {

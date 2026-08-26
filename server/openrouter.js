@@ -88,7 +88,12 @@ export function createOpenRouterProvider({ config, fetch: fetchImplementation = 
     try {
       const payload = await request('/models', { authenticated: false });
       catalogue = rankedCatalogue(payload).slice(0, OPENROUTER_MODEL_LIMIT);
-    } catch { catalogue = []; }
+    } catch {
+      // Осечку сети не запоминаем: пустой кэш живёт до перезапуска, и один
+      // неудачный запрос погасил бы выбор моделей, а провайдер остался бы
+      // помеченным недоступным даже после того, как сеть вернулась.
+      return [];
+    }
     return catalogue;
   }
 

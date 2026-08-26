@@ -132,6 +132,21 @@ function migrate(db) {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS capture_notes_active ON capture_notes(capture_id) WHERE status='active';
     CREATE INDEX IF NOT EXISTS capture_notes_capture ON capture_notes(capture_id, created_at);`);
+  // Вложения: сами файлы лежат на диске в data/attachments, в базе — только
+  // описание. Байты в SQLite раздули бы и базу, и экспорт; на диске файл
+  // называется своим id, а человеческое имя хранится отдельно — значит, из
+  // имени файла нельзя выйти за пределы каталога.
+  db.exec(`CREATE TABLE IF NOT EXISTS capture_attachments (
+      id TEXT PRIMARY KEY,
+      capture_id TEXT NOT NULL REFERENCES captures(id),
+      filename TEXT NOT NULL,
+      content_type TEXT NOT NULL,
+      byte_size INTEGER NOT NULL,
+      checksum TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      deleted_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS capture_attachments_capture ON capture_attachments(capture_id, created_at);`);
     db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(6, now());
     // Миграция 7: ручные параметры записи (тип/срок/важность/теги из карточки
     // ввода) сохраняются с заданием и накладываются после разбора моделью.
@@ -142,6 +157,42 @@ function migrate(db) {
 
 export const NOTE_BODY_LIMIT = 20000;
 
+export const ATTACHMENT_SIZE_LIMIT = 10 * 1024 * 1024;
+export const ATTACHMENTS_PER_CAPTURE = 10;
+export function attachmentsFor(db, captureId) {
+  return db
+    .prepare(
+      'SELECT id,filename,content_type,byte_size,created_at FROM capture_attachments WHERE capture_id=? AND deleted_at IS NULL ORDER BY created_at,id',
+    )
+    .all(captureId)
+    .map(row => ({ id:row.id, filename:row.filename, contentType:row.content_type, size:row.byte_size, createdAt:row.created_at }));
+}
+export function addAttachment(db, captureId, { filename, contentType, bytes }) {
+  const capture = db.prepare('SELECT id FROM captures WHERE id=? AND deleted_at IS NULL').get(captureId);
+  if (!capture) return { notFound: true };
+  const count = db.prepare('SELECT COUNT(*) AS count FROM capture_attachments WHERE capture_id=? AND deleted_at IS NULL').get(captureId).count;
+  if (count >= ATTACHMENTS_PER_CAPTURE) return { tooMany: true, limit: ATTACHMENTS_PER_CAPTURE };
+  const attachmentId = id(), createdAt = now();
+  const checksum = crypto.createHash('sha256').update(bytes).digest('hex');
+  db.prepare('INSERT INTO capture_attachments(id,capture_id,filename,content_type,byte_size,checksum,created_at) VALUES(?,?,?,?,?,?,?)')
+    .run(attachmentId, captureId, filename, contentType, bytes.length, checksum, createdAt);
+  return { id: attachmentId, filename, contentType, size: bytes.length, checksum, createdAt };
+}
+export function findAttachment(db, attachmentId) {
+  const row = db
+    .prepare('SELECT id,capture_id,filename,content_type,byte_size,created_at FROM capture_attachments WHERE id=? AND deleted_at IS NULL')
+    .get(attachmentId);
+  if (!row) return null;
+  return { id:row.id, captureId:row.capture_id, filename:row.filename, contentType:row.content_type, size:row.byte_size, createdAt:row.created_at };
+}
+// Удаление мягкое, как и у записи: файл на диске снимается отдельно, чтобы
+// строка в журнале и байты уходили одним решением, а не наполовину.
+export function removeAttachment(db, attachmentId) {
+  const found = findAttachment(db, attachmentId);
+  if (!found) return { notFound: true };
+  db.prepare('UPDATE capture_attachments SET deleted_at=? WHERE id=?').run(now(), attachmentId);
+  return { id: attachmentId, captureId: found.captureId, removed: true };
+}
 export function activeNote(db, captureId) {
   return db.prepare("SELECT id,version,body,created_at FROM capture_notes WHERE capture_id=? AND status='active'").get(captureId) || null;
 }
@@ -509,7 +560,7 @@ export function listEntries(db, { cursor, limit = 40 }) {
   return { entries: rows.map(row => fullEntry(db, row)), nextCursor: rows.length === limit ? rows.at(-1).created_at : null };
 }
 export function serializeEntry(row) { return { id: row.id, raw: row.raw, occurredAt: row.occurred_at, createdAt: row.created_at, interpretation: { id: row.interpretation_id, version: row.version, provider: row.provider, model: row.model, classification: JSON.parse(row.classification_json), confidence: JSON.parse(row.field_confidence_json) }, projections: [] }; }
-export function fullEntry(db, row) { const entry = serializeEntry(row); entry.note = activeNote(db, row.id); entry.projections = db.prepare("SELECT * FROM projections WHERE capture_id=? AND status='active' ORDER BY created_at").all(row.id).map(p => ({ id:p.id,type:p.projection_type,payload:JSON.parse(p.payload_json),undoGroupId:p.undo_group_id,completion:completionState(db,p.id),completionCandidate:null })); return entry; }
+export function fullEntry(db, row) { const entry = serializeEntry(row); entry.note = activeNote(db, row.id); entry.attachments = attachmentsFor(db, row.id); entry.projections = db.prepare("SELECT * FROM projections WHERE capture_id=? AND status='active' ORDER BY created_at").all(row.id).map(p => ({ id:p.id,type:p.projection_type,payload:JSON.parse(p.payload_json),undoGroupId:p.undo_group_id,completion:completionState(db,p.id),completionCandidate:null })); return entry; }
 export function day(db) { const rows = db.prepare(`SELECT c.*, i.id interpretation_id, i.version, i.provider, i.model, i.classification_json, i.field_confidence_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL ORDER BY c.created_at DESC LIMIT 100`).all(); return rows.map(row=>fullEntry(db,row)); }
 export function dayView(db, date, now=new Date()) { const entries=day(db); const scheduled=entry=>entry.interpretation.classification.entities.schedule; const completable=entry=>entry.projections.find(projection=>['task','meeting_event'].includes(projection.type)); const dayEntries=entries.filter(entry=>scheduled(entry)?.date===date); const horizon=new Date(now.getTime()+48*60*60*1000); const upcoming=entries.filter(entry=>{const c=entry.interpretation.classification,s=scheduled(entry),projection=completable(entry);return !projection?.completion.completed&&['meeting_event','task'].includes(c.primaryType)&&s?.sortAt&&new Date(s.sortAt)>=now&&new Date(s.sortAt)<=horizon}).sort((a,b)=>new Date(scheduled(a).sortAt)-new Date(scheduled(b).sortAt)); const attention=entries.filter(entry=>{const c=entry.interpretation.classification,projection=completable(entry);return !projection?.completion.completed&&!c.completed&&((c.primaryType==='task'&&!scheduled(entry)?.date)||c.entities.followUp||c.primaryType==='outcome_decision')}); return {day:dayEntries,upcoming,attention}; }
 
@@ -639,7 +690,7 @@ export function resetLedger(db) {
   return withImmediateTransaction(db, () => {
     db.exec('DROP TRIGGER IF EXISTS ledger_events_no_update; DROP TRIGGER IF EXISTS ledger_events_no_delete;');
     try {
-      for (const table of ['daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','interpretations','capture_notes','activity_events','captures']) db.prepare(`DELETE FROM ${table}`).run();
+      for (const table of ['daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','interpretations','capture_attachments','capture_notes','activity_events','captures']) db.prepare(`DELETE FROM ${table}`).run();
     } finally { createLedgerEventGuards(db); }
   });
 }

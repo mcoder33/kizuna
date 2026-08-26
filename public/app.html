@@ -48,6 +48,9 @@
           ><label class="provider-picker model-picker" for="ai-model" hidden
             ><span>Модель</span
             ><select id="ai-model" aria-label="Модель ИИ"></select></label
+          ><label class="provider-picker voice-picker" for="voice-provider" hidden
+            ><span>Голос</span
+            ><select id="voice-provider" aria-label="Провайдер голоса"></select></label
           ><span id="ai-status" class="status" role="status">Проверяем ИИ…</span>
         </div>
       </details>
@@ -264,6 +267,19 @@
     <dialog id="review-dialog" tabindex="-1" aria-label="Карточка записи">
       <button id="review-close" class="dialog-close" type="button" aria-label="Закрыть карточку"></button>
       <section id="review" class="review" aria-live="polite"></section>
+    </dialog>
+    <dialog id="preview-dialog" aria-label="Просмотр вложения">
+      <div class="preview-head">
+        <p id="preview-title" class="preview-title"></p>
+        <a id="preview-download" class="secondary" download>Скачать</a>
+        <button
+          id="preview-close"
+          class="dialog-close"
+          type="button"
+          aria-label="Закрыть просмотр"
+        ></button>
+      </div>
+      <div id="preview-body" class="preview-body"></div>
     </dialog>
     <dialog id="reset-dialog">
       <form method="dialog">

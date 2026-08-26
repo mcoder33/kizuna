@@ -177,7 +177,13 @@ function showProvenance(provenance) {
   element.className = `status ${provider !== "fallback" ? "ai" : fallbackSuffix(provenance) ? "fallback" : ""}`.trim();
 }
 function updatePageFromHash() {
-  const pageId = location.hash.slice(1) || "today";
+  // Внутренние ссылки Obsidian ведут в память с запросом: «#memory?query=Hub».
+  // Хэш поэтому разбирается на страницу и параметры — иначе такой страницы не
+  // находится и человека выбрасывает на «Сегодня» вместо поиска.
+  const hash = location.hash.slice(1);
+  const separator = hash.indexOf("?");
+  const pageId = (separator >= 0 ? hash.slice(0, separator) : hash) || "today";
+  const params = new URLSearchParams(separator >= 0 ? hash.slice(separator + 1) : "");
   const page = document.getElementById(pageId);
   const activePage = page?.classList.contains("app-page") ? pageId : "today";
   for (const section of document.querySelectorAll(".app-page"))
@@ -190,6 +196,16 @@ function updatePageFromHash() {
   const historyMenu = document.querySelector(".history-menu");
   historyMenu?.classList.toggle("active", activePage.startsWith("history-"));
   if (activePage !== pageId) history.replaceState(null, "", "#today");
+  // Запрос из ссылки сразу уходит в поиск: человек щёлкнул по имени, а не по
+  // пустой странице памяти.
+  const query = activePage === "memory" ? params.get("query")?.trim() : "";
+  if (query) {
+    const input = $("#memory-input");
+    if (input.value !== query || !$("#memory-result").hasChildNodes()) {
+      input.value = query;
+      $("#memory-form").requestSubmit();
+    }
+  }
 }
 const historyMenu = document.querySelector(".history-menu");
 // Поповеры шапки: «Журнал» и настройки ИИ закрываются по клику вне и Escape.
@@ -266,6 +282,29 @@ function shiftDate(date, days) {
 }
 // Подпись срока считается от сегодняшней даты при отрисовке: сохранённый
 // токен «сегодня» назавтра превращался в бессмыслицу «сегодня · просрочено».
+// Когда запись сделана — день и время. «Сегодня» и «вчера» словами: так дату
+// читают, а не вычисляют. Часовой пояс тот же, что и у остального журнала.
+function entryClock(entry) {
+  const at = new Date(entry.occurredAt || entry.createdAt);
+  if (Number.isNaN(at.getTime())) return null;
+  const time = new Intl.DateTimeFormat("ru-RU", {
+    timeZone: "Europe/Samara",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(at);
+  const date = entryDate(entry);
+  const day =
+    currentDayDate && date === currentDayDate
+      ? "сегодня"
+      : currentDayDate && date === shiftDate(currentDayDate, -1)
+        ? "вчера"
+        : new Intl.DateTimeFormat("ru-RU", {
+            timeZone: "Europe/Samara",
+            day: "numeric",
+            month: "short",
+          }).format(at);
+  return `${day}, ${time}`;
+}
 function scheduleLabel(schedule) {
   if (!schedule) return null;
   if (schedule.state === "conflict" || (!schedule.date && !schedule.time))
@@ -366,7 +405,6 @@ function entryCard(entry, { overdue = false, compact = false } = {}) {
   title.type = "button";
   title.addEventListener("click", () => {
     // Карточка вытекает из той записи, по которой щёлкнули.
-    cardOrigin = card;
     // Если у записи есть свой вопрос от модели, он и показывается; иначе
     // карточка открывается на обычное уточнение.
     const review = reviewFromEntry(entry);
@@ -380,17 +418,45 @@ function entryCard(entry, { overdue = false, compact = false } = {}) {
       `tag ${c.primaryType === "task" ? "task" : ""}`,
     ),
   );
+  // Проект — отдельной меткой рядом с типом: это то, к чему запись относится,
+  // а не подробность в общей строке.
+  for (const project of c.entities.projects)
+    meta.append(node("span", project, "tag project"));
+  const due = scheduleLabel(c.entities.schedule);
+  // Время записи видно всегда: без него карточка не отвечает на вопрос
+  // «когда это было».
   const metaParts = [
-    ...c.entities.projects,
+    entryClock(entry),
     ...(Array.isArray(c.tags) ? c.tags.map((tag) => `#${tag}`) : []),
-    scheduleLabel(c.entities.schedule),
-    c.primaryType === "task" && c.priority === "high" ? "важно" : null,
-    c.primaryType === "task" && c.priority === "low" ? "не срочно" : null,
-    overdue ? "просрочено" : null,
-    completed ? "готово" : null,
   ].filter(Boolean);
   if (metaParts.length)
     meta.append(document.createTextNode(metaParts.join(" · ")));
+  // Состояния — цветными метками, а не словами в общей строке: просрочено и
+  // готово должны читаться взглядом, не чтением.
+  const dueDate = c.entities.schedule?.date;
+  if (due)
+    meta.append(
+      node(
+        "span",
+        `срок: ${due}`,
+        `tag due${overdue ? " late" : dueDate && dueDate === currentDayDate ? " soon" : ""}`,
+      ),
+    );
+  // У дела без срока просрочки быть не может — и это тоже должно быть видно,
+  // иначе пустое место читается как «неизвестно».
+  if (!due && !completed && ["task", "meeting_event"].includes(c.primaryType))
+    meta.append(node("span", "без срока", "tag undated"));
+  if (overdue) meta.append(node("span", "просрочено", "tag late"));
+  if (!overdue && !completed && due && ["task", "meeting_event"].includes(c.primaryType))
+    meta.append(node("span", "в срок", "tag ontime"));
+  if (completed) meta.append(node("span", "готово", "tag done"));
+  if (c.primaryType === "task" && c.priority === "high")
+    meta.append(node("span", "важно", "tag urgent"));
+  if (c.primaryType === "task" && c.priority === "low")
+    meta.append(node("span", "не срочно", "tag calm"));
+  // Скрепка с числом: по списку видно, что к записи что-то приложено.
+  if (entry.attachments?.length)
+    meta.append(node("span", `📎 ${entry.attachments.length}`, "tag files"));
   card.append(meta);
   const actions = node("div", undefined, "entry-actions");
   if (!compact) {
@@ -416,6 +482,9 @@ function appendEntries(container, entries, emptyText, options) {
     container.append(node("p", emptyText, "empty"));
 }
 const previewLimit = 3;
+// Колонка показывает первые записи, а не все. Раньше об этом было сказано
+// только заголовком-ссылкой, и запись, ушедшая за границу превью (например,
+// дело, которому передвинули срок вперёд), выглядела пропавшей.
 function appendPreview(container, entries, emptyText, options) {
   appendEntries(container, entries.slice(0, previewLimit), emptyText, {
     entryOptions: (entry) => ({
@@ -423,6 +492,11 @@ function appendPreview(container, entries, emptyText, options) {
       compact: true,
     }),
   });
+  const hidden = entries.length - previewLimit;
+  if (hidden <= 0) return;
+  const more = node("a", `Ещё ${hidden} — весь список →`, "preview-more");
+  more.href = options?.href || "#today";
+  container.append(more);
 }
 function historyLabel(date) {
   if (!date) return "Без срока";
@@ -519,15 +593,14 @@ function render(data) {
         ["note", "outcome_decision", "idea_question"].includes(type)
       );
     });
-  appendPreview(
-    $("#journal"),
-    done,
-    "Пока нет зафиксированной работы за сегодня.",
-  );
+  appendPreview($("#journal"), done, "Пока нет зафиксированной работы за сегодня.", {
+    href: "#history-work",
+  });
   appendPreview($("#todo"), todo, "Открытых дел нет.", {
+    href: "#history-todo",
     entryOptions: (entry) => ({ overdue: isOverdue(entry, data.date) }),
   });
-  appendPreview($("#notes"), notes, "Заметки появятся здесь.");
+  appendPreview($("#notes"), notes, "Заметки появятся здесь.", { href: "#history-notes" });
   appendHistoryByDay(
     $("#history-work-list"),
     workHistory,
@@ -571,18 +644,38 @@ async function load() {
   ]);
   render({ ...day, entries: entries.entries });
 }
-// Элемент, из которого «вытекает» карточка записи: запись в списке, по которой
-// щёлкнули. Один и тот же приём, что и у листа записи, — карточка вырастает
-// оттуда, куда смотрел человек, а не появляется из ниоткуда.
-let cardOrigin = null;
-// Куда карточка уезжает при закрытии — та же запись, из которой вышла.
-let cardReturn = null;
-function flowFrom(element, origin) {
-  if (!origin) return;
-  flowBetween(element, origin.getBoundingClientRect(), element.getBoundingClientRect());
+// Движение в приложении одно на всё: предмет не летит через экран и не растёт
+// на глазах — он тихо проявляется там, где его посчитала раскладка. Тот же
+// характер, что у кольца в разговоре: мягко, коротко и без рывка.
+const APPEAR_EASING = "cubic-bezier(0.16, 1, 0.3, 1)";
+const APPEAR_DURATION = 300;
+const FADE_DURATION = 150;
+function motionAllowed() {
+  return !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 }
+// base нужен предметам, у которых своё постоянное смещение (лист держится на
+// translate(-50%, -50%)): без него анимация сбросила бы его на первом кадре.
+function appear(element, { shift = 10, duration = APPEAR_DURATION, base = "" } = {}) {
+  if (!motionAllowed()) return null;
+  for (const animation of element.getAnimations()) animation.cancel();
+  return element.animate(
+    [
+      { opacity: 0, transform: `${base} translateY(${shift}px)`.trim() },
+      { opacity: 1, transform: base || "none" },
+    ],
+    { duration, easing: APPEAR_EASING },
+  );
+}
+// Незаписанная правка заметки: карточку закрывают крестиком, фоном и Esc —
+// и во всех трёх случаях набранное должно остаться, а не пропасть.
+let flushCardBody = null;
 function closeCard() {
   const dialog = $("#review-dialog");
+  // Сохранение уходит своим ходом: карточка закрывается сразу, но значение
+  // поля читается сейчас, пока разметка ещё на месте.
+  const flush = flushCardBody;
+  flushCardBody = null;
+  flush?.();
   if (!dialog.open) {
     clear($("#review"));
     return;
@@ -590,26 +683,18 @@ function closeCard() {
   const finish = () => {
     if (dialog.open) dialog.close();
     clear($("#review"));
-    cardReturn = null;
     // Анимация закрытия держит карточку прозрачной (fill: forwards): не снять
     // её — и при следующем открытии карточка окажется невидимой.
     for (const animation of dialog.getAnimations()) animation.cancel();
   };
-  const target = cardReturn?.isConnected ? cardReturn.getBoundingClientRect() : null;
-  const motionAllowed = !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-  if (!target || !target.width || !motionAllowed) return finish();
-  // Обратный ход: карточка уезжает туда, откуда вышла, и только потом
-  // закрывается — иначе переход обрывается на середине.
-  const from = dialog.getBoundingClientRect();
-  const shiftX = target.left + target.width / 2 - (from.left + from.width / 2);
-  const shiftY = target.top + target.height / 2 - (from.top + from.height / 2);
+  if (!motionAllowed()) return finish();
+  // Уходит карточка так же тихо, как пришла: гаснет на месте, никуда не едет.
   const animation = dialog.animate(
     [
-      { transform: "none", opacity: 1, offset: 0 },
-      { opacity: 1, offset: 0.5 },
-      { transform: `translate(${shiftX}px, ${shiftY}px) scale(0.94)`, opacity: 0, offset: 1 },
+      { opacity: 1, transform: "none" },
+      { opacity: 0, transform: "translateY(6px)" },
     ],
-    { duration: SHEET_DURATION * 0.62, easing: SHEET_EASING, fill: "forwards" },
+    { duration: FADE_DURATION, easing: "ease-in", fill: "forwards" },
   );
   animation.finished.then(finish, finish);
 }
@@ -621,12 +706,151 @@ function propertyRow(label, control) {
   row.append(node("span", label, "prop-label"), control);
   return row;
 }
+// ── вложения записи ──────────────────────────────────────────────────────────
+// Файл живёт рядом с записью, а не внутри текста: заметку правят словами, а
+// снимок доски или счёт прикладывают как есть.
+const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/heic"]);
+function fileSize(bytes) {
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} КБ`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+}
+// Быстрый предпросмотр: картинка открывается прямо здесь, PDF — рамкой,
+// остальное честно предлагается скачать.
+function previewAttachment(attachment) {
+  const dialog = $("#preview-dialog"),
+    body = $("#preview-body"),
+    title = $("#preview-title"),
+    download = $("#preview-download");
+  clear(body);
+  title.textContent = attachment.filename;
+  download.href = `/api/attachments/${attachment.id}`;
+  download.download = attachment.filename;
+  if (IMAGE_TYPES.has(attachment.contentType)) {
+    const image = node("img", undefined, "preview-image");
+    image.src = `/api/attachments/${attachment.id}`;
+    image.alt = attachment.filename;
+    body.append(image);
+  } else if (attachment.contentType === "application/pdf") {
+    const frame = node("iframe", undefined, "preview-frame");
+    frame.src = `/api/attachments/${attachment.id}`;
+    frame.title = attachment.filename;
+    body.append(frame);
+  } else {
+    body.append(
+      node("p", `${attachment.contentType || "файл"} · ${fileSize(attachment.size)}`, "preview-plain"),
+    );
+  }
+  if (!dialog.open) dialog.showModal();
+  appear(dialog, { shift: 8 });
+}
+function attachmentsBlock(entry) {
+  const wrap = node("section", undefined, "card-files"),
+    label = node("p", "Вложения", "prop-section"),
+    grid = node("div", undefined, "file-grid"),
+    hint = node("p", "Перетащите файл сюда или выберите — до 10 файлов, каждый до 10 МБ.", "card-body-hint"),
+    input = document.createElement("input"),
+    add = node("button", "Добавить файл", "secondary");
+  let files = entry.attachments || [];
+  input.type = "file";
+  input.multiple = true;
+  input.className = "sr-only";
+  input.id = `attach-${entry.id}`;
+  add.type = "button";
+  add.addEventListener("click", () => input.click());
+
+  const paint = () => {
+    clear(grid);
+    if (!files.length) grid.append(node("p", "Пока пусто.", "empty"));
+    for (const attachment of files) {
+      const tile = node("div", undefined, "file-tile"),
+        open = node("button", undefined, "file-open"),
+        remove = node("button", "×", "file-remove");
+      open.type = "button";
+      open.title = `${attachment.filename} · ${fileSize(attachment.size)}`;
+      if (IMAGE_TYPES.has(attachment.contentType)) {
+        const thumb = node("img", undefined, "file-thumb");
+        thumb.src = `/api/attachments/${attachment.id}`;
+        thumb.alt = attachment.filename;
+        thumb.loading = "lazy";
+        open.append(thumb);
+      } else {
+        open.append(
+          node("span", attachment.contentType === "application/pdf" ? "PDF" : "ФАЙЛ", "file-kind"),
+        );
+      }
+      open.append(node("span", attachment.filename, "file-name"));
+      open.addEventListener("click", () => previewAttachment(attachment));
+      remove.type = "button";
+      remove.title = "Убрать вложение";
+      remove.setAttribute("aria-label", `Убрать ${attachment.filename}`);
+      remove.addEventListener("click", async () => {
+        remove.disabled = true;
+        try {
+          const result = await request(`/api/attachments/${attachment.id}`, { method: "DELETE" });
+          files = result.attachments;
+          paint();
+          load();
+        } catch (error) {
+          toast(error.message);
+          remove.disabled = false;
+        }
+      });
+      tile.append(open, remove);
+      grid.append(tile);
+    }
+  };
+
+  const upload = async (list) => {
+    for (const file of list) {
+      try {
+        const response = await fetch(`/api/captures/${entry.id}/attachments`, {
+          method: "POST",
+          headers: {
+            "Content-Type": file.type || "application/octet-stream",
+            "X-Attachment-Name": encodeURIComponent(file.name),
+          },
+          body: file,
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(payload?.error?.message || "Файл не приложился.");
+        files = payload.attachments;
+        paint();
+      } catch (error) {
+        toast(error.message);
+      }
+    }
+    load();
+  };
+  input.addEventListener("change", () => {
+    const chosen = [...(input.files || [])];
+    input.value = "";
+    if (chosen.length) upload(chosen);
+  });
+  // Перетаскивание — самый короткий путь для снимка экрана: он и так в буфере.
+  for (const event of ["dragover", "dragenter"])
+    wrap.addEventListener(event, (dropEvent) => {
+      dropEvent.preventDefault();
+      wrap.classList.add("dropping");
+    });
+  for (const event of ["dragleave", "drop"])
+    wrap.addEventListener(event, () => wrap.classList.remove("dropping"));
+  wrap.addEventListener("drop", (dropEvent) => {
+    dropEvent.preventDefault();
+    const dropped = [...(dropEvent.dataTransfer?.files || [])];
+    if (dropped.length) upload(dropped);
+  });
+
+  paint();
+  wrap.append(label, grid, add, input, hint);
+  return wrap;
+}
 // Тело заметки — отдельная пользовательская сущность, а не правка raw:
 // контракт памяти запрещает менять источник, поэтому оно версионируется
 // на сервере со ссылкой supersedes.
 function cardBody(entry) {
   const wrap = node("section", undefined, "card-body"),
-    hint = node("p", "Markdown оформляется прямо в тексте · ⌘/Ctrl + Enter — сохранить, Esc — отменить", "card-body-hint"),
+    hint = node("p", "Markdown оформляется прямо в тексте · ⌘/Ctrl + Enter — сохранить · закроете карточку — сохранится само", "card-body-hint"),
     label = node("p", "Заметки", "prop-section"),
     origin = node("span", " · из исходной записи", "prop-origin");
   // Пока своей заметки нет, тело начинается с текста записи: дописывать проще,
@@ -653,13 +877,11 @@ function cardBody(entry) {
   field.setValue(body);
   hint.hidden = true;
 
-  // Отключение поля снимает фокус и вызывает blur, а тот сохраняет: без этих
-  // флагов заметка сохранялась дважды, а Escape вместо отмены сохранял
-  // черновик.
+  // Отключение поля снимает фокус и вызывает blur, а тот сохраняет: без флага
+  // заметка сохранялась бы дважды.
   let saving = false;
-  let cancelling = false;
   const save = async () => {
-    if (saving || cancelling) return;
+    if (saving) return;
     const next = field.getValue();
     if (next === body) return;
     saving = true;
@@ -685,21 +907,21 @@ function cardBody(entry) {
   field.element.addEventListener("focus", () => {
     hint.hidden = false;
   });
+  // Esc не откатывает набранное: раньше он возвращал прежний текст, и правка,
+  // сделанная перед закрытием карточки, пропадала. Теперь он просто уводит
+  // фокус — на blur заметка сохраняется, как и при закрытии.
   field.element.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
-      event.preventDefault();
       event.stopPropagation();
-      cancelling = true;
-      field.setValue(body);
       hint.hidden = true;
       field.element.blur();
-      cancelling = false;
     }
   });
   field.element.addEventListener("blur", () => {
     hint.hidden = true;
     save();
   });
+  flushCardBody = save;
   wrap.append(label, field.element, hint);
   return wrap;
 }
@@ -716,6 +938,10 @@ function showReview(entry, review, undoGroupId, provenance) {
     return;
   }
   area.append(markdownNode("h2", c.summary, undefined, { inline: true, firstLine: true }));
+  // Когда запись сделана — в самой карточке: «Срок» ниже это про будущее, а
+  // здесь ответ на вопрос «когда это было».
+  const written = entryClock(entry);
+  if (written) area.append(node("p", `Записано: ${written}`, "card-written"));
   if (review.question)
     area.append(node("p", review.question, "review-question"));
 
@@ -830,7 +1056,7 @@ function showReview(entry, review, undoGroupId, provenance) {
       apply.disabled = false;
     }
   });
-  area.append(form, cardBody(entry));
+  area.append(form, cardBody(entry), attachmentsBlock(entry));
 
   const source = node("details", undefined, "card-source");
   source.append(node("summary", "Источник и версия"));
@@ -857,6 +1083,8 @@ function showReview(entry, review, undoGroupId, provenance) {
   const remove = node("button", "Удалить запись", "card-delete");
   remove.type = "button";
   remove.addEventListener("click", async () => {
+    // Записи больше не будет: сохранять в неё заметку незачем.
+    flushCardBody = null;
     remove.disabled = true;
     try {
       await request(`/api/captures/${entry.id}`, { method: "DELETE" });
@@ -885,9 +1113,9 @@ function showReview(entry, review, undoGroupId, provenance) {
     // иначе карточка откроется прозрачной.
     for (const animation of dialog.getAnimations()) animation.cancel();
     dialog.showModal();
-    flowFrom(dialog, cardOrigin);
-    cardReturn = cardOrigin;
-    cardOrigin = null;
+    // Только при открытии: после сохранения уточнения карточка
+    // перерисовывается на месте, и проявлять её заново незачем.
+    appear(dialog);
     // Фокус на самой карточке: иначе он уходит на крестик или на селектор
     // типа, хотя карточку открывают ради заметок.
     dialog.focus();
@@ -1401,45 +1629,14 @@ const expandButton = $("#capture-expand");
 function captureLarge() {
   return $("#capture-form").classList.contains("capture-large");
 }
-// Кривая в духе macOS: короткий разгон и длинное мягкое торможение.
-const SHEET_EASING = "cubic-bezier(0.16, 1, 0.3, 1)";
-const SHEET_DURATION = 680;
-// Путь от прежнего прямоугольника к новому. Позицию считает раскладка,
-// анимация только показывает переход — поэтому её можно выключить целиком.
-function flowBetween(element, from, to, base = "") {
-  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
-  if (!to.width || !to.height || !from.width || !from.height) return;
-  const shiftX = from.left + from.width / 2 - (to.left + to.width / 2);
-  const shiftY = from.top + from.height / 2 - (to.top + to.height / 2);
-  // Лист выезжает из того места, куда смотрел человек: главное здесь —
-  // движение, а масштаб лишь чуть отстаёт, чтобы переход не выглядел рывком.
-  // Небольшой сдвиг вниз на старте нужен, когда источник и лист почти совпали:
-  // иначе выезжать было бы неоткуда.
-  const nudgeY = Math.abs(shiftY) < 24 ? 24 : 0;
-  element.animate(
-    [
-      {
-        transform: `${base} translate(${shiftX}px, ${shiftY + nudgeY}px) scale(0.94)`,
-        opacity: 0,
-        offset: 0,
-      },
-      // Прозрачность набирается раньше движения: лист не мигает, а именно едет.
-      { opacity: 1, offset: 0.34 },
-      { transform: base || "none", opacity: 1, offset: 1 },
-    ],
-    { duration: SHEET_DURATION, easing: SHEET_EASING },
-  );
-}
 function setCaptureLarge(large) {
   const form = $("#capture-form");
-  // Лист вытекает из карточки: запоминаем, где она была, переключаем классы и
-  // проигрываем путь от прежнего прямоугольника к новому. Позицию считает
-  // раскладка, анимация только показывает переход.
-  const from = form.getBoundingClientRect();
+  // Лист не летит и не растёт на глазах: раскладка ставит его на место, а
+  // движение только показывает, что он появился. Тот же характер, что у
+  // кольца в разговоре.
   form.classList.toggle("capture-large", large);
   document.body.classList.toggle("capture-large-open", large);
-  const to = form.getBoundingClientRect();
-  flowBetween(form, from, to, large ? "translate(-50%, -50%)" : "");
+  appear(form, { shift: large ? 12 : 6, base: large ? "translate(-50%, -50%)" : "" });
   expandButton.setAttribute("aria-pressed", String(large));
   const label = large ? "Свернуть поле — Esc" : "Увеличить поле";
   expandButton.setAttribute("aria-label", label);
@@ -1460,7 +1657,16 @@ captureField.element.addEventListener("keydown", (event) => {
 // Голосовой диалог: кнопка рядом с «развернуть», панель — под карточкой.
 // Записи, сделанные голосом, сразу видны в журнале, поэтому после каждого
 // изменения перезагружаем списки.
-const voiceDialog = createVoiceDialog({ onJournalChanged: () => load() });
+const voiceDialog = createVoiceDialog({
+  onJournalChanged: () => load(),
+  // Разговор начинается тем провайдером, которого выбрали в шапке.
+  voiceProvider: () => selectedVoiceProvider(),
+  // А сказанное разбирает та же модель, что и напечатанное.
+  captureProvider: () => (providerReady() ? selectedProvider() : null),
+  // Кнопка разговора показывает состояние панели, а закрыть панель можно и
+  // изнутри — крестиком или Esc.
+  onClosed: () => $("#capture-voice").setAttribute("aria-pressed", "false"),
+});
 $("#capture-form").after(voiceDialog.element);
 const voiceButton = $("#capture-voice");
 voiceButton.addEventListener("click", () => {
@@ -1606,6 +1812,46 @@ function onModelChange() {
   if (model) localStorage.setItem(modelStorageKey, model);
   paintAiSummary();
 }
+// Голос умеют оба провайдера, и выбор между ними — не то же самое, что выбор
+// модели разбора: голос и характер у них разные. Список показывается, только
+// если выбирать есть из чего, а ключей в браузере всё так же нет — сервер
+// присылает лишь признак «настроен».
+const voiceProviderNames = { openai: "OpenAI", gemini: "Google Gemini" };
+const VOICE_PROVIDER_KEY = "pagent.voice-provider";
+function selectedVoiceProvider() {
+  const picker = $("#voice-provider");
+  return picker.options.length && picker.value ? picker.value : null;
+}
+async function voiceStatus() {
+  const label = $(".voice-picker"),
+    picker = $("#voice-provider");
+  let data;
+  try {
+    data = await request("/api/voice/status");
+  } catch {
+    label.hidden = true;
+    return;
+  }
+  const available = Object.entries(data.providers || {}).filter(([, info]) => info?.configured);
+  clear(picker);
+  // Один ключ — выбирать нечего, и лишняя строка в поповере только мешает.
+  if (available.length < 2) {
+    label.hidden = true;
+    return;
+  }
+  for (const [id] of available) {
+    const option = node("option", voiceProviderNames[id] || id);
+    option.value = id;
+    picker.append(option);
+  }
+  const stored = localStorage.getItem(VOICE_PROVIDER_KEY);
+  picker.value = available.some(([id]) => id === stored) ? stored : data.provider;
+  label.hidden = false;
+}
+$("#voice-provider").addEventListener("change", () => {
+  const chosen = selectedVoiceProvider();
+  if (chosen) localStorage.setItem(VOICE_PROVIDER_KEY, chosen);
+});
 async function status() {
   const stored = localStorage.getItem("pagent.ai-provider"),
     data = await request(
@@ -1630,6 +1876,9 @@ async function status() {
     ? chosen
     : "fallback";
   renderModelPicker(data);
+  // Список голосов спрашиваем отдельно: он зависит от голосовых ключей, а не
+  // от провайдера разбора.
+  voiceStatus();
   const available =
       selectedProvider() === "fallback" ||
       data.providers[selectedProvider()]?.available,
@@ -1680,6 +1929,12 @@ async function bootstrap() {
     }
   } while (bootstrapQueued);
 }
+// Предпросмотр закрывается крестиком, кликом по фону и Esc — как и карточка.
+$("#preview-close").addEventListener("click", () => $("#preview-dialog").close());
+$("#preview-dialog").addEventListener("click", (event) => {
+  if (event.target === $("#preview-dialog")) $("#preview-dialog").close();
+});
+$("#preview-dialog").addEventListener("close", () => clear($("#preview-body")));
 $("#reset-button").addEventListener("click", () =>
   $("#reset-dialog").showModal(),
 );
@@ -1722,7 +1977,41 @@ window.addEventListener("pagehide", () => {
 window.addEventListener("pagent:toast", (event) => {
   if (typeof event.detail === "string" && event.detail) toast(event.detail);
 });
-window.addEventListener("online", bootstrap);
+// Живое обновление: сервер сообщает, что журнал изменился, — карточки
+// перерисовываются сами. Меняет журнал не только эта вкладка: запись может
+// прийти голосом, разбор — закончиться в фоне, правка — из другого окна.
+let journalStream = null;
+let journalReloadTimer = 0;
+function reloadJournalSoon() {
+  // Событий может прийти пачка (запись, разбор, проекция): перечитываем один
+  // раз, а не по разу на каждое.
+  clearTimeout(journalReloadTimer);
+  journalReloadTimer = setTimeout(() => {
+    load().catch(() => {});
+  }, 120);
+}
+function listenToJournal() {
+  if (!("EventSource" in window) || journalStream) return;
+  try {
+    journalStream = new EventSource("/api/events");
+  } catch {
+    journalStream = null;
+    return;
+  }
+  journalStream.addEventListener("journal", reloadJournalSoon);
+  // Браузер переподключается сам; на всякий случай сбрасываем ссылку, чтобы
+  // повторный вызов мог открыть поток заново.
+  journalStream.addEventListener("error", () => {
+    if (journalStream?.readyState === EventSource.CLOSED) {
+      journalStream = null;
+    }
+  });
+}
+window.addEventListener("online", () => {
+  listenToJournal();
+  bootstrap();
+});
 window.addEventListener("hashchange", updatePageFromHash);
 updatePageFromHash();
 bootstrap();
+listenToJournal();

@@ -170,13 +170,18 @@ test("with a key the live path connects, runs the tool and returns the result to
   await expect(entry).toBeVisible({ timeout: 15000 });
 
   // Результат вернулся модели ровно тем событием, которое она ждёт, и следом
-  // просьба продолжить вслух.
+  // просьба продолжить вслух. Ждём события, а не читаем сразу: между записью в
+  // журнал и ответом модели есть ещё один запрос — разбор для подтверждения.
+  await expect
+    .poll(async () => (await page.evaluate(() => window.__voiceProbe.sent)).at(-1)?.type, {
+      timeout: 15000,
+    })
+    .toBe("response.create");
   const sent = await page.evaluate(() => window.__voiceProbe.sent);
   const output = sent.find((event) => event.item?.type === "function_call_output");
   expect(output.type).toBe("conversation.item.create");
   expect(output.item.call_id).toBe("call_test_1");
   expect(JSON.parse(output.item.output).saved).toBe(true);
-  expect(sent[sent.length - 1].type).toBe("response.create");
 });
 
 test("live transcripts appear in the log and errors are shown honestly", async ({ page, request }) => {
@@ -236,6 +241,15 @@ test("closing the dialog releases the microphone and the connection", async ({ p
   await expect(page.locator("#voice-panel")).toBeHidden();
   const closed = await page.evaluate(() => window.__voiceChannel.readyState);
   expect(closed).toBe("closed");
+
+  // Кнопка разговора показывает состояние панели: закрыли изнутри — она гаснет,
+  // иначе значок остаётся подсвеченным при закрытом диалоге и врёт о состоянии.
+  await expect(page.locator("#capture-voice")).toHaveAttribute("aria-pressed", "false");
+  await page.locator("#capture-voice").click();
+  await expect(page.locator("#voice-panel")).toBeVisible();
+  await page.locator("#voice-panel").press("Escape");
+  await expect(page.locator("#voice-panel")).toBeHidden();
+  await expect(page.locator("#capture-voice")).toHaveAttribute("aria-pressed", "false");
 });
 
 test("without a key the browser itself listens and speaks the answer", async ({ page, request }) => {
@@ -293,14 +307,29 @@ test("without a key the browser itself listens and speaks the answer", async ({ 
   await expect(page.locator("#todo .entry").filter({ hasText: "проверить микрофон" }).first()).toBeVisible({ timeout: 15000 });
 });
 
-test("in the live mode the browser microphone button steps aside", async ({ page, request }) => {
+test("в живом режиме кнопка микрофона глушит разговор, а не слушает второй раз", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
-  await installFakeRealtime(page);
+  await installFakeGemini(page);
   await page.goto("/");
   await page.locator("#capture-voice").click();
   await expect(page.locator("#voice-hint")).toContainText("Говорите вслух");
-  // Микрофон уже открыт для модели — вторая запись была бы лишней.
-  await expect(page.locator(".voice-listen")).toBeHidden();
+
+  // Микрофон уже открыт для модели, поэтому кнопка в поле не запускает вторую
+  // запись: она выключает и включает тот же микрофон — как щелчок по кольцу.
+  const listen = page.locator(".voice-listen");
+  await expect(listen).toBeVisible();
+  await expect(listen).toHaveAttribute("aria-pressed", "true");
+  const stage = page.locator(".voice-stage");
+  await expect(stage).toHaveAttribute("data-state", "listening");
+
+  await listen.click();
+  await expect(stage).toHaveAttribute("data-state", "sleeping");
+  await expect(listen).toHaveAttribute("aria-pressed", "false");
+  expect(await page.evaluate(() => window.__micTrack.enabled)).toBe(false);
+
+  await listen.click();
+  await expect(stage).toHaveAttribute("data-state", "listening");
+  expect(await page.evaluate(() => window.__micTrack.enabled)).toBe(true);
 });
 
 // Подставной вебсокет и звук для живого режима Gemini: настоящего ключа нет,
@@ -343,8 +372,27 @@ const installFakeGemini = async (page) => {
       createMediaStreamSource() {
         return { connect() {}, disconnect() {} };
       }
+      // Смеситель и анализатор нужны кругу разговора: он дышит от громкости.
+      createGain() {
+        return { connect() {}, disconnect() {} };
+      }
+      createAnalyser() {
+        return {
+          fftSize: 0,
+          smoothingTimeConstant: 0,
+          frequencyBinCount: 16,
+          connect() {},
+          disconnect() {},
+          getByteTimeDomainData(data) {
+            data.fill(128);
+          },
+        };
+      }
       createScriptProcessor() {
-        return { connect() {}, disconnect() {}, onaudioprocess: null };
+        // Тест сам «подаёт звук» в этот узел: так проверяется, уходит ли он
+        // наружу во сне.
+        window.__processor = { connect() {}, disconnect() {}, onaudioprocess: null };
+        return window.__processor;
       }
       createBuffer(channels, length) {
         return { duration: length / 24000, getChannelData: () => new Float32Array(length) };
@@ -356,9 +404,38 @@ const installFakeGemini = async (page) => {
         window.__audioClosed = true;
       }
     };
+    // Имя во сне слушает браузер — подставляем распознавание, чтобы «услышать»
+    // нужную фразу в тесте, а не ждать настоящего микрофона.
+    class FakeRecognition {
+      constructor() {
+        this.listeners = {};
+        window.__speech = this;
+      }
+      addEventListener(type, handler) {
+        (this.listeners[type] ||= []).push(handler);
+      }
+      start() {
+        window.__speechStarted = (window.__speechStarted || 0) + 1;
+      }
+      stop() {}
+      abort() {
+        window.__speechAborted = true;
+      }
+      hear(text) {
+        for (const handler of this.listeners.result || [])
+          handler({ resultIndex: 0, results: [[{ transcript: text }]] });
+      }
+    }
+    window.SpeechRecognition = FakeRecognition;
+    window.__micTrack = { enabled: true, kind: "audio", stop() { window.__micStopped = true; } };
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
-      value: { getUserMedia: async () => ({ getTracks: () => [{ stop() { window.__micStopped = true; } }] }) },
+      value: {
+        getUserMedia: async () => ({
+          getTracks: () => [window.__micTrack],
+          getAudioTracks: () => [window.__micTrack],
+        }),
+      },
     });
   });
   await page.route("**/api/voice/session", (route) =>
@@ -407,7 +484,14 @@ test("gemini live connects over a socket, runs the tool and answers back", async
   const entry = page.locator("#todo .entry").filter({ hasText: "созвон голосом через gemini" }).first();
   await expect(entry).toBeVisible({ timeout: 15000 });
 
-  // Результат вернулся тем сообщением, которое ждёт Google.
+  // Результат вернулся тем сообщением, которое ждёт Google. Ждём его, а не
+  // читаем сразу: между записью в журнал и ответом модели есть ещё один
+  // запрос — разбор для подтверждения на экране.
+  await expect
+    .poll(async () => (await page.evaluate(() => window.__geminiProbe.sent)).some((event) => event.toolResponse), {
+      timeout: 15000,
+    })
+    .toBe(true);
   const sent = await page.evaluate(() => window.__geminiProbe.sent);
   const answer = sent.find((event) => event.toolResponse);
   expect(answer.toolResponse.functionResponses[0].id).toBe("fc_1");
@@ -457,4 +541,277 @@ test("closing a gemini dialog releases the socket, the microphone and the audio 
     audio: window.__audioClosed === true,
   }));
   expect(released).toEqual({ socket: true, microphone: true, audio: true });
+});
+
+test("живой разговор занимает весь экран и оставляет один круг", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await installFakeGemini(page);
+  await page.goto("/");
+  await page.locator("#capture-voice").click();
+
+  const panel = page.locator("#voice-panel");
+  await expect(panel).toHaveClass(/voice-live/);
+  await expect(page.locator("body")).toHaveClass(/voice-live-open/);
+
+  // Панель занимает окно целиком, и в его середине — круг разговора, а не
+  // журнал: во время разговора интерфейса за ним не видно. Ждём конца входной
+  // анимации: пока она идёт, панель ужата масштабом и меряется меньше окна.
+  await panel.evaluate((node) => Promise.all(node.getAnimations().map((animation) => animation.finished)));
+  const viewport = page.viewportSize();
+  const box = await panel.boundingBox();
+  expect(Math.round(box.width)).toBeGreaterThanOrEqual(viewport.width);
+  expect(Math.round(box.height)).toBeGreaterThanOrEqual(viewport.height);
+  const middle = await page.evaluate(() =>
+    document.elementFromPoint(innerWidth / 2, innerHeight / 2)?.closest("#voice-panel") ? "разговор" : "страница",
+  );
+  expect(middle).toBe("разговор");
+
+  const orb = await page.locator("#voice-orb").boundingBox();
+  expect(orb.width).toBeGreaterThan(180);
+  expect(Math.round(orb.width)).toBe(Math.round(orb.height));
+
+  // Закрытие возвращает страницу как была.
+  await page.locator(".voice-close").click();
+  await expect(panel).not.toHaveClass(/voice-live/);
+  await expect(page.locator("body")).not.toHaveClass(/voice-live-open/);
+});
+
+test("разговор засыпает, не слушает комнату и просыпается по имени", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await installFakeGemini(page);
+  await page.goto("/");
+  await page.locator("#capture-voice").click();
+
+  const stage = page.locator(".voice-stage");
+  await expect(stage).toHaveAttribute("data-state", "listening");
+  expect(await page.evaluate(() => window.__micTrack.enabled)).toBe(true);
+
+  // Звук бодрствующего разговора уходит модели.
+  const speak = () =>
+    page.evaluate(() =>
+      window.__processor?.onaudioprocess?.({ inputBuffer: { getChannelData: () => new Float32Array(128) } }),
+    );
+  const audioSent = () =>
+    page.evaluate(() => window.__geminiProbe.sent.filter((event) => event.realtimeInput?.audio).length);
+  await speak();
+  expect(await audioSent()).toBeGreaterThan(0);
+
+  // Уснул: дорожка микрофона выключена, и комната наружу не уходит вовсе.
+  await page.locator("#voice-orb").click();
+  await expect(stage).toHaveAttribute("data-state", "sleeping");
+  expect(await page.evaluate(() => window.__micTrack.enabled)).toBe(false);
+  const before = await audioSent();
+  await speak();
+  await speak();
+  expect(await audioSent()).toBe(before);
+
+  // Чужая речь во сне не будит…
+  await page.evaluate(() => window.__speech.hear("вообще-то мы вчера обсуждали отпуск"));
+  await expect(stage).toHaveAttribute("data-state", "sleeping");
+  // …а обращение по имени — будит, и звук снова идёт.
+  await page.evaluate(() => window.__speech.hear("Кизуна, запиши мысль"));
+  await expect(stage).toHaveAttribute("data-state", "listening");
+  expect(await page.evaluate(() => window.__micTrack.enabled)).toBe(true);
+  await speak();
+  expect(await audioSent()).toBeGreaterThan(before);
+});
+
+test("голосом можно удалить запись и вернуть её обратно", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  await page.locator("#capture-voice").click();
+
+  const say = async (text) => {
+    await page.locator("#voice-input").fill(text);
+    await page.locator("#voice-input").press("Enter");
+  };
+  await say("запиши задачу зайти к стоматологу");
+  const entry = page.locator("#todo .entry").filter({ hasText: "стоматологу" }).first();
+  await expect(entry).toBeVisible({ timeout: 15000 });
+
+  await say("удали последнюю запись");
+  await expect(page.locator(".voice-bot").last()).toContainText("Убрал");
+  await expect(entry).toHaveCount(0);
+
+  await say("верни");
+  await expect(page.locator(".voice-bot").last()).toContainText("Вернул");
+  await expect(page.locator("#todo .entry").filter({ hasText: "стоматологу" }).first()).toBeVisible({
+    timeout: 15000,
+  });
+});
+
+test("неясный тип записи разговор переспрашивает, а не выдумывает", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  await page.locator("#capture-voice").click();
+
+  await page.locator("#voice-input").fill("пересмотреть план недели");
+  await page.locator("#voice-input").press("Enter");
+  await expect(page.locator(".voice-bot").last()).toContainText("Это дело, заметка или результат?");
+
+  // Ответ одним словом ложится на ту же запись, а новой не создаёт.
+  await expect(page.locator("#today .entry").filter({ hasText: "план недели" }).first()).toBeVisible({
+    timeout: 15000,
+  });
+  await page.locator("#voice-input").fill("заметка");
+  await page.locator("#voice-input").press("Enter");
+  await expect(page.locator(".voice-bot").last()).toContainText("Теперь это заметка");
+  const entries = await (await request.get("/api/entries?limit=10")).json();
+  expect(entries.entries.filter((item) => item.raw.includes("план недели"))).toHaveLength(1);
+});
+
+// Выбор провайдера голоса живёт в шапке и показывается только тогда, когда
+// ключей действительно два: с одним выбирать нечего.
+test("выбор провайдера голоса появляется при двух ключах и доходит до сессии", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.route("**/api/voice/status", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        configured: true,
+        provider: "openai",
+        mode: "live",
+        providers: { openai: { configured: true }, gemini: { configured: true } },
+      }),
+    }),
+  );
+  const asked = [];
+  await page.route("**/api/voice/session", async (route) => {
+    asked.push(JSON.parse(route.request().postData() || "{}"));
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ mode: "mock" }),
+    });
+  });
+  await page.goto("/");
+
+  // Выбор живёт в поповере шапки — его сначала открывают, как и человек.
+  await page.locator(".ai-menu summary").click();
+  const picker = page.locator("#voice-provider");
+  await expect(picker).toBeVisible();
+  await expect(picker).toHaveValue("openai");
+  await picker.selectOption("gemini");
+  await page.locator(".ai-menu summary").click();
+
+  await page.locator("#capture-voice").click();
+  await expect(page.locator("#voice-panel")).toBeVisible();
+  await expect.poll(() => asked.length).toBeGreaterThan(0);
+  expect(asked[0].provider).toBe("gemini");
+
+  // Выбор переживает перезагрузку: он про человека, а не про вкладку.
+  await page.reload();
+  await page.locator(".ai-menu summary").click();
+  await expect(page.locator("#voice-provider")).toHaveValue("gemini");
+});
+
+test("с одним ключом выбора голоса в шапке нет", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.route("**/api/voice/status", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        configured: true,
+        provider: "gemini",
+        mode: "live",
+        providers: { openai: { configured: false }, gemini: { configured: true } },
+      }),
+    }),
+  );
+  await page.goto("/");
+  await expect(page.locator(".voice-picker")).toBeHidden();
+});
+
+// Экран разговора по макету: шапка с историей, знаком и настройками, кольцо с
+// волнами внутри, подпись состояния, мелкий эквалайзер и строка ввода.
+test("экран разговора собран по макету: шапка, кольцо, подпись, поле", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await installFakeGemini(page);
+  await page.goto("/");
+  await page.locator("#capture-voice").click();
+
+  const panel = page.locator("#voice-panel");
+  await expect(panel).toHaveClass(/voice-live/);
+  await expect(panel.getByRole("link", { name: "История" })).toBeVisible();
+  await expect(panel.getByRole("link", { name: "Настройки" })).toBeVisible();
+  await expect(panel.locator(".voice-brand-word")).toHaveText("Кизуна");
+
+  // Кольцо: три дуги, стекло и холст волн внутри.
+  await expect(panel.locator(".voice-arc")).toHaveCount(3);
+  await expect(panel.locator(".voice-waves")).toBeVisible();
+  await expect(panel.locator(".voice-bar")).toHaveCount(7);
+  await expect(panel.locator("#voice-phase")).toHaveText("Слушаю");
+
+  // Сказанное живёт под кольцом, а не отдельным блоком у поля ввода.
+  const captionInsideStage = await page.evaluate(
+    () => document.querySelector("#voice-log")?.parentElement?.classList.contains("voice-stage"),
+  );
+  expect(captionInsideStage).toBe(true);
+
+  // Ссылки шапки ведут в журнал и настройки — из разговора есть выход.
+  await expect(panel.getByRole("link", { name: "История" })).toHaveAttribute("href", "#history-work");
+  await expect(panel.getByRole("link", { name: "Настройки" })).toHaveAttribute("href", "#settings");
+
+  // После закрытия панель снова обычная, а реплики возвращаются на своё место.
+  await page.locator(".voice-close").click();
+  await expect(panel).not.toHaveClass(/voice-live/);
+  const captionBack = await page.evaluate(
+    () => document.querySelector("#voice-log")?.parentElement?.id === "voice-panel",
+  );
+  expect(captionBack).toBe(true);
+});
+
+// Журнала за экраном разговора не видно, поэтому разговор сам говорит, что
+// записал и в какую колонку: иначе человеку кажется, что запись не появилась.
+test("разговор показывает, что записал и в какую колонку", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await installFakeGemini(page);
+  await page.goto("/");
+  await page.locator("#capture-voice").click();
+
+  // Модель просит записать отчёт о сделанном — как это приходит по сокету.
+  await page.evaluate(() => {
+    window.__geminiSocket.emit("message", {
+      data: JSON.stringify({
+        toolCall: {
+          functionCalls: [
+            {
+              name: "create_capture",
+              id: "call-1",
+              args: { text: "поговорил с Ильёй по колл-центру", type: "outcome" },
+            },
+          ],
+        },
+      }),
+    });
+  });
+
+  const done = page.locator(".voice-line.voice-done");
+  await expect(done).toHaveText(/Записал в «Что делал»/, { timeout: 20000 });
+  await expect(done).toContainText("Ильёй");
+
+  // Удаление и возврат тоже видно.
+  const captureId = await page.evaluate(async () => {
+    const list = await (await fetch("/api/entries?limit=5")).json();
+    return list.entries[0].id;
+  });
+  await page.evaluate((id) => {
+    window.__geminiSocket.emit("message", {
+      data: JSON.stringify({
+        toolCall: { functionCalls: [{ name: "delete_capture", id: "call-2", args: { captureId: id } }] },
+      }),
+    });
+  }, captureId);
+  await expect(page.locator(".voice-line.voice-done").last()).toContainText("Убрал запись");
+
+  await page.evaluate((id) => {
+    window.__geminiSocket.emit("message", {
+      data: JSON.stringify({
+        toolCall: { functionCalls: [{ name: "restore_capture", id: "call-3", args: { captureId: id } }] },
+      }),
+    });
+  }, captureId);
+  await expect(page.locator(".voice-line.voice-done").last()).toContainText("Вернул запись");
 });

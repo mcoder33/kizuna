@@ -68,7 +68,7 @@ test("markdown notes save, render and survive reopening without touching the raw
   await expect(page.locator("#review-dialog")).toBeHidden();
   await openCard(page, "#todo", raw);
   await expect(page.locator(".card-markdown .md-heading")).toContainText("План");
-  await expect(page.locator(".prop-section")).toContainText("версия 1");
+  await expect(page.locator(".card-body .prop-section")).toContainText("версия 1");
 
   const entries = await (await page.request.get("/api/entries?limit=100")).json();
   const entry = entries.entries.find((item) => item.raw === raw);
@@ -83,7 +83,7 @@ test("the note body starts from the original capture without creating a note", a
   await openCard(page, "#todo", raw);
 
   await expect(page.locator(".card-markdown")).toContainText(raw);
-  await expect(page.locator(".prop-section")).toContainText("из исходной записи");
+  await expect(page.locator(".card-body .prop-section")).toContainText("из исходной записи");
 
   const entries = await (await page.request.get("/api/entries?limit=100")).json();
   expect(entries.entries.find((item) => item.raw === raw).note).toBeNull();
@@ -94,7 +94,7 @@ test("the note body starts from the original capture without creating a note", a
   await page.locator("#card-body-editor").press("ControlOrMeta+Enter");
   await expect(page.locator(".card-markdown .md-bullet")).toBeVisible();
   await expect(page.locator(".card-markdown")).toContainText("дописал пункт");
-  await expect(page.locator(".prop-section")).toContainText("версия 1");
+  await expect(page.locator(".card-body .prop-section")).toContainText("версия 1");
 
   const after = await (await page.request.get("/api/entries?limit=100")).json();
   const entry = after.entries.find((item) => item.raw === raw);
@@ -128,19 +128,20 @@ test("html typed into notes is escaped, never executed", async ({ page }) => {
   expect(await page.locator(".card-markdown img").count()).toBe(0);
 });
 
-test("escape leaves the note unsaved and keeps the card open", async ({ page }) => {
-  const raw = "Нужно проверить отмену заметки";
+test("escape closes the card and keeps what was typed", async ({ page }) => {
+  const raw = "Нужно проверить сохранение заметки";
   await page.goto("/");
   await capture(page, raw);
   await openCard(page, "#todo", raw);
   await page.locator(".card-markdown").click();
-  await page.locator("#card-body-editor").fill("черновик, который не нужен");
+  await page.locator("#card-body-editor").fill("дописанное перед закрытием");
+  // Раньше Esc откатывал набранное — и правка, сделанная перед закрытием
+  // карточки, пропадала. Теперь он закрывает карточку и сохраняет её.
   await page.locator("#card-body-editor").press("Escape");
-  await expect(page.locator("#review-dialog")).toBeVisible();
-  // Поле никуда не прячется — Esc возвращает в него сохранённый текст.
-  await expect(page.locator("#card-body-editor")).toBeVisible();
-  await expect(page.locator(".card-markdown")).not.toContainText("черновик");
-  await expect(page.locator(".card-markdown")).toContainText(raw);
+  await expect(page.locator("#review-dialog")).toBeHidden();
+
+  await openCard(page, "#todo", raw);
+  await expect(page.locator(".card-markdown")).toContainText("дописанное перед закрытием");
 });
 
 test("closing a task removes it from today without filing it as reported work", async ({ page }) => {
@@ -558,32 +559,47 @@ test("on a phone the sheet fills the screen without overflow", async ({ page, re
   expect(foot.y + foot.height).toBeLessThanOrEqual(sheet.y + sheet.height + 1);
 });
 
-test("the sheet and the entry card flow out of what was clicked", async ({ page, request }) => {
+test("лист и карточка тихо проявляются, а не летят через экран", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
 
-  // Лист вытекает из карточки ввода: анимация начинается от её размера.
+  // Движение в приложении одно на всё: короткое проявление на месте. Ни
+  // перелёта из точки клика, ни роста размеров, ни масштаба — только
+  // прозрачность и мягкий сдвиг по вертикали.
   const form = page.locator("#capture-form");
   await page.getByLabel("Новая запись").click();
   await page.keyboard.type("# Заметка на листе");
   await page.locator("#capture-expand").click();
   const sheetFrames = await form.evaluate((node) =>
     node.getAnimations().map((animation) => ({
-      state: animation.playState,
       duration: animation.effect.getTiming().duration,
+      keys: animation.effect.getKeyframes().map((frame) => ({
+        opacity: frame.opacity,
+        transform: frame.transform,
+        width: frame.width,
+      })),
     })),
   );
   expect(sheetFrames.length).toBe(1);
-  expect(sheetFrames[0].duration).toBe(680);
-  await page.waitForTimeout(500);
+  expect(sheetFrames[0].duration).toBe(300);
+  const [first, last] = sheetFrames[0].keys;
+  expect(first.opacity).toBe("0");
+  expect(last.opacity).toBe("1");
+  // Постоянное смещение листа остаётся на месте, к нему добавлен только сдвиг.
+  expect(first.transform).toContain("translate(-50%, -50%)");
+  expect(first.transform).toContain("translateY(12px)");
+  expect(last.transform).toBe("translate(-50%, -50%)");
+  // Размеры не анимируются вовсе: их считает раскладка.
+  expect(first.width).toBeUndefined();
+
+  await page.waitForTimeout(400);
   const sheet = await form.boundingBox();
   // Пропорция листа — чуть шире A4. Допуск на округление пикселей.
   expect(sheet.height / sheet.width).toBeGreaterThan(1.26);
   expect(sheet.height / sheet.width).toBeLessThan(1.34);
   await page.keyboard.press("Escape");
 
-  // Карточка записи вытекает из записи, по которой щёлкнули.
   await page.getByLabel("Новая запись").click();
   await page.keyboard.type("запись для карточки");
   await page.getByRole("button", { name: "Сохранить запись" }).click();
@@ -593,10 +609,22 @@ test("the sheet and the entry card flow out of what was clicked", async ({ page,
 
   const dialog = page.locator("#review-dialog");
   const cardFrames = await dialog.evaluate((node) =>
-    node.getAnimations().map((animation) => animation.effect.getTiming().duration),
+    node.getAnimations().map((animation) => ({
+      duration: animation.effect.getTiming().duration,
+      keys: animation.effect.getKeyframes().map((frame) => frame.transform),
+    })),
   );
-  expect(cardFrames).toEqual([680]);
+  expect(cardFrames.length).toBe(1);
+  expect(cardFrames[0].duration).toBe(300);
+  expect(cardFrames[0].keys[0]).toBe("translateY(10px)");
+  expect(cardFrames[0].keys.at(-1)).toBe("none");
   await expect(dialog).toBeVisible();
+
+  // Содержимое въезжает вместе с карточкой: отдельных анимаций у блоков нет.
+  const blockAnimations = await page.locator("#review").evaluate((area) =>
+    [...area.children].reduce((total, block) => total + block.getAnimations().length, 0),
+  );
+  expect(blockAnimations).toBe(0);
 });
 
 test("the entry card is the same sheet as the grown capture card", async ({ page, request }) => {
@@ -681,4 +709,98 @@ test("a card reopened after closing is visible, not a ghost", async ({ page, req
     await page.waitForTimeout(600);
     await expect(dialog).toBeHidden();
   }
+});
+
+// Вложения: файл живёт рядом с записью, а не внутри текста. Проверяем весь
+// путь — выбор файла, плитка, быстрый предпросмотр, удаление и скрепка в списке.
+test("к записи можно приложить файл, посмотреть его и убрать", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  await page.getByLabel("Новая запись").click();
+  await page.keyboard.type("запись со снимком доски");
+  await page.getByRole("button", { name: "Сохранить запись" }).click();
+  const entry = page.locator("#today .entry").filter({ hasText: "снимком доски" }).first();
+  await expect(entry).toBeVisible({ timeout: 15000 });
+  await entry.locator(".entry-title").click();
+
+  const files = page.locator(".card-files");
+  await expect(files).toContainText("Пока пусто");
+
+  // Настоящий выбор файла: тот же путь, что и у человека.
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  await page.locator(".card-files input[type=file]").setInputFiles({
+    name: "снимок доски.png",
+    mimeType: "image/png",
+    buffer: png,
+  });
+
+  const tile = page.locator(".file-tile").first();
+  await expect(tile).toBeVisible();
+  await expect(tile.locator(".file-name")).toHaveText("снимок доски.png");
+  await expect(tile.locator("img.file-thumb")).toBeVisible();
+
+  // Быстрый предпросмотр: картинка открывается тут же, не скачиванием.
+  await tile.locator(".file-open").click();
+  const preview = page.locator("#preview-dialog");
+  await expect(preview).toBeVisible();
+  await expect(page.locator("#preview-title")).toHaveText("снимок доски.png");
+  await expect(page.locator(".preview-image")).toBeVisible();
+  await expect(page.locator("#preview-download")).toHaveAttribute("download", "снимок доски.png");
+  await page.locator("#preview-close").click();
+  await expect(preview).toBeHidden();
+
+  // В списке видно скрепку с числом — не открывая карточку.
+  await page.locator("#review-close").click();
+  await expect(entry.locator(".entry-meta .tag.files")).toHaveText("📎 1");
+
+  // Убрать вложение можно там же, где приложили.
+  await entry.locator(".entry-title").click();
+  await page.locator(".file-remove").first().click();
+  await expect(page.locator(".card-files")).toContainText("Пока пусто");
+  await page.locator("#review-close").click();
+  await expect(entry.locator(".entry-meta .tag.files")).toHaveCount(0);
+});
+
+// Набранное в карточке не должно пропадать: карточку закрывают крестиком,
+// фоном и Esc — во всех трёх случаях заметка сохраняется сама.
+test("заметка сохраняется при любом закрытии карточки", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  await page.getByLabel("Новая запись").click();
+  await page.keyboard.type("встреча по колл-центру");
+  await page.getByRole("button", { name: "Сохранить запись" }).click();
+  const entry = page.locator("#today .entry").filter({ hasText: "колл-центру" }).first();
+  await expect(entry).toBeVisible({ timeout: 15000 });
+
+  // Esc раньше откатывал набранное — теперь он просто уводит фокус.
+  await entry.locator(".entry-title").click();
+  await page.locator(".card-markdown").click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" :: правка перед Esc");
+  // Esc закрывает карточку — и уносит набранное с собой в заметку.
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#review-dialog")).toBeHidden();
+
+  await entry.locator(".entry-title").click();
+  await expect(page.locator(".card-markdown")).toContainText("правка перед Esc");
+
+  // Закрытие крестиком прямо из поля — тоже сохраняет.
+  await page.locator(".card-markdown").click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" :: и перед крестиком");
+  await page.locator("#review-close").click();
+  await expect(page.locator("#review-dialog")).toBeHidden();
+
+  await entry.locator(".entry-title").click();
+  await expect(page.locator(".card-markdown")).toContainText("и перед крестиком");
+  await page.locator("#review-close").click();
+
+  // Сохранилось на сервере, а не только на экране.
+  const entries = await (await request.get("/api/entries?limit=5")).json();
+  const saved = entries.entries.find((item) => item.raw.includes("колл-центру"));
+  expect(saved.note.body).toContain("правка перед Esc");
+  expect(saved.note.body).toContain("и перед крестиком");
 });

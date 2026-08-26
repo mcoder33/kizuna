@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server/index.js';
-import { createVoiceService, runVoiceTool, mockVoiceTurn, pickVoiceProvider, geminiTools, VOICE_TOOLS, GEMINI_LIVE_URL } from '../server/voice.js';
+import { createVoiceService, runVoiceTool, mockVoiceTurn, pickVoiceProvider, geminiTools, VOICE_TOOLS, VOICE_INSTRUCTIONS, GEMINI_LIVE_URL } from '../server/voice.js';
 import { openDatabase, createLedger } from '../server/db.js';
 import { normalizeClassification } from '../server/classifier.js';
 import { fakeModelService } from './helpers/fake-model.js';
@@ -38,7 +38,16 @@ function database() {
 }
 test('voice tools are declared once and shared by both modes', () => {
   const names = VOICE_TOOLS.map((tool) => tool.name);
-  assert.deepEqual(names, ['create_capture', 'search_memory', 'list_today', 'append_note', 'update_capture']);
+  assert.deepEqual(names, [
+    'create_capture',
+    'search_memory',
+    'list_today',
+    'append_note',
+    'read_capture',
+    'delete_capture',
+    'restore_capture',
+    'update_capture',
+  ]);
   for (const tool of VOICE_TOOLS) {
     assert.equal(tool.type, 'function');
     assert.equal(typeof tool.description, 'string');
@@ -144,8 +153,48 @@ test('a mock turn keeps plain speech as a capture and stays quiet on silence', (
 
 test('without any key the service reports the mock mode and asks for no session', async () => {
   const service = createVoiceService({ apiKey: '', geminiApiKey: '' });
-  assert.deepEqual(service.status(), { configured: false, provider: null, mode: 'mock', model: null, voice: null });
+  const status = service.status();
+  assert.deepEqual(
+    { ...status, providers: undefined },
+    { configured: false, provider: null, mode: 'mock', model: null, voice: null, providers: undefined },
+  );
+  assert.equal(status.providers.openai.configured, false);
+  assert.equal(status.providers.gemini.configured, false);
   assert.deepEqual(await service.createSession(), { mode: 'mock' });
+});
+
+// Провайдера голоса выбирают на один разговор: с двумя ключами выбор работает,
+// а названный без ключа не подменяется молча — иначе человек считал бы, что
+// говорит с одной моделью, а говорил бы с другой.
+test('a chosen voice provider wins, and one without a key is refused instead of swapped', async () => {
+  const asked = [];
+  const service = createVoiceService({
+    apiKey: 'openai-key',
+    geminiApiKey: 'gemini-key',
+    provider: 'openai',
+    fetch: async (url) => {
+      asked.push(String(url));
+      return String(url).includes('auth_tokens')
+        ? { ok: true, json: async () => ({ name: 'auth_tokens/short' }) }
+        : { ok: true, json: async () => ({ value: 'ek_secret', expires_at: 1 }) };
+    },
+  });
+  const status = service.status();
+  assert.equal(status.provider, 'openai', 'по умолчанию — тот, что выбран настройкой');
+  assert.equal(status.providers.openai.configured, true);
+  assert.equal(status.providers.gemini.configured, true);
+
+  assert.equal((await service.createSession()).provider, 'openai');
+  assert.equal((await service.createSession({ provider: 'gemini' })).provider, 'gemini');
+  assert.equal((await service.createSession({ provider: 'openai' })).provider, 'openai');
+  assert.ok(asked.some((url) => url.includes('auth_tokens')), 'выбор дошёл до Google');
+
+  const single = createVoiceService({ apiKey: '', geminiApiKey: 'gemini-key', fetch: async () => ({ ok: true, json: async () => ({ name: 'n' }) }) });
+  assert.deepEqual(await single.createSession({ provider: 'openai' }), {
+    mode: 'live',
+    provider: 'openai',
+    error: 'not_configured',
+  });
 });
 
 test('with a key the service asks OpenAI for an ephemeral secret and never leaks the key', async () => {
@@ -326,13 +375,15 @@ test('with a gemini key the service mints an ephemeral token and never leaks the
       return { ok: true, json: async () => ({ name: 'auth_tokens/short-lived' }) };
     },
   });
-  assert.deepEqual(service.status(), {
-    configured: true,
-    provider: 'gemini',
-    mode: 'live',
-    model: 'models/gemini-3.1-flash-live-preview',
-    voice: 'Puck',
-  });
+  const status = service.status();
+  assert.equal(status.configured, true);
+  assert.equal(status.provider, 'gemini');
+  assert.equal(status.mode, 'live');
+  assert.equal(status.model, 'models/gemini-3.1-flash-live-preview');
+  assert.equal(status.voice, 'Puck');
+  // Выбор провайдера показывается только там, где он есть: ключ один — выбора нет.
+  assert.equal(status.providers.gemini.configured, true);
+  assert.equal(status.providers.openai.configured, false);
 
   const session = await service.createSession();
   assert.equal(session.provider, 'gemini');
@@ -349,13 +400,17 @@ test('with a gemini key the service mints an ephemeral token and never leaks the
   assert.equal(body.expireTime, '2026-08-25T10:30:00.000Z');
   assert.equal(body.newSessionExpireTime, '2026-08-25T10:02:00.000Z');
   // Токен привязан к модели и набору инструментов, а не выдан «на всё».
-  assert.equal(body.liveConnectConstraints.model, 'models/gemini-3.1-flash-live-preview');
-  assert.deepEqual(body.liveConnectConstraints.config.responseModalities, ['AUDIO']);
+  // Поле именно bidiGenerateContentSetup: имя из документации API не знает.
+  assert.equal(body.liveConnectConstraints, undefined);
+  const setup = body.bidiGenerateContentSetup;
+  assert.equal(setup.model, 'models/gemini-3.1-flash-live-preview');
+  assert.deepEqual(setup.generationConfig.responseModalities, ['AUDIO']);
+  assert.equal(setup.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, 'Puck');
   assert.deepEqual(
-    body.liveConnectConstraints.config.tools[0].functionDeclarations.map((tool) => tool.name),
+    setup.tools[0].functionDeclarations.map((tool) => tool.name),
     VOICE_TOOLS.map((tool) => tool.name),
   );
-  assert.match(body.liveConnectConstraints.config.systemInstruction.parts[0].text, /Кизуна/);
+  assert.match(setup.systemInstruction.parts[0].text, /Кизуна/);
 });
 
 test('a failing gemini token request degrades with a safe reason', async () => {
@@ -379,4 +434,129 @@ test('the session endpoint hands the browser a gemini token and the socket url o
   assert.equal(session.clientSecret, 'auth_tokens/browser');
   assert.equal(session.url, GEMINI_LIVE_URL);
   assert.equal(JSON.stringify(session).includes('gemini-secret-key'), false, 'ключ не должен уходить в браузер');
+});
+
+// Разговор идёт обо всех записях, а не только о новых: прочитать, удалить и
+// вернуть — такие же инструменты, как «записать».
+test('read_capture tells what the parse knows and what it is missing', () => {
+  const db = database();
+  const clear = parsedCapture(db, 'позвонить Даниилу по релизу');
+  const readable = runVoiceTool(db, 'read_capture', { captureId: clear });
+  assert.equal(readable.parsed, true);
+  assert.equal(readable.deleted, false);
+  assert.equal(readable.type, 'задача');
+  assert.match(readable.raw, /Даниилу/);
+  assert.equal(readable.clarity.clear, true);
+  assert.equal(readable.clarity.question, null);
+
+  // Спорный разбор несёт готовый вопрос: его и задаёт голос.
+  const unclear = parsedCapture(db, 'созвон то ли завтра, то ли в пятницу', {
+    ambiguity: { field: 'schedule', question: 'Какой день верный?' },
+  });
+  const asked = runVoiceTool(db, 'read_capture', { captureId: unclear });
+  assert.equal(asked.clarity.clear, false);
+  assert.equal(asked.clarity.field, 'schedule');
+  assert.equal(asked.clarity.question, 'Какой день верный?');
+
+  assert.equal(runVoiceTool(db, 'read_capture', { captureId: 'нет такой' }).error, 'Запись не найдена.');
+});
+
+test('delete_capture is soft and restore_capture brings the entry back', () => {
+  const db = database();
+  const captureId = parsedCapture(db, 'зайти к стоматологу');
+  assert.equal(runVoiceTool(db, 'list_today', {}).total, 1);
+
+  const deleted = runVoiceTool(db, 'delete_capture', { captureId });
+  assert.deepEqual(deleted, { captureId, deleted: true, restorable: true });
+  assert.equal(runVoiceTool(db, 'list_today', {}).total, 0);
+  assert.equal(runVoiceTool(db, 'read_capture', { captureId }).deleted, true, 'удалённая запись всё ещё читается');
+  assert.equal(runVoiceTool(db, 'delete_capture', { captureId }).error, 'Запись не найдена или уже удалена.');
+
+  const restored = runVoiceTool(db, 'restore_capture', { captureId });
+  assert.equal(restored.restored, true);
+  assert.equal(runVoiceTool(db, 'list_today', {}).total, 1);
+  assert.equal(runVoiceTool(db, 'restore_capture', { captureId }).restored, false, 'вернуть уже вернувшееся нечего');
+  assert.equal(runVoiceTool(db, 'restore_capture', { captureId: 'нет такой' }).error, 'Запись не найдена.');
+});
+
+test('a mock turn removes the last entry and puts it back on request', () => {
+  const db = database();
+  parsedCapture(db, 'зайти к стоматологу');
+  const removed = mockVoiceTurn(db, 'удали последнюю запись');
+  assert.equal(removed.calls[0].name, 'delete_capture');
+  assert.match(removed.reply, /верни/i, 'в ответе есть выход из ошибки');
+  assert.equal(runVoiceTool(db, 'list_today', {}).total, 0);
+
+  const back = mockVoiceTurn(db, 'верни');
+  assert.equal(back.calls[0].name, 'restore_capture');
+  assert.equal(runVoiceTool(db, 'list_today', {}).total, 1);
+
+  assert.deepEqual(mockVoiceTurn(database(), 'верни').calls, [], 'возвращать нечего — молчим об инструментах');
+});
+
+// «Если классификация не ясна — спроси»: тип, которого не было в реплике, не
+// выдумывается, а уточняется, и ответ одним словом ложится на ту же запись.
+test('an unclear type is asked about, and a one-word answer settles it', () => {
+  const db = database();
+  const saved = mockVoiceTurn(db, 'пересмотреть план недели');
+  assert.equal(saved.calls[0].name, 'create_capture');
+  assert.equal(saved.calls[0].arguments.type, undefined, 'тип не выдуман');
+  assert.match(saved.reply, /дело, заметка или результат\?/i);
+
+  // Ответ приходит к разобранной записи, поэтому разбор готовим отдельно.
+  const captureId = parsedCapture(db, 'пересмотреть план недели');
+  const answered = mockVoiceTurn(db, 'заметка');
+  assert.equal(answered.calls[0].name, 'update_capture');
+  assert.equal(answered.calls[0].arguments.captureId, captureId);
+  assert.equal(runVoiceTool(db, 'read_capture', { captureId }).type, 'заметка');
+
+  // А явный тип в реплике вопросом не переспрашивается.
+  const explicit = mockVoiceTurn(db, 'запиши задачу починить ретрай');
+  assert.equal(explicit.calls[0].arguments.type, 'todo');
+  assert.doesNotMatch(explicit.reply, /\?/);
+});
+
+test('voice instructions carry the rules of a real conversation', () => {
+  assert.match(VOICE_INSTRUCTIONS, /молчи/i, 'чужая речь остаётся без ответа');
+  assert.match(VOICE_INSTRUCTIONS, /read_capture/, 'после записи разбор проверяется');
+  assert.match(VOICE_INSTRUCTIONS, /удал/i, 'удаление подтверждается вслух');
+});
+
+// Сказанное вслух разбирает та же модель, что и напечатанное. С жёстким
+// 'fallback' отчёт о сделанном («поговорил с парнями») уходил в заметки: правила
+// без модели не понимают, что это отчёт, а не наблюдение.
+test('a spoken capture is parsed by the chosen provider, not always by the rules', () => {
+  const db = database();
+  const queued = runVoiceTool(db, 'create_capture', { text: 'поговорил с парнями про релиз' }, { provider: 'openrouter' });
+  const job = db.prepare('SELECT selected_provider FROM capture_jobs WHERE id=?').get(queued.jobId);
+  assert.equal(job.selected_provider, 'openrouter');
+
+  // Без указания провайдера поведение прежнее — правила.
+  const plain = runVoiceTool(db, 'create_capture', { text: 'ещё одна мысль' });
+  assert.equal(db.prepare('SELECT selected_provider FROM capture_jobs WHERE id=?').get(plain.jobId).selected_provider, 'fallback');
+});
+
+test('the api hands the voice tools the provider it was asked for', async () => {
+  const api = request(app());
+  const spoken = await api
+    .post('/api/voice/tool')
+    .send({ name: 'create_capture', arguments: { text: 'созвонились по Hub' }, provider: 'openrouter' })
+    .expect(200);
+  assert.equal(spoken.body.result.saved, true);
+  await api
+    .post('/api/voice/tool')
+    .send({ name: 'create_capture', arguments: { text: 'x' }, provider: 'выдуманный' })
+    .expect(400);
+});
+
+// Без ключа правила тоже должны узнавать отчёт: «поговорил», «созвонились»,
+// «доделал» — это сделанное, а не заметка.
+test('the keyless rules read a report about finished work as an outcome', () => {
+  for (const said of ['поговорил с парнями про релиз', 'созвонились с Даниилом', 'доделал ретрай в Hub']) {
+    const db = database();
+    const turn = mockVoiceTurn(db, said);
+    assert.equal(turn.calls[0].name, 'create_capture', said);
+    assert.equal(turn.calls[0].arguments.type, 'outcome', said);
+    assert.match(turn.reply, /как результат/i, said);
+  }
 });

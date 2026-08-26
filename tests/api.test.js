@@ -71,3 +71,34 @@ assert.equal(tags.length,0);
 const brief=(await api.get('/api/daily-brief').expect(200)).body;
 const texts=brief.content.sections.flatMap(section=>section.items.map(item=>item.text)).join(' ');
 assert.equal(texts.includes('ротация ключей'),false);});
+
+// Ошибка в теле запроса — вина клиента: битый JSON и превышенный лимит должны
+// отличаться от отказа сервера, иначе интерфейс покажет «internal_error» на
+// собственную опечатку и повторит запрос как будто виноват сервер.
+test('a malformed or oversized body answers as a client error, not a server failure',async()=>{const api=request(app());const broken=await api.post('/api/captures').set('Content-Type','application/json').send('{oops').expect(400);assert.equal(broken.body.error.code,'invalid_json');const huge=await api.post('/api/captures').set('Content-Type','application/json').send(JSON.stringify({raw:'x'.repeat(40000)})).expect(413);assert.equal(huge.body.error.code,'payload_too_large');await api.post('/api/captures').send({raw:'обычная запись'}).expect(201)});
+
+// Живое обновление: страница подписывается на поток и перерисовывает карточки
+// сама. Без него запись, сделанную голосом или дочитанную разбором в фоне,
+// приходилось ждать до перезагрузки страницы.
+test('the journal stream announces changes to whoever is listening',async()=>{const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pagent-events-'));const application=createApp({aiService:fakeModelService(),databasePath:path.join(dir,'test.sqlite')});const server=application.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));const {port}=server.address();
+  const lines=[];
+  const stream=await new Promise((resolve,reject)=>{const request=http.request({host:'127.0.0.1',port,path:'/api/events',method:'GET'},response=>{assert.equal(response.statusCode,200);assert.match(response.headers['content-type'],/text\/event-stream/);response.setEncoding('utf8');response.on('data',chunk=>lines.push(chunk));resolve(request)});request.on('error',reject);request.end()});
+  const waitFor=async predicate=>{for(let attempt=0;attempt<80;attempt+=1){if(predicate(lines.join('')))return true;await new Promise(resolve=>setTimeout(resolve,25))}return false};
+  // Первое сообщение приходит сразу: клиент понимает, что поток жив.
+  assert.equal(await waitFor(text=>text.includes('event: ready')),true,'поток здоровается');
+
+  const api=request(server);
+  const created=(await api.post('/api/captures').send({raw:'Нужно проверить поток'}).expect(201)).body.entry;
+  assert.equal(await waitFor(text=>text.includes('event: journal')),true,'о новой записи сообщили');
+
+  lines.length=0;
+  await api.delete(`/api/captures/${created.id}`).expect(200);
+  assert.equal(await waitFor(text=>text.includes('"reason":"delete"')),true,'об удалении тоже');
+
+  lines.length=0;
+  await api.post(`/api/captures/${created.id}/restore`).expect(200);
+  assert.equal(await waitFor(text=>text.includes('"reason":"restore"')),true,'и о возврате');
+
+  stream.destroy();
+  await new Promise(resolve=>server.close(resolve));
+});

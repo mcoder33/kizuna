@@ -31,6 +31,11 @@ export default defineConfig({
           'PAGENT_OPENROUTER_MODELS=fake/fast,fake/deep',
           'PAGENT_OPENROUTER_TIMEOUT_MS=30000',
           'OPENAI_API_KEY=',
+          // Голосовые ключи тоже гасим: с ключом в локальном .env заглушечный
+          // режим разговора уходил бы в настоящую сеть и прогон переставал бы
+          // быть детерминированным.
+          'GEMINI_API_KEY=',
+          'GOOGLE_API_KEY=',
           'PAGENT_TIMEZONE=Europe/Samara',
           'PAGENT_CODEX_PATH=$PWD/tests/fixtures/codex',
           'PAGENT_CLAUDE_PATH=$PWD/tests/fixtures/claude',

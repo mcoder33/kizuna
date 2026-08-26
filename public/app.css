@@ -401,19 +401,487 @@ main {
     transform: translateY(-4px);
   }
 }
+/* ── сцена разговора: светящееся кольцо ──────────────────────────────────── */
+/* Уровень звука приходит из voice.js в --voice-level (0…1): от него зависят
+   размах кольца, яркость свечения и высота волн внутри. */
+@property --voice-ink {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #8b7fe8;
+}
+.voice-stage {
+  --voice-level: 0;
+  --voice-ink: #6f7ce6;
+  --arc-a: #8fb6ff;
+  --arc-b: #b795ff;
+  --arc-c: #8ae7ff;
+  --arc-d: #ffb3e2;
+  --voice-spin: 26s;
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding: 10px 0;
+  transition:
+    --voice-ink 1.2s ease,
+    --arc-a 1.2s ease,
+    --arc-b 1.2s ease;
+}
+.voice-orb {
+  position: relative;
+  width: 168px;
+  height: 168px;
+  border: 0;
+  padding: 0;
+  background: none;
+  border-radius: 50%;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  isolation: isolate;
+  transform: scale(calc(1 + var(--voice-level) * 0.05));
+  transition:
+    transform 0.14s ease-out,
+    width 0.9s cubic-bezier(0.16, 1, 0.3, 1),
+    height 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.voice-orb:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 12px;
+}
+/* Свечение вокруг кольца: мягкое пятно, которое разгорается от голоса. */
+.voice-halo {
+  position: absolute;
+  inset: -14%;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--arc-b) 55%, transparent) 0%,
+    color-mix(in srgb, var(--arc-a) 34%, transparent) 48%,
+    transparent 72%
+  );
+  filter: blur(22px);
+  opacity: calc(0.66 + var(--voice-level) * 0.34);
+  transition: opacity 0.2s ease-out;
+}
+/* Три дуги одного кольца. Каждая — почти окружность с прозрачным сектором,
+   поэтому при вращении свет перетекает по ободу, а не крутится колесом. */
+.voice-arc {
+  position: absolute;
+  border-radius: 50%;
+  border: 3px solid transparent;
+  background:
+    conic-gradient(
+        from 0deg,
+        transparent 0deg,
+        var(--arc-a) 60deg,
+        var(--arc-b) 150deg,
+        var(--arc-c) 240deg,
+        transparent 330deg
+      )
+      border-box;
+  -webkit-mask:
+    linear-gradient(#000 0 0) padding-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) padding-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: voice-spin var(--voice-spin) linear infinite;
+}
+.voice-arc-1 {
+  inset: 2%;
+  border-width: 4px;
+}
+.voice-arc-2 {
+  inset: 8%;
+  border-width: 3px;
+  opacity: 0.8;
+  animation-duration: calc(var(--voice-spin) * 1.6);
+  animation-direction: reverse;
+  background:
+    conic-gradient(
+        from 140deg,
+        transparent 0deg,
+        var(--arc-c) 70deg,
+        var(--arc-d) 170deg,
+        var(--arc-a) 250deg,
+        transparent 340deg
+      )
+      border-box;
+}
+.voice-arc-3 {
+  inset: 14%;
+  border-width: 2px;
+  opacity: 0.55;
+  animation-duration: calc(var(--voice-spin) * 0.72);
+  background:
+    conic-gradient(
+        from 280deg,
+        transparent 0deg,
+        var(--arc-b) 80deg,
+        var(--arc-a) 180deg,
+        transparent 320deg
+      )
+      border-box;
+}
+@keyframes voice-spin {
+  to {
+    rotate: 1turn;
+  }
+}
+/* Стеклянная середина: чуть светлее фона, с бликом сверху. */
+.voice-glass {
+  position: absolute;
+  inset: 17%;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 26%, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0) 52%),
+    radial-gradient(circle at 50% 60%, rgba(255, 255, 255, 0.55) 0%, rgba(244, 244, 255, 0.25) 100%);
+}
+/* Волны рисует голос — canvas лежит поверх стекла, внутри кольца. */
+.voice-waves {
+  position: absolute;
+  inset: 17%;
+  width: 66%;
+  height: 66%;
+  border-radius: 50%;
+}
+.voice-phase {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--voice-ink);
+  transition: color 0.8s ease;
+}
+/* Мелкий эквалайзер: короткий признак того, что микрофон открыт. */
+.voice-meter {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+}
+.voice-bar {
+  width: 4px;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--voice-ink);
+  opacity: 0.7;
+}
+.voice-bar:nth-child(4) {
+  width: 5px;
+  opacity: 1;
+}
+.voice-bar:nth-child(3),
+.voice-bar:nth-child(5) {
+  opacity: 0.85;
+}
+
+/* Отвечает — кольцо теплеет и раскручивается заметнее. */
+.voice-stage[data-state="speaking"] {
+  --voice-ink: #3f8fd6;
+  --arc-a: #9fdcff;
+  --arc-b: #b6c8ff;
+  --arc-c: #d9f2ff;
+  --voice-spin: 17s;
+}
+.voice-stage[data-state="thinking"] {
+  --voice-ink: #8267d8;
+  --arc-a: #cbb2ff;
+  --arc-b: #e3ccff;
+  --voice-spin: 11s;
+}
+/* Спит: цвет уходит в серый, кольцо поджимается и почти замирает — микрофон в
+   этот момент выключен, и комнату разговор не слышит. */
+.voice-stage[data-state="sleeping"] {
+  --voice-ink: #9c9aad;
+  --arc-a: #d7d8e4;
+  --arc-b: #e2e0ea;
+  --arc-c: #e8e9f1;
+  --arc-d: #eceaf2;
+  --voice-spin: 70s;
+}
+.voice-stage[data-state="sleeping"] .voice-orb {
+  transform: scale(0.82);
+}
+.voice-stage[data-state="sleeping"] .voice-halo {
+  opacity: 0.25;
+}
+
+/* ── живой разговор во весь экран ────────────────────────────────────────── */
+/* Пока идёт разговор, остального интерфейса не видно: шапка разговора, кольцо,
+   подпись и строка ввода. Так же ведёт себя голосовой режим в телефоне. */
+html.voice-live-open,
+body.voice-live-open {
+  overflow: hidden;
+}
+.voice-panel.voice-live {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  margin: 0;
+  padding: 22px 24px 26px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  /* Фон не белый: очень светлая сиренево-голубая дымка, на которой свет
+     кольца читается, а не тонет. */
+  background:
+    radial-gradient(90vmin 70vmin at 50% 34%, #f8f6ff 0%, rgba(248, 246, 255, 0) 72%),
+    linear-gradient(168deg, #f3f2fc 0%, #eef1fb 52%, #f5f0fa 100%);
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  animation: voice-live-enter 0.36s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes voice-live-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+.voice-panel.voice-live .voice-head {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+}
+.voice-head-tail {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+}
+.voice-round-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #4a4a58;
+  font-size: 14px;
+  text-decoration: none;
+}
+.voice-round,
+.voice-panel.voice-live .voice-close {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  flex: none;
+  border: 1px solid rgba(150, 140, 200, 0.22);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.75);
+  box-shadow: 0 6px 18px rgba(120, 120, 180, 0.12);
+  color: #5b5a6d;
+  transition:
+    background 0.3s ease,
+    color 0.3s ease,
+    border-color 0.3s ease;
+}
+.voice-round svg {
+  width: 19px;
+  height: 19px;
+}
+.voice-round-link:hover .voice-round,
+.voice-panel.voice-live .voice-close:hover {
+  background: #fff;
+  border-color: rgba(120, 110, 190, 0.4);
+  color: var(--ink);
+}
+.voice-panel.voice-live .voice-close {
+  font-size: 15px;
+  cursor: pointer;
+  padding: 0;
+}
+/* Знак и имя по центру шапки: то же кольцо, что и на сцене, только крошечное. */
+.voice-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 21px;
+  font-weight: 800;
+  letter-spacing: -0.3px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.voice-brand-mark {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid transparent;
+  background: conic-gradient(from 0deg, #a9c6ff, #cbb2ff, #b6f0ff, #ffc9ec, #a9c6ff) border-box;
+  -webkit-mask:
+    linear-gradient(#000 0 0) padding-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) padding-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+/* Вне разговора шапка панели остаётся прежней строкой с крестиком. */
+.voice-panel:not(.voice-live) .voice-brand,
+.voice-panel:not(.voice-live) .voice-round-link {
+  display: none;
+}
+.voice-panel.voice-live .voice-stage {
+  align-content: center;
+  gap: 22px;
+}
+.voice-panel.voice-live .voice-orb {
+  width: min(52vmin, 380px);
+  height: min(52vmin, 380px);
+}
+.voice-panel.voice-live .voice-arc-1 { border-width: 11px; }
+.voice-panel.voice-live .voice-arc-2 { border-width: 7px; }
+.voice-panel.voice-live .voice-arc-3 { border-width: 4px; }
+.voice-panel.voice-live .voice-halo { filter: blur(34px); }
+.voice-panel.voice-live .voice-phase { font-size: 19px; }
+/* Сказанное остаётся строкой под кольцом — как подпись, а не как переписка. */
+/* Видно последнее сказанное, а не всю переписку: строки идут снизу вверх и
+   выше обрезаются. Маски нет — от неё короткая строка гасла целиком. */
+/* Под кольцом видно ровно последнее сказанное: строки идут снизу вверх, выше
+   обрезается. Это подпись к происходящему, а не переписка. */
+.voice-panel.voice-live .voice-log {
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  justify-content: flex-start;
+  height: 26px;
+  overflow: hidden;
+  margin: 0;
+  max-width: min(620px, 88vw);
+  text-align: center;
+  border: 0;
+  padding: 0;
+  background: none;
+  font-size: 16px;
+}
+.voice-panel.voice-live .voice-line {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.voice-panel.voice-live .voice-log:empty::before {
+  content: "Скажите, что записать — или спросите о прошлом";
+  color: #9d9bad;
+}
+.voice-panel.voice-live .voice-line {
+  background: none;
+  padding: 2px 0;
+  color: #56556a;
+}
+.voice-panel.voice-live .voice-line.voice-me {
+  color: var(--ink);
+}
+/* Имена инструментов человеку не нужны — нужен итог: что записано и куда. */
+.voice-panel.voice-live .voice-line.voice-tool {
+  display: none;
+}
+.voice-line.voice-done {
+  color: var(--green);
+}
+.voice-panel.voice-live .voice-line.voice-done {
+  color: #2f7f68;
+  font-weight: 600;
+}
+/* Низ: широкая пилюля с микрофоном слева и отдельная круглая кнопка отправки. */
+.voice-panel.voice-live .voice-say {
+  position: relative;
+  max-width: 660px;
+  margin: 0 auto;
+  width: 100%;
+  gap: 12px;
+  border-top: 0;
+  padding-top: 0;
+}
+.voice-panel.voice-live .voice-input {
+  border: 1px solid rgba(150, 140, 200, 0.3);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 16px 22px 16px 52px;
+  font-size: 15px;
+  color: var(--ink);
+  box-shadow: 0 8px 24px rgba(120, 120, 180, 0.1);
+  transition:
+    background 0.3s ease,
+    border-color 0.3s ease;
+}
+.voice-panel.voice-live .voice-input::placeholder {
+  color: #9d9bad;
+}
+.voice-panel.voice-live .voice-input:focus-visible {
+  outline: none;
+  background: #fff;
+  border-color: rgba(120, 110, 190, 0.5);
+}
+/* Значок микрофона живёт внутри пилюли слева: в живом режиме он показывает,
+   что поле голосовое, без ключа — включает браузерное распознавание. */
+.voice-panel.voice-live .voice-listen {
+  position: absolute;
+  left: 11px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 0;
+  background: rgba(160, 150, 220, 0.16);
+  color: #6f6ab0;
+}
+.voice-panel.voice-live .voice-send {
+  width: 54px;
+  height: 54px;
+  flex: none;
+  border: 1px solid rgba(150, 140, 200, 0.3);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 8px 24px rgba(120, 120, 180, 0.12);
+  color: #4a4a58;
+  font-size: 18px;
+  transition:
+    background 0.3s ease,
+    color 0.3s ease;
+}
+.voice-panel.voice-live .voice-send:hover {
+  background: #fff;
+  color: var(--ink);
+}
+.voice-panel.voice-live .voice-hint {
+  max-width: 560px;
+  margin: 12px auto 0;
+  text-align: center;
+  color: #8b89a0;
+  font-size: 13px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-arc {
+    animation: none;
+  }
+  .voice-orb {
+    transition: none;
+  }
+  .voice-panel.voice-live {
+    animation: none;
+  }
+}
+
 .voice-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
 }
+/* Состояние разговора видно на орбе, а строка в шапке осталась ради
+   скринридера: два одинаковых заголовка рядом — это шум, а не забота. */
 .voice-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
   margin: 0;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-  color: var(--type-auto);
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
 }
 .voice-close {
   border: 0;
@@ -896,10 +1364,70 @@ body.capture-large-open::before {
   cursor: default;
 }
 .entry-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   color: #888;
   margin-top: 4px;
 }
+/* Проект — своя метка: тише типа, но заметнее обычной подробности. */
+.entry-meta .tag.project {
+  background: #f1f4f7;
+  color: #4a5b6b;
+  font-weight: 600;
+}
+/* Состояние карточки читается цветом: просрочено — красным, сегодня — тёплым,
+   готово — зелёным. Слова остаются: цвет здесь помощник, а не единственный
+   носитель смысла. */
+.entry-meta .tag.due {
+  background: var(--hairline);
+  color: #6a6a6a;
+}
+.entry-meta .tag.due.soon {
+  background: var(--tint-wait);
+  color: #8a5a12;
+}
+.entry-meta .tag.late {
+  background: var(--tint-late);
+  color: #b3243f;
+  font-weight: 600;
+}
+/* «Ещё N» — честная граница превью: видно, что список длиннее, и куда идти. */
+.preview-more {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+  text-decoration: none;
+}
+.preview-more:hover {
+  color: var(--ink);
+}
+.entry-meta .tag.undated {
+  background: var(--hairline);
+  color: #8a8681;
+}
+.entry-meta .tag.ontime {
+  background: #eef7f3;
+  color: #2f7f68;
+}
+.entry-meta .tag.done {
+  background: #eef7f3;
+  color: var(--green);
+  font-weight: 600;
+}
+.entry-meta .tag.urgent {
+  background: #fdf1f1;
+  color: #c33434;
+}
+.entry-meta .tag.calm {
+  background: #f1f4f7;
+  color: #62707e;
+}
+/* Кромки у карточки нет: состояние и так названо меткой и цветом фона, а
+   полоска слева читалась как лишняя линия в списке. */
 .entry.overdue .entry-title,
 .entry.overdue .entry-meta {
   color: #b11638;
@@ -1016,7 +1544,146 @@ body.capture-large-open::before {
   }
 }
 /* Крестик остаётся на месте при прокрутке содержимого карточки. */
-#review-dialog .dialog-close {
+#review-dialog /* ── вложения записи ─────────────────────────────────────────────────────── */
+.card-files {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline);
+  border-radius: 12px;
+  transition: background 0.2s ease;
+}
+/* Пока файл держат над карточкой, видно, куда он упадёт. */
+.card-files.dropping {
+  background: var(--tint-auto);
+  outline: 2px dashed var(--type-auto);
+  outline-offset: 4px;
+}
+.file-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 10px 0;
+}
+.file-grid .empty {
+  margin: 0;
+  font-size: 12px;
+}
+.file-tile {
+  position: relative;
+  width: 104px;
+}
+.file-open {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+  overflow: hidden;
+  text-align: left;
+}
+.file-open:hover {
+  border-color: #cfcfcd;
+}
+.file-thumb {
+  width: 100%;
+  height: 74px;
+  object-fit: cover;
+  display: block;
+  background: var(--hairline);
+}
+.file-kind {
+  display: grid;
+  place-items: center;
+  height: 74px;
+  background: var(--hairline);
+  color: #96918e;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+.file-name {
+  padding: 0 8px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: #fff;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.file-remove:hover {
+  color: var(--ink);
+  border-color: #cfcfcd;
+}
+/* Быстрый предпросмотр: картинка целиком, PDF рамкой, остальное — скачать. */
+#preview-dialog {
+  width: min(1040px, 94vw);
+  max-width: none;
+  padding: 16px;
+  border-radius: 18px;
+}
+.preview-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.preview-title {
+  margin: 0;
+  flex: 1;
+  font-size: 14px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.preview-head .dialog-close {
+  position: static;
+}
+.preview-body {
+  display: grid;
+  place-items: center;
+  min-height: 200px;
+  max-height: 78vh;
+  overflow: auto;
+}
+.preview-image {
+  max-width: 100%;
+  max-height: 76vh;
+  border-radius: 12px;
+}
+.preview-frame {
+  width: 100%;
+  height: 76vh;
+  border: 0;
+  border-radius: 12px;
+}
+.preview-plain {
+  color: var(--muted);
+  font-size: 13px;
+}
+/* Скрепка с числом на карточке в колонке: видно, что к записи что-то приложено. */
+.entry-meta .tag.files {
+  background: var(--hairline);
+  color: #6a6a6a;
+}
+
+.dialog-close {
   position: sticky;
   top: 0;
   float: right;
@@ -1028,6 +1695,11 @@ body.capture-large-open::before {
   border: 0;
   border-radius: 0;
   background: none;
+}
+.card-written {
+  margin: -6px 0 0;
+  font-size: 12px;
+  color: var(--muted);
 }
 #review-dialog .review h2 {
   margin: 0 0 12px;
@@ -1041,16 +1713,22 @@ body.capture-large-open::before {
   gap: 14px;
   margin-top: 18px;
 }
+/* Тихая кнопка, а не ссылка: подчёркивание в карточке читалось как гиперссылка
+   и спорило с текстом заметки. */
 #review-dialog .review-form > button {
   justify-self: end;
   margin-top: 2px;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: none;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: #fff;
   color: var(--muted);
   font-size: 12px;
-  text-decoration: underline;
+  text-decoration: none;
+}
+#review-dialog .review-form > button:hover {
+  border-color: #cfcfcd;
+  background: var(--wash);
 }
 #review-dialog .review-form > button:hover {
   color: var(--ink);
