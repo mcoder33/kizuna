@@ -311,3 +311,15 @@ test('без входа не открывается ничего, кроме с�
   await api.get('/login').expect(200);
   await api.get('/api/auth/state').expect(200);
 });
+
+test('очередь заявок не бесконечна', async () => {
+  const application = app();
+  authed(application, { email: 'admin@example.com' });
+  const api = request(application);
+  // Пятьдесят нерассмотренных заявок — потолок: дальше очередь закрывается,
+  // чтобы в ней не утонули настоящие люди.
+  for (let index = 0; index < 50; index += 1)
+    seedUser(application, { email: `pending-${index}@example.com`, role: 'user', status: 'pending' });
+  const refused = await api.post('/api/auth/register').send({ email: 'last@example.com', password: 'very-long-password' }).expect(429);
+  assert.equal(refused.body.error.code, 'too_many_pending');
+});

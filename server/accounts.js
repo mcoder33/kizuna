@@ -36,6 +36,7 @@ export function publicUser(row) {
   };
 }
 
+const PENDING_LIMIT = 50;
 const fail = (res, status, code, message, extra = {}) => res.status(status).json({ error: { code, message, ...extra } });
 
 export function createAccounts({ db, now = () => new Date(), secureCookies = false, audit = () => {}, sessionTtlMs = SESSION_TTL_MS } = {}) {
@@ -54,6 +55,13 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
     const problem = passwordProblem(password);
     if (problem) return { error: [400, 'weak_password', problem] };
     const first = needsBootstrap();
+    // Регистрация открыта всем, а решает администратор — значит, очередь заявок
+    // легко забить и утопить в ней настоящих людей. Больше полусотни
+    // нерассмотренных заявок держать незачем: сначала разберите эти.
+    if (!first && listUsers(db).filter(user => user.status === 'pending').length >= PENDING_LIMIT) {
+      logAuthEvent(db, { email: address, event: 'register', result: 'queue_full' });
+      return { error: [429, 'too_many_pending', 'Очередь заявок переполнена. Попробуйте позже.'] };
+    }
     if (findUserByEmail(db, address)) {
       logAuthEvent(db, { email: address, event: 'register', result: 'duplicate' });
       return { error: [409, 'email_taken', 'Такой адрес уже зарегистрирован.'] };
