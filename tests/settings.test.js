@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server/index.js';
+import { authed } from './helpers/auth.js';
 import { fakeModelService } from './helpers/fake-model.js';
 
 // Настройки — это конфигурация, а не журнал: они живут своей таблицей, не
@@ -15,7 +16,7 @@ function app(overrides = {}) {
 }
 
 test('settings come back without secrets and with sensible defaults', async () => {
-  const api = request(app());
+  const api = authed(app());
   const body = (await api.get('/api/settings').expect(200)).body;
   assert.equal(body.settings.sleepAfterSeconds, '25');
   assert.equal(body.settings.wakeWord, 'кизуна');
@@ -27,7 +28,7 @@ test('settings come back without secrets and with sensible defaults', async () =
 });
 
 test('a key set in the app never leaves the server and beats the environment', async () => {
-  const api = request(app());
+  const api = authed(app());
   const secret = 'очень-секретный-ключ-4321';
   const saved = (await api.put('/api/settings').send({ geminiKey: secret }).expect(200)).body;
   assert.equal(saved.settings.geminiKey.configured, true);
@@ -50,7 +51,7 @@ test('a key set in the app never leaves the server and beats the environment', a
 test('a changed timezone applies at once, without restarting the server', async () => {
   const fixedNow = () => new Date('2026-08-20T20:30:00Z');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pagent-settings-zone-'));
-  const api = request(
+  const api = authed(
     createApp({
       aiService: fakeModelService({ now: fixedNow }),
       databasePath: path.join(dir, 'test.sqlite'),
@@ -67,7 +68,7 @@ test('a changed timezone applies at once, without restarting the server', async 
 });
 
 test('nonsense settings are refused by name and by value', async () => {
-  const api = request(app());
+  const api = authed(app());
   const unknown = await api.put('/api/settings').send({ чтоТоЕщё: '1' }).expect(400);
   assert.equal(unknown.body.error.code, 'unknown_setting');
 
@@ -89,7 +90,7 @@ test('nonsense settings are refused by name and by value', async () => {
 });
 
 test('settings survive a data reset and stay out of the export', async () => {
-  const api = request(app());
+  const api = authed(app());
   await api.put('/api/settings').send({ wakeWord: 'журнал', previewLimit: '7' }).expect(200);
   await api.post('/api/captures').send({ raw: 'Нужно проверить настройки' }).expect(201);
 
@@ -108,7 +109,7 @@ test('settings survive a data reset and stay out of the export', async () => {
 // Род голоса и добавка к промпту: модель должна говорить о себе так же, каким
 // голосом звучит, а человек — уметь дописать своё правило, не отменяя базовых.
 test('the chosen voice sets the gender the model speaks in, and the addition is appended', async () => {
-  const api = request(app());
+  const api = authed(app());
   const base = (await api.get('/api/voice/status').expect(200)).body;
   assert.ok(base.instructions.includes('Кизуна'), 'основной промпт на месте');
   assert.ok(base.voices.gemini.some((voice) => voice.id === 'Puck'), 'каталог голосов отдаётся');
@@ -138,7 +139,7 @@ test('the chosen voice sets the gender the model speaks in, and the addition is 
 });
 
 test('a voice outside the catalogue is refused, because gender rides on it', async () => {
-  const api = request(app());
+  const api = authed(app());
   await api.put('/api/settings').send({ geminiVoiceName: 'Выдуманный' }).expect(400);
   await api.put('/api/settings').send({ voiceName: 'nova' }).expect(400);
   await api.put('/api/settings').send({ voiceName: 'cedar' }).expect(200);
@@ -172,7 +173,7 @@ test('usage is counted per provider and priced only where the price is known', a
       }),
     },
   });
-  const api = request(application);
+  const api = authed(application);
   const empty = (await api.get('/api/usage').expect(200)).body;
   assert.equal(empty.total.calls, 0);
 

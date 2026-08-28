@@ -6,11 +6,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { createApp } from '../server/index.js';import { fakeModelService, fakeModelClassification } from './helpers/fake-model.js';
+import { createApp } from '../server/index.js';import { fakeModelService, fakeModelClassification } from './helpers/fake-model.js';import { authed } from './helpers/auth.js';
 import { openDatabase } from '../server/db.js';
 
 
-function fixture(options={}) { const directory=fs.mkdtempSync(path.join(os.tmpdir(),'pagent-export-')); const databasePath=path.join(directory,'test.sqlite'); const app=createApp({aiService:fakeModelService(),databasePath,...options}); return { app, api:request(app), databasePath }; }
+function fixture(options={}) { const directory=fs.mkdtempSync(path.join(os.tmpdir(),'pagent-export-')); const databasePath=path.join(directory,'test.sqlite'); const app=createApp({aiService:fakeModelService(),databasePath,...options}); return { app, api:authed(app), databasePath }; }
 // Завтрашний день в таймзоне приложения, а не в UTC: с полуночи до 4 утра по
 // Самаре UTC-дата отстаёт на сутки, и «завтра по UTC» оказывалось сегодняшним
 // днём — запись переставала быть «вчерашней» для отчёта, и тест падал.
@@ -95,6 +95,6 @@ test('correction keeps completed and daily provenance IDs while safe audit omits
 });
 
 test('materialized export rejects oversized datasets without partial output', async () => {
-  const { app, api, databasePath }=fixture(); const db=new Database(databasePath); const createdAt='2026-08-20T00:00:00.000Z'; const insert=db.prepare('INSERT INTO captures(id,raw,modality,occurred_at,created_at,privacy_scope,deleted_at) VALUES(?,?,?,?,?,?,NULL)'); const write=db.transaction(()=>{for(let index=0;index<10_001;index+=1)insert.run(crypto.randomUUID(),`row ${index}`,'text',createdAt,createdAt,'private');}); write(); db.close();
+  const { app, api, databasePath }=fixture(); const db=new Database(databasePath); const createdAt='2026-08-20T00:00:00.000Z'; const insert=db.prepare('INSERT INTO captures(id,raw,modality,occurred_at,created_at,privacy_scope,deleted_at,user_id) VALUES(?,?,?,?,?,?,NULL,?)'); const write=db.transaction(()=>{for(let index=0;index<10_001;index+=1)insert.run(crypto.randomUUID(),`row ${index}`,'text',createdAt,createdAt,'private',api.user.id);}); write(); db.close();
   const response=await api.get('/api/export').expect(413); assert.equal(response.body.error.code,'export_limit_exceeded'); assert.equal(response.body.rowLimit,10_000); await app.captureJobWorker.stop();
 });

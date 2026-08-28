@@ -62,7 +62,9 @@ export class CaptureJobWorker {
       // видел бы только записи, сохранённые синхронно.
       try {
         if (result?.usage && result.usedProvider && result.usedProvider !== 'fallback')
-          recordUsage(this.db, { provider:result.usedProvider, model:result.model || null, kind:'classify', inputTokens:result.usage.inputTokens, outputTokens:result.usage.outputTokens, costUsd:result.usage.costUsd });
+          // Хозяин расхода — тот, чью запись разбирали: расход у каждого свой,
+          // и безымянная строка не попала бы ни в чей счёт.
+          recordUsage(this.db, { provider:result.usedProvider, model:result.model || null, kind:'classify', inputTokens:result.usage.inputTokens, outputTokens:result.usage.outputTokens, costUsd:result.usage.costUsd, userId:claim.user_id ?? null });
       } catch {}
       if (controller.signal.aborted || this.stopping) return;
       // Ручные параметры карточки ввода перекрывают разбор модели.

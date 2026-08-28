@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Кизуна — вход</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='2' y='2' width='60' height='60' rx='14' fill='%23c73e3a'/%3E%3Cg fill='none' stroke='white' stroke-linecap='round' stroke-width='6'%3E%3Cpath d='M8 17q24 -6 48 0'/%3E%3Cline x1='14' y1='27' x2='50' y2='27'/%3E%3Cline x1='19' y1='22' x2='21' y2='54'/%3E%3Cline x1='45' y1='22' x2='43' y2='54'/%3E%3C/g%3E%3C/svg%3E"
+    />
+    <!-- Тема ставится до отрисовки: иначе тёмной странице предшествует белая
+         вспышка. Отдельным файлом, а не строкой в разметке, потому что политика
+         безопасности запрещает встроенные скрипты. -->
+    <script src="/public/theme.js"></script>
+    <link rel="stylesheet" href="/public/app.css" />
+    <link rel="stylesheet" href="/public/auth.css" />
+  </head>
+  <body class="auth-body">
+    <main class="auth-shell">
+      <div class="auth-card">
+        <a class="brand auth-brand" href="/"
+          ><svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true" focusable="false"
+            ><rect class="hanko-pad" x="2" y="2" width="60" height="60" rx="14" fill="#c73e3a" /><g
+              class="torii"
+              fill="none"
+              stroke-linecap="round"
+              stroke-width="6"
+              ><path class="roof" d="M8 17q24 -6 48 0" /><line x1="14" y1="27" x2="50" y2="27" /><line
+                x1="19"
+                y1="22"
+                x2="21"
+                y2="54"
+              /><line x1="45" y1="22" x2="43" y2="54" /></g></svg
+          ><span class="brand-word">Кизуна</span></a
+        >
+
+        <h1 id="auth-title">Вход</h1>
+        <p id="auth-lead" class="auth-lead">
+          Журнал у каждого свой: записи, отчёты и память видит только их автор.
+        </p>
+
+        <form id="auth-form" class="auth-form" novalidate>
+          <label class="auth-field" for="auth-email"
+            ><span>Почта</span
+            ><input
+              id="auth-email"
+              type="email"
+              autocomplete="username"
+              inputmode="email"
+              required
+              placeholder="you@example.com"
+          /></label>
+          <label class="auth-field" for="auth-password"
+            ><span>Пароль</span
+            ><input
+              id="auth-password"
+              type="password"
+              autocomplete="current-password"
+              required
+              placeholder="не короче 10 знаков"
+          /></label>
+          <label class="auth-field" for="auth-password-repeat" id="auth-repeat-field" hidden
+            ><span>Пароль ещё раз</span
+            ><input id="auth-password-repeat" type="password" autocomplete="new-password"
+          /></label>
+          <label class="auth-field" for="auth-code" id="auth-code-field" hidden
+            ><span>Код из приложения</span
+            ><input
+              id="auth-code"
+              type="text"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              placeholder="6 цифр или резервный код"
+          /></label>
+          <p id="auth-error" class="auth-error" role="alert" hidden></p>
+          <p id="auth-notice" class="auth-notice" role="status" hidden></p>
+          <button id="auth-submit" class="primary auth-submit" type="submit">Войти</button>
+        </form>
+
+        <p class="auth-switch">
+          <span id="auth-switch-text">Нет учётной записи?</span>
+          <button id="auth-switch" class="linklike" type="button">Зарегистрироваться</button>
+        </p>
+
+        <p id="auth-bootstrap" class="auth-bootstrap" hidden>
+          В приложении ещё нет ни одной учётной записи. Первая станет
+          администратором и заберёт себе журнал, который вёлся до сих пор.
+        </p>
+      </div>
+      <button
+        id="auth-theme"
+        class="theme-toggle auth-theme"
+        type="button"
+        aria-label="Сменить тему оформления"
+        title="Сменить тему оформления"
+      ></button>
+    </main>
+    <script type="module" src="/public/auth.js"></script>
+  </body>
+</html>

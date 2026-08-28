@@ -855,6 +855,14 @@ export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () =
         body: JSON.stringify(chosen ? { provider: chosen } : {}),
       });
       session = await response.json().catch(() => ({}));
+      // Исчерпанный предел — это не поломка: разговор не начинается, и об этом
+      // надо сказать словами, а не уводить в режим заглушки, будто нет ключа.
+      if (response.status === 429) {
+        setPhase("idle", "Разговор закрыт");
+        hint.textContent = session?.error?.message || "Предел разговора исчерпан.";
+        say("bot", session?.error?.message || "Предел разговора исчерпан.");
+        return;
+      }
       if (!response.ok) throw new Error(session?.error?.message || "Голосовая модель недоступна.");
     } catch (error) {
       state.mode = "mock";
@@ -863,6 +871,10 @@ export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () =
       say("bot", error.message);
       return;
     }
+    // Звук пойдёт мимо сервера, поэтому длительность знает только браузер: её
+    // он и сообщит, когда разговор кончится.
+    state.voiceSessionId = session.voiceSessionId || null;
+    state.startedAt = Date.now();
     state.mode = session.mode;
     if (session.mode !== "live") {
       setPhase("idle", "Разговор без модели");
@@ -900,7 +912,32 @@ export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () =
     }
   }
 
+  // Разговор кончился — сервер должен узнать, сколько он длился: иначе минуты
+  // не попадут в расход, и предел окажется бумажным. Ответ нас не интересует,
+  // поэтому ошибка сети здесь ничего не ломает.
+  function reportVoiceSession() {
+    const sessionId = state.voiceSessionId;
+    if (!sessionId) return;
+    state.voiceSessionId = null;
+    const seconds = Math.max(0, Math.round((Date.now() - (state.startedAt || Date.now())) / 1000));
+    const body = JSON.stringify({ seconds });
+    // sendBeacon переживает закрытие вкладки, обычный fetch — не всегда.
+    try {
+      if (navigator.sendBeacon?.(`/api/voice/session/${sessionId}/close`, new Blob([body], { type: "application/json" }))) return;
+    } catch {
+      // Не отправилось маяком — пробуем обычным запросом.
+    }
+    fetchImplementation(`/api/voice/session/${sessionId}/close`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+      keepalive: true,
+    }).catch(() => {});
+  }
+  window.addEventListener("pagehide", reportVoiceSession);
+
   function stop() {
+    reportVoiceSession();
     panel.hidden = true;
     // Панель возвращается к обычному виду: реплики снова живут своим блоком.
     if (log.parentElement === stage) panel.insertBefore(log, form);

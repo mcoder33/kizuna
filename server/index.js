@@ -10,6 +10,8 @@ import { createVoiceService, runVoiceTool, mockVoiceTurn, VOICE_TOOLS, VOICE_INS
 import { CaptureJobWorker } from './capture-job-worker.js';
 import { normalizeClassification, gateClassification, shouldMaterializeProjections, parseCaptureOverrides, applyUserOverrides } from './classifier.js';
 import { validateRemoteModel } from './cli-config.js';
+import { createAccounts, publicUser } from './accounts.js';
+import { captureOwner, attachmentOwner, projectionOwner, undoGroupOwner, openVoiceSession, closeVoiceSession, closeStaleVoiceSessions, voiceSpend, findUserById, countUsers } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 function validateTimeZone(timeZone) {
@@ -45,33 +47,63 @@ function jobStatusUrl(jobId) { return `/api/jobs/${jobId}`; }
 // перезапуском; здесь описано одним списком: как зовётся, как проверяется и
 // секрет ли это. Секреты наружу не отдаются никогда — только признак «настроен»
 // и последние четыре знака, чтобы человек узнал свой ключ.
+// Область настройки. Ключи и провайдеры общие на всё приложение — платит за
+// них один человек, и менять их может только администратор. Всё, что про
+// привычки («засыпать через», «обращайся на ты», тема оформления), — своё у
+// каждого: общие настройки такого рода означали бы, что сосед переписывает вам
+// интерфейс.
 const SETTINGS = {
-  openaiKey: { env:'OPENAI_API_KEY', secret:true, check:value => typeof value === 'string' && value.length <= 400 },
-  geminiKey: { env:'GEMINI_API_KEY', secret:true, check:value => typeof value === 'string' && value.length <= 400 },
-  openrouterKey: { env:'OPENROUTER_API_KEY', secret:true, check:value => typeof value === 'string' && value.length <= 400 },
-  aiProvider: { env:'PAGENT_AI_PROVIDER', check:value => providerIds.has(value) },
-  voiceProvider: { env:'PAGENT_VOICE_PROVIDER', check:value => value === 'openai' || value === 'gemini' },
+  openaiKey: { env:'OPENAI_API_KEY', secret:true, admin:true, check:value => typeof value === 'string' && value.length <= 400 },
+  geminiKey: { env:'GEMINI_API_KEY', secret:true, admin:true, check:value => typeof value === 'string' && value.length <= 400 },
+  openrouterKey: { env:'OPENROUTER_API_KEY', secret:true, admin:true, check:value => typeof value === 'string' && value.length <= 400 },
+  aiProvider: { env:'PAGENT_AI_PROVIDER', admin:true, check:value => providerIds.has(value) },
+  voiceProvider: { env:'PAGENT_VOICE_PROVIDER', admin:true, check:value => value === 'openai' || value === 'gemini' },
   // Голос выбирается из каталога: от него зависит род, в котором модель говорит
   // о себе, поэтому произвольная строка здесь только сломала бы согласование.
-  voiceName: { env:'PAGENT_VOICE_NAME', check:value => VOICE_CHOICES.openai.some(item => item.id === value) },
-  geminiVoiceName: { env:'PAGENT_GEMINI_VOICE_NAME', check:value => VOICE_CHOICES.gemini.some(item => item.id === value) },
+  voiceName: { env:'PAGENT_VOICE_NAME', admin:true, check:value => VOICE_CHOICES.openai.some(item => item.id === value) },
+  geminiVoiceName: { env:'PAGENT_GEMINI_VOICE_NAME', admin:true, check:value => VOICE_CHOICES.gemini.some(item => item.id === value) },
   // Модель голоса: у OpenAI живой режим принимает и realtime-, и audio-модели,
   // поэтому список открытый — проверяем только форму имени.
-  voiceModel: { env:'PAGENT_VOICE_MODEL', check:value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,60}$/.test(value) },
-  geminiVoiceModel: { env:'PAGENT_GEMINI_VOICE_MODEL', check:value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,80}$/.test(value) },
+  voiceModel: { env:'PAGENT_VOICE_MODEL', admin:true, check:value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,60}$/.test(value) },
+  geminiVoiceModel: { env:'PAGENT_GEMINI_VOICE_MODEL', admin:true, check:value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,80}$/.test(value) },
   // Добавка к системному промпту разговора: правила инструментов и памяти она
   // не отменяет, а дописывается к ним.
-  systemPrompt: { check:value => typeof value === 'string' && value.length <= 2000 },
-  timeZone: { env:'PAGENT_TIMEZONE', check:value => { try { new Intl.DateTimeFormat('en-CA', { timeZone:value }); return true; } catch { return false; } } },
+  systemPrompt: { personal:true, check:value => typeof value === 'string' && value.length <= 2000 },
+  timeZone: { env:'PAGENT_TIMEZONE', admin:true, check:value => { try { new Intl.DateTimeFormat('en-CA', { timeZone:value }); return true; } catch { return false; } } },
   // Настройки интерфейса живут здесь же: они про человека, а не про вкладку,
   // поэтому переживают смену браузера.
-  sleepAfterSeconds: { check:value => /^\d+$/.test(String(value)) && Number(value) >= 10 && Number(value) <= 600 },
-  wakeWord: { check:value => typeof value === 'string' && value.trim().length >= 2 && value.length <= 40 },
-  previewLimit: { check:value => /^\d+$/.test(String(value)) && Number(value) >= 1 && Number(value) <= 20 },
+  sleepAfterSeconds: { personal:true, check:value => /^\d+$/.test(String(value)) && Number(value) >= 10 && Number(value) <= 600 },
+  wakeWord: { personal:true, check:value => typeof value === 'string' && value.trim().length >= 2 && value.length <= 40 },
+  previewLimit: { personal:true, check:value => /^\d+$/.test(String(value)) && Number(value) >= 1 && Number(value) <= 20 },
+  // Тема оформления. Хранится у человека, а не во вкладке: со сменой браузера
+  // светлая тема не должна возвращаться сама.
+  theme: { personal:true, check:value => ['system','light','dark'].includes(value) },
+  // ── предел расхода на разговор ──
+  // Звук идёт мимо сервера, поэтому денег мы не видим: считаем минуты и
+  // умножаем на заданную цену. Предел по минутам работает и без цены — это
+  // важнее, чем красивая сумма, потому что перекрыть разговор надо наверняка.
+  voiceRateUsdPerMinute: { admin:true, check:value => Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 100 },
+  voiceGeminiRateUsdPerMinute: { admin:true, check:value => Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 100 },
+  voiceLimitUsd: { admin:true, check:value => Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 1e6 },
+  voiceLimitMinutes: { admin:true, check:value => Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 1e6 },
+  voiceLimitWindow: { admin:true, check:value => ['day','week','month','total'].includes(value) },
+  voiceEnabled: { admin:true, check:value => value === 'on' || value === 'off' },
 };
 // Голоса по умолчанию те же, что и у самой службы: без них выпадающий список
 // открывался бы пустым, хотя разговор уже идёт каким-то голосом.
-const SETTING_DEFAULTS = { sleepAfterSeconds:'25', wakeWord:'кизуна', previewLimit:'3', voiceName:'marin', geminiVoiceName:'Puck', systemPrompt:'', voiceModel:'gpt-realtime', geminiVoiceModel:'models/gemini-3.1-flash-live-preview' };
+const SETTING_DEFAULTS = { sleepAfterSeconds:'25', wakeWord:'кизуна', previewLimit:'3', voiceName:'marin', geminiVoiceName:'Puck', systemPrompt:'', voiceModel:'gpt-realtime', geminiVoiceModel:'models/gemini-3.1-flash-live-preview', theme:'system',
+  // Цены по умолчанию нет намеренно: выдумать её значит показать человеку
+  // сумму, которой он не платил. Пока цену не задали, работает предел по
+  // минутам, а деньги честно показываются как неизвестные.
+  voiceRateUsdPerMinute:'0', voiceGeminiRateUsdPerMinute:'0', voiceLimitUsd:'', voiceLimitMinutes:'', voiceLimitWindow:'day', voiceEnabled:'on' };
+// Личная настройка лежит под своим ключом: у каждого своя строчка, общая
+// таблица одна.
+const personalKey = (userId, name) => `user:${userId}:${name}`;
+function settingValue(stored, env, name, userId) {
+  const rule = SETTINGS[name];
+  const own = rule.personal && userId ? stored[personalKey(userId, name)] : undefined;
+  return own ?? stored[name] ?? (rule.env ? env[rule.env] : undefined) ?? SETTING_DEFAULTS[name] ?? null;
+}
 function secretHint(value) { return value ? `••••${String(value).slice(-4)}` : null; }
 // createVoiceService по умолчанию читает process.env напрямую; здесь ей отдаётся
 // то же окружение, но с настройками из приложения поверх.
@@ -87,15 +119,19 @@ function voiceOptions(env) {
   };
 }
 // То, что уходит в браузер: значения без секретов и «настроен» вместо ключа.
-function publicSettings(stored, env) {
+function publicSettings(stored, env, user = null) {
   const out = {};
   for (const [name, rule] of Object.entries(SETTINGS)) {
-    const value = stored[name] ?? (rule.env ? env[rule.env] : undefined) ?? SETTING_DEFAULTS[name] ?? null;
+    const value = settingValue(stored, env, name, user?.id);
     if (rule.secret) out[name] = { configured: Boolean(value), hint: secretHint(value), fromEnvironment: !stored[name] && Boolean(rule.env && env[rule.env]) };
     else out[name] = value;
   }
   return out;
 }
+// Что из настроек человек вправе менять: общее — только администратор, своё —
+// каждый сам. Список отдаётся в браузер, чтобы интерфейс не показывал полей,
+// которые всё равно вернут отказ.
+function editableSettings(user) { return Object.entries(SETTINGS).filter(([, rule]) => rule.personal || user?.role === 'admin').map(([name]) => name); }
 // Окружение для служб: настройки поверх .env. Ключ, введённый в приложении,
 // сильнее того, что лежит в файле, — иначе правка в интерфейсе не работала бы.
 function environmentWith(stored, env) {
@@ -124,17 +160,18 @@ function correctionRequestFingerprint(patch) { return crypto.createHash('sha256'
 function reportAudit(audit, event) { try { audit(event); } catch {} }
 // Расход записывается рядом с ответом модели и никогда не мешает делу: сбой
 // учёта не должен ронять разбор записи.
-function noteUsage(db, result, kind) {
+function noteUsage(db, result, kind, userId = null) {
   try {
     if (!result?.usage || !result.usedProvider || result.usedProvider === 'fallback') return;
-    recordUsage(db, { provider:result.usedProvider, model:result.model || null, kind, inputTokens:result.usage.inputTokens, outputTokens:result.usage.outputTokens, costUsd:result.usage.costUsd });
+    recordUsage(db, { provider:result.usedProvider, model:result.model || null, kind, inputTokens:result.usage.inputTokens, outputTokens:result.usage.outputTokens, costUsd:result.usage.costUsd, userId });
   } catch {}
 }
 function correctedClassification(original,patch){const entities={...original.entities,projects:patch.project===undefined?original.entities.projects:(patch.project?[patch.project.trim()]:[]),people:patch.people===undefined?original.entities.people:patch.people.map(person=>person.trim()).filter(Boolean),followUp:patch.followUp===undefined?original.entities.followUp:(patch.followUp?.trim()||null),schedule:patch.schedule===undefined?original.entities.schedule:{state:patch.schedule.date&&patch.schedule.time?'ok':'ambiguous',date:patch.schedule.date||null,time:patch.schedule.time||null,sortAt:patch.schedule.date?`${patch.schedule.date}T${patch.schedule.time||'23:59'}:00`:null,display:[patch.schedule.date,patch.schedule.time].filter(Boolean).join(', ')}};const clearsAmbiguity=Boolean(original.ambiguity)&&patch[{type:'primaryType',schedule:'schedule',projects:'project',people:'people',followUp:'followUp'}[original.ambiguity.field]||'primaryType']!==undefined;const classification={...original,primaryType:patch.primaryType||original.primaryType,entities,completed:patch.completed===undefined?Boolean(original.completed):patch.completed,unclassified:original.unclassified&&patch.primaryType===undefined?true:undefined,ambiguity:clearsAmbiguity?null:(original.ambiguity??null),conflicts:{projects:patch.project!==undefined?false:original.conflicts?.projects,schedule:patch.schedule!==undefined?false:original.conflicts?.schedule},claims:(original.claims||[]).map(claim=>{const map={type:'primaryType',projects:'project',people:'people',followUp:'followUp',schedule:'schedule'};return patch[map[claim.field]]!==undefined?{...claim,value:claim.field==='type'?(patch.primaryType||original.primaryType):entities[claim.field],confidence:1,kind:'fact',provenance:{source:'raw',evidence:'manual correction'}}:claim})};classification.confidence=Object.fromEntries(classification.claims.map(claim=>[claim.field,claim.confidence]));return classification;}
 function applyCorrection(db,req,res,next,notify=()=>{}){try{const active=getAggregate(db,req.params.id);if(!active)return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}});const body=req.body||{},patch=body.patch||body,providedKey=req.get('Idempotency-Key');if(providedKey!==undefined&&!validIdempotencyKey(providedKey))return res.status(400).json({error:{code:'invalid_idempotency_key',message:'Некорректный ключ идемпотентности.'}});if(patch.primaryType!==undefined&&!['meeting_event','task','note','outcome_decision','idea_question'].includes(patch.primaryType))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректный тип записи.'}});if(patch.schedule!==undefined&&!validSchedule(patch.schedule))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректная дата или время.'}});if(patch.project!==undefined&&patch.project!==null&&(typeof patch.project!=='string'||patch.project.length>120))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректный проект.'}});if(patch.people!==undefined&&(!Array.isArray(patch.people)||patch.people.length>8||patch.people.some(person=>typeof person!=='string'||person.length>120)))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректные участники.'}});if(patch.followUp!==undefined&&patch.followUp!==null&&(typeof patch.followUp!=='string'||patch.followUp.length>500))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректное действие.'}}); if(patch.completed!==undefined&&typeof patch.completed!=='boolean')return res.status(400).json({error:{code:'invalid_patch',message:'Некорректный признак выполнения.'}});const requestFingerprint=correctionRequestFingerprint(patch),operationKey=providedKey||`correction-${requestFingerprint}`,classification=correctedClassification(JSON.parse(active.classification_json),patch),review=gateClassification(classification),replacement=replaceInterpretation(db,req.params.id,classification,'manual',{...patch,patch,operationKey,requestFingerprint},shouldMaterializeProjections(classification));if(replacement?.conflict)return res.status(409).json({error:{code:'idempotency_conflict',message:'Ключ уже использован для другого уточнения.'}});const row=getAggregate(db,req.params.id);notify();res.json({entry:fullEntry(db,row),undoGroupId:replacement.undoGroupId,review,replayed:Boolean(replacement.replayed)});}catch(error){next(error);}}
 async function snapshotProvider(ai, requested) { if (requested) return requested; const status = await ai.status(); return providerIds.has(status?.selectedProvider) ? status.selectedProvider : providerIds.has(status?.defaultProvider) ? status.defaultProvider : 'fallback'; }
-export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.join(__dirname, '..', 'data', 'pagent.sqlite'), aiService, voiceService, timeZone = process.env.PAGENT_TIMEZONE || 'Europe/Samara', now = () => new Date(), workerOptions, audit = () => {} } = {}) {
+export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.join(__dirname, '..', 'data', 'pagent.sqlite'), aiService, voiceService, timeZone = process.env.PAGENT_TIMEZONE || 'Europe/Samara', now = () => new Date(), workerOptions, audit = () => {}, secureCookies = process.env.PAGENT_SECURE_COOKIES === 'on' } = {}) {
   const db = openDatabase(databasePath);
+  const accounts = createAccounts({ db, now, secureCookies, audit });
   // Настройки читаются из базы поверх окружения: то, что человек поменял в
   // приложении, сильнее того, что лежит в .env, и применяется без перезапуска.
   let stored = readSettings(db);
@@ -169,9 +206,25 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     captureJobWorker.ai = ai;
   }
   app.captureJobWorker = captureJobWorker;
+  // Внутренние ручки для тестов и для запуска: наружу по HTTP они не выходят.
+  app.accounts = accounts;
+  app.database = db;
   app.disable('x-powered-by');
   app.use(express.json({ limit:'32kb' }));
+  // Кто перед нами — выясняется до всего остального, но никого не заворачивает:
+  // страница входа и заявка на регистрацию должны работать без учётной записи.
+  app.use(accounts.attachUser);
   app.use((req,res,next)=>{ if(req.path==='/'||req.path.startsWith('/api/')||req.path.startsWith('/public/')) res.set({'Content-Security-Policy':"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://api.openai.com https://generativelanguage.googleapis.com wss://generativelanguage.googleapis.com; base-uri 'none'; frame-ancestors 'none'",'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'}); next(); });
+  accounts.registerRoutes(app);
+  // Отсюда и ниже — только для вошедших. Граница одна и видна глазом: любой
+  // маршрут, добавленный после этой строки, закрыт по умолчанию.
+  app.use('/api', accounts.requireAuth);
+  // Чужой идентификатор в адресе не должен открывать чужую запись: владельца
+  // спрашиваем у базы, а не у клиента.
+  // Хозяин задания нужен серверу для проверки, но наружу не уходит: ответ о
+  // задаче не должен рассказывать ничего сверх её состояния.
+  const publicJob = ({ userId, ...rest }) => rest;
+  const ownsCapture = (req,res,captureId) => { const owner=captureOwner(db,captureId); if(owner===undefined||owner!==req.user.id){res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}});return false;} return true; };
   app.get('/api/events',(req,res)=>{
     res.set({ 'Content-Type':'text/event-stream', 'Cache-Control':'no-store', Connection:'keep-alive', 'X-Accel-Buffering':'no' });
     res.flushHeaders?.();
@@ -187,7 +240,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   });
   // ── настройки ──
   app.get('/api/settings',(req,res)=>{
-    res.json({ settings: publicSettings(stored, process.env), voice: voice.status(), voices: VOICE_CHOICES, timeZone: configuredTimeZone });
+    res.json({ settings: publicSettings(stored, process.env, req.user), editable: editableSettings(req.user), voice: voice.status(), voices: VOICE_CHOICES, timeZone: configuredTimeZone, quota: voiceQuota(req.user) });
   });
   app.put('/api/settings',(req,res,next)=>{
     try {
@@ -196,77 +249,132 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
       for (const [name, value] of Object.entries(body)) {
         const rule = SETTINGS[name];
         if (!rule) return res.status(400).json({error:{code:'unknown_setting',message:`Неизвестная настройка: ${name}.`}});
+        // Общая настройка — общая ответственность: ключи, провайдеры и пределы
+        // меняет только администратор, остальное каждый правит у себя.
+        if (!rule.personal && req.user.role !== 'admin') return res.status(403).json({error:{code:'forbidden',message:`Настройку «${name}» меняет администратор.`}});
+        const key = rule.personal ? personalKey(req.user.id, name) : name;
         // Пустая строка и null означают «вернуть значение из окружения».
-        if (value === null || value === '') { next[name] = null; continue; }
+        if (value === null || value === '') { next[key] = null; continue; }
         if (!rule.check(value)) return res.status(400).json({error:{code:'invalid_setting',message:`Некорректное значение настройки: ${name}.`}});
-        next[name] = String(value).trim();
+        next[key] = String(value).trim();
       }
       writeSettings(db, next);
       rebuildServices();
       reportAudit(audit,{event:'settings_changed',result:'succeeded',keys:Object.keys(next)});
-      res.json({ settings: publicSettings(stored, process.env), voice: voice.status(), voices: VOICE_CHOICES, timeZone: configuredTimeZone });
+      res.json({ settings: publicSettings(stored, process.env, req.user), editable: editableSettings(req.user), voice: voice.status(), voices: VOICE_CHOICES, timeZone: configuredTimeZone, quota: voiceQuota(req.user) });
     } catch(error){ next(error); }
   });
-  app.get('/api/usage',(req,res,next)=>{try{res.json(usageSummary(db,{now:now()}));}catch(error){next(error);}});
+  app.get('/api/usage',(req,res,next)=>{try{res.json(usageSummary(db,{now:now(),userId:req.user.id}));}catch(error){next(error);}});
   app.get('/api/status', async (req,res,next)=>{try{const provider=requestedProvider(req.query.selectedProvider);if(provider===null)return res.status(400).json({error:{code:'invalid_provider',message:'Некорректный провайдер.'}});res.json(await ai.status(provider));}catch(error){next(error);}});
-  app.post('/api/captures/:id/corrections',(req,res,next)=>applyCorrection(db,req,res,next,()=>notifyJournal('correction')));
-  app.post('/api/captures', async (req,res,next)=> { const lifecycle=requestAbortSignal(req,res);try { const raw = typeof req.body?.raw === 'string' ? req.body.raw.trim() : '',provider=requestedProvider(req.body?.provider),selectedModelValue=requestedModel(req.body?.model); if (selectedModelValue===null) return res.status(400).json({error:{code:'invalid_model',message:'Некорректная модель.'}}); if (!raw || raw.length > 10000) return res.status(400).json({error:{code:'invalid_capture',message:'Запись должна содержать от 1 до 10 000 символов.'}});if(provider===null)return res.status(400).json({error:{code:'invalid_provider',message:'Некорректный провайдер.'}});const parsedOverrides=parseCaptureOverrides(req.body,now(),configuredTimeZone);if(parsedOverrides.error)return res.status(400).json({error:{code:parsedOverrides.error,message:'Некорректные параметры записи.'}});const overrides=parsedOverrides.overrides;if(wantsAsyncResponse(req.get('Prefer'))){const idempotencyKey=req.get('Idempotency-Key');if(idempotencyKey!==undefined&&!validIdempotencyKey(idempotencyKey))return res.status(400).json({error:{code:'invalid_idempotency_key',message:'Некорректный ключ идемпотентности.'}});const selectedProvider=await snapshotProvider(ai,provider);const selectedModel=selectedModelValue||null;const queued=enqueueCaptureJob(db,{raw,occurredAt:req.body.occurredAt,selectedProvider,selectedModel,idempotencyKey:idempotencyKey||null,requestFingerprint:idempotencyKey?captureRequestFingerprint({raw,occurredAt:req.body.occurredAt,selectedProvider,selectedModel,overrides}):null,overrides});if(queued.conflict)return res.status(409).json({error:{code:'idempotency_conflict',message:'Ключ уже использован для другого запроса.'}});const duplicate=db.prepare('SELECT id FROM captures WHERE deleted_at IS NULL AND raw=? AND id!=? AND created_at>=? ORDER BY created_at DESC LIMIT 1').get(raw,queued.captureId,new Date(now().getTime()-24*60*60*1000).toISOString());const statusUrl=jobStatusUrl(queued.jobId);captureJobWorker.wake();notifyJournal('queued');res.location(statusUrl).status(202).json({captureId:queued.captureId,jobId:queued.jobId,statusUrl,...(duplicate?{duplicateCaptureId:duplicate.id}:{})});return;}const result = await ai.classify(raw, provider, lifecycle.signal, selectedModelValue||null);noteUsage(db,result,'classify');if(lifecycle.signal.aborted)return; if(overrides)result.classification=applyUserOverrides(result.classification,overrides,now(),configuredTimeZone); const review=gateClassification(result.classification); const ids = createLedger(db,{raw,occurredAt:req.body.occurredAt, ...result,createProjections:shouldMaterializeProjections(result.classification)}); const row=getAggregate(db,ids.captureId); notifyJournal('capture'); res.status(201).json({entry:fullEntry(db,row),undoGroupId:ids.undoGroupId,review,provenance:{requestedProvider:result.requestedProvider,usedProvider:result.usedProvider,provider:result.provider,model:result.model,fallbackReason:result.fallbackReason}}); } catch(error){if(!lifecycle.signal.aborted)next(error);}finally{lifecycle.dispose();} });
-  app.get('/api/jobs/:id',(req,res)=>{if(!validJobId(req.params.id))return res.status(400).json({error:{code:'invalid_job_id',message:'Некорректный идентификатор задачи.'}});const job=getCaptureJob(db,req.params.id);if(!job)return res.status(404).json({error:{code:'not_found',message:'Задача не найдена.'}});res.json(job);});
-  app.post('/api/jobs/:id/cancel',(req,res)=>{if(!validJobId(req.params.id))return res.status(400).json({error:{code:'invalid_job_id',message:'Некорректный идентификатор задачи.'}});const cancelled=cancelCaptureJob(db,req.params.id);if(!cancelled)return res.status(404).json({error:{code:'not_found',message:'Задача не найдена.'}});if(cancelled.changed)captureJobWorker.abort(req.params.id);res.status(cancelled.changed?202:200).json(getCaptureJob(db,req.params.id));});
-  app.post('/api/jobs/:id/retry',(req,res,next)=>{try{if(!validJobId(req.params.id))return res.status(400).json({error:{code:'invalid_job_id',message:'Некорректный идентификатор задачи.'}});if(Object.hasOwn(req.body||{},'provider'))return res.status(400).json({error:{code:'retry_provider_not_allowed',message:'Повтор использует исходного провайдера.'}});const retry=retryCaptureJob(db,req.params.id);if(!retry)return res.status(404).json({error:{code:'not_found',message:'Задача не найдена.'}});if(retry.invalidState)return res.status(409).json({error:{code:'retry_not_allowed',message:'Повтор возможен только для отменённой или неудачной задачи.'}});captureJobWorker.wake();const statusUrl=jobStatusUrl(retry.jobId);res.location(statusUrl).status(202).json({...retry,statusUrl});}catch(error){next(error);}});
-  app.post('/api/captures/:id/classify', async (req,res,next)=> { const lifecycle=requestAbortSignal(req,res);try { const provider=requestedProvider(req.body?.provider);if(provider===null)return res.status(400).json({error:{code:'invalid_provider',message:'Некорректный провайдер.'}});const selectedModelValue=requestedModel(req.body?.model);if(selectedModelValue===null)return res.status(400).json({error:{code:'invalid_model',message:'Некорректная модель.'}});const capture=db.prepare('SELECT raw FROM captures WHERE id=?').get(req.params.id); if(!capture) return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}}); const result=await ai.classify(capture.raw,provider,lifecycle.signal,selectedModelValue||null);noteUsage(db,result,'classify');if(lifecycle.signal.aborted)return;const review=gateClassification(result.classification); const replacement=replaceInterpretation(db,req.params.id,result.classification,result.provider,null,shouldMaterializeProjections(result.classification),result.model); const row=getAggregate(db,req.params.id); res.json({entry:fullEntry(db,row),undoGroupId:replacement.undoGroupId,review,provenance:{requestedProvider:result.requestedProvider,usedProvider:result.usedProvider,provider:result.provider,model:result.model,fallbackReason:result.fallbackReason}}); }catch(error){if(!lifecycle.signal.aborted)next(error);}finally{lifecycle.dispose();} });
+  app.post('/api/captures/:id/corrections',(req,res,next)=>{ if(!ownsCapture(req,res,req.params.id))return; applyCorrection(db,req,res,next,()=>notifyJournal('correction')); });
+  app.post('/api/captures', async (req,res,next)=> { const lifecycle=requestAbortSignal(req,res);try { const raw = typeof req.body?.raw === 'string' ? req.body.raw.trim() : '',provider=requestedProvider(req.body?.provider),selectedModelValue=requestedModel(req.body?.model); if (selectedModelValue===null) return res.status(400).json({error:{code:'invalid_model',message:'Некорректная модель.'}}); if (!raw || raw.length > 10000) return res.status(400).json({error:{code:'invalid_capture',message:'Запись должна содержать от 1 до 10 000 символов.'}});if(provider===null)return res.status(400).json({error:{code:'invalid_provider',message:'Некорректный провайдер.'}});const parsedOverrides=parseCaptureOverrides(req.body,now(),configuredTimeZone);if(parsedOverrides.error)return res.status(400).json({error:{code:parsedOverrides.error,message:'Некорректные параметры записи.'}});const overrides=parsedOverrides.overrides;if(wantsAsyncResponse(req.get('Prefer'))){const idempotencyKey=req.get('Idempotency-Key');if(idempotencyKey!==undefined&&!validIdempotencyKey(idempotencyKey))return res.status(400).json({error:{code:'invalid_idempotency_key',message:'Некорректный ключ идемпотентности.'}});const selectedProvider=await snapshotProvider(ai,provider);const selectedModel=selectedModelValue||null;const queued=enqueueCaptureJob(db,{userId:req.user.id,raw,occurredAt:req.body.occurredAt,selectedProvider,selectedModel,idempotencyKey:idempotencyKey||null,requestFingerprint:idempotencyKey?captureRequestFingerprint({raw,occurredAt:req.body.occurredAt,selectedProvider,selectedModel,overrides}):null,overrides});if(queued.conflict)return res.status(409).json({error:{code:'idempotency_conflict',message:'Ключ уже использован для другого запроса.'}});const duplicate=db.prepare('SELECT id FROM captures WHERE deleted_at IS NULL AND user_id IS ? AND raw=? AND id!=? AND created_at>=? ORDER BY created_at DESC LIMIT 1').get(req.user.id,raw,queued.captureId,new Date(now().getTime()-24*60*60*1000).toISOString());const statusUrl=jobStatusUrl(queued.jobId);captureJobWorker.wake();notifyJournal('queued');res.location(statusUrl).status(202).json({captureId:queued.captureId,jobId:queued.jobId,statusUrl,...(duplicate?{duplicateCaptureId:duplicate.id}:{})});return;}const result = await ai.classify(raw, provider, lifecycle.signal, selectedModelValue||null);noteUsage(db,result,'classify',req.user.id);if(lifecycle.signal.aborted)return; if(overrides)result.classification=applyUserOverrides(result.classification,overrides,now(),configuredTimeZone); const review=gateClassification(result.classification); const ids = createLedger(db,{userId:req.user.id,raw,occurredAt:req.body.occurredAt, ...result,createProjections:shouldMaterializeProjections(result.classification)}); const row=getAggregate(db,ids.captureId); notifyJournal('capture'); res.status(201).json({entry:fullEntry(db,row),undoGroupId:ids.undoGroupId,review,provenance:{requestedProvider:result.requestedProvider,usedProvider:result.usedProvider,provider:result.provider,model:result.model,fallbackReason:result.fallbackReason}}); } catch(error){if(!lifecycle.signal.aborted)next(error);}finally{lifecycle.dispose();} });
+  app.get('/api/jobs/:id',(req,res)=>{if(!validJobId(req.params.id))return res.status(400).json({error:{code:'invalid_job_id',message:'Некорректный идентификатор задачи.'}});const job=getCaptureJob(db,req.params.id);if(!job||job.userId!==req.user.id)return res.status(404).json({error:{code:'not_found',message:'Задача не найдена.'}});res.json(publicJob(job));});
+  app.post('/api/jobs/:id/cancel',(req,res)=>{if(!validJobId(req.params.id))return res.status(400).json({error:{code:'invalid_job_id',message:'Некорректный идентификатор задачи.'}});const existing=getCaptureJob(db,req.params.id);if(existing&&existing.userId!==req.user.id)return res.status(404).json({error:{code:'not_found',message:'Задача не найдена.'}});const cancelled=cancelCaptureJob(db,req.params.id);if(!cancelled)return res.status(404).json({error:{code:'not_found',message:'Задача не найдена.'}});if(cancelled.changed)captureJobWorker.abort(req.params.id);res.status(cancelled.changed?202:200).json(publicJob(getCaptureJob(db,req.params.id)));});
+  app.post('/api/jobs/:id/retry',(req,res,next)=>{try{if(!validJobId(req.params.id))return res.status(400).json({error:{code:'invalid_job_id',message:'Некорректный идентификатор задачи.'}});if(Object.hasOwn(req.body||{},'provider'))return res.status(400).json({error:{code:'retry_provider_not_allowed',message:'Повтор использует исходного провайдера.'}});const existing=getCaptureJob(db,req.params.id);if(existing&&existing.userId!==req.user.id)return res.status(404).json({error:{code:'not_found',message:'Задача не найдена.'}});const retry=retryCaptureJob(db,req.params.id);if(!retry)return res.status(404).json({error:{code:'not_found',message:'Задача не найдена.'}});if(retry.invalidState)return res.status(409).json({error:{code:'retry_not_allowed',message:'Повтор возможен только для отменённой или неудачной задачи.'}});captureJobWorker.wake();const statusUrl=jobStatusUrl(retry.jobId);res.location(statusUrl).status(202).json({...retry,statusUrl});}catch(error){next(error);}});
+  app.post('/api/captures/:id/classify', async (req,res,next)=> { const lifecycle=requestAbortSignal(req,res);try { const provider=requestedProvider(req.body?.provider);if(provider===null)return res.status(400).json({error:{code:'invalid_provider',message:'Некорректный провайдер.'}});const selectedModelValue=requestedModel(req.body?.model);if(selectedModelValue===null)return res.status(400).json({error:{code:'invalid_model',message:'Некорректная модель.'}});if(!ownsCapture(req,res,req.params.id))return;const capture=db.prepare('SELECT raw FROM captures WHERE id=?').get(req.params.id); if(!capture) return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}}); const result=await ai.classify(capture.raw,provider,lifecycle.signal,selectedModelValue||null);noteUsage(db,result,'classify',req.user.id);if(lifecycle.signal.aborted)return;const review=gateClassification(result.classification); const replacement=replaceInterpretation(db,req.params.id,result.classification,result.provider,null,shouldMaterializeProjections(result.classification),result.model); const row=getAggregate(db,req.params.id); res.json({entry:fullEntry(db,row),undoGroupId:replacement.undoGroupId,review,provenance:{requestedProvider:result.requestedProvider,usedProvider:result.usedProvider,provider:result.provider,model:result.model,fallbackReason:result.fallbackReason}}); }catch(error){if(!lifecycle.signal.aborted)next(error);}finally{lifecycle.dispose();} });
   app.post('/api/captures/:id/corrections',(req,res,next)=>{ try { const active=getAggregate(db,req.params.id); if(!active) return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}}); const original=JSON.parse(active.classification_json); const body=req.body||{}, patch=body.patch||body; if(patch.primaryType!==undefined&&!['meeting_event','task','note','outcome_decision','idea_question'].includes(patch.primaryType))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректный тип записи.'}}); if(patch.schedule!==undefined&&!validSchedule(patch.schedule))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректная дата или время.'}}); if(patch.project!==undefined&&patch.project!==null&&(typeof patch.project!=='string'||patch.project.length>120))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректный проект.'}}); if(patch.people!==undefined&&(!Array.isArray(patch.people)||patch.people.length>8||patch.people.some(person=>typeof person!=='string'||person.length>120)))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректные участники.'}}); if(patch.followUp!==undefined&&patch.followUp!==null&&(typeof patch.followUp!=='string'||patch.followUp.length>500))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректное действие.'}}); if(patch.completed!==undefined&&typeof patch.completed!=='boolean')return res.status(400).json({error:{code:'invalid_patch',message:'Некорректный признак выполнения.'}}); const entities={...original.entities,projects:patch.project===undefined?original.entities.projects:(patch.project?[patch.project.trim()]:[]),people:patch.people===undefined?original.entities.people:patch.people.map(person=>person.trim()).filter(Boolean),followUp:patch.followUp===undefined?original.entities.followUp:(patch.followUp?.trim()||null),schedule:patch.schedule===undefined?original.entities.schedule:{state:patch.schedule.date&&patch.schedule.time?'ok':'ambiguous',date:patch.schedule.date||null,time:patch.schedule.time||null,sortAt:patch.schedule.date?`${patch.schedule.date}T${patch.schedule.time||'23:59'}:00`:null,display:[patch.schedule.date,patch.schedule.time].filter(Boolean).join(', ')}}; const clearsAmbiguity=Boolean(original.ambiguity)&&patch[{type:'primaryType',schedule:'schedule',projects:'project',people:'people',followUp:'followUp'}[original.ambiguity.field]||'primaryType']!==undefined;const classification={...original,primaryType:patch.primaryType||original.primaryType,entities,completed:patch.completed===undefined?Boolean(original.completed):patch.completed,unclassified:original.unclassified&&patch.primaryType===undefined?true:undefined,ambiguity:clearsAmbiguity?null:(original.ambiguity??null),conflicts:{projects:patch.project!==undefined?false:original.conflicts?.projects,schedule:patch.schedule!==undefined?false:original.conflicts?.schedule},claims:(original.claims||[]).map(claim=>{const map={type:'primaryType',projects:'project',people:'people',followUp:'followUp',schedule:'schedule'};return patch[map[claim.field]]!==undefined?{...claim,value:claim.field==='type'?(patch.primaryType||original.primaryType):entities[claim.field],confidence:1,kind:'fact',provenance:{source:'raw',evidence:'manual correction'}}:claim})}; classification.confidence=Object.fromEntries(classification.claims.map(claim=>[claim.field,claim.confidence])); const review=gateClassification(classification); const replacement=replaceInterpretation(db,req.params.id,classification,'manual',patch,shouldMaterializeProjections(classification)); const row=getAggregate(db,req.params.id); res.json({entry:fullEntry(db,row),undoGroupId:replacement.undoGroupId,review}); }catch(error){next(error);} });
   // Удаление записи — мягкое: она уходит из всех списков, но остаётся в
   // журнале и в экспорте. Поэтому же её можно вернуть.
-  app.delete('/api/captures/:id',(req,res,next)=>{try{const result=deleteCapture(db,req.params.id);if(result.notFound)return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}});reportAudit(audit,{event:'capture_deleted',result:'succeeded'});notifyJournal('delete');res.json(result);}catch(error){next(error);}});
-  app.post('/api/captures/:id/restore',(req,res,next)=>{try{const result=restoreCapture(db,req.params.id);if(result.notFound)return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}});reportAudit(audit,{event:'capture_restored',result:'succeeded'});notifyJournal('restore');res.json(result);}catch(error){next(error);}});
-  app.post('/api/projections/:id/complete',(req,res,next)=>{try{if(!validProjectionId(req.params.id))return res.status(400).json({error:{code:'invalid_projection_id',message:'Некорректный идентификатор проекции.'}});const result=completeProjection(db,req.params.id);if(result.error)return completionError(res,result.error);notifyJournal('completion');res.json({projectionId:result.projection.id,completion:result.completion,changed:result.changed});}catch(error){next(error);}});
-  app.post('/api/projections/:id/undo-complete',(req,res,next)=>{try{if(!validProjectionId(req.params.id))return res.status(400).json({error:{code:'invalid_projection_id',message:'Некорректный идентификатор проекции.'}});const result=undoProjectionCompletion(db,req.params.id);if(result.error)return completionError(res,result.error);notifyJournal('completion');res.json({projectionId:result.projection.id,completion:result.completion,changed:result.changed});}catch(error){next(error);}});
-  app.get('/api/entries',(req,res)=>{ const limit=Math.min(Math.max(Number(req.query.limit)||40,1),100); res.json(listEntries(db,{cursor:typeof req.query.cursor==='string'?req.query.cursor:null,limit})); });
-  app.get('/api/day',(req,res)=>{const date=req.query.date||dateInTimeZone(now(),configuredTimeZone);if(!validDate(date))return res.status(400).json({error:{code:'invalid_date',message:'Дата должна быть в формате YYYY-MM-DD.'}});res.json({date,...dayView(db,date,now())});});
-  app.get('/api/daily-brief',(req,res,next)=>{try{const date=req.query.date||dateInTimeZone(now(),'Europe/Samara'), revision=req.query.revision; if(!validDate(date)||revision!==undefined&&(!/^\d+$/.test(revision)||Number(revision)<1))return res.status(400).json({error:{code:'invalid_daily_brief_request',message:'Некорректная дата или ревизия отчёта.'}}); const brief=revision===undefined?getDailyBrief(db,{date,timeZone:'Europe/Samara'}):findDailyBrief(db,{date,timeZone:'Europe/Samara',revision:Number(revision)}); if(!brief)return res.status(404).json({error:{code:'not_found',message:'Ревизия отчёта не найдена.'}}); res.json(brief);}catch(error){next(error);}});
-  app.post('/api/daily-brief/refresh',(req,res,next)=>{try{const date=req.body?.date||dateInTimeZone(now(),'Europe/Samara');if(!validDate(date))return res.status(400).json({error:{code:'invalid_date',message:'Дата должна быть в формате YYYY-MM-DD.'}});res.json(getDailyBrief(db,{date,timeZone:'Europe/Samara',force:true}));}catch(error){next(error);}});
-  app.get('/api/daily-brief/:date/revisions/:revision/sources/:sourceId',(req,res,next)=>{try{const {date,revision,sourceId}=req.params;if(!validDate(date)||!/^\d+$/.test(revision)||Number(revision)<1||!validJobId(sourceId))return res.status(400).json({error:{code:'invalid_daily_source',message:'Некорректный источник отчёта.'}});const source=findDailyBriefSource(db,{date,timeZone:'Europe/Samara',revision:Number(revision),sourceId});if(!source)return res.status(404).json({error:{code:'not_found',message:'Источник отчёта не найден.'}});res.json({captureId:source.id,raw:source.raw,occurredAt:source.occurred_at,createdAt:source.created_at});}catch(error){next(error);}});
-  app.post('/api/captures/:id/notes',(req,res,next)=>{try{const body=req.body?.body;if(typeof body!=='string'||body.length>NOTE_BODY_LIMIT)return res.status(400).json({error:{code:'invalid_note',message:`Заметка должна быть текстом до ${NOTE_BODY_LIMIT} символов.`}});const saved=saveNote(db,req.params.id,body);if(saved.notFound)return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}});const row=getAggregate(db,req.params.id);notifyJournal('note');res.json({entry:fullEntry(db,row)});}catch(error){next(error);}});
-  app.post('/api/undo',(req,res)=>{ const undoGroupId=req.body?.undoGroupId; if(typeof undoGroupId!=='string') return res.status(400).json({error:{code:'invalid_undo',message:'Нужна группа отмены.'}}); const reverted=undo(db,undoGroupId);notifyJournal('undo');res.json({reverted}); });
-  app.post('/api/memory/search',(req,res)=>{const query=memoryQuery(req); if(!query) return res.status(400).json({error:{code:'invalid_query',message:'Введите запрос длиной до 2 000 символов.'}}); res.json({results:search(db,query)});});
-  app.post('/api/memory/answer',async(req,res,next)=>{const lifecycle=requestAbortSignal(req,res);try{const query=memoryQuery(req),provider=requestedProvider(req.body?.provider);if(!query)return res.status(400).json({error:{code:'invalid_query',message:'Введите запрос длиной до 2 000 символов.'}});if(provider===null)return res.status(400).json({error:{code:'invalid_provider',message:'Некорректный провайдер.'}});const selectedModelValue=requestedModel(req.body?.model);if(selectedModelValue===null)return res.status(400).json({error:{code:'invalid_model',message:'Некорректная модель.'}});const sources=boundedMemorySources(query,search(db,query)); const answer=await ai.answer(query,sources,provider,lifecycle.signal,selectedModelValue||null);noteUsage(db,answer,'answer');if(lifecycle.signal.aborted)return;res.json({...answer,sources,provenance:{requestedProvider:answer.requestedProvider,usedProvider:answer.usedProvider,provider:answer.provider,model:answer.model,fallbackReason:answer.fallbackReason}});}catch(error){if(!lifecycle.signal.aborted)next(error);}finally{lifecycle.dispose();}});
-  app.get('/api/export',(req,res)=>{const exported=exportLedger(db);if(exported.limitExceeded)return res.status(413).json({error:{code:'export_limit_exceeded',message:'Экспорт слишком большой для безопасного создания одним файлом.'},rowLimit:exported.rowLimit});reportAudit(audit,{event:'export_created',schemaVersion:exported.schemaVersion,rowCount:exported.captures.length+exported.interpretations.length+exported.corrections.length+exported.projections.length+exported.captureJobs.length+exported.captureJobEvents.length+exported.ledgerEvents.length+exported.dailyBriefs.length+exported.dailyBriefSources.length});res.type('application/json').attachment('pagent-ledger.json').json(exported);});
-  app.get('/api/tags',(req,res,next)=>{try{const counts=new Map();for(const row of db.prepare("SELECT i.classification_json FROM interpretations i JOIN captures c ON c.id=i.capture_id WHERE i.status='active' AND c.deleted_at IS NULL").all()){let tags;try{tags=JSON.parse(row.classification_json)?.tags}catch{continue}if(!Array.isArray(tags))continue;for(const tag of tags)if(typeof tag==='string')counts.set(tag,(counts.get(tag)||0)+1)}res.json({tags:[...counts.entries()].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])).slice(0,30).map(([tag])=>tag)});}catch(error){next(error);}});
+  app.delete('/api/captures/:id',(req,res,next)=>{try{if(!ownsCapture(req,res,req.params.id))return;const result=deleteCapture(db,req.params.id);if(result.notFound)return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}});reportAudit(audit,{event:'capture_deleted',result:'succeeded'});notifyJournal('delete');res.json(result);}catch(error){next(error);}});
+  app.post('/api/captures/:id/restore',(req,res,next)=>{try{if(!ownsCapture(req,res,req.params.id))return;const result=restoreCapture(db,req.params.id);if(result.notFound)return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}});reportAudit(audit,{event:'capture_restored',result:'succeeded'});notifyJournal('restore');res.json(result);}catch(error){next(error);}});
+  app.post('/api/projections/:id/complete',(req,res,next)=>{try{if(!validProjectionId(req.params.id))return res.status(400).json({error:{code:'invalid_projection_id',message:'Некорректный идентификатор проекции.'}});if(projectionOwner(db,req.params.id)!==req.user.id)return res.status(404).json({error:{code:'not_found',message:'Проекция не найдена.'}});const result=completeProjection(db,req.params.id);if(result.error)return completionError(res,result.error);notifyJournal('completion');res.json({projectionId:result.projection.id,completion:result.completion,changed:result.changed});}catch(error){next(error);}});
+  app.post('/api/projections/:id/undo-complete',(req,res,next)=>{try{if(!validProjectionId(req.params.id))return res.status(400).json({error:{code:'invalid_projection_id',message:'Некорректный идентификатор проекции.'}});if(projectionOwner(db,req.params.id)!==req.user.id)return res.status(404).json({error:{code:'not_found',message:'Проекция не найдена.'}});const result=undoProjectionCompletion(db,req.params.id);if(result.error)return completionError(res,result.error);notifyJournal('completion');res.json({projectionId:result.projection.id,completion:result.completion,changed:result.changed});}catch(error){next(error);}});
+  app.get('/api/entries',(req,res)=>{ const limit=Math.min(Math.max(Number(req.query.limit)||40,1),100); res.json(listEntries(db,{cursor:typeof req.query.cursor==='string'?req.query.cursor:null,limit,userId:req.user.id})); });
+  app.get('/api/day',(req,res)=>{const date=req.query.date||dateInTimeZone(now(),configuredTimeZone);if(!validDate(date))return res.status(400).json({error:{code:'invalid_date',message:'Дата должна быть в формате YYYY-MM-DD.'}});res.json({date,...dayView(db,date,now(),req.user.id)});});
+  app.get('/api/daily-brief',(req,res,next)=>{try{const date=req.query.date||dateInTimeZone(now(),'Europe/Samara'), revision=req.query.revision; if(!validDate(date)||revision!==undefined&&(!/^\d+$/.test(revision)||Number(revision)<1))return res.status(400).json({error:{code:'invalid_daily_brief_request',message:'Некорректная дата или ревизия отчёта.'}}); const brief=revision===undefined?getDailyBrief(db,{date,timeZone:'Europe/Samara',userId:req.user.id}):findDailyBrief(db,{date,timeZone:'Europe/Samara',revision:Number(revision),userId:req.user.id}); if(!brief)return res.status(404).json({error:{code:'not_found',message:'Ревизия отчёта не найдена.'}}); res.json(brief);}catch(error){next(error);}});
+  app.post('/api/daily-brief/refresh',(req,res,next)=>{try{const date=req.body?.date||dateInTimeZone(now(),'Europe/Samara');if(!validDate(date))return res.status(400).json({error:{code:'invalid_date',message:'Дата должна быть в формате YYYY-MM-DD.'}});res.json(getDailyBrief(db,{date,timeZone:'Europe/Samara',force:true,userId:req.user.id}));}catch(error){next(error);}});
+  app.get('/api/daily-brief/:date/revisions/:revision/sources/:sourceId',(req,res,next)=>{try{const {date,revision,sourceId}=req.params;if(!validDate(date)||!/^\d+$/.test(revision)||Number(revision)<1||!validJobId(sourceId))return res.status(400).json({error:{code:'invalid_daily_source',message:'Некорректный источник отчёта.'}});const source=findDailyBriefSource(db,{date,timeZone:'Europe/Samara',revision:Number(revision),sourceId,userId:req.user.id});if(!source)return res.status(404).json({error:{code:'not_found',message:'Источник отчёта не найден.'}});res.json({captureId:source.id,raw:source.raw,occurredAt:source.occurred_at,createdAt:source.created_at});}catch(error){next(error);}});
+  app.post('/api/captures/:id/notes',(req,res,next)=>{try{if(!ownsCapture(req,res,req.params.id))return;const body=req.body?.body;if(typeof body!=='string'||body.length>NOTE_BODY_LIMIT)return res.status(400).json({error:{code:'invalid_note',message:`Заметка должна быть текстом до ${NOTE_BODY_LIMIT} символов.`}});const saved=saveNote(db,req.params.id,body);if(saved.notFound)return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}});const row=getAggregate(db,req.params.id);notifyJournal('note');res.json({entry:fullEntry(db,row)});}catch(error){next(error);}});
+  app.post('/api/undo',(req,res)=>{ const undoGroupId=req.body?.undoGroupId; if(typeof undoGroupId!=='string') return res.status(400).json({error:{code:'invalid_undo',message:'Нужна группа отмены.'}}); const owner=undoGroupOwner(db,undoGroupId);if(owner!==undefined&&owner!==req.user.id)return res.status(404).json({error:{code:'not_found',message:'Группа отмены не найдена.'}});const reverted=undo(db,undoGroupId);notifyJournal('undo');res.json({reverted}); });
+  app.post('/api/memory/search',(req,res)=>{const query=memoryQuery(req); if(!query) return res.status(400).json({error:{code:'invalid_query',message:'Введите запрос длиной до 2 000 символов.'}}); res.json({results:search(db,query,req.user.id)});});
+  app.post('/api/memory/answer',async(req,res,next)=>{const lifecycle=requestAbortSignal(req,res);try{const query=memoryQuery(req),provider=requestedProvider(req.body?.provider);if(!query)return res.status(400).json({error:{code:'invalid_query',message:'Введите запрос длиной до 2 000 символов.'}});if(provider===null)return res.status(400).json({error:{code:'invalid_provider',message:'Некорректный провайдер.'}});const selectedModelValue=requestedModel(req.body?.model);if(selectedModelValue===null)return res.status(400).json({error:{code:'invalid_model',message:'Некорректная модель.'}});const sources=boundedMemorySources(query,search(db,query,req.user.id)); const answer=await ai.answer(query,sources,provider,lifecycle.signal,selectedModelValue||null);noteUsage(db,answer,'answer',req.user.id);if(lifecycle.signal.aborted)return;res.json({...answer,sources,provenance:{requestedProvider:answer.requestedProvider,usedProvider:answer.usedProvider,provider:answer.provider,model:answer.model,fallbackReason:answer.fallbackReason}});}catch(error){if(!lifecycle.signal.aborted)next(error);}finally{lifecycle.dispose();}});
+  app.get('/api/export',(req,res)=>{const exported=exportLedger(db,req.user.id);if(exported.limitExceeded)return res.status(413).json({error:{code:'export_limit_exceeded',message:'Экспорт слишком большой для безопасного создания одним файлом.'},rowLimit:exported.rowLimit});reportAudit(audit,{event:'export_created',schemaVersion:exported.schemaVersion,rowCount:exported.captures.length+exported.interpretations.length+exported.corrections.length+exported.projections.length+exported.captureJobs.length+exported.captureJobEvents.length+exported.ledgerEvents.length+exported.dailyBriefs.length+exported.dailyBriefSources.length});res.type('application/json').attachment('pagent-ledger.json').json(exported);});
+  app.get('/api/tags',(req,res,next)=>{try{const counts=new Map();for(const row of db.prepare("SELECT i.classification_json FROM interpretations i JOIN captures c ON c.id=i.capture_id WHERE i.status='active' AND c.deleted_at IS NULL AND c.user_id IS ?").all(req.user.id)){let tags;try{tags=JSON.parse(row.classification_json)?.tags}catch{continue}if(!Array.isArray(tags))continue;for(const tag of tags)if(typeof tag==='string')counts.set(tag,(counts.get(tag)||0)+1)}res.json({tags:[...counts.entries()].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])).slice(0,30).map(([tag])=>tag)});}catch(error){next(error);}});
   // ── голосовой диалог ──
   // Состояние: настроен ли ключ и в каком режиме пойдёт разговор.
   // Промпт собирается на месте: он зависит от выбранного голоса и добавки из
   // настроек, а они меняются без перезапуска.
-  const voiceInstructions = () => {
+  const voiceInstructions = (user = null) => {
     const state = voice.status();
     const chosen = state.provider === 'gemini' ? state.providers?.gemini?.voice : state.providers?.openai?.voice;
-    return buildVoiceInstructions({ provider:state.provider, voice:state.voice || chosen, extra:stored.systemPrompt });
+    return buildVoiceInstructions({ provider:state.provider, voice:state.voice || chosen, extra:settingValue(stored, process.env, 'systemPrompt', user?.id) });
   };
-  app.get('/api/voice/status',(req,res)=>res.json({...voice.status(),voices:VOICE_CHOICES,instructions:voiceInstructions(),tools:VOICE_TOOLS}));
+  // ── предел расхода на разговор ──
+  // Правило одно на всех, но у человека может быть своё: личный предел сильнее
+  // общего, потому что заводят его как раз для исключения. «Ноль» — это ноль, а
+  // «пусто» — «своего нет», и путать их нельзя.
+  const voiceRate = (provider) => Number(settingValue(stored, process.env, provider === 'gemini' ? 'voiceGeminiRateUsdPerMinute' : 'voiceRateUsdPerMinute', null)) || 0;
+  const numberOrNull = (value) => { const parsed = Number(value); return value === null || value === undefined || value === '' || !Number.isFinite(parsed) ? null : parsed; };
+  function voiceQuota(user) {
+    const window = user?.voice_limit_window || settingValue(stored, process.env, 'voiceLimitWindow', null) || 'day';
+    const limitUsd = user?.voice_limit_usd ?? numberOrNull(settingValue(stored, process.env, 'voiceLimitUsd', null));
+    const limitMinutes = user?.voice_limit_minutes ?? numberOrNull(settingValue(stored, process.env, 'voiceLimitMinutes', null));
+    // Забытые разговоры закрываются перед подсчётом: иначе вкладка, закрытая
+    // крестиком, навсегда оставалась бы бесплатной.
+    try { closeStaleVoiceSessions(db, { at: now().toISOString() }); } catch {}
+    const spent = voiceSpend(db, { userId: user.id, window, at: now() });
+    const minutes = spent.seconds / 60;
+    const globallyOff = settingValue(stored, process.env, 'voiceEnabled', null) === 'off';
+    const reason = globallyOff ? 'voice_disabled'
+      : user.voice_blocked ? 'voice_blocked_for_user'
+      : limitUsd !== null && spent.costUsd >= limitUsd ? 'voice_limit_usd'
+      : limitMinutes !== null && minutes >= limitMinutes ? 'voice_limit_minutes'
+      : null;
+    return {
+      window, limitUsd, limitMinutes,
+      spentUsd: spent.costUsd, spentMinutes: Math.round(minutes * 100) / 100, sessions: spent.sessions,
+      remainingUsd: limitUsd === null ? null : Math.max(0, limitUsd - spent.costUsd),
+      remainingMinutes: limitMinutes === null ? null : Math.max(0, Math.round((limitMinutes - minutes) * 100) / 100),
+      rateUsdPerMinute: voiceRate(voice.status().provider),
+      priced: voiceRate(voice.status().provider) > 0,
+      allowed: reason === null, reason,
+    };
+  }
+  const quotaMessages = {
+    voice_disabled: 'Разговор выключен администратором.',
+    voice_blocked_for_user: 'Разговор для вашей учётной записи закрыт администратором.',
+    voice_limit_usd: 'Предел расхода на разговор исчерпан.',
+    voice_limit_minutes: 'Предел времени разговора исчерпан.',
+  };
+  app.get('/api/voice/status',(req,res)=>res.json({...voice.status(),voices:VOICE_CHOICES,instructions:voiceInstructions(req.user),tools:VOICE_TOOLS,quota:voiceQuota(req.user)}));
+  app.get('/api/voice/quota',(req,res,next)=>{try{res.json(voiceQuota(req.user));}catch(error){next(error);}});
   // Короткоживущий токен для браузера. Сам ключ наружу не уходит; без ключа
   // отвечаем режимом заглушки, чтобы интерфейс работал одинаково.
-  app.post('/api/voice/session',async(req,res,next)=>{try{const chosen=req.body?.provider;if(chosen!==undefined&&chosen!==null&&chosen!=='openai'&&chosen!=='gemini')return res.status(400).json({error:{code:'invalid_voice_provider',message:'Некорректный провайдер голоса.'}});const session=await voice.createSession({instructions:voiceInstructions(),tools:VOICE_TOOLS,provider:chosen??null});
+  app.post('/api/voice/session',async(req,res,next)=>{try{const chosen=req.body?.provider;if(chosen!==undefined&&chosen!==null&&chosen!=='openai'&&chosen!=='gemini')return res.status(400).json({error:{code:'invalid_voice_provider',message:'Некорректный провайдер голоса.'}});// Предел проверяется до выдачи токена: после выдачи разговор идёт мимо нас,
+    // и остановить его будет уже нечем.
+    const quota=voiceQuota(req.user);
+    if(!quota.allowed)return res.status(429).json({error:{code:quota.reason,message:quotaMessages[quota.reason]||'Разговор недоступен.'},quota});
+    const session=await voice.createSession({instructions:voiceInstructions(req.user),tools:VOICE_TOOLS,provider:chosen??null});
     // Выбранный провайдер без ключа — это не «сервер сломался», а «так не
     // получится»: причину видно, и интерфейс может предложить другой.
     if(session.error==='not_configured')return res.status(409).json({error:{code:'voice_provider_not_configured',message:'У выбранного провайдера нет ключа.'}});
     if(session.error)return res.status(503).json({error:{code:session.error,message:'Голосовая модель недоступна.'}});
     // Аудио идёт мимо нас, поэтому минуты разговора нам не видны — считаем хотя
     // бы сами разговоры, чтобы расход не выглядел нулевым.
-    try{recordUsage(db,{provider:session.provider||voice.status().provider||'openai',model:session.model||null,kind:'voice_session'});}catch{}
-    res.json({...session,instructions:voiceInstructions(),tools:VOICE_TOOLS});}catch(error){next(error);}});
+    const voiceProvider=session.provider||voice.status().provider||'openai';
+    try{recordUsage(db,{provider:voiceProvider,model:session.model||null,kind:'voice_session',userId:req.user.id});}catch{}
+    // Разговор заводится в собственной книге расхода: она не уходит в экспорт и
+    // переживает «Очистить данные» — иначе предел обходился бы одной кнопкой.
+    let voiceSessionId=null;
+    try{voiceSessionId=openVoiceSession(db,{userId:req.user.id,provider:voiceProvider,model:session.model||null,ratePerMinute:voiceRate(voiceProvider),startedAt:now().toISOString()});}catch{}
+    res.json({...session,voiceSessionId,instructions:voiceInstructions(req.user),tools:VOICE_TOOLS,quota:voiceQuota(req.user)});}catch(error){next(error);}});
+  // Браузер сообщает, сколько говорили. Верить ему на слово нельзя, поэтому
+  // длительность обрезается по времени, реально прошедшему с выдачи токена.
+  app.post('/api/voice/session/:id/close',(req,res,next)=>{try{if(!validJobId(req.params.id))return res.status(400).json({error:{code:'invalid_session_id',message:'Некорректный идентификатор разговора.'}});const owned=db.prepare('SELECT user_id FROM voice_sessions WHERE id=?').get(req.params.id);if(!owned||owned.user_id!==req.user.id)return res.status(404).json({error:{code:'not_found',message:'Разговор не найден.'}});const seconds=Number(req.body?.seconds);const closed=closeVoiceSession(db,req.params.id,{seconds:Number.isFinite(seconds)?seconds:undefined,at:now().toISOString(),closedBy:'client'});res.json({seconds:closed?.seconds??0,costUsd:closed?.cost_usd??0,quota:voiceQuota(req.user)});}catch(error){next(error);}});
   // Вызов инструмента моделью: журнал меняется только здесь, на сервере.
   // Сказанное вслух разбирает та же модель, что и напечатанное: провайдер
   // приходит из интерфейса, а если его не назвали — берётся тот, что выбран на
   // сервере. С жёстким 'fallback' отчёт о сделанном оказывался заметкой.
-  app.post('/api/voice/tool',async(req,res,next)=>{try{const name=req.body?.name;if(typeof name!=='string'||!VOICE_TOOLS.some(tool=>tool.name===name))return res.status(400).json({error:{code:'unknown_tool',message:'Неизвестный инструмент.'}});const requested=requestedProvider(req.body?.provider);if(requested===null)return res.status(400).json({error:{code:'invalid_provider',message:'Некорректный провайдер.'}});const args=req.body?.arguments&&typeof req.body.arguments==='object'?req.body.arguments:{};const provider=await snapshotProvider(ai,requested);const result=runVoiceTool(db,name,args,{now,timeZone:configuredTimeZone,provider});if(result?.error)return res.status(400).json({error:{code:'tool_failed',message:result.error}});captureJobWorker.wake();notifyJournal('voice');res.json({name,result});}catch(error){next(error);}});
+  app.post('/api/voice/tool',async(req,res,next)=>{try{const name=req.body?.name;if(typeof name!=='string'||!VOICE_TOOLS.some(tool=>tool.name===name))return res.status(400).json({error:{code:'unknown_tool',message:'Неизвестный инструмент.'}});const requested=requestedProvider(req.body?.provider);if(requested===null)return res.status(400).json({error:{code:'invalid_provider',message:'Некорректный провайдер.'}});const args=req.body?.arguments&&typeof req.body.arguments==='object'?req.body.arguments:{};const provider=await snapshotProvider(ai,requested);const result=runVoiceTool(db,name,args,{now,timeZone:configuredTimeZone,provider,userId:req.user.id});if(result?.error)return res.status(400).json({error:{code:'tool_failed',message:result.error}});captureJobWorker.wake();notifyJournal('voice');res.json({name,result});}catch(error){next(error);}});
   // Ход разговора в режиме заглушки: та же цепочка инструментов, но без сети.
-  app.post('/api/voice/turn',async(req,res,next)=>{try{const text=typeof req.body?.text==='string'?req.body.text:'';if(text.length>2000)return res.status(400).json({error:{code:'invalid_turn',message:'Реплика слишком длинная.'}});const requested=requestedProvider(req.body?.provider);if(requested===null)return res.status(400).json({error:{code:'invalid_provider',message:'Некорректный провайдер.'}});const provider=await snapshotProvider(ai,requested);const turn=mockVoiceTurn(db,text,{now,timeZone:configuredTimeZone,provider});captureJobWorker.wake();if(turn.calls?.length)notifyJournal('voice');res.json(turn);}catch(error){next(error);}});
-  app.post('/api/reset',(req,res,next)=>{if(req.body?.confirmation!=='СБРОСИТЬ КИЗУНА')return res.status(400).json({error:{code:'invalid_confirmation',message:'Требуется точная фраза подтверждения.'}});try{resetLedger(db);try{fs.rmSync(attachmentsDirectory,{recursive:true,force:true});fs.mkdirSync(attachmentsDirectory,{recursive:true});}catch{}reportAudit(audit,{event:'local_data_reset',result:'succeeded'});notifyJournal('reset');res.json({ok:true});}catch(error){reportAudit(audit,{event:'local_data_reset',result:'failed',errorCode:'storage_error'});next(error);}});
+  app.post('/api/voice/turn',async(req,res,next)=>{try{const text=typeof req.body?.text==='string'?req.body.text:'';if(text.length>2000)return res.status(400).json({error:{code:'invalid_turn',message:'Реплика слишком длинная.'}});const requested=requestedProvider(req.body?.provider);if(requested===null)return res.status(400).json({error:{code:'invalid_provider',message:'Некорректный провайдер.'}});const provider=await snapshotProvider(ai,requested);const turn=mockVoiceTurn(db,text,{now,timeZone:configuredTimeZone,provider,userId:req.user.id});captureJobWorker.wake();if(turn.calls?.length)notifyJournal('voice');res.json(turn);}catch(error){next(error);}});
+  app.post('/api/reset',(req,res,next)=>{if(req.body?.confirmation!=='СБРОСИТЬ КИЗУНА')return res.status(400).json({error:{code:'invalid_confirmation',message:'Требуется точная фраза подтверждения.'}});try{const mine=db.prepare('SELECT a.id FROM capture_attachments a JOIN captures c ON c.id=a.capture_id WHERE c.user_id IS ?').all(req.user.id);resetLedger(db,req.user.id);for(const row of mine){try{fs.rmSync(attachmentPath(row.id),{force:true});}catch{}}reportAudit(audit,{event:'local_data_reset',result:'succeeded'});notifyJournal('reset');res.json({ok:true});}catch(error){reportAudit(audit,{event:'local_data_reset',result:'failed',errorCode:'storage_error'});next(error);}});
   // ── вложения ──
   // Тело приходит сырыми байтами: base64 в JSON раздул бы запрос на треть, а
   // multipart потребовал бы зависимости ради одного поля.
   app.post('/api/captures/:id/attachments', express.raw({ type:'*/*', limit: ATTACHMENT_SIZE_LIMIT }), (req,res,next)=>{
     try {
+      if (!ownsCapture(req,res,req.params.id)) return;
       const bytes = Buffer.isBuffer(req.body) ? req.body : null;
       if (!bytes || !bytes.length) return res.status(400).json({error:{code:'empty_attachment',message:'Файл пустой.'}});
       const declared = String(req.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
@@ -286,7 +394,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   app.get('/api/attachments/:id',(req,res,next)=>{
     try {
       if (!validAttachmentId(req.params.id)) return res.status(400).json({error:{code:'invalid_attachment_id',message:'Некорректный идентификатор вложения.'}});
-      const found = findAttachment(db, req.params.id);
+      const found = attachmentOwner(db, req.params.id) === req.user.id ? findAttachment(db, req.params.id) : null;
       if (!found) return res.status(404).json({error:{code:'not_found',message:'Вложение не найдено.'}});
       const file = attachmentPath(found.id);
       if (!fs.existsSync(file)) return res.status(410).json({error:{code:'attachment_gone',message:'Файл вложения не найден на диске.'}});
@@ -306,6 +414,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   app.delete('/api/attachments/:id',(req,res,next)=>{
     try {
       if (!validAttachmentId(req.params.id)) return res.status(400).json({error:{code:'invalid_attachment_id',message:'Некорректный идентификатор вложения.'}});
+      if (attachmentOwner(db, req.params.id) !== req.user.id) return res.status(404).json({error:{code:'not_found',message:'Вложение не найдено.'}});
       const removed = removeAttachment(db, req.params.id);
       if (removed.notFound) return res.status(404).json({error:{code:'not_found',message:'Вложение не найдено.'}});
       try { fs.rmSync(attachmentPath(removed.id), { force: true }); } catch {}
@@ -315,8 +424,13 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     } catch(error){ next(error); }
   });
   app.use('/public',express.static(path.join(__dirname,'..','public'),{index:false,dotfiles:'deny'}));
-  app.get('/',(req,res)=>res.sendFile(path.join(__dirname,'..','public','app.html')));
-  for(const page of ['prototype.html','memory-model.html','index.html','design-options.html','ui-options.html','voice-orb-variations.html','capture-motion-variations.html'])app.get(`/${page}`,(req,res)=>res.sendFile(path.join(__dirname,'..',page)));
+  // Без учётной записи открывается только вход: приложение целиком, включая
+  // журнал, живёт за ним.
+  app.get('/login',(req,res)=>res.sendFile(path.join(__dirname,'..','public','auth.html')));
+  app.get('/',(req,res)=>req.user?res.sendFile(path.join(__dirname,'..','public','app.html')):res.redirect('/login'));
+  // Черновики и студии макетов — часть той же двери: снаружи у приложения
+  // видна только страница входа.
+  for(const page of ['prototype.html','memory-model.html','index.html','design-options.html','ui-options.html','voice-orb-variations.html','capture-motion-variations.html'])app.get(`/${page}`,(req,res)=>req.user?res.sendFile(path.join(__dirname,'..',page)):res.redirect('/login'));
   app.use((req,res)=>res.status(404).json({error:{code:'not_found',message:'Не найдено.'}}));
   // Ошибка разбора тела — вина запроса, а не сервера: express.json() помечает
   // такие ошибки типом entity.*/encoding.* и своим статусом (400 на битый JSON,

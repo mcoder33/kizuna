@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server/index.js';
+import { authed } from './helpers/auth.js';
 import { fakeModelService } from './helpers/fake-model.js';
 
 // Файлы вложений лежат на диске рядом с базой, а в базе — только описание.
@@ -25,7 +26,7 @@ async function capture(api, raw = 'запись с вложением') {
 
 test('an attachment is stored beside the entry and comes back byte for byte', async () => {
   const place = workspace();
-  const api = request(place.app);
+  const api = authed(place.app);
   const entry = await capture(api);
   const bytes = Buffer.from('строка из приложенного файла', 'utf8');
 
@@ -64,7 +65,7 @@ test('an attachment is stored beside the entry and comes back byte for byte', as
 
 test('an unknown type is never served as something the browser would run', async () => {
   const place = workspace();
-  const api = request(place.app);
+  const api = authed(place.app);
   const entry = await capture(api);
   const saved = (
     await api
@@ -84,7 +85,7 @@ test('an unknown type is never served as something the browser would run', async
 
 test('a filename with a path in it cannot escape the attachments directory', async () => {
   const place = workspace();
-  const api = request(place.app);
+  const api = authed(place.app);
   const entry = await capture(api);
   const saved = (
     await api
@@ -101,7 +102,7 @@ test('a filename with a path in it cannot escape the attachments directory', asy
 
 test('empty files, unknown ids and a full card are refused with a reason', async () => {
   const place = workspace();
-  const api = request(place.app);
+  const api = authed(place.app);
   const entry = await capture(api);
 
   await api
@@ -136,7 +137,7 @@ test('empty files, unknown ids and a full card are refused with a reason', async
 
 test('deleting an attachment takes the bytes with it, and reset clears the whole shelf', async () => {
   const place = workspace();
-  const api = request(place.app);
+  const api = authed(place.app);
   const entry = await capture(api);
   const saved = (
     await api

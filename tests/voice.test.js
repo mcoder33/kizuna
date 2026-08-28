@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server/index.js';
+import { authed } from './helpers/auth.js';
 import { createVoiceService, runVoiceTool, mockVoiceTurn, pickVoiceProvider, geminiTools, VOICE_TOOLS, VOICE_INSTRUCTIONS, GEMINI_LIVE_URL } from '../server/voice.js';
 import { openDatabase, createLedger } from '../server/db.js';
 import { normalizeClassification } from '../server/classifier.js';
@@ -245,7 +246,7 @@ test('a failing or slow realtime API degrades with a safe reason', async () => {
 });
 
 test('the api exposes status, session, tools and turns', async () => {
-  const api = request(app(createVoiceService({ apiKey: '', geminiApiKey: '' })));
+  const api = authed(app(createVoiceService({ apiKey: '', geminiApiKey: '' })));
 
   const status = (await api.get('/api/voice/status').expect(200)).body;
   assert.equal(status.mode, 'mock');
@@ -270,7 +271,7 @@ test('the api exposes status, session, tools and turns', async () => {
 });
 
 test('with a key the session endpoint hands the browser a short-lived secret only', async () => {
-  const api = request(app(createVoiceService({
+  const api = authed(app(createVoiceService({
     apiKey: 'sk-secret-key',
     geminiApiKey: '',
     fetch: async () => ({ ok: true, json: async () => ({ value: 'ek_browser', expires_at: 42 }) }),
@@ -283,7 +284,7 @@ test('with a key the session endpoint hands the browser a short-lived secret onl
 });
 
 test('an unavailable realtime API answers 503 instead of pretending', async () => {
-  const api = request(app(createVoiceService({ apiKey: 'sk-test', geminiApiKey: '', fetch: async () => ({ ok: false, status: 429 }) })));
+  const api = authed(app(createVoiceService({ apiKey: 'sk-test', geminiApiKey: '', fetch: async () => ({ ok: false, status: 429 }) })));
   const failed = await api.post('/api/voice/session').expect(503);
   assert.equal(failed.body.error.code, 'unavailable');
 });
@@ -422,7 +423,7 @@ test('a failing gemini token request degrades with a safe reason', async () => {
 });
 
 test('the session endpoint hands the browser a gemini token and the socket url only', async () => {
-  const api = request(app(createVoiceService({
+  const api = authed(app(createVoiceService({
     apiKey: '',
     geminiApiKey: 'gemini-secret-key',
     fetch: async () => ({ ok: true, json: async () => ({ name: 'auth_tokens/browser' }) }),
@@ -537,7 +538,7 @@ test('a spoken capture is parsed by the chosen provider, not always by the rules
 });
 
 test('the api hands the voice tools the provider it was asked for', async () => {
-  const api = request(app());
+  const api = authed(app());
   const spoken = await api
     .post('/api/voice/tool')
     .send({ name: 'create_capture', arguments: { text: 'созвонились по Hub' }, provider: 'openrouter' })

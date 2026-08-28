@@ -8,6 +8,7 @@
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='2' y='2' width='60' height='60' rx='14' fill='%23c73e3a'/%3E%3Cg fill='none' stroke='white' stroke-linecap='round' stroke-width='6'%3E%3Cpath d='M8 17q24 -6 48 0'/%3E%3Cline x1='14' y1='27' x2='50' y2='27'/%3E%3Cline x1='19' y1='22' x2='21' y2='54'/%3E%3Cline x1='45' y1='22' x2='43' y2='54'/%3E%3C/g%3E%3C/svg%3E"
     />
+    <script src="/public/theme.js"></script>
     <link rel="stylesheet" href="/public/app.css" />
   </head>
   <body>
@@ -76,6 +77,22 @@
           />
         </svg>
       </a>
+      <button
+        id="theme-toggle"
+        class="theme-toggle"
+        type="button"
+        aria-label="Тема оформления"
+      ></button>
+      <details class="account-menu">
+        <summary id="account-summary" aria-label="Учётная запись">—</summary>
+        <div class="account-menu-popover">
+          <p id="account-email" class="account-email"></p>
+          <p id="account-role" class="account-role"></p>
+          <a id="account-admin-link" href="#admin" hidden>Пользователи</a>
+          <a href="#settings">Настройки и учётная запись</a>
+          <button id="account-logout" class="linklike" type="button">Выйти</button>
+        </div>
+      </details>
       </div>
     </header>
     <aside
@@ -264,6 +281,31 @@
           ></div>
         </section>
       </section>
+      <section id="admin" class="app-page" hidden>
+        <section class="settings-form" aria-label="Пользователи">
+          <div class="page-heading">
+            <p class="eyebrow">ПОЛЬЗОВАТЕЛИ</p>
+            <h2>Кого пускать</h2>
+            <p>
+              Зарегистрироваться может кто угодно, но до подтверждения заявка
+              никуда не ведёт. У каждого свой журнал: одобрив человека, вы
+              открываете ему приложение, а не свои записи.
+            </p>
+          </div>
+          <div id="admin-pending" class="admin-group" hidden>
+            <h3>Ждут решения</h3>
+            <div id="admin-pending-list" class="admin-list"></div>
+          </div>
+          <div class="admin-group">
+            <h3>Учётные записи</h3>
+            <div id="admin-users" class="admin-list"></div>
+          </div>
+          <div class="admin-group">
+            <h3>Последние входы</h3>
+            <div id="admin-events" class="admin-events"></div>
+          </div>
+        </section>
+      </section>
       <section id="settings" class="app-page" hidden>
         <section class="settings-form" aria-label="Настройки приложения">
           <div class="page-heading">
@@ -408,6 +450,133 @@
           </fieldset>
 
           <fieldset class="settings-group">
+            <legend>Учётная запись</legend>
+            <p class="setting-hint" id="account-summary-line"></p>
+            <label class="setting" for="setting-theme"
+              ><span class="setting-name">Тема оформления</span
+              ><select id="setting-theme">
+                <option value="system">Как в системе</option>
+                <option value="light">Светлая</option>
+                <option value="dark">Тёмная</option>
+              </select></label
+            >
+            <div class="setting-actions">
+              <button id="password-change" class="secondary" type="button">
+                Сменить пароль
+              </button>
+              <button id="logout-everywhere" class="secondary" type="button">
+                Выйти на всех устройствах
+              </button>
+              <button id="account-logout-2" class="secondary" type="button">Выйти</button>
+            </div>
+          </fieldset>
+
+          <fieldset class="settings-group">
+            <legend>Второй фактор</legend>
+            <p class="setting-hint" id="totp-state">Проверяем…</p>
+            <div id="totp-setup" class="totp-setup" hidden>
+              <p class="setting-hint">
+                Отсканируйте код приложением-аутентификатором или введите ключ
+                вручную, затем подтвердите шестизначным кодом.
+              </p>
+              <img id="totp-qr" class="totp-qr" alt="QR-код для аутентификатора" />
+              <code id="totp-secret" class="totp-secret"></code>
+              <label class="setting" for="totp-code"
+                ><span class="setting-name">Код из приложения</span
+                ><input
+                  id="totp-code"
+                  type="text"
+                  inputmode="numeric"
+                  autocomplete="one-time-code"
+                  placeholder="6 цифр"
+              /></label>
+            </div>
+            <div id="totp-codes" class="totp-codes" hidden>
+              <p class="setting-hint">
+                Резервные коды. Каждый работает один раз и показывается только
+                сейчас — сохраните их там, где не лежит телефон.
+              </p>
+              <pre id="totp-codes-list"></pre>
+            </div>
+            <div class="setting-actions">
+              <button id="totp-start" class="secondary" type="button">Включить</button>
+              <button id="totp-confirm" class="primary" type="button" hidden>
+                Подтвердить код
+              </button>
+              <button id="totp-disable" class="secondary" type="button" hidden>
+                Выключить
+              </button>
+              <button id="totp-recovery" class="secondary" type="button" hidden>
+                Новые резервные коды
+              </button>
+            </div>
+          </fieldset>
+
+          <fieldset class="settings-group" id="voice-limit-group">
+            <legend>Предел разговора</legend>
+            <p class="setting-hint" id="voice-quota-state">Считаем…</p>
+            <label class="setting" for="setting-voiceEnabled"
+              ><span class="setting-name">Разговор доступен</span
+              ><select id="setting-voiceEnabled">
+                <option value="on">Да</option>
+                <option value="off">Нет, выключен для всех</option>
+              </select></label
+            >
+            <label class="setting" for="setting-voiceLimitWindow"
+              ><span class="setting-name">Считать за</span
+              ><select id="setting-voiceLimitWindow">
+                <option value="day">Сутки</option>
+                <option value="week">Неделю</option>
+                <option value="month">Месяц</option>
+                <option value="total">Всё время</option>
+              </select></label
+            >
+            <label class="setting" for="setting-voiceLimitMinutes"
+              ><span class="setting-name">Предел, минут</span
+              ><input
+                id="setting-voiceLimitMinutes"
+                type="number"
+                min="0"
+                step="5"
+                placeholder="без предела"
+            /></label>
+            <label class="setting" for="setting-voiceLimitUsd"
+              ><span class="setting-name">Предел, $</span
+              ><input
+                id="setting-voiceLimitUsd"
+                type="number"
+                min="0"
+                step="0.5"
+                placeholder="без предела"
+            /></label>
+            <label class="setting" for="setting-voiceRateUsdPerMinute"
+              ><span class="setting-name">Цена OpenAI, $/мин</span
+              ><input
+                id="setting-voiceRateUsdPerMinute"
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="0"
+            /></label>
+            <label class="setting" for="setting-voiceGeminiRateUsdPerMinute"
+              ><span class="setting-name">Цена Gemini, $/мин</span
+              ><input
+                id="setting-voiceGeminiRateUsdPerMinute"
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="0"
+            /></label>
+            <p class="setting-hint">
+              Звук идёт от браузера прямо к провайдеру, мимо сервера, поэтому
+              настоящего счёта у нас нет: мы знаем минуты разговора и умножаем
+              их на цену, которую вы здесь укажете. Предел по минутам работает и
+              без цены — и именно он надёжно перекрывает разговор. Когда предел
+              исчерпан, новый разговор просто не начинается.
+            </p>
+          </fieldset>
+
+          <fieldset class="settings-group">
             <legend>Расходы</legend>
             <div id="usage-table" class="usage"></div>
             <p class="setting-hint">
@@ -486,6 +655,43 @@
         ></button>
       </div>
       <div id="preview-body" class="preview-body"></div>
+    </dialog>
+    <dialog id="password-dialog">
+      <form method="dialog">
+        <h2>Смена пароля</h2>
+        <p>
+          После смены останется только этот вход: все прочие сессии закроются.
+        </p>
+        <label
+          >Текущий пароль<input id="password-current" type="password" autocomplete="current-password"
+        /></label>
+        <label
+          >Новый пароль<input id="password-new" type="password" autocomplete="new-password"
+        /></label>
+        <label
+          >Новый пароль ещё раз<input
+            id="password-repeat"
+            type="password"
+            autocomplete="new-password"
+        /></label>
+        <div>
+          <button value="cancel" class="secondary">Отмена</button
+          ><button id="password-submit" value="default" class="primary">Сменить</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="totp-disable-dialog">
+      <form method="dialog">
+        <h2>Выключить второй фактор?</h2>
+        <p>Вход снова будет защищён только паролем.</p>
+        <label
+          >Пароль<input id="totp-disable-password" type="password" autocomplete="current-password"
+        /></label>
+        <div>
+          <button value="cancel" class="secondary">Отмена</button
+          ><button id="totp-disable-submit" value="default" class="danger">Выключить</button>
+        </div>
+      </form>
     </dialog>
     <dialog id="reset-dialog">
       <form method="dialog">

@@ -5,10 +5,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { createApp } from '../server/index.js';import { fakeModelService } from './helpers/fake-model.js';
+import { createApp } from '../server/index.js';import { fakeModelService } from './helpers/fake-model.js';import { authed } from './helpers/auth.js';
 import { openDatabase } from '../server/db.js';
 
-function fixture(now=()=>new Date()) { const directory=fs.mkdtempSync(path.join(os.tmpdir(),'pagent-daily-')),databasePath=path.join(directory,'test.sqlite'); return { api:request(createApp({aiService:fakeModelService(),databasePath,now})),databasePath }; }
+function fixture(now=()=>new Date()) { const directory=fs.mkdtempSync(path.join(os.tmpdir(),'pagent-daily-')),databasePath=path.join(directory,'test.sqlite'); return { api:authed(createApp({aiService:fakeModelService(),databasePath,now})),databasePath }; }
 function section(brief,key) { return brief.content.sections.find(candidate=>candidate.key===key); }
 function samaraDate(date=new Date()) { const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Samara',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(date),part=type=>parts.find(item=>item.type===type).value; return `${part('year')}-${part('month')}-${part('day')}`; }
 function nextDate(date) { return new Date(new Date(`${date}T00:00:00Z`).getTime()+86400000).toISOString().slice(0,10); }

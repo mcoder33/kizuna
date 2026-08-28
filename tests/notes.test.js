@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import request from 'supertest';
 import { createApp } from '../server/index.js';
+import { authed } from './helpers/auth.js';
 import { fakeModelService } from './helpers/fake-model.js';
 import { openDatabase, saveNote, activeNote, resetLedger, NOTE_BODY_LIMIT } from '../server/db.js';
 
@@ -21,7 +22,7 @@ async function capture(api, raw = 'Нужно проверить Hub') {
 test('a note is stored as a new version instead of rewriting the previous one', () => {
   const db = openDatabase(fixture());
   const captureId = 'c1';
-  db.prepare('INSERT INTO captures VALUES(?,?,?,?,?,?,NULL)').run(captureId, 'raw', 'text', '2026-08-21T10:00:00Z', '2026-08-21T10:00:00Z', 'private');
+  db.prepare('INSERT INTO captures(id,raw,modality,occurred_at,created_at,privacy_scope,deleted_at) VALUES(?,?,?,?,?,?,NULL)').run(captureId, 'raw', 'text', '2026-08-21T10:00:00Z', '2026-08-21T10:00:00Z', 'private');
   const first = saveNote(db, captureId, '# Первая');
   assert.equal(first.note.version, 1);
   const second = saveNote(db, captureId, '# Вторая');
@@ -39,7 +40,7 @@ test('saving a note for a missing capture reports not found', () => {
 
 test('a note body is capped instead of failing', () => {
   const db = openDatabase(fixture());
-  db.prepare('INSERT INTO captures VALUES(?,?,?,?,?,?,NULL)').run('c2', 'raw', 'text', '2026-08-21T10:00:00Z', '2026-08-21T10:00:00Z', 'private');
+  db.prepare('INSERT INTO captures(id,raw,modality,occurred_at,created_at,privacy_scope,deleted_at) VALUES(?,?,?,?,?,?,NULL)').run('c2', 'raw', 'text', '2026-08-21T10:00:00Z', '2026-08-21T10:00:00Z', 'private');
   const saved = saveNote(db, 'c2', 'x'.repeat(NOTE_BODY_LIMIT + 500));
   assert.equal(saved.note.body.length, NOTE_BODY_LIMIT);
 });
@@ -47,7 +48,7 @@ test('a note body is capped instead of failing', () => {
 test('reset removes notes together with captures', () => {
   const databasePath = fixture();
   const db = openDatabase(databasePath);
-  db.prepare('INSERT INTO captures VALUES(?,?,?,?,?,?,NULL)').run('c3', 'raw', 'text', '2026-08-21T10:00:00Z', '2026-08-21T10:00:00Z', 'private');
+  db.prepare('INSERT INTO captures(id,raw,modality,occurred_at,created_at,privacy_scope,deleted_at) VALUES(?,?,?,?,?,?,NULL)').run('c3', 'raw', 'text', '2026-08-21T10:00:00Z', '2026-08-21T10:00:00Z', 'private');
   saveNote(db, 'c3', 'тело');
   resetLedger(db);
   assert.equal(db.prepare('SELECT COUNT(*) c FROM capture_notes').get().c, 0);
@@ -55,7 +56,7 @@ test('reset removes notes together with captures', () => {
 });
 
 test('the api returns the note with the entry and rejects a non-string body', async () => {
-  const api = request(app());
+  const api = authed(app());
   const entry = await capture(api);
   assert.equal(entry.note, null);
   const saved = (await api.post(`/api/captures/${entry.id}/notes`).send({ body: '**жирный**' }).expect(200)).body;
@@ -69,7 +70,7 @@ test('the api returns the note with the entry and rejects a non-string body', as
 });
 
 test('the note never touches the immutable raw capture', async () => {
-  const api = request(app());
+  const api = authed(app());
   const entry = await capture(api, 'Нужно проверить Hub');
   await api.post(`/api/captures/${entry.id}/notes`).send({ body: 'совсем другой текст' }).expect(200);
   const reread = (await api.get('/api/entries')).body.entries.find(item => item.id === entry.id);
@@ -77,7 +78,7 @@ test('the note never touches the immutable raw capture', async () => {
 });
 
 test('a correction can flip the completed flag the model set', async () => {
-  const api = request(app());
+  const api = authed(app());
   const entry = await capture(api, 'обсудили перспективы ИИ');
   assert.equal(entry.interpretation.classification.completed, true, 'фейковая модель считает это отчётом');
   const corrected = (await api.post(`/api/captures/${entry.id}/corrections`).send({ patch: { completed: false } }).expect(200)).body;
@@ -87,7 +88,7 @@ test('a correction can flip the completed flag the model set', async () => {
 });
 
 test('the export includes note versions as lifecycle provenance', async () => {
-  const api = request(app());
+  const api = authed(app());
   const entry = await capture(api);
   await api.post(`/api/captures/${entry.id}/notes`).send({ body: 'первая' }).expect(200);
   await api.post(`/api/captures/${entry.id}/notes`).send({ body: 'вторая' }).expect(200);

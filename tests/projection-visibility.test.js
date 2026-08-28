@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import request from 'supertest';
-import { createApp } from '../server/index.js';import { fakeModelClassification } from './helpers/fake-model.js';
+import { createApp } from '../server/index.js';import { fakeModelClassification } from './helpers/fake-model.js';import { authed } from './helpers/auth.js';
 import { normalizeClassification } from '../server/classifier.js';
 import { createLedger, openDatabase } from '../server/db.js';
 
@@ -21,7 +21,7 @@ test('accepted classifications stay visible while a flagged ambiguity is gated',
     return modelClassification(raw,'task');
   };
   const aiService={status:async()=>({}),classify:async raw=>({classification:classify(raw),provider:'openrouter',requestedProvider:'openrouter',usedProvider:'openrouter'}),answer:async()=>({})};
-  const api=request(createApp({databasePath,aiService,now:()=>new Date('2026-08-21T10:00:00Z')}));
+  const api=authed(createApp({databasePath,aiService,now:()=>new Date('2026-08-21T10:00:00Z')}));
 
   const task=(await api.post('/api/captures').send({raw:'Нужно проверить Hub'}).expect(201)).body;
   assert.equal(task.review.level,'high','однозначная задача не требует вопросов');

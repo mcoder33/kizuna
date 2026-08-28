@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-/etc/ssl/cert.pem} node --watch server/index.js",
     "start": "NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-/etc/ssl/cert.pem} node server/index.js",
@@ -16,6 +18,7 @@
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
     "openai": "^5.12.2",
+    "qrcode": "^1.5.4",
     "zod": "^3.25.76"
   },
   "devDependencies": {

@@ -10,7 +10,7 @@
 //
 // Инструменты — единственный способ менять журнал: и модель, и заглушка ходят
 // через них, поэтому поведение совпадает, а контракт памяти не обходится.
-import { enqueueCaptureJob, getAggregate, fullEntry, activeNote, saveNote, search, day, replaceInterpretation, deleteCapture, restoreCapture } from './db.js';
+import { enqueueCaptureJob, getAggregate, fullEntry, activeNote, saveNote, search, day, replaceInterpretation, deleteCapture, restoreCapture, captureOwner } from './db.js';
 import { parseCaptureOverrides, applyUserOverrides, gateClassification, shouldMaterializeProjections } from './classifier.js';
 
 export const VOICE_MODEL = 'gpt-realtime';
@@ -196,14 +196,14 @@ function latestParsedCapture(db) {
   );
 }
 
-function latestCapture(db) {
-  return db.prepare('SELECT id, raw FROM captures WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 1').get() || null;
+function latestCapture(db, userId = null) {
+  return db.prepare('SELECT id, raw FROM captures WHERE deleted_at IS NULL AND user_id IS ? ORDER BY created_at DESC LIMIT 1').get(userId) || null;
 }
 
 // «Верни» относится к тому, что убрали последним, а не к первому попавшемуся
 // удалённому: человек отменяет своё же только что сказанное.
-function latestDeletedCapture(db) {
-  return db.prepare('SELECT id, raw FROM captures WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 1').get() || null;
+function latestDeletedCapture(db, userId = null) {
+  return db.prepare('SELECT id, raw FROM captures WHERE deleted_at IS NOT NULL AND user_id IS ? ORDER BY deleted_at DESC LIMIT 1').get(userId) || null;
 }
 
 const typeNames = { task: 'задача', meeting_event: 'встреча', outcome_decision: 'результат', note: 'заметка', idea_question: 'идея' };
@@ -227,7 +227,11 @@ function entrySummary(entry) {
 // provider — тот же разбор, что и у записи из карточки ввода. Раньше здесь
 // стояло жёсткое 'fallback': сказанное вслух разбирали правила, а не модель, и
 // отчёт о сделанном («поговорил с парнями») уходил в заметки вместо «Что делал».
-export function runVoiceTool(db, name, args = {}, { now = () => new Date(), timeZone = 'Europe/Samara', provider = 'fallback' } = {}) {
+export function runVoiceTool(db, name, args = {}, { now = () => new Date(), timeZone = 'Europe/Samara', provider = 'fallback', userId = null } = {}) {
+  // Идентификатор записи модель называет сама, а значит может назвать чужой.
+  // Одна проверка на входе закрывает это для всех инструментов сразу: чужая
+  // запись для разговора просто не существует.
+  if (args.captureId !== undefined && captureOwner(db, args.captureId) !== userId) return { error: 'Запись не найдена.' };
   if (name === 'create_capture') {
     const text = typeof args.text === 'string' ? args.text.trim() : '';
     if (!text || text.length > 10000) return { error: 'Нужен текст записи от 1 до 10 000 символов.' };
@@ -242,6 +246,7 @@ export function runVoiceTool(db, name, args = {}, { now = () => new Date(), time
     // Запись сохраняется тем же путём, что и из карточки ввода: задание в
     // очередь, разбор моделью, ручные параметры поверх разбора.
     const queued = enqueueCaptureJob(db, {
+      userId,
       raw: text,
       occurredAt: undefined,
       selectedProvider: provider,
@@ -253,7 +258,7 @@ export function runVoiceTool(db, name, args = {}, { now = () => new Date(), time
   if (name === 'search_memory') {
     const query = typeof args.query === 'string' ? args.query.trim() : '';
     if (!query) return { error: 'Нужен запрос.' };
-    const results = search(db, query).slice(0, 6).map((result) => ({
+    const results = search(db, query, userId).slice(0, 6).map((result) => ({
       captureId: result.captureId,
       snippet: shortText(result.snippet),
       createdAt: result.createdAt,
@@ -268,9 +273,9 @@ export function runVoiceTool(db, name, args = {}, { now = () => new Date(), time
       .prepare(`SELECT c.id, c.raw, c.created_at, i.classification_json
         FROM captures c
         LEFT JOIN interpretations i ON i.capture_id = c.id AND i.status='active'
-        WHERE c.deleted_at IS NULL
+        WHERE c.deleted_at IS NULL AND c.user_id IS ?
         ORDER BY c.created_at DESC LIMIT 20`)
-      .all();
+      .all(userId);
     const entries = rows.map((row) => {
       if (!row.classification_json) return { captureId: row.id, type: 'на разборе', summary: shortText(row.raw), due: null, tags: [] };
       const classification = JSON.parse(row.classification_json);
@@ -466,13 +471,13 @@ function relativeDate(text, now) {
 }
 
 /** Один ход разговора в режиме заглушки: реплика → инструменты → ответ. */
-export function mockVoiceTurn(db, text, { now = () => new Date(), timeZone = 'Europe/Samara', provider = 'fallback' } = {}) {
+export function mockVoiceTurn(db, text, { now = () => new Date(), timeZone = 'Europe/Samara', provider = 'fallback', userId = null } = {}) {
   const said = String(text || '').trim();
   if (!said) return { reply: 'Я слушаю.', calls: [] };
   const { intent, groups } = detectIntent(said);
   const calls = [];
   const call = (name, args) => {
-    const result = runVoiceTool(db, name, args, { now, timeZone, provider });
+    const result = runVoiceTool(db, name, args, { now, timeZone, provider, userId });
     calls.push({ name, arguments: args, result });
     return result;
   };
@@ -522,7 +527,7 @@ export function mockVoiceTurn(db, text, { now = () => new Date(), timeZone = 'Eu
   }
 
   if (intent === 'delete') {
-    const recent = latestCapture(db);
+    const recent = latestCapture(db, userId);
     if (!recent) return { reply: 'Удалять нечего: журнал пуст.', calls };
     const result = call('delete_capture', { captureId: recent.id });
     if (result.error) return { reply: result.error, calls };
@@ -530,7 +535,7 @@ export function mockVoiceTurn(db, text, { now = () => new Date(), timeZone = 'Eu
   }
 
   if (intent === 'restore') {
-    const removed = latestDeletedCapture(db);
+    const removed = latestDeletedCapture(db, userId);
     if (!removed) return { reply: 'Возвращать нечего: удалённых записей нет.', calls };
     const result = call('restore_capture', { captureId: removed.id });
     if (result.error) return { reply: result.error, calls };
@@ -559,7 +564,7 @@ export function mockVoiceTurn(db, text, { now = () => new Date(), timeZone = 'Eu
 
   if (intent === 'append_note') {
     const note = (groups.text || '').trim();
-    const recent = latestCapture(db);
+    const recent = latestCapture(db, userId);
     if (!recent) return { reply: 'Пока не к чему дописывать: журнал пуст.', calls };
     if (!note) return { reply: 'Что дописать?', calls };
     const result = call('append_note', { captureId: recent.id, text: note });

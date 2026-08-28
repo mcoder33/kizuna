@@ -68,6 +68,7 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS ledger_events_capture_id ON ledger_events(capture_id, created_at);
     CREATE TABLE IF NOT EXISTS daily_briefs (
       id TEXT PRIMARY KEY,
+      user_id TEXT,
       brief_date TEXT NOT NULL,
       time_zone TEXT NOT NULL,
       revision INTEGER NOT NULL,
@@ -75,8 +76,8 @@ function migrate(db) {
       content_json TEXT NOT NULL,
       effective_fingerprint TEXT NOT NULL,
       created_at TEXT NOT NULL,
-      UNIQUE(brief_date, time_zone, revision),
-      UNIQUE(brief_date, time_zone, effective_fingerprint)
+      UNIQUE(user_id, brief_date, time_zone, revision),
+      UNIQUE(user_id, brief_date, time_zone, effective_fingerprint)
     );
     CREATE TABLE IF NOT EXISTS daily_brief_sources (
       id TEXT PRIMARY KEY,
@@ -95,7 +96,7 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS daily_brief_sources_capture_id ON daily_brief_sources(capture_id, created_at);`);
     const dailyBriefColumns = new Set(db.prepare('PRAGMA table_info(daily_briefs)').all().map(column => column.name));
     if (!dailyBriefColumns.has('revision')) migrateLegacyDailyBriefs(db, dailyBriefColumns);
-    db.exec('CREATE INDEX IF NOT EXISTS daily_briefs_latest ON daily_briefs(brief_date, time_zone, revision DESC)');
+    if (new Set(db.prepare('PRAGMA table_info(daily_briefs)').all().map(column => column.name)).has('user_id')) db.exec('CREATE INDEX IF NOT EXISTS daily_briefs_latest ON daily_briefs(user_id, brief_date, time_zone, revision DESC)');
     const ledgerColumns = new Set(db.prepare('PRAGMA table_info(ledger_events)').all().map(column => column.name));
     for (const [name, definition] of [['projection_id','TEXT REFERENCES projections(id)'],['interpretation_id','TEXT REFERENCES interpretations(id)'],['actor','TEXT'],['occurred_at','TEXT']]) if (!ledgerColumns.has(name)) db.exec(`ALTER TABLE ledger_events ADD COLUMN ${name} ${definition}`);
     migrateLedgerEventProvenance(db);
@@ -175,26 +176,138 @@ function migrate(db) {
     const overrideColumns = new Set(db.prepare('PRAGMA table_info(capture_jobs)').all().map(column => column.name));
     if (!overrideColumns.has('overrides_json')) db.exec('ALTER TABLE capture_jobs ADD COLUMN overrides_json TEXT');
     db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(7, now());
+    // Миграция 8: люди. До неё журнал был один и ничей — теперь у каждой записи
+    // есть хозяин, а войти можно только своей учётной записью.
+    migrateUsers(db);
+    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(8, now());
+}
+// Учётные записи, входы и расход голоса. Пароль хранится только хешем, секрет
+// второго фактора — в открытом виде: проверить код без него нельзя, поэтому
+// защита здесь не в шифровании, а в том, что база лежит локально и не уходит
+// ни в экспорт, ни в очистку данных.
+function migrateUsers(db) {
+  db.exec(`CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('admin','user')),
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','active','blocked','rejected')),
+      totp_secret TEXT,
+      totp_pending_secret TEXT,
+      totp_enabled INTEGER NOT NULL DEFAULT 0,
+      recovery_codes_json TEXT,
+      voice_limit_usd REAL,
+      voice_limit_minutes REAL,
+      voice_limit_window TEXT CHECK(voice_limit_window IN ('day','week','month','total')),
+      voice_blocked INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      approved_at TEXT,
+      approved_by TEXT,
+      blocked_at TEXT,
+      blocked_reason TEXT,
+      last_login_at TEXT,
+      failed_attempts INTEGER NOT NULL DEFAULT 0,
+      locked_until TEXT
+    );
+    CREATE TABLE IF NOT EXISTS user_sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      created_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      user_agent TEXT
+    );
+    CREATE INDEX IF NOT EXISTS user_sessions_user ON user_sessions(user_id, expires_at);
+    CREATE TABLE IF NOT EXISTS auth_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      email TEXT,
+      event TEXT NOT NULL,
+      result TEXT NOT NULL,
+      detail TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS auth_events_time ON auth_events(created_at);
+    CREATE TABLE IF NOT EXISTS voice_sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT REFERENCES users(id),
+      provider TEXT NOT NULL,
+      model TEXT,
+      rate_usd_per_minute REAL NOT NULL DEFAULT 0,
+      started_at TEXT NOT NULL,
+      ended_at TEXT,
+      seconds INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL NOT NULL DEFAULT 0,
+      closed_by TEXT
+    );
+    CREATE INDEX IF NOT EXISTS voice_sessions_time ON voice_sessions(started_at);
+    CREATE INDEX IF NOT EXISTS voice_sessions_user ON voice_sessions(user_id, started_at);`);
+  const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map(column => column.name));
+  if (!userColumns.has('voice_limit_minutes')) db.exec('ALTER TABLE users ADD COLUMN voice_limit_minutes REAL');
+  const captureColumns = new Set(db.prepare('PRAGMA table_info(captures)').all().map(column => column.name));
+  if (!captureColumns.has('user_id')) db.exec('ALTER TABLE captures ADD COLUMN user_id TEXT REFERENCES users(id)');
+  db.exec('CREATE INDEX IF NOT EXISTS captures_user ON captures(user_id, created_at)');
+  const usageColumns = new Set(db.prepare('PRAGMA table_info(usage_events)').all().map(column => column.name));
+  if (!usageColumns.has('user_id')) db.exec('ALTER TABLE usage_events ADD COLUMN user_id TEXT');
+  const jobColumns = new Set(db.prepare('PRAGMA table_info(capture_jobs)').all().map(column => column.name));
+  if (!jobColumns.has('user_id')) db.exec('ALTER TABLE capture_jobs ADD COLUMN user_id TEXT');
+  // Отчёт за день — у каждого свой, поэтому и «одна ревизия на дату» тоже своя.
+  // Ограничения переписываются копией таблицы: ALTER TABLE их не меняет.
+  const briefColumns = new Set(db.prepare('PRAGMA table_info(daily_briefs)').all().map(column => column.name));
+  if (!briefColumns.has('user_id')) migrateDailyBriefsPerUser(db);
+}
+function migrateDailyBriefsPerUser(db) {
+  db.pragma('foreign_keys = OFF');
+  try { withImmediateTransaction(db, () => {
+    const briefs = db.prepare('SELECT * FROM daily_briefs ORDER BY created_at,id').all();
+    const sources = db.prepare('SELECT * FROM daily_brief_sources ORDER BY created_at,id').all();
+    db.exec(`ALTER TABLE daily_brief_sources RENAME TO daily_brief_sources_pre_users;
+      ALTER TABLE daily_briefs RENAME TO daily_briefs_pre_users;
+      CREATE TABLE daily_briefs (
+        id TEXT PRIMARY KEY, user_id TEXT, brief_date TEXT NOT NULL, time_zone TEXT NOT NULL, revision INTEGER NOT NULL,
+        generated_at TEXT NOT NULL, content_json TEXT NOT NULL, effective_fingerprint TEXT NOT NULL, created_at TEXT NOT NULL,
+        UNIQUE(user_id, brief_date, time_zone, revision), UNIQUE(user_id, brief_date, time_zone, effective_fingerprint)
+      );
+      CREATE TABLE daily_brief_sources (
+        id TEXT PRIMARY KEY, daily_brief_id TEXT NOT NULL REFERENCES daily_briefs(id), section_key TEXT NOT NULL, item_key TEXT NOT NULL,
+        source_type TEXT NOT NULL CHECK(source_type IN ('capture','projection','interpretation','ledger_event')), source_id TEXT NOT NULL,
+        capture_id TEXT REFERENCES captures(id), projection_id TEXT REFERENCES projections(id), interpretation_id TEXT REFERENCES interpretations(id), ledger_event_id TEXT REFERENCES ledger_events(id), created_at TEXT NOT NULL,
+        UNIQUE(daily_brief_id, section_key, item_key, source_type, source_id)
+      );
+      CREATE INDEX IF NOT EXISTS daily_brief_sources_capture_id ON daily_brief_sources(capture_id, created_at);
+      CREATE INDEX IF NOT EXISTS daily_briefs_latest ON daily_briefs(user_id, brief_date, time_zone, revision DESC);`);
+    const insertBrief = db.prepare('INSERT INTO daily_briefs(id,user_id,brief_date,time_zone,revision,generated_at,content_json,effective_fingerprint,created_at) VALUES(?,?,?,?,?,?,?,?,?)');
+    // Хозяин старых отчётов неизвестен, пока нет ни одного человека: их
+    // подберёт первая учётная запись вместе со старыми записями.
+    for (const brief of briefs) insertBrief.run(brief.id, null, brief.brief_date, brief.time_zone, brief.revision, brief.generated_at, brief.content_json, brief.effective_fingerprint, brief.created_at);
+    const insertSource = db.prepare('INSERT INTO daily_brief_sources(id,daily_brief_id,section_key,item_key,source_type,source_id,capture_id,projection_id,interpretation_id,ledger_event_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)');
+    for (const source of sources) insertSource.run(source.id, source.daily_brief_id, source.section_key, source.item_key, source.source_type, source.source_id, source.capture_id, source.projection_id, source.interpretation_id, source.ledger_event_id, source.created_at);
+    db.exec('DROP TABLE daily_brief_sources_pre_users; DROP TABLE daily_briefs_pre_users;');
+  }); } finally { db.pragma('foreign_keys = ON'); }
+  if (db.prepare('PRAGMA foreign_key_check').all().length) throw new Error('Per-user daily brief migration failed foreign-key validation.');
 }
 
 export const NOTE_BODY_LIMIT = 20000;
 
 // Запись расхода: молча и никогда не мешая основному делу — если что-то в
 // цифрах не сошлось, запись просто не появится, а разбор не сорвётся.
-export function recordUsage(db, { provider, model = null, kind = 'classify', inputTokens = 0, outputTokens = 0, costUsd = null } = {}) {
+export function recordUsage(db, { provider, model = null, kind = 'classify', inputTokens = 0, outputTokens = 0, costUsd = null, userId = null } = {}) {
   if (!provider) return null;
   const at = now();
   const cost = Number.isFinite(costUsd) ? costUsd : null;
-  db.prepare('INSERT INTO usage_events(id,provider,model,kind,input_tokens,output_tokens,cost_usd,created_at) VALUES(?,?,?,?,?,?,?,?)')
-    .run(id(), provider, model, kind, Math.max(0, Math.round(inputTokens) || 0), Math.max(0, Math.round(outputTokens) || 0), cost, at);
+  db.prepare('INSERT INTO usage_events(id,provider,model,kind,input_tokens,output_tokens,cost_usd,created_at,user_id) VALUES(?,?,?,?,?,?,?,?,?)')
+    .run(id(), provider, model, kind, Math.max(0, Math.round(inputTokens) || 0), Math.max(0, Math.round(outputTokens) || 0), cost, at, userId);
   return { provider, model, kind, at };
 }
-function usageSince(db, since) {
+function usageSince(db, since, userId) {
+  // undefined — «весь дом», это нужно администратору; конкретный id (в том
+  // числе null для доисторических записей) — только свой расход.
+  const everyone = userId === undefined;
   const rows = db
     .prepare(`SELECT provider, model, COUNT(*) AS calls, SUM(input_tokens) AS input, SUM(output_tokens) AS output,
         SUM(COALESCE(cost_usd,0)) AS cost, SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END) AS unpriced
-      FROM usage_events WHERE created_at >= ? GROUP BY provider, model ORDER BY calls DESC`)
-    .all(since);
+      FROM usage_events WHERE created_at >= ? ${everyone ? '' : 'AND user_id IS ?'} GROUP BY provider, model ORDER BY calls DESC`)
+    .all(...(everyone ? [since] : [since, userId]));
   const rows_ = rows.map(row => ({
     provider: row.provider,
     model: row.model,
@@ -215,10 +328,10 @@ function usageSince(db, since) {
     rows: rows_,
   };
 }
-export function usageSummary(db, { now: at = new Date() } = {}) {
+export function usageSummary(db, { now: at = new Date(), userId } = {}) {
   const day = new Date(at.getTime() - 24 * 60 * 60 * 1000).toISOString();
   const week = new Date(at.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  return { day: usageSince(db, day), week: usageSince(db, week), total: usageSince(db, '') };
+  return { day: usageSince(db, day, userId), week: usageSince(db, week, userId), total: usageSince(db, '', userId) };
 }
 export function readSettings(db) {
   const out = {};
@@ -422,10 +535,14 @@ function migrateLegacyDailyBriefs(db, columns) {
 const id = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
 
-export function createLedger(db, { raw, occurredAt, classification, provider, model = null, createProjections = true }) {
+// Хозяин записи проставляется здесь и больше не меняется: журнал у каждого
+// свой, и «ничьих» записей после появления первой учётной записи не бывает.
+const INSERT_CAPTURE = 'INSERT INTO captures(id,raw,modality,occurred_at,created_at,privacy_scope,deleted_at,user_id) VALUES(?,?,?,?,?,?,NULL,?)';
+
+export function createLedger(db, { raw, occurredAt, classification, provider, model = null, createProjections = true, userId = null }) {
   const captureId = id(), interpretationId = id(), undoGroupId = id(), createdAt = now();
   const write = db.transaction(() => {
-    db.prepare('INSERT INTO captures VALUES(?,?,?,?,?,?,NULL)').run(captureId, raw, 'text', occurredAt || createdAt, createdAt, 'private');
+    db.prepare(INSERT_CAPTURE).run(captureId, raw, 'text', occurredAt || createdAt, createdAt, 'private', userId);
     db.prepare('INSERT INTO interpretations VALUES(?,?,?,?,?,?,?,?,?,NULL)').run(interpretationId, captureId, 1, 'active', provider, model, JSON.stringify(classification), JSON.stringify(classification.confidence || {}), createdAt);
     if(createProjections) insertProjections(db, interpretationId, makeProjections(captureId, classification, undoGroupId), createdAt);
     db.prepare('INSERT INTO activity_events VALUES(?,?,?,?)').run(id(), 'capture_created', JSON.stringify({ captureId, undoGroupId }), createdAt);
@@ -447,20 +564,22 @@ function insertLedgerEvent(db, eventType, captureId, jobId, createdAt, { project
   db.prepare('INSERT INTO ledger_events(id,event_type,capture_id,job_id,projection_id,interpretation_id,actor,occurred_at,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(id(), eventType, captureId, jobId, projectionId, interpretationId, actor, occurredAt, createdAt);
 }
 
-export function enqueueCaptureJob(db, { raw, occurredAt, selectedProvider, selectedModel = null, idempotencyKey = null, requestFingerprint = null, overrides = null }) {
+export function enqueueCaptureJob(db, { raw, occurredAt, selectedProvider, selectedModel = null, idempotencyKey = null, requestFingerprint = null, overrides = null, userId = null }) {
   const createdAt = now();
   return withImmediateTransaction(db, () => {
     if (idempotencyKey) {
-      const existing = db.prepare('SELECT id,capture_id,request_fingerprint FROM capture_jobs WHERE idempotency_key=?').get(idempotencyKey);
+      // Ключ идемпотентности уникален на всю базу, а повтором считается только
+      // свой же запрос: чужой ключ — это столкновение, а не «то же самое».
+      const existing = db.prepare('SELECT id,capture_id,request_fingerprint,user_id FROM capture_jobs WHERE idempotency_key=?').get(idempotencyKey);
       if (existing) {
-        if (existing.request_fingerprint !== requestFingerprint) return { conflict:true };
+        if (existing.user_id !== userId || existing.request_fingerprint !== requestFingerprint) return { conflict:true };
         return { captureId:existing.capture_id, jobId:existing.id, state:'pending', existing:true };
       }
     }
     const captureId = id(), jobId = id();
-    db.prepare('INSERT INTO captures VALUES(?,?,?,?,?,?,NULL)').run(captureId, raw, 'text', occurredAt || createdAt, createdAt, 'private');
-    db.prepare(`INSERT INTO capture_jobs(id,capture_id,selected_provider,selected_model,state,stage,retryable,retry_of_id,idempotency_key,request_fingerprint,overrides_json,created_at)
-      VALUES(?,?,?,?,'pending','queued',0,NULL,?,?,?,?)`).run(jobId, captureId, selectedProvider, selectedModel, idempotencyKey, requestFingerprint, overrides ? JSON.stringify(overrides) : null, createdAt);
+    db.prepare(INSERT_CAPTURE).run(captureId, raw, 'text', occurredAt || createdAt, createdAt, 'private', userId);
+    db.prepare(`INSERT INTO capture_jobs(id,capture_id,selected_provider,selected_model,state,stage,retryable,retry_of_id,idempotency_key,request_fingerprint,overrides_json,created_at,user_id)
+      VALUES(?,?,?,?,'pending','queued',0,NULL,?,?,?,?,?)`).run(jobId, captureId, selectedProvider, selectedModel, idempotencyKey, requestFingerprint, overrides ? JSON.stringify(overrides) : null, createdAt, userId);
     insertJobEvent(db, jobId, 'queued', createdAt);
     insertLedgerEvent(db, 'capture_queued', captureId, jobId, createdAt);
     return { captureId, jobId, state:'pending', existing:false };
@@ -553,8 +672,8 @@ export function retryCaptureJob(db, jobId) {
     if (!previous) return null;
     if (!['failed','cancelled'].includes(previous.state) || !previous.retryable) return { invalidState:true };
     const retryId = id();
-    db.prepare(`INSERT INTO capture_jobs(id,capture_id,selected_provider,selected_model,state,stage,retryable,retry_of_id,created_at)
-      VALUES(?,?,?,?,'pending','queued',0,?,?)`).run(retryId, previous.capture_id, previous.selected_provider, previous.selected_model || null, previous.id, createdAt);
+    db.prepare(`INSERT INTO capture_jobs(id,capture_id,selected_provider,selected_model,state,stage,retryable,retry_of_id,created_at,user_id)
+      VALUES(?,?,?,?,'pending','queued',0,?,?,?)`).run(retryId, previous.capture_id, previous.selected_provider, previous.selected_model || null, previous.id, createdAt, previous.user_id ?? null);
     insertJobEvent(db, retryId, 'queued', createdAt);
     insertLedgerEvent(db, 'capture_retry_queued', previous.capture_id, retryId, createdAt);
     return { captureId:previous.capture_id, jobId:retryId, state:'pending' };
@@ -562,9 +681,9 @@ export function retryCaptureJob(db, jobId) {
 }
 
 export function getCaptureJob(db, jobId) {
-  const job = db.prepare('SELECT id,capture_id,state,stage,retryable,retry_of_id,created_at,started_at,finished_at,cancelled_at,error_code,used_provider FROM capture_jobs WHERE id=?').get(jobId);
+  const job = db.prepare('SELECT id,capture_id,state,stage,retryable,retry_of_id,created_at,started_at,finished_at,cancelled_at,error_code,used_provider,user_id FROM capture_jobs WHERE id=?').get(jobId);
   if (!job) return null;
-  return { id:job.id, captureId:job.capture_id, state:job.state, stage:job.stage, retryable:Boolean(job.retryable), retryOfId:job.retry_of_id, createdAt:job.created_at, startedAt:job.started_at, finishedAt:job.finished_at, cancelledAt:job.cancelled_at, error:job.error_code, usedProvider:job.used_provider };
+  return { id:job.id, captureId:job.capture_id, state:job.state, stage:job.stage, retryable:Boolean(job.retryable), retryOfId:job.retry_of_id, createdAt:job.created_at, startedAt:job.started_at, finishedAt:job.finished_at, cancelledAt:job.cancelled_at, error:job.error_code, usedProvider:job.used_provider, userId:job.user_id ?? null };
 }
 function insertProjections(db, interpretationId, projections, createdAt) {
   const stmt = db.prepare('INSERT INTO projections VALUES(?,?,?,?,?,?,?,?,NULL)');
@@ -637,14 +756,14 @@ export function undoProjectionCompletion(db, projectionId) {
     return { projection:target.projection, completion:{ completed:false, completedAt:null, actor:null }, changed:true };
   });
 }
-export function listEntries(db, { cursor, limit = 40 }) {
-  const rows = db.prepare(`SELECT c.*, i.id interpretation_id, i.version, i.provider, i.model, i.classification_json, i.field_confidence_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL ${cursor ? 'AND c.created_at < ?' : ''} ORDER BY c.created_at DESC LIMIT ?`).all(...(cursor ? [cursor, limit] : [limit]));
+export function listEntries(db, { cursor, limit = 40, userId }) {
+  const rows = db.prepare(`SELECT c.*, i.id interpretation_id, i.version, i.provider, i.model, i.classification_json, i.field_confidence_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND c.user_id IS ? ${cursor ? 'AND c.created_at < ?' : ''} ORDER BY c.created_at DESC LIMIT ?`).all(...(cursor ? [userId, cursor, limit] : [userId, limit]));
   return { entries: rows.map(row => fullEntry(db, row)), nextCursor: rows.length === limit ? rows.at(-1).created_at : null };
 }
 export function serializeEntry(row) { return { id: row.id, raw: row.raw, occurredAt: row.occurred_at, createdAt: row.created_at, interpretation: { id: row.interpretation_id, version: row.version, provider: row.provider, model: row.model, classification: JSON.parse(row.classification_json), confidence: JSON.parse(row.field_confidence_json) }, projections: [] }; }
 export function fullEntry(db, row) { const entry = serializeEntry(row); entry.note = activeNote(db, row.id); entry.attachments = attachmentsFor(db, row.id); entry.projections = db.prepare("SELECT * FROM projections WHERE capture_id=? AND status='active' ORDER BY created_at").all(row.id).map(p => ({ id:p.id,type:p.projection_type,payload:JSON.parse(p.payload_json),undoGroupId:p.undo_group_id,completion:completionState(db,p.id),completionCandidate:null })); return entry; }
-export function day(db) { const rows = db.prepare(`SELECT c.*, i.id interpretation_id, i.version, i.provider, i.model, i.classification_json, i.field_confidence_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL ORDER BY c.created_at DESC LIMIT 100`).all(); return rows.map(row=>fullEntry(db,row)); }
-export function dayView(db, date, now=new Date()) { const entries=day(db); const scheduled=entry=>entry.interpretation.classification.entities.schedule; const completable=entry=>entry.projections.find(projection=>['task','meeting_event'].includes(projection.type)); const dayEntries=entries.filter(entry=>scheduled(entry)?.date===date); const horizon=new Date(now.getTime()+48*60*60*1000); const upcoming=entries.filter(entry=>{const c=entry.interpretation.classification,s=scheduled(entry),projection=completable(entry);return !projection?.completion.completed&&['meeting_event','task'].includes(c.primaryType)&&s?.sortAt&&new Date(s.sortAt)>=now&&new Date(s.sortAt)<=horizon}).sort((a,b)=>new Date(scheduled(a).sortAt)-new Date(scheduled(b).sortAt)); const attention=entries.filter(entry=>{const c=entry.interpretation.classification,projection=completable(entry);return !projection?.completion.completed&&!c.completed&&((c.primaryType==='task'&&!scheduled(entry)?.date)||c.entities.followUp||c.primaryType==='outcome_decision')}); return {day:dayEntries,upcoming,attention}; }
+export function day(db, userId) { const rows = db.prepare(`SELECT c.*, i.id interpretation_id, i.version, i.provider, i.model, i.classification_json, i.field_confidence_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND c.user_id IS ? ORDER BY c.created_at DESC LIMIT 100`).all(userId); return rows.map(row=>fullEntry(db,row)); }
+export function dayView(db, date, now=new Date(), userId=null) { const entries=day(db,userId); const scheduled=entry=>entry.interpretation.classification.entities.schedule; const completable=entry=>entry.projections.find(projection=>['task','meeting_event'].includes(projection.type)); const dayEntries=entries.filter(entry=>scheduled(entry)?.date===date); const horizon=new Date(now.getTime()+48*60*60*1000); const upcoming=entries.filter(entry=>{const c=entry.interpretation.classification,s=scheduled(entry),projection=completable(entry);return !projection?.completion.completed&&['meeting_event','task'].includes(c.primaryType)&&s?.sortAt&&new Date(s.sortAt)>=now&&new Date(s.sortAt)<=horizon}).sort((a,b)=>new Date(scheduled(a).sortAt)-new Date(scheduled(b).sortAt)); const attention=entries.filter(entry=>{const c=entry.interpretation.classification,projection=completable(entry);return !projection?.completion.completed&&!c.completed&&((c.primaryType==='task'&&!scheduled(entry)?.date)||c.entities.followUp||c.primaryType==='outcome_decision')}); return {day:dayEntries,upcoming,attention}; }
 
 const dailySectionLabels = { doneYesterday:'Сделано вчера', decisions:'Решения', carried:'Перенесённое', blockers:'Блокеры', today:'Сегодня' };
 function samaraBounds(date) { const start = new Date(`${date}T00:00:00+04:00`); return { start:start.toISOString(), end:new Date(start.getTime()+86400000).toISOString() }; }
@@ -653,34 +772,34 @@ function dailySource(sectionKey, itemKey, sourceType, sourceId, row) { return { 
 function dailyItem(key, text, source) { return { key, text, source:{ kind:'capture', captureId:source.captureId } }; }
 function isExplicitDecision(raw) { return !/^\s*[«"']/u.test(raw) && !raw.includes('?') && /^\s*(?:решение|решили|договорились|выбрали)\s*:/iu.test(raw); }
 function effectiveProjectionText(row) { const payload=JSON.parse(row.payload_json),schedule=payload.schedule||{},details=[schedule.time,payload.title,(payload.projects||[]).join(', '),payload.followUp].filter(Boolean); return details.join(' · '); }
-function dailyContent(db, date) {
+function dailyContent(db, date, userId=null) {
   const yesterday = previousDate(date), { start, end } = samaraBounds(yesterday), sections = [];
   const doneRows = db.prepare(`SELECT e.id ledger_id,e.capture_id,e.projection_id,e.interpretation_id,c.raw FROM ledger_events e JOIN captures c ON c.id=e.capture_id
-    WHERE e.event_type='completed' AND e.actor='user' AND e.occurred_at>=? AND e.occurred_at<?
+    WHERE e.event_type='completed' AND e.actor='user' AND c.user_id IS ? AND e.occurred_at>=? AND e.occurred_at<?
     AND NOT EXISTS (SELECT 1 FROM ledger_events later WHERE later.projection_id=e.projection_id AND later.event_type='completion_undone' AND later.rowid>e.rowid)
-    ORDER BY e.occurred_at LIMIT 100`).all(start,end);
+    ORDER BY e.occurred_at LIMIT 100`).all(userId,start,end);
   const done = doneRows.map(row => ({ item:dailyItem(`done-${row.ledger_id}`,row.raw,{captureId:row.capture_id}), sources:[dailySource('doneYesterday',`done-${row.ledger_id}`,'ledger_event',row.ledger_id,row),dailySource('doneYesterday',`done-${row.ledger_id}`,'capture',row.capture_id,row),dailySource('doneYesterday',`done-${row.ledger_id}`,'projection',row.projection_id,row)] }));
   sections.push({ key:'doneYesterday', label:dailySectionLabels.doneYesterday, empty:'Нет подтверждённых завершений за вчера.', items:done });
   const decisionRows = db.prepare(`SELECT c.id,c.raw,i.id interpretation_id FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active'
-    WHERE c.deleted_at IS NULL AND i.classification_json LIKE '%"primaryType":"outcome_decision"%' AND c.occurred_at>=? AND c.occurred_at<? ORDER BY c.occurred_at LIMIT 200`).all(start,end).filter(row=>isExplicitDecision(row.raw)).slice(0,100);
+    WHERE c.deleted_at IS NULL AND c.user_id IS ? AND i.classification_json LIKE '%"primaryType":"outcome_decision"%' AND c.occurred_at>=? AND c.occurred_at<? ORDER BY c.occurred_at LIMIT 200`).all(userId,start,end).filter(row=>isExplicitDecision(row.raw)).slice(0,100);
   const decisions = decisionRows.map(row => ({ item:dailyItem(`decision-${row.id}`,row.raw,{captureId:row.id}), sources:[dailySource('decisions',`decision-${row.id}`,'capture',row.id,row),dailySource('decisions',`decision-${row.id}`,'interpretation',row.interpretation_id,row)] }));
   sections.push({ key:'decisions', label:dailySectionLabels.decisions, empty:'Нет зафиксированных решений.', items:decisions });
   const carriedRows = db.prepare(`SELECT p.id projection_id,p.capture_id,p.interpretation_id,p.payload_json,c.raw FROM projections p JOIN captures c ON c.id=p.capture_id JOIN interpretations i ON i.id=p.interpretation_id
-    WHERE p.status='active' AND c.deleted_at IS NULL AND i.status='active' AND p.projection_type IN ('task','meeting_event')
+    WHERE p.status='active' AND c.deleted_at IS NULL AND c.user_id IS ? AND i.status='active' AND p.projection_type IN ('task','meeting_event')
       AND json_extract(p.payload_json,'$.schedule.date')<?
       AND NOT EXISTS (SELECT 1 FROM ledger_events e WHERE e.projection_id=p.id AND e.event_type='completed' AND NOT EXISTS (SELECT 1 FROM ledger_events undo_e WHERE undo_e.projection_id=p.id AND undo_e.event_type='completion_undone' AND undo_e.rowid>e.rowid))
-    ORDER BY json_extract(p.payload_json,'$.schedule.date'),p.created_at LIMIT 100`).all(date);
+    ORDER BY json_extract(p.payload_json,'$.schedule.date'),p.created_at LIMIT 100`).all(userId,date);
   const carried = carriedRows.map(row => ({ item:dailyItem(`carried-${row.projection_id}`,effectiveProjectionText(row),{captureId:row.capture_id}), sources:[dailySource('carried',`carried-${row.projection_id}`,'capture',row.capture_id,row),dailySource('carried',`carried-${row.projection_id}`,'projection',row.projection_id,row),dailySource('carried',`carried-${row.projection_id}`,'interpretation',row.interpretation_id,row)] }));
   sections.push({ key:'carried', label:dailySectionLabels.carried, empty:'Нет незавершённых задач или встреч из прошлого.', items:carried });
   const blockRows = db.prepare(`SELECT c.id,c.raw,i.id interpretation_id FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active'
-    WHERE c.deleted_at IS NULL AND c.occurred_at>=? AND c.occurred_at<? AND (trim(c.raw) LIKE 'Блокер:%' OR trim(c.raw) LIKE 'Блокер—%' OR trim(c.raw) LIKE 'Блокер-%' OR trim(c.raw) LIKE 'блокер:%' OR trim(c.raw) LIKE 'блокер—%' OR trim(c.raw) LIKE 'блокер-%' OR trim(c.raw) LIKE 'Блокирует:%' OR trim(c.raw) LIKE 'Блокирует—%' OR trim(c.raw) LIKE 'Блокирует-%' OR trim(c.raw) LIKE 'блокирует:%' OR trim(c.raw) LIKE 'блокирует—%' OR trim(c.raw) LIKE 'блокирует-%')
-    ORDER BY c.occurred_at LIMIT 100`).all(start,end);
+    WHERE c.deleted_at IS NULL AND c.user_id IS ? AND c.occurred_at>=? AND c.occurred_at<? AND (trim(c.raw) LIKE 'Блокер:%' OR trim(c.raw) LIKE 'Блокер—%' OR trim(c.raw) LIKE 'Блокер-%' OR trim(c.raw) LIKE 'блокер:%' OR trim(c.raw) LIKE 'блокер—%' OR trim(c.raw) LIKE 'блокер-%' OR trim(c.raw) LIKE 'Блокирует:%' OR trim(c.raw) LIKE 'Блокирует—%' OR trim(c.raw) LIKE 'Блокирует-%' OR trim(c.raw) LIKE 'блокирует:%' OR trim(c.raw) LIKE 'блокирует—%' OR trim(c.raw) LIKE 'блокирует-%')
+    ORDER BY c.occurred_at LIMIT 100`).all(userId,start,end);
   const blockers = blockRows.map(row => ({ item:dailyItem(`blocker-${row.id}`,row.raw,{captureId:row.id}), sources:[dailySource('blockers',`blocker-${row.id}`,'capture',row.id,row),dailySource('blockers',`blocker-${row.id}`,'interpretation',row.interpretation_id,row)] }));
   sections.push({ key:'blockers', label:dailySectionLabels.blockers, empty:'Нет зафиксированных блокеров.', items:blockers });
   const todayRows = db.prepare(`SELECT p.id projection_id,p.capture_id,p.interpretation_id,p.payload_json,c.raw FROM projections p JOIN captures c ON c.id=p.capture_id JOIN interpretations i ON i.id=p.interpretation_id
-    WHERE p.status='active' AND c.deleted_at IS NULL AND i.status='active' AND p.projection_type IN ('task','meeting_event') AND json_extract(p.payload_json,'$.schedule.date')=?
+    WHERE p.status='active' AND c.deleted_at IS NULL AND c.user_id IS ? AND i.status='active' AND p.projection_type IN ('task','meeting_event') AND json_extract(p.payload_json,'$.schedule.date')=?
       AND NOT EXISTS (SELECT 1 FROM ledger_events e WHERE e.projection_id=p.id AND e.event_type='completed' AND NOT EXISTS (SELECT 1 FROM ledger_events undo_e WHERE undo_e.projection_id=p.id AND undo_e.event_type='completion_undone' AND undo_e.rowid>e.rowid))
-    ORDER BY json_extract(p.payload_json,'$.schedule.time'),p.created_at LIMIT 100`).all(date);
+    ORDER BY json_extract(p.payload_json,'$.schedule.time'),p.created_at LIMIT 100`).all(userId,date);
   const today = todayRows.map(row => ({ item:dailyItem(`today-${row.projection_id}`,effectiveProjectionText(row),{captureId:row.capture_id}), sources:[dailySource('today',`today-${row.projection_id}`,'capture',row.capture_id,row),dailySource('today',`today-${row.projection_id}`,'projection',row.projection_id,row),dailySource('today',`today-${row.projection_id}`,'interpretation',row.interpretation_id,row)] }));
   sections.push({ key:'today', label:dailySectionLabels.today, empty:'На сегодня задач и встреч нет.', items:today });
   return { content:{ date, timeZone:'Europe/Samara', sections:sections.map(section=>({...section,items:section.items.map(entry=>entry.item)})) }, sourceRows:sections.flatMap(section=>section.items.flatMap(entry=>entry.sources)) };
@@ -688,11 +807,11 @@ function dailyContent(db, date) {
 function dailyFingerprint(content, sourceRows) { return crypto.createHash('sha256').update(JSON.stringify({content,sources:sourceRows.map(source=>[source.sectionKey,source.itemKey,source.sourceType,source.sourceId])})).digest('hex'); }
 function readBriefSources(db, briefId) { return db.prepare(`SELECT section_key,item_key,source_type,source_id,capture_id FROM daily_brief_sources WHERE daily_brief_id=? ORDER BY rowid`).all(briefId).map(row => ({ sectionKey:row.section_key,itemKey:row.item_key,sourceType:row.source_type,sourceId:row.source_id,action:{kind:'capture',captureId:row.capture_id} })); }
 function serializeBrief(db, row) { return { date:row.brief_date, timeZone:row.time_zone, revision:row.revision, generatedAt:row.generated_at, content:JSON.parse(row.content_json), sources:readBriefSources(db,row.id) }; }
-export function getDailyBrief(db, { date, timeZone='Europe/Samara', force=false }) {
-  return withImmediateTransaction(db,()=>{const { content, sourceRows }=dailyContent(db,date),fingerprint=dailyFingerprint(content,sourceRows),latest=db.prepare('SELECT * FROM daily_briefs WHERE brief_date=? AND time_zone=? ORDER BY revision DESC LIMIT 1').get(date,timeZone);if(latest&&latest.effective_fingerprint===fingerprint)return serializeBrief(db,latest);const generatedAt=now(),revision=(latest?.revision||0)+1,briefId=id();db.prepare('INSERT INTO daily_briefs(id,brief_date,time_zone,revision,generated_at,content_json,effective_fingerprint,created_at) VALUES(?,?,?,?,?,?,?,?)').run(briefId,date,timeZone,revision,generatedAt,JSON.stringify(content),fingerprint,generatedAt);for(const source of sourceRows)db.prepare('INSERT INTO daily_brief_sources(id,daily_brief_id,section_key,item_key,source_type,source_id,capture_id,projection_id,interpretation_id,ledger_event_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id(),briefId,source.sectionKey,source.itemKey,source.sourceType,source.sourceId,source.captureId,source.projectionId,source.interpretationId,source.ledgerEventId,generatedAt);return serializeBrief(db,db.prepare('SELECT * FROM daily_briefs WHERE id=?').get(briefId));});
+export function getDailyBrief(db, { date, timeZone='Europe/Samara', force=false, userId=null }) {
+  return withImmediateTransaction(db,()=>{const { content, sourceRows }=dailyContent(db,date,userId),fingerprint=dailyFingerprint(content,sourceRows),latest=db.prepare('SELECT * FROM daily_briefs WHERE user_id IS ? AND brief_date=? AND time_zone=? ORDER BY revision DESC LIMIT 1').get(userId,date,timeZone);if(latest&&latest.effective_fingerprint===fingerprint)return serializeBrief(db,latest);const generatedAt=now(),revision=(latest?.revision||0)+1,briefId=id();db.prepare('INSERT INTO daily_briefs(id,user_id,brief_date,time_zone,revision,generated_at,content_json,effective_fingerprint,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(briefId,userId,date,timeZone,revision,generatedAt,JSON.stringify(content),fingerprint,generatedAt);for(const source of sourceRows)db.prepare('INSERT INTO daily_brief_sources(id,daily_brief_id,section_key,item_key,source_type,source_id,capture_id,projection_id,interpretation_id,ledger_event_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id(),briefId,source.sectionKey,source.itemKey,source.sourceType,source.sourceId,source.captureId,source.projectionId,source.interpretationId,source.ledgerEventId,generatedAt);return serializeBrief(db,db.prepare('SELECT * FROM daily_briefs WHERE id=?').get(briefId));});
 }
-export function findDailyBrief(db, { date, timeZone='Europe/Samara', revision=null }) { const row = revision === null ? db.prepare('SELECT * FROM daily_briefs WHERE brief_date=? AND time_zone=? ORDER BY revision DESC LIMIT 1').get(date,timeZone) : db.prepare('SELECT * FROM daily_briefs WHERE brief_date=? AND time_zone=? AND revision=?').get(date,timeZone,revision); return row ? serializeBrief(db,row) : null; }
-export function findDailyBriefSource(db,{date,timeZone='Europe/Samara',revision,sourceId}) { return db.prepare(`SELECT c.id,c.raw,c.occurred_at,c.created_at FROM daily_brief_sources s JOIN daily_briefs b ON b.id=s.daily_brief_id JOIN captures c ON c.id=s.capture_id WHERE b.brief_date=? AND b.time_zone=? AND b.revision=? AND s.source_id=?`).get(date,timeZone,revision,sourceId) || null; }
+export function findDailyBrief(db, { date, timeZone='Europe/Samara', revision=null, userId=null }) { const row = revision === null ? db.prepare('SELECT * FROM daily_briefs WHERE user_id IS ? AND brief_date=? AND time_zone=? ORDER BY revision DESC LIMIT 1').get(userId,date,timeZone) : db.prepare('SELECT * FROM daily_briefs WHERE user_id IS ? AND brief_date=? AND time_zone=? AND revision=?').get(userId,date,timeZone,revision); return row ? serializeBrief(db,row) : null; }
+export function findDailyBriefSource(db,{date,timeZone='Europe/Samara',revision,sourceId,userId=null}) { return db.prepare(`SELECT c.id,c.raw,c.occurred_at,c.created_at FROM daily_brief_sources s JOIN daily_briefs b ON b.id=s.daily_brief_id JOIN captures c ON c.id=s.capture_id WHERE b.user_id IS ? AND b.brief_date=? AND b.time_zone=? AND b.revision=? AND s.source_id=?`).get(userId,date,timeZone,revision,sourceId) || null; }
 // Удаление записи — мягкое: строка остаётся в журнале, но помечается временем
 // удаления и пропадает из всех списков, поиска и отчётов. Контракт памяти этим
 // не нарушается: raw не переписывается, история решений сохраняется, а экспорт
@@ -744,35 +863,188 @@ function stemMatch(token, rawTokens) {
   for (const rawToken of rawTokens) if (rawToken.length >= STEM_LENGTH && rawToken.startsWith(stem)) return true;
   return false;
 }
-export function search(db, query) { const normalizedQuery=normalizeMemoryText(query),tokens=meaningfulTokens(normalizedQuery); const rows=db.prepare('SELECT id,raw,created_at FROM captures WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?').all(500); const results=[]; for(const row of rows){const normalizedRaw=normalizeMemoryText(row.raw),rawTokens=new Set(normalizedRaw.split(' '));const matched=tokens.filter(token=>rawTokens.has(token));const stemmed=tokens.filter(token=>!rawTokens.has(token)&&stemMatch(token,rawTokens));const exact=Boolean(normalizedQuery&&normalizedRaw.includes(normalizedQuery));if(!matched.length&&!stemmed.length&&!exact)continue;const score=(exact?10000:0)+matched.length*100+stemmed.length*40+(tokens.length?(matched.length+stemmed.length*0.5)/tokens.length:0)*10;results.push({captureId:row.id,snippet:row.raw.slice(0,500),createdAt:row.created_at,score})}return results.sort((left,right)=>right.score-left.score||right.createdAt.localeCompare(left.createdAt)).slice(0,12).map(({score,...result})=>result); }
+export function search(db, query, userId=null) { const normalizedQuery=normalizeMemoryText(query),tokens=meaningfulTokens(normalizedQuery); const rows=db.prepare('SELECT id,raw,created_at FROM captures WHERE deleted_at IS NULL AND user_id IS ? ORDER BY created_at DESC LIMIT ?').all(userId,500); const results=[]; for(const row of rows){const normalizedRaw=normalizeMemoryText(row.raw),rawTokens=new Set(normalizedRaw.split(' '));const matched=tokens.filter(token=>rawTokens.has(token));const stemmed=tokens.filter(token=>!rawTokens.has(token)&&stemMatch(token,rawTokens));const exact=Boolean(normalizedQuery&&normalizedRaw.includes(normalizedQuery));if(!matched.length&&!stemmed.length&&!exact)continue;const score=(exact?10000:0)+matched.length*100+stemmed.length*40+(tokens.length?(matched.length+stemmed.length*0.5)/tokens.length:0)*10;results.push({captureId:row.id,snippet:row.raw.slice(0,500),createdAt:row.created_at,score})}return results.sort((left,right)=>right.score-left.score||right.createdAt.localeCompare(left.createdAt)).slice(0,12).map(({score,...result})=>result); }
 const EXPORT_ROW_LIMIT = 10_000;
 const exportTables = ['captures','interpretations','corrections','projections','capture_jobs','capture_job_events','ledger_events','daily_briefs','daily_brief_sources'];
-function exportRowCount(db) { return exportTables.reduce((total, table) => total + db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count, 0); }
-export function exportLedger(db) {
-  const rowCount = exportRowCount(db);
+// Экспорт и очистка — только про свой журнал: чужие записи не выгружаются и
+// не стираются, даже если очистку запускает администратор.
+const MINE = 'capture_id IN (SELECT id FROM captures WHERE user_id IS ?)';
+const ownedRows = {
+  captures: ['user_id IS ?', 1],
+  interpretations: [MINE, 1], corrections: [MINE, 1], projections: [MINE, 1],
+  capture_notes: [MINE, 1], capture_attachments: [MINE, 1], capture_jobs: [MINE, 1],
+  ledger_events: [MINE, 1],
+  capture_job_events: ['job_id IN (SELECT id FROM capture_jobs WHERE ' + MINE + ')', 1],
+  daily_briefs: ['user_id IS ?', 1],
+  daily_brief_sources: ['daily_brief_id IN (SELECT id FROM daily_briefs WHERE user_id IS ?)', 1],
+  usage_events: ['user_id IS ?', 1],
+  activity_events: ["json_extract(payload_json,'$.captureId') IN (SELECT id FROM captures WHERE user_id IS ?)", 1],
+};
+const mineWhere = table => 'WHERE ' + ownedRows[table][0];
+function exportRowCount(db, userId) { return exportTables.reduce((total, table) => total + db.prepare(`SELECT COUNT(*) AS count FROM ${table} ${mineWhere(table)}`).get(userId).count, 0); }
+export function exportLedger(db, userId = null) {
+  const rowCount = exportRowCount(db, userId);
   if (rowCount > EXPORT_ROW_LIMIT) return { limitExceeded:true, rowCount, rowLimit:EXPORT_ROW_LIMIT };
+  const mine = (table, columns, order) => db.prepare(`SELECT ${columns} FROM ${table} ${mineWhere(table)} ORDER BY ${order}`).all(userId);
   return {
     schemaVersion:2,
     exportedAt:now(),
     dataClassification:'local-personal-data',
     rowLimit:EXPORT_ROW_LIMIT,
-    captures:db.prepare('SELECT * FROM captures ORDER BY created_at,id').all(),
-    interpretations:db.prepare('SELECT id,capture_id,version,status,provider,created_at,supersedes_id FROM interpretations ORDER BY created_at,id').all(),
-    corrections:db.prepare('SELECT id,capture_id,interpretation_id,correction_json,note,created_at FROM corrections ORDER BY created_at,id').all(),
-    projections:db.prepare('SELECT id,capture_id,interpretation_id,projection_type,status,undo_group_id,created_at,reverted_at FROM projections ORDER BY created_at,id').all(),
-    captureNotes:db.prepare('SELECT id,capture_id,version,status,created_at,supersedes_id FROM capture_notes ORDER BY created_at,id').all(),
-    captureJobs:db.prepare('SELECT id,capture_id,selected_provider,selected_model,state,stage,retryable,retry_of_id,attempt_count,error_code,used_provider,created_at,started_at,finished_at,cancelled_at FROM capture_jobs ORDER BY created_at,id').all(),
-    captureJobEvents:db.prepare('SELECT id,job_id,event_type,created_at FROM capture_job_events ORDER BY created_at,id').all(),
-    ledgerEvents:db.prepare('SELECT * FROM ledger_events ORDER BY created_at,id').all(),
-    dailyBriefs:db.prepare('SELECT * FROM daily_briefs ORDER BY brief_date,time_zone,revision').all(),
-    dailyBriefSources:db.prepare('SELECT * FROM daily_brief_sources ORDER BY daily_brief_id,created_at,id').all()
+    captures:mine('captures','*','created_at,id'),
+    interpretations:mine('interpretations','id,capture_id,version,status,provider,created_at,supersedes_id','created_at,id'),
+    corrections:mine('corrections','id,capture_id,interpretation_id,correction_json,note,created_at','created_at,id'),
+    projections:mine('projections','id,capture_id,interpretation_id,projection_type,status,undo_group_id,created_at,reverted_at','created_at,id'),
+    captureNotes:mine('capture_notes','id,capture_id,version,status,created_at,supersedes_id','created_at,id'),
+    captureJobs:mine('capture_jobs','id,capture_id,selected_provider,selected_model,state,stage,retryable,retry_of_id,attempt_count,error_code,used_provider,created_at,started_at,finished_at,cancelled_at','created_at,id'),
+    captureJobEvents:mine('capture_job_events','id,job_id,event_type,created_at','created_at,id'),
+    ledgerEvents:mine('ledger_events','*','created_at,id'),
+    dailyBriefs:mine('daily_briefs','*','brief_date,time_zone,revision'),
+    dailyBriefSources:mine('daily_brief_sources','*','daily_brief_id,created_at,id')
   };
 }
-export function resetLedger(db) {
+export function resetLedger(db, userId = null) {
   return withImmediateTransaction(db, () => {
     db.exec('DROP TRIGGER IF EXISTS ledger_events_no_update; DROP TRIGGER IF EXISTS ledger_events_no_delete;');
     try {
-      for (const table of ['daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','interpretations','capture_attachments','capture_notes','activity_events','usage_events','captures']) db.prepare(`DELETE FROM ${table}`).run();
+      // Порядок важен: сначала то, что ссылается, потом то, на что ссылаются.
+      for (const table of ['activity_events','daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','interpretations','capture_attachments','capture_notes','usage_events','captures']) db.prepare(`DELETE FROM ${table} ${mineWhere(table)}`).run(userId);
     } finally { createLedgerEventGuards(db); }
   });
 }
+
+// ── люди ────────────────────────────────────────────────────────────────────
+// Учётные записи живут рядом с журналом, но живут отдельной жизнью: их не
+// уносит экспорт, не стирает «Очистить данные» и не видит модель.
+const USER_COLUMNS = 'id,email,role,status,totp_enabled,voice_limit_usd,voice_limit_minutes,voice_limit_window,voice_blocked,created_at,approved_at,approved_by,blocked_at,blocked_reason,last_login_at';
+
+export function createUser(db, { email, passwordHash, role = 'user', status = 'pending' }) {
+  const userId = id(), createdAt = now();
+  db.prepare('INSERT INTO users(id,email,password_hash,role,status,created_at) VALUES(?,?,?,?,?,?)').run(userId, email, passwordHash, role, status, createdAt);
+  return findUserById(db, userId);
+}
+export function findUserByEmail(db, email) { return db.prepare('SELECT * FROM users WHERE email=?').get(String(email || '')) || null; }
+export function findUserById(db, userId) { return db.prepare('SELECT * FROM users WHERE id=?').get(userId) || null; }
+export function countUsers(db) { return db.prepare('SELECT COUNT(*) AS count FROM users').get().count; }
+export function listUsers(db) {
+  // Расход показывается рядом с человеком: без него список пользователей не
+  // отвечает на вопрос, ради которого его и открывают.
+  return db.prepare(`SELECT ${USER_COLUMNS},
+      (SELECT COUNT(*) FROM captures c WHERE c.user_id=users.id AND c.deleted_at IS NULL) AS capture_count,
+      (SELECT COALESCE(SUM(cost_usd),0) FROM voice_sessions v WHERE v.user_id=users.id) AS voice_cost_usd,
+      (SELECT COALESCE(SUM(seconds),0) FROM voice_sessions v WHERE v.user_id=users.id) AS voice_seconds
+    FROM users ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at`).all();
+}
+// Правится только то, что перечислено: список полей — это и есть граница между
+// «администратор поменял роль» и «кто-то переписал чужой пароль».
+const EDITABLE_USER_FIELDS = new Set(['role','status','password_hash','totp_secret','totp_pending_secret','totp_enabled','recovery_codes_json','voice_limit_usd','voice_limit_minutes','voice_limit_window','voice_blocked','approved_at','approved_by','blocked_at','blocked_reason','last_login_at','failed_attempts','locked_until','email']);
+export function updateUser(db, userId, patch) {
+  const fields = Object.entries(patch).filter(([field]) => EDITABLE_USER_FIELDS.has(field));
+  if (!fields.length) return findUserById(db, userId);
+  db.prepare(`UPDATE users SET ${fields.map(([field]) => `${field}=?`).join(',')} WHERE id=?`).run(...fields.map(([, value]) => value), userId);
+  return findUserById(db, userId);
+}
+// Первая учётная запись забирает себе всё, что было записано до появления
+// людей: иначе журнал, который человек вёл до обновления, оказался бы ничьим и
+// пропал бы у него из глаз.
+export function adoptOrphanRecords(db, userId) {
+  return withImmediateTransaction(db, () => {
+    const captures = db.prepare('UPDATE captures SET user_id=? WHERE user_id IS NULL').run(userId).changes;
+    db.prepare('UPDATE capture_jobs SET user_id=? WHERE user_id IS NULL').run(userId);
+    db.prepare('UPDATE usage_events SET user_id=? WHERE user_id IS NULL').run(userId);
+    db.prepare('UPDATE voice_sessions SET user_id=? WHERE user_id IS NULL').run(userId);
+    // Отчёты уникальны по (хозяин, дата, ревизия): у ничьих отчётов хозяин уже
+    // есть — это тот же человек, поэтому столкновения быть не может.
+    db.prepare('UPDATE daily_briefs SET user_id=? WHERE user_id IS NULL').run(userId);
+    return captures;
+  });
+}
+
+// ── сессии ──────────────────────────────────────────────────────────────────
+export function createSession(db, { tokenHash, userId, expiresAt, userAgent = null }) {
+  const at = now();
+  db.prepare('INSERT INTO user_sessions(id,user_id,created_at,last_seen_at,expires_at,user_agent) VALUES(?,?,?,?,?,?)').run(tokenHash, userId, at, at, expiresAt, userAgent ? String(userAgent).slice(0, 200) : null);
+  return { tokenHash, userId, expiresAt };
+}
+export function findSessionUser(db, tokenHash, at = now()) {
+  return db.prepare('SELECT u.*, s.expires_at session_expires_at FROM user_sessions s JOIN users u ON u.id=s.user_id WHERE s.id=? AND s.expires_at > ?').get(tokenHash, at) || null;
+}
+export function touchSession(db, tokenHash, at = now()) { db.prepare('UPDATE user_sessions SET last_seen_at=? WHERE id=?').run(at, tokenHash); }
+export function deleteSession(db, tokenHash) { return db.prepare('DELETE FROM user_sessions WHERE id=?').run(tokenHash).changes; }
+export function deleteUserSessions(db, userId) { return db.prepare('DELETE FROM user_sessions WHERE user_id=?').run(userId).changes; }
+export function purgeExpiredSessions(db, at = now()) { return db.prepare('DELETE FROM user_sessions WHERE expires_at <= ?').run(at).changes; }
+export function countUserSessions(db, userId, at = now()) { return db.prepare('SELECT COUNT(*) AS count FROM user_sessions WHERE user_id=? AND expires_at > ?').get(userId, at).count; }
+
+// ── журнал входов ───────────────────────────────────────────────────────────
+// Кто и когда пытался войти — единственный след, по которому потом можно
+// понять, был ли перебор. Пароли и коды сюда не попадают никогда.
+export function logAuthEvent(db, { userId = null, email = null, event, result, detail = null }) {
+  try { db.prepare('INSERT INTO auth_events(id,user_id,email,event,result,detail,created_at) VALUES(?,?,?,?,?,?,?)').run(id(), userId, email, event, result, detail, now()); } catch {}
+}
+export function listAuthEvents(db, { limit = 50, userId = null } = {}) {
+  const capped = Math.min(Math.max(Number(limit) || 50, 1), 200);
+  return userId
+    ? db.prepare('SELECT * FROM auth_events WHERE user_id=? ORDER BY created_at DESC LIMIT ?').all(userId, capped)
+    : db.prepare('SELECT * FROM auth_events ORDER BY created_at DESC LIMIT ?').all(capped);
+}
+
+// ── разговоры и их цена ─────────────────────────────────────────────────────
+// Звук идёт напрямую к провайдеру, мимо сервера, поэтому настоящего счёта у нас
+// нет: считаем минуты разговора и умножаем на заданную цену. Это оценка, и она
+// названа оценкой везде, где показывается, — но лимит по ней работает честно,
+// потому что минуты мы знаем точно.
+export function openVoiceSession(db, { userId = null, provider, model = null, ratePerMinute = 0, startedAt = now() }) {
+  const sessionId = id();
+  db.prepare('INSERT INTO voice_sessions(id,user_id,provider,model,rate_usd_per_minute,started_at) VALUES(?,?,?,?,?,?)').run(sessionId, userId, provider, model, ratePerMinute, startedAt);
+  return sessionId;
+}
+export function closeVoiceSession(db, sessionId, { seconds, at = now(), closedBy = 'client' }) {
+  const session = db.prepare('SELECT * FROM voice_sessions WHERE id=?').get(sessionId);
+  if (!session) return null;
+  if (session.ended_at) return session;
+  // Длительность приходит из браузера, поэтому ей нельзя верить на слово: она
+  // обрезается по времени, которое реально прошло с начала разговора.
+  const elapsed = Math.max(0, Math.round((new Date(at).getTime() - new Date(session.started_at).getTime()) / 1000));
+  const claimed = Number.isFinite(Number(seconds)) ? Math.max(0, Math.round(Number(seconds))) : elapsed;
+  const counted = Math.min(claimed, elapsed + 5);
+  const cost = (counted / 60) * (session.rate_usd_per_minute || 0);
+  db.prepare('UPDATE voice_sessions SET ended_at=?, seconds=?, cost_usd=?, closed_by=? WHERE id=?').run(at, counted, cost, closedBy, sessionId);
+  return db.prepare('SELECT * FROM voice_sessions WHERE id=?').get(sessionId);
+}
+// Разговор, о котором браузер не отчитался (вкладку закрыли, связь пропала),
+// иначе висел бы открытым вечно и не попадал бы в расход. Закрываем по потолку
+// длительности — так забытый разговор считается дорого, а не бесплатно.
+export function closeStaleVoiceSessions(db, { at = now(), maxSeconds = 3600 } = {}) {
+  const cutoff = new Date(new Date(at).getTime() - maxSeconds * 1000).toISOString();
+  const stale = db.prepare('SELECT id FROM voice_sessions WHERE ended_at IS NULL AND started_at <= ?').all(cutoff);
+  for (const row of stale) closeVoiceSession(db, row.id, { seconds: maxSeconds, at, closedBy: 'timeout' });
+  return stale.length;
+}
+const VOICE_WINDOW_MS = { day: 24 * 60 * 60 * 1000, week: 7 * 24 * 60 * 60 * 1000, month: 30 * 24 * 60 * 60 * 1000 };
+export function voiceWindowStart(window, at = new Date()) {
+  const span = VOICE_WINDOW_MS[window];
+  return span ? new Date(at.getTime() - span).toISOString() : '';
+}
+export function voiceSpend(db, { userId, window = 'day', at = new Date() } = {}) {
+  const since = voiceWindowStart(window, at);
+  const everyone = userId === undefined;
+  const row = db.prepare(`SELECT COALESCE(SUM(cost_usd),0) AS cost, COALESCE(SUM(seconds),0) AS seconds, COUNT(*) AS sessions
+    FROM voice_sessions WHERE started_at >= ? ${everyone ? '' : 'AND user_id IS ?'}`).get(...(everyone ? [since] : [since, userId]));
+  return { window, since: since || null, costUsd: row.cost, seconds: row.seconds, sessions: row.sessions };
+}
+export function listVoiceSessions(db, { userId, limit = 20 } = {}) {
+  const capped = Math.min(Math.max(Number(limit) || 20, 1), 200);
+  return userId === undefined
+    ? db.prepare('SELECT * FROM voice_sessions ORDER BY started_at DESC LIMIT ?').all(capped)
+    : db.prepare('SELECT * FROM voice_sessions WHERE user_id IS ? ORDER BY started_at DESC LIMIT ?').all(userId, capped);
+}
+// Кому принадлежит запись: одна проверка на все маршруты, которые берут id из
+// адреса. Без неё чужой идентификатор открывал бы чужую карточку.
+// undefined — «такого нет вовсе», null — «есть, но ничей». Свести их к одному
+// значению нельзя: ничья запись бывает у журнала, который вели до появления
+// людей, и она должна оставаться доступной, а не исчезать.
+const ownerOf = (row) => row ? row.user_id : undefined;
+export function captureOwner(db, captureId) { return ownerOf(db.prepare('SELECT user_id FROM captures WHERE id=?').get(captureId)); }
+export function attachmentOwner(db, attachmentId) { return ownerOf(db.prepare('SELECT c.user_id FROM capture_attachments a JOIN captures c ON c.id=a.capture_id WHERE a.id=?').get(attachmentId)); }
+export function projectionOwner(db, projectionId) { return ownerOf(db.prepare('SELECT c.user_id FROM projections p JOIN captures c ON c.id=p.capture_id WHERE p.id=?').get(projectionId)); }
+export function undoGroupOwner(db, undoGroupId) { return ownerOf(db.prepare('SELECT c.user_id FROM projections p JOIN captures c ON c.id=p.capture_id WHERE p.undo_group_id=? LIMIT 1').get(undoGroupId)); }

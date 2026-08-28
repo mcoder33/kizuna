@@ -67,6 +67,9 @@ async function requestResponse(url, options = {}) {
   const pending = (async () => {
     const response = await fetch(url, { ...options, headers }),
       data = await response.json().catch(() => null);
+    // Сессия кончилась или её закрыл администратор: сообщать об этом ошибкой в
+    // углу бессмысленно — дальше всё равно ничего не откроется.
+    if (response.status === 401) { location.replace("/login"); throw new Error("Нужно войти."); }
     if (!response.ok)
       throw new Error(data?.error?.message || "Не удалось выполнить действие.");
     return { response, data };
@@ -201,6 +204,7 @@ function updatePageFromHash() {
   // Открыли настройки — перечитываем расход: он меняется от каждой записи, а
   // страница может висеть открытой долго.
   if (activePage === "settings") loadUsage();
+  if (activePage === "admin") loadAdmin();
   // Запрос из ссылки сразу уходит в поиск: человек щёлкнул по имени, а не по
   // пустой странице памяти.
   const query = activePage === "memory" ? params.get("query")?.trim() : "";
@@ -1925,6 +1929,13 @@ const SETTING_FIELDS = [
   "aiProvider",
   "timeZone",
   "previewLimit",
+  "theme",
+  "voiceEnabled",
+  "voiceLimitWindow",
+  "voiceLimitMinutes",
+  "voiceLimitUsd",
+  "voiceRateUsdPerMinute",
+  "voiceGeminiRateUsdPerMinute",
 ];
 const SECRET_FIELDS = ["openaiKey", "geminiKey", "openrouterKey"];
 let appSettings = {};
@@ -1989,6 +2000,27 @@ function paintSettings(payload) {
     voiceState.textContent = payload.voice?.configured
       ? `сейчас ${providerNames[payload.voice.provider] || payload.voice.provider}`
       : "ключа нет — разговор без модели";
+  const editable = new Set(payload.editable || SETTING_FIELDS);
+  for (const name of SETTING_FIELDS) {
+    const input = settingInput(name);
+    const row = input?.closest(".setting");
+    if (row) row.hidden = !editable.has(name);
+  }
+  // Ключи, провайдеры и пределы — общие на всё приложение, поэтому целые
+  // разделы настроек существуют только для администратора.
+  for (const group of document.querySelectorAll(".settings-group")) {
+    const rows = [...group.querySelectorAll(".setting")];
+    if (rows.length && rows.every((row) => row.hidden)) group.hidden = true;
+  }
+  if (settingInput("theme")) {
+    // Тема, сохранённая в учётной записи, сильнее пустого браузера: человек
+    // выбрал её однажды и ждёт её на любом устройстве.
+    const remembered = appSettings.theme || "system";
+    if (window.pagentTheme.read() === "system" && remembered !== "system") window.pagentTheme.set(remembered);
+    settingInput("theme").value = window.pagentTheme.read();
+    paintThemeButton();
+  }
+  paintVoiceQuota(payload.quota);
   // Настройки вида применяются сразу, без перезагрузки страницы.
   const limit = Number(appSettings.previewLimit);
   if (Number.isFinite(limit) && limit > 0 && limit !== previewLimit) {
@@ -2165,6 +2197,11 @@ function listenToJournal() {
     return;
   }
   journalStream.addEventListener("journal", reloadJournalSoon);
+  // Между загрузкой страницы и подключением к потоку журнал мог измениться:
+  // запись пришла голосом, разбор закончился в фоне, правку сделали в другом
+  // окне. Сервер здоровается сообщением «поток жив» — по нему и перечитываем,
+  // иначе такая правка осталась бы невидимой до следующего события.
+  journalStream.addEventListener("ready", reloadJournalSoon);
   // Браузер переподключается сам; на всякий случай сбрасываем ссылку, чтобы
   // повторный вызов мог открыть поток заново.
   journalStream.addEventListener("error", () => {
@@ -2181,3 +2218,308 @@ window.addEventListener("hashchange", updatePageFromHash);
 updatePageFromHash();
 bootstrap();
 listenToJournal();
+
+// ── учётная запись ───────────────────────────────────────────────────────────
+// Кто мы, что нам можно и как отсюда выйти. Всё остальное приложение об этом не
+// спрашивает: маршруты закрыты на сервере, а здесь только видимость разделов.
+let currentUser = null;
+
+const roleNames = { admin: "администратор", user: "пользователь" };
+
+async function loadAccount() {
+  try {
+    const state = await request("/api/auth/me");
+    currentUser = state.user;
+  } catch {
+    return;
+  }
+  const short = currentUser.email.split("@")[0];
+  $("#account-summary").textContent = short.slice(0, 2).toUpperCase();
+  $("#account-summary").title = currentUser.email;
+  $("#account-email").textContent = currentUser.email;
+  $("#account-role").textContent = roleNames[currentUser.role] || currentUser.role;
+  $("#account-admin-link").hidden = currentUser.role !== "admin";
+  const line = $("#account-summary-line");
+  if (line)
+    line.textContent = `${currentUser.email} · ${roleNames[currentUser.role]} · вход защищён ${currentUser.twoFactorEnabled ? "паролем и вторым фактором" : "только паролем"}`;
+  paintTotp();
+}
+
+async function logout(everywhere = false) {
+  try {
+    await request(everywhere ? "/api/auth/logout-everywhere" : "/api/auth/logout", { method: "POST" });
+  } catch {
+    // Даже если сервер не ответил, оставаться на закрытой странице незачем.
+  }
+  location.replace("/login");
+}
+$("#account-logout")?.addEventListener("click", () => logout());
+$("#account-logout-2")?.addEventListener("click", () => logout());
+$("#logout-everywhere")?.addEventListener("click", () => logout(true));
+
+// ── тема ─────────────────────────────────────────────────────────────────────
+// Кнопка в шапке для быстрого переключения, поле в настройках — чтобы выбор
+// пережил смену браузера.
+function paintThemeButton() {
+  const button = $("#theme-toggle");
+  if (!button) return;
+  button.textContent = window.pagentTheme.icon();
+  button.title = `Тема: ${window.pagentTheme.label()}`;
+  button.setAttribute("aria-label", `Тема оформления: ${window.pagentTheme.label()}`);
+  const field = settingInput("theme");
+  if (field) field.value = window.pagentTheme.read();
+}
+$("#theme-toggle")?.addEventListener("click", () => {
+  const next = window.pagentTheme.next();
+  window.pagentTheme.set(next);
+  paintThemeButton();
+  saveSettings({ theme: next }, { announce: null }).catch(() => {});
+});
+settingInput("theme")?.addEventListener("change", (event) => {
+  window.pagentTheme.set(event.target.value);
+  paintThemeButton();
+});
+paintThemeButton();
+
+// ── второй фактор ────────────────────────────────────────────────────────────
+// Секрет сначала показывается, и только подтверждённый кодом становится
+// рабочим: иначе можно включить защиту, которую нечем открыть.
+function paintTotp() {
+  const state = $("#totp-state");
+  if (!state || !currentUser) return;
+  const on = currentUser.twoFactorEnabled;
+  state.textContent = on
+    ? "Включён. При входе после пароля спрашивается код из приложения."
+    : "Выключен. Вход защищён только паролем.";
+  $("#totp-start").hidden = on;
+  $("#totp-disable").hidden = !on;
+  $("#totp-recovery").hidden = !on;
+  $("#totp-confirm").hidden = true;
+  $("#totp-setup").hidden = true;
+}
+$("#totp-start")?.addEventListener("click", async () => {
+  try {
+    const setup = await request("/api/auth/totp/setup", { method: "POST" });
+    if (setup.qr) $("#totp-qr").src = setup.qr;
+    $("#totp-qr").hidden = !setup.qr;
+    $("#totp-secret").textContent = setup.secret.replace(/(.{4})/g, "$1 ").trim();
+    $("#totp-setup").hidden = false;
+    $("#totp-confirm").hidden = false;
+    $("#totp-start").hidden = true;
+    $("#totp-code").focus();
+  } catch (error) {
+    toast(error.message);
+  }
+});
+$("#totp-confirm")?.addEventListener("click", async () => {
+  try {
+    const result = await request("/api/auth/totp/enable", {
+      method: "POST",
+      body: JSON.stringify({ code: $("#totp-code").value.trim() }),
+    });
+    showRecoveryCodes(result.recoveryCodes);
+    $("#totp-code").value = "";
+    await loadAccount();
+    toast("Второй фактор включён");
+  } catch (error) {
+    toast(error.message);
+  }
+});
+function showRecoveryCodes(codes) {
+  $("#totp-codes-list").textContent = (codes || []).join("\n");
+  $("#totp-codes").hidden = !codes?.length;
+}
+$("#totp-disable")?.addEventListener("click", () => $("#totp-disable-dialog").showModal());
+$("#totp-disable-submit")?.addEventListener("click", async (event) => {
+  event.preventDefault();
+  try {
+    await request("/api/auth/totp/disable", {
+      method: "POST",
+      body: JSON.stringify({ password: $("#totp-disable-password").value }),
+    });
+    $("#totp-disable-password").value = "";
+    $("#totp-disable-dialog").close();
+    $("#totp-codes").hidden = true;
+    await loadAccount();
+    toast("Второй фактор выключен");
+  } catch (error) {
+    toast(error.message);
+  }
+});
+$("#totp-recovery")?.addEventListener("click", async () => {
+  const password = prompt("Пароль, чтобы выпустить новые резервные коды:");
+  if (!password) return;
+  try {
+    const result = await request("/api/auth/totp/recovery-codes", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    });
+    showRecoveryCodes(result.recoveryCodes);
+    toast("Прежние резервные коды больше не работают");
+  } catch (error) {
+    toast(error.message);
+  }
+});
+
+// ── пароль ───────────────────────────────────────────────────────────────────
+$("#password-change")?.addEventListener("click", () => $("#password-dialog").showModal());
+$("#password-submit")?.addEventListener("click", async (event) => {
+  event.preventDefault();
+  const current = $("#password-current").value,
+    next = $("#password-new").value;
+  if (next !== $("#password-repeat").value) return toast("Пароли не совпадают");
+  try {
+    await request("/api/auth/password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword: current, newPassword: next }),
+    });
+    for (const id of ["#password-current", "#password-new", "#password-repeat"])
+      $(id).value = "";
+    $("#password-dialog").close();
+    toast("Пароль сменён, остальные входы закрыты");
+  } catch (error) {
+    toast(error.message);
+  }
+});
+
+// ── предел разговора ─────────────────────────────────────────────────────────
+function paintVoiceQuota(quota) {
+  const state = $("#voice-quota-state");
+  if (!state) return;
+  if (!quota) return void (state.textContent = "");
+  const windows = { day: "за сутки", week: "за неделю", month: "за месяц", total: "за всё время" };
+  const parts = [`Наговорено ${quota.spentMinutes} мин ${windows[quota.window] || ""}`];
+  if (quota.priced) parts.push(`это примерно $${quota.spentUsd.toFixed(2)}`);
+  else parts.push("цена не задана, поэтому деньги не считаются");
+  if (quota.limitMinutes !== null) parts.push(`осталось ${quota.remainingMinutes} мин`);
+  if (quota.limitUsd !== null) parts.push(`осталось $${quota.remainingUsd.toFixed(2)}`);
+  if (!quota.allowed) parts.push("разговор сейчас закрыт");
+  state.textContent = parts.join(" · ");
+  state.classList.toggle("quota-exhausted", !quota.allowed);
+}
+
+// ── администрирование ────────────────────────────────────────────────────────
+const statusNames = {
+  pending: "ждёт подтверждения",
+  active: "работает",
+  blocked: "заблокирован",
+  rejected: "отклонён",
+};
+async function adminAction(userId, action, body) {
+  try {
+    await request(`/api/admin/users/${userId}/${action}`, {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    });
+    await loadAdmin();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+function adminButton(label, className, handler) {
+  const button = node("button", label, className);
+  button.type = "button";
+  button.addEventListener("click", handler);
+  return button;
+}
+function userRow(user, { lastAdmin = false } = {}) {
+  const row = node("div", null, "admin-user");
+  const head = node("div", null, "admin-user-head");
+  head.append(
+    node("span", user.email, "admin-user-email"),
+    node("span", roleNames[user.role] || user.role, `admin-tag admin-role-${user.role}`),
+    node("span", statusNames[user.status] || user.status, `admin-tag admin-status-${user.status}`),
+  );
+  if (user.twoFactorEnabled) head.append(node("span", "2FA", "admin-tag admin-tag-quiet"));
+  row.append(head);
+
+  const facts = [`записей ${user.captureCount ?? 0}`, `разговор ${Math.round((user.voiceSeconds || 0) / 60)} мин`];
+  if (user.blockedReason) facts.push(`причина: ${user.blockedReason}`);
+  if (user.lastLoginAt) facts.push(`входил ${new Date(user.lastLoginAt).toLocaleString("ru-RU")}`);
+  row.append(node("p", facts.join(" · "), "admin-user-facts"));
+
+  const actions = node("div", null, "admin-user-actions");
+  if (user.status === "pending") {
+    actions.append(adminButton("Одобрить", "primary", () => adminAction(user.id, "approve")));
+    actions.append(adminButton("Отклонить", "secondary", () => adminAction(user.id, "reject")));
+  }
+  if (user.status === "rejected")
+    actions.append(adminButton("Всё-таки пустить", "secondary", () => adminAction(user.id, "approve")));
+  // Последнего администратора не закрыть и не разжаловать: иначе приложение
+  // осталось бы без хозяина. Сервер это тоже проверяет — здесь просто не
+  // предлагаем того, что всё равно не выйдет.
+  if (user.status === "active" && !lastAdmin)
+    actions.append(
+      adminButton("Заблокировать", "danger", () => {
+        const reason = prompt(`Причина блокировки ${user.email} (необязательно):`);
+        if (reason === null) return;
+        adminAction(user.id, "block", { reason });
+      }),
+    );
+  if (user.status === "blocked")
+    actions.append(adminButton("Разблокировать", "secondary", () => adminAction(user.id, "unblock")));
+  if (user.status === "active" && !lastAdmin)
+    actions.append(
+      adminButton(
+        user.role === "admin" ? "Снять администратора" : "Сделать администратором",
+        "secondary",
+        () => adminAction(user.id, "role", { role: user.role === "admin" ? "user" : "admin" }),
+      ),
+    );
+  actions.append(
+    adminButton("Предел разговора", "secondary", () => {
+      const minutes = prompt(
+        `Личный предел разговора для ${user.email}, минут за период. Пусто — общий предел.`,
+        user.voiceLimitMinutes ?? "",
+      );
+      if (minutes === null) return;
+      adminAction(user.id, "limits", { voiceLimitMinutes: minutes.trim() });
+    }),
+  );
+  if (user.twoFactorEnabled)
+    actions.append(adminButton("Сбросить 2FA", "secondary", () => adminAction(user.id, "reset-2fa")));
+  row.append(actions);
+  return row;
+}
+async function loadAdmin() {
+  const box = $("#admin-users");
+  if (!box) return;
+  let payload;
+  try {
+    payload = await request("/api/admin/users");
+  } catch (error) {
+    clear(box);
+    box.append(node("p", error.message, "empty"));
+    return;
+  }
+  const pendingBox = $("#admin-pending-list");
+  const pending = payload.users.filter((user) => user.status === "pending");
+  clear(pendingBox);
+  $("#admin-pending").hidden = !pending.length;
+  const admins = payload.users.filter((user) => user.role === "admin" && user.status === "active");
+  const soleAdmin = admins.length === 1 ? admins[0].id : null;
+  for (const user of pending) pendingBox.append(userRow(user));
+  clear(box);
+  for (const user of payload.users.filter((user) => user.status !== "pending"))
+    box.append(userRow(user, { lastAdmin: user.id === soleAdmin }));
+
+  const events = $("#admin-events");
+  clear(events);
+  try {
+    const log = await request("/api/admin/auth-events?limit=25");
+    if (!log.events.length) events.append(node("p", "Пока пусто.", "empty"));
+    for (const event of log.events) {
+      const line = node("div", null, "admin-event");
+      line.append(
+        node("span", new Date(event.createdAt).toLocaleString("ru-RU"), "admin-event-when"),
+        node("span", event.email || "—", "admin-event-who"),
+        node("span", `${event.event} · ${event.result}`, "admin-event-what"),
+      );
+      events.append(line);
+    }
+  } catch {
+    events.append(node("p", "Журнал входов не открылся.", "empty"));
+  }
+}
+
+loadAccount();

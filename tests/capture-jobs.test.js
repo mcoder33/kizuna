@@ -4,11 +4,11 @@ import request from 'supertest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createApp } from '../server/index.js';import { fakeModelClassification } from './helpers/fake-model.js';
+import { createApp } from '../server/index.js';import { fakeModelClassification } from './helpers/fake-model.js';import { authed } from './helpers/auth.js';
 
 import { openDatabase, enqueueCaptureJob, claimCaptureJob, completeCaptureJob } from '../server/db.js';
 
-function fixture(aiService, workerOptions) { const directory=fs.mkdtempSync(path.join(os.tmpdir(),'pagent-jobs-')); const databasePath=path.join(directory,'test.sqlite'); const app=createApp({databasePath,aiService,workerOptions}); return { app, api:request(app), databasePath }; }
+function fixture(aiService, workerOptions) { const directory=fs.mkdtempSync(path.join(os.tmpdir(),'pagent-jobs-')); const databasePath=path.join(directory,'test.sqlite'); const app=createApp({databasePath,aiService,workerOptions}); return { app, api:authed(app), databasePath }; }
 function classification(raw) { return { classification:fakeModelClassification(raw),provider:'fallback',requestedProvider:'fallback',usedProvider:'fallback',fallbackReason:null,model:null }; }
 function deferred() { let resolve; const promise=new Promise(done=>{resolve=done;}); return { promise, resolve }; }
 async function eventually(assertion, timeout=1500) { const until=Date.now()+timeout; let lastError; while(Date.now()<until){try{return await assertion();}catch(error){lastError=error;await new Promise(resolve=>setTimeout(resolve,10));}}throw lastError; }

@@ -1,0 +1,130 @@
+/* Страница входа. Отдельный файл, потому что она живёт своей жизнью: у неё нет
+   ни шапки, ни журнала, а палитру и шрифт она берёт из app.css — чтобы вход и
+   приложение выглядели одним продуктом, а не двумя. */
+.auth-body {
+  background: var(--n-96);
+  min-height: 100vh;
+}
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px 20px;
+  position: relative;
+}
+.auth-card {
+  width: min(420px, 100%);
+  background: var(--n-100);
+  border: 1px solid var(--n-93);
+  border-radius: 22px;
+  padding: 34px 30px 28px;
+  box-shadow: 0 18px 55px var(--orange-21-a7);
+}
+.auth-brand {
+  margin-bottom: 22px;
+}
+.auth-card h1 {
+  margin: 0 0 6px;
+  font-size: 26px;
+  letter-spacing: -0.01em;
+}
+.auth-lead {
+  margin: 0 0 22px;
+  color: var(--n-52);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.auth-form {
+  display: grid;
+  gap: 14px;
+}
+.auth-field {
+  display: grid;
+  gap: 6px;
+}
+.auth-field > span {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--n-52);
+}
+.auth-field input {
+  width: 100%;
+  padding: 11px 13px;
+  border: 1px solid var(--n-87);
+  border-radius: 12px;
+  background: var(--n-100);
+  color: var(--n-25);
+  font: inherit;
+  font-size: 15px;
+}
+.auth-field input:focus-visible {
+  outline: 2px solid var(--blue-54);
+  outline-offset: 1px;
+  border-color: var(--blue-54);
+}
+.auth-submit {
+  margin-top: 4px;
+  width: 100%;
+  padding: 12px;
+  font-size: 15px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+.auth-submit[disabled] {
+  opacity: 0.6;
+  cursor: progress;
+}
+/* Отказ и ожидание выглядят по-разному нарочно: «пароль не подошёл» и «заявка
+   принята» — разные новости, и путать их нельзя. */
+.auth-error,
+.auth-notice {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.auth-error {
+  background: var(--red-97);
+  border: 1px solid var(--red-90);
+  color: var(--red-49);
+}
+.auth-notice {
+  background: var(--n-97-2);
+  border: 1px solid var(--blue-92-2);
+  color: var(--blue-46);
+}
+.auth-switch {
+  margin: 18px 0 0;
+  font-size: 14px;
+  color: var(--n-52);
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.linklike {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--blue-54);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.auth-bootstrap {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--yellow-99);
+  border: 1px solid var(--yellow-91);
+  color: var(--yellow-51);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.auth-theme {
+  position: absolute;
+  top: 20px;
+  right: 22px;
+}
