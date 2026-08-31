@@ -766,6 +766,9 @@ test("разговор показывает, что записал и в как�
   await installFakeGemini(page);
   await page.goto("/");
   await page.locator("#capture-voice").click();
+  // Сокет поднимается не мгновенно: пока разговор не начался, подставного
+  // сокета ещё нет и слать в него нечего. Соседние проверки ждут того же.
+  await expect(page.locator("#voice-hint")).toContainText("Говорите вслух");
 
   // Модель просит записать отчёт о сделанном — как это приходит по сокету.
   await page.evaluate(() => {
