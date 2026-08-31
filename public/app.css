@@ -3713,3 +3713,33 @@ dialog form > div {
     gap: 2px;
   }
 }
+
+/* Пределы человека правятся полями прямо в его карточке: их два, они числовые,
+   и прежнее значение должно быть видно рядом с новым. */
+.admin-limits {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline);
+}
+.admin-limit {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+.admin-limit-name {
+  color: var(--n-66);
+}
+.admin-limit input {
+  width: 130px;
+  padding: 7px 10px;
+  border: 1px solid var(--n-87);
+  border-radius: 10px;
+  background: var(--n-100);
+  color: var(--n-25);
+  font: inherit;
+  font-size: 13px;
+}

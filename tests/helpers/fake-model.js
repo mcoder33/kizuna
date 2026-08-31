@@ -134,9 +134,13 @@ export function fakeModelService({ now = () => new Date(), timeZone = 'Europe/Sa
     },
     async classify(raw, selectedProvider) {
       const requested = selectedProvider || provider;
+      // Попросили правила — правила и отвечают. Настоящая служба ведёт себя
+      // именно так, а заглушка, всегда отвечающая моделью, скрыла бы от тестов
+      // случаи, когда модель звать нельзя.
+      const used = requested === 'fallback' ? 'fallback' : provider;
       return {
         classification: fakeModelClassification(raw, now(), timeZone),
-        provider, model, requestedProvider: requested, usedProvider: provider, fallbackReason: null,
+        provider: used, model: used === 'fallback' ? null : model, requestedProvider: requested, usedProvider: used, fallbackReason: null,
       };
     },
     async answer(query, sources) {

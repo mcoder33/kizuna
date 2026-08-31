@@ -578,6 +578,22 @@
 
           <fieldset class="settings-group">
             <legend>Расходы</legend>
+            <p class="setting-hint" id="spend-state"></p>
+            <label class="setting" for="setting-monthlyLimitUsd"
+              ><span class="setting-name">Потолок на месяц, $</span
+              ><input
+                id="setting-monthlyLimitUsd"
+                type="number"
+                min="0"
+                step="1"
+                placeholder="без потолка"
+            /></label>
+            <p class="setting-hint">
+              Общий потолок для всех. Личный ставится каждому отдельно в разделе
+              «Пользователи» и сильнее общего. Когда потолок исчерпан, записи
+              продолжают сохраняться, но разбираются по правилам, без платной
+              модели, и разговор не начинается.
+            </p>
             <div id="usage-table" class="usage"></div>
             <p class="setting-hint">
               Токены считает сам провайдер, деньги — по его же цене за токен.

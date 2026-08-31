@@ -198,6 +198,7 @@ function migrateUsers(db) {
       recovery_codes_json TEXT,
       voice_limit_usd REAL,
       voice_limit_minutes REAL,
+      monthly_limit_usd REAL,
       voice_limit_window TEXT CHECK(voice_limit_window IN ('day','week','month','total')),
       voice_blocked INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
@@ -244,6 +245,7 @@ function migrateUsers(db) {
     CREATE INDEX IF NOT EXISTS voice_sessions_user ON voice_sessions(user_id, started_at);`);
   const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map(column => column.name));
   if (!userColumns.has('voice_limit_minutes')) db.exec('ALTER TABLE users ADD COLUMN voice_limit_minutes REAL');
+  if (!userColumns.has('monthly_limit_usd')) db.exec('ALTER TABLE users ADD COLUMN monthly_limit_usd REAL');
   const captureColumns = new Set(db.prepare('PRAGMA table_info(captures)').all().map(column => column.name));
   if (!captureColumns.has('user_id')) db.exec('ALTER TABLE captures ADD COLUMN user_id TEXT REFERENCES users(id)');
   db.exec('CREATE INDEX IF NOT EXISTS captures_user ON captures(user_id, created_at)');
@@ -916,7 +918,7 @@ export function resetLedger(db, userId = null) {
 // ── люди ────────────────────────────────────────────────────────────────────
 // Учётные записи живут рядом с журналом, но живут отдельной жизнью: их не
 // уносит экспорт, не стирает «Очистить данные» и не видит модель.
-const USER_COLUMNS = 'id,email,role,status,totp_enabled,voice_limit_usd,voice_limit_minutes,voice_limit_window,voice_blocked,created_at,approved_at,approved_by,blocked_at,blocked_reason,last_login_at';
+const USER_COLUMNS = 'id,email,role,status,totp_enabled,voice_limit_usd,voice_limit_minutes,monthly_limit_usd,voice_limit_window,voice_blocked,created_at,approved_at,approved_by,blocked_at,blocked_reason,last_login_at';
 
 export function createUser(db, { email, passwordHash, role = 'user', status = 'pending' }) {
   const userId = id(), createdAt = now();
@@ -937,7 +939,7 @@ export function listUsers(db) {
 }
 // Правится только то, что перечислено: список полей — это и есть граница между
 // «администратор поменял роль» и «кто-то переписал чужой пароль».
-const EDITABLE_USER_FIELDS = new Set(['role','status','password_hash','totp_secret','totp_pending_secret','totp_enabled','recovery_codes_json','voice_limit_usd','voice_limit_minutes','voice_limit_window','voice_blocked','approved_at','approved_by','blocked_at','blocked_reason','last_login_at','failed_attempts','locked_until','email']);
+const EDITABLE_USER_FIELDS = new Set(['role','status','password_hash','totp_secret','totp_pending_secret','totp_enabled','recovery_codes_json','voice_limit_usd','voice_limit_minutes','monthly_limit_usd','voice_limit_window','voice_blocked','approved_at','approved_by','blocked_at','blocked_reason','last_login_at','failed_attempts','locked_until','email']);
 export function updateUser(db, userId, patch) {
   const fields = Object.entries(patch).filter(([field]) => EDITABLE_USER_FIELDS.has(field));
   if (!fields.length) return findUserById(db, userId);
@@ -1048,3 +1050,46 @@ export function captureOwner(db, captureId) { return ownerOf(db.prepare('SELECT 
 export function attachmentOwner(db, attachmentId) { return ownerOf(db.prepare('SELECT c.user_id FROM capture_attachments a JOIN captures c ON c.id=a.capture_id WHERE a.id=?').get(attachmentId)); }
 export function projectionOwner(db, projectionId) { return ownerOf(db.prepare('SELECT c.user_id FROM projections p JOIN captures c ON c.id=p.capture_id WHERE p.id=?').get(projectionId)); }
 export function undoGroupOwner(db, undoGroupId) { return ownerOf(db.prepare('SELECT c.user_id FROM projections p JOIN captures c ON c.id=p.capture_id WHERE p.undo_group_id=? LIMIT 1').get(undoGroupId)); }
+
+// ── расход за календарный месяц ─────────────────────────────────────────────
+// Скользящее окно годится для «предела разговора», но деньги человек считает
+// по календарю: «сколько ушло в августе» и «первого числа снова можно». Поэтому
+// у месячного потолка границы календарные — в поясе, настроенном в приложении.
+function zoneOffsetMinutes(date, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'longOffset' }).formatToParts(date);
+  const match = (parts.find(part => part.type === 'timeZoneName')?.value || 'GMT+00:00').match(/GMT([+-])(\d{2}):?(\d{2})?/);
+  if (!match) return 0;
+  return (match[1] === '-' ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3] || 0));
+}
+export function monthBounds(at = new Date(), timeZone = 'UTC') {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit' }).formatToParts(at);
+  const year = Number(parts.find(part => part.type === 'year').value);
+  const month = Number(parts.find(part => part.type === 'month').value);
+  // Полночь первого числа по местному времени — это момент UTC, сдвинутый на
+  // смещение пояса; смещение берётся на сам этот момент, иначе перевод часов
+  // внутри месяца сдвинул бы границу на час.
+  const localMidnight = (y, m) => { const guess = Date.UTC(y, m - 1, 1); return new Date(guess - zoneOffsetMinutes(new Date(guess), timeZone) * 60000).toISOString(); };
+  return {
+    month: `${year}-${String(month).padStart(2, '0')}`,
+    start: localMidnight(year, month),
+    end: localMidnight(month === 12 ? year + 1 : year, month === 12 ? 1 : month + 1),
+  };
+}
+// Что считается расходом: цена вызовов модели, где провайдер её назвал, плюс
+// оценка разговора по минутам. Вызовы без цены в сумму не входят и считаются
+// отдельно — иначе сумма выглядела бы полной, не будучи ею.
+export function monthlySpend(db, { userId, at = new Date(), timeZone = 'UTC' } = {}) {
+  const { month, start, end } = monthBounds(at, timeZone);
+  const everyone = userId === undefined;
+  const scope = everyone ? [start, end] : [start, end, userId];
+  const models = db.prepare(`SELECT COALESCE(SUM(cost_usd),0) AS cost, COUNT(*) AS calls,
+      SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END) AS unpriced
+    FROM usage_events WHERE created_at >= ? AND created_at < ? ${everyone ? '' : 'AND user_id IS ?'}`).get(...scope);
+  const voice = db.prepare(`SELECT COALESCE(SUM(cost_usd),0) AS cost, COALESCE(SUM(seconds),0) AS seconds
+    FROM voice_sessions WHERE started_at >= ? AND started_at < ? ${everyone ? '' : 'AND user_id IS ?'}`).get(...scope);
+  return {
+    month, since: start, until: end,
+    modelUsd: models.cost, voiceUsd: voice.cost, totalUsd: models.cost + voice.cost,
+    calls: models.calls, unpriced: models.unpriced || 0, voiceSeconds: voice.seconds,
+  };
+}

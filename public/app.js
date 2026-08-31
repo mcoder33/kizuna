@@ -35,6 +35,7 @@ const fallbackNames = {
   rate_limited: "достиг лимита",
   citation_failure: "не подтвердил источники",
   invalid_provider: "неизвестный провайдер",
+  spend_limit: "остановлен потолком расходов",
 };
 const activeCaptureStorageKey = "pagent.active-captures";
 const legacyActiveCaptureStorageKey = "pagent.active-capture";
@@ -1725,6 +1726,10 @@ $("#capture-form").addEventListener("submit", async (event) => {
     // испортили бы следующие записи.
     resetComposerOverrides();
     startCapturePolling({ ...result.data, raw, provider: provider || "fallback" });
+    // Потолок исчерпан — запись сохранится, но разберут её правила. Сказать об
+    // этом надо сразу: иначе человек решит, что разбор сломался.
+    if (result.data.spend && !result.data.spend.allowed)
+      toast("Потолок расходов исчерпан: запись сохранена, но разобрана по правилам");
   } catch (error) {
     toast(error.message);
   } finally {
@@ -1936,6 +1941,7 @@ const SETTING_FIELDS = [
   "voiceLimitUsd",
   "voiceRateUsdPerMinute",
   "voiceGeminiRateUsdPerMinute",
+  "monthlyLimitUsd",
 ];
 const SECRET_FIELDS = ["openaiKey", "geminiKey", "openrouterKey"];
 let appSettings = {};
@@ -2021,6 +2027,7 @@ function paintSettings(payload) {
     paintThemeButton();
   }
   paintVoiceQuota(payload.quota);
+  paintSpend(payload.spend);
   // Настройки вида применяются сразу, без перезагрузки страницы.
   const limit = Number(appSettings.previewLimit);
   if (Number.isFinite(limit) && limit > 0 && limit !== previewLimit) {
@@ -2050,6 +2057,21 @@ function usageRow(title, slice) {
   );
   return row;
 }
+// Сколько ушло за календарный месяц и сколько осталось до потолка. Месяц
+// календарный нарочно: деньги человек считает по счетам, а не по скользящему
+// окну, и «первого числа снова можно» — понятное правило.
+function paintSpend(spend) {
+  const line = $("#spend-state");
+  if (!line || !spend) return;
+  const money = (value) => `$${value < 0.01 && value > 0 ? value.toFixed(4) : value.toFixed(2)}`;
+  const parts = [`За ${spend.month} потрачено ${money(spend.totalUsd)}`];
+  if (spend.voiceUsd) parts.push(`из них разговор ${money(spend.voiceUsd)}`);
+  if (spend.limitUsd === null) parts.push("потолка нет");
+  else parts.push(spend.allowed ? `осталось ${money(spend.remainingUsd)} из ${money(spend.limitUsd)}` : `потолок ${money(spend.limitUsd)} исчерпан`);
+  if (spend.unpriced) parts.push(`${spend.unpriced} вызовов без цены в сумму не вошли`);
+  line.textContent = parts.join(" · ");
+  line.classList.toggle("quota-exhausted", !spend.allowed);
+}
 async function loadUsage() {
   const box = $("#usage-table");
   if (!box) return;
@@ -2059,6 +2081,7 @@ async function loadUsage() {
   } catch {
     return;
   }
+  paintSpend(data.spend);
   clear(box);
   box.append(usageRow("За сутки", data.day), usageRow("За неделю", data.week), usageRow("Всего", data.total));
   if (!data.total.calls) {
@@ -2433,10 +2456,21 @@ function userRow(user, { lastAdmin = false } = {}) {
   if (user.twoFactorEnabled) head.append(node("span", "2FA", "admin-tag admin-tag-quiet"));
   row.append(head);
 
-  const facts = [`записей ${user.captureCount ?? 0}`, `разговор ${Math.round((user.voiceSeconds || 0) / 60)} мин`];
+  // Потолок ставят, глядя на расход, поэтому они стоят рядом: «потрачено из
+  // сколько можно», а не два числа в разных углах страницы.
+  const spent = user.monthSpentUsd || 0;
+  const cap = user.monthlyLimitUsd;
+  const capped = cap !== null && cap !== undefined;
+  const facts = [
+    `записей ${user.captureCount ?? 0}`,
+    `разговор ${Math.round((user.voiceSeconds || 0) / 60)} мин`,
+    `в этом месяце $${spent.toFixed(2)}${capped ? ` из $${cap}` : " (потолок общий)"}`,
+  ];
   if (user.blockedReason) facts.push(`причина: ${user.blockedReason}`);
   if (user.lastLoginAt) facts.push(`входил ${new Date(user.lastLoginAt).toLocaleString("ru-RU")}`);
-  row.append(node("p", facts.join(" · "), "admin-user-facts"));
+  const factsLine = node("p", facts.join(" · "), "admin-user-facts");
+  if (capped && spent >= cap) factsLine.classList.add("quota-exhausted");
+  row.append(factsLine);
 
   const actions = node("div", null, "admin-user-actions");
   if (user.status === "pending") {
@@ -2466,19 +2500,38 @@ function userRow(user, { lastAdmin = false } = {}) {
         () => adminAction(user.id, "role", { role: user.role === "admin" ? "user" : "admin" }),
       ),
     );
-  actions.append(
-    adminButton("Предел разговора", "secondary", () => {
-      const minutes = prompt(
-        `Личный предел разговора для ${user.email}, минут за период. Пусто — общий предел.`,
-        user.voiceLimitMinutes ?? "",
-      );
-      if (minutes === null) return;
-      adminAction(user.id, "limits", { voiceLimitMinutes: minutes.trim() });
-    }),
-  );
   if (user.twoFactorEnabled)
     actions.append(adminButton("Сбросить 2FA", "secondary", () => adminAction(user.id, "reset-2fa")));
   row.append(actions);
+
+  // Пределы правятся полями, а не вопросом в модальном окне: их два, они
+  // числовые, и видеть прежнее значение рядом с новым — половина дела.
+  const limits = node("div", null, "admin-limits");
+  const field = (label, hint, value, key, step) => {
+    const wrap = node("label", null, "admin-limit");
+    wrap.append(node("span", label, "admin-limit-name"));
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "0";
+    input.step = step;
+    input.placeholder = hint;
+    input.value = value ?? "";
+    input.dataset.key = key;
+    wrap.append(input);
+    limits.append(wrap);
+    return input;
+  };
+  const monthly = field("Потолок, $/мес", "общий", user.monthlyLimitUsd, "monthlyLimitUsd", "1");
+  const minutes = field("Разговор, мин", "общий", user.voiceLimitMinutes, "voiceLimitMinutes", "5");
+  limits.append(
+    adminButton("Сохранить пределы", "secondary", () =>
+      adminAction(user.id, "limits", {
+        monthlyLimitUsd: monthly.value.trim(),
+        voiceLimitMinutes: minutes.value.trim(),
+      }),
+    ),
+  );
+  row.append(limits);
   return row;
 }
 async function loadAdmin() {

@@ -161,3 +161,44 @@ test("выход возвращает на страницу входа", async (
   await expect(page).toHaveURL(/\/login$/);
   await context.close();
 });
+
+test("администратор ставит человеку потолок расходов на месяц", async ({ page, request }) => {
+  const email = `limit-${Date.now()}@kizuna.test`;
+  expect((await request.post("/api/auth/register", { data: { email, password: "limit-very-long-password" } })).status()).toBe(201);
+
+  await page.goto("/#admin");
+  const pending = page.locator("#admin-pending .admin-user").filter({ hasText: email });
+  await pending.getByRole("button", { name: "Одобрить" }).click();
+
+  const card = page.locator("#admin-users .admin-user").filter({ hasText: email });
+  await expect(card).toContainText("потолок общий");
+
+  // Потолок правится полем прямо в карточке, а не вопросом в модальном окне.
+  await card.locator('input[data-key="monthlyLimitUsd"]').fill("7");
+  await card.locator('input[data-key="voiceLimitMinutes"]').fill("30");
+  await card.getByRole("button", { name: "Сохранить пределы" }).click();
+
+  const saved = page.locator("#admin-users .admin-user").filter({ hasText: email });
+  await expect(saved).toContainText("в этом месяце $0.00 из $7");
+  await expect(saved.locator('input[data-key="monthlyLimitUsd"]')).toHaveValue("7");
+  await expect(saved.locator('input[data-key="voiceLimitMinutes"]')).toHaveValue("30");
+
+  // Пустое поле возвращает человека под общий потолок, а не обнуляет его.
+  await saved.locator('input[data-key="monthlyLimitUsd"]').fill("");
+  await saved.getByRole("button", { name: "Сохранить пределы" }).click();
+  await expect(page.locator("#admin-users .admin-user").filter({ hasText: email })).toContainText("потолок общий");
+});
+
+test("свой расход за месяц виден в настройках", async ({ page, request }) => {
+  await request.put("/api/settings", { data: { monthlyLimitUsd: "50" } });
+  await page.goto("/#settings");
+  await expect(page.locator("#spend-state")).toContainText("потрачено");
+  await expect(page.locator("#spend-state")).toContainText("осталось");
+  await expect(page.locator("#setting-monthlyLimitUsd")).toHaveValue("50");
+  // Возвращаем как было: потолок общий, и он касается остальных проверок.
+  expect((await request.put("/api/settings", { data: { monthlyLimitUsd: "" } })).status()).toBe(200);
+  // Перезагрузка, а не переход по тому же адресу: адрес и хэш те же, и переход
+  // по ним страницу не обновит — она осталась бы с прежними числами.
+  await page.reload();
+  await expect(page.locator("#spend-state")).toContainText("потолка нет");
+});

@@ -13,6 +13,7 @@ import {
   normalizeEmail, validEmail, MAX_FAILED_ATTEMPTS, LOCKOUT_MS,
 } from './auth.js';
 import QRCode from 'qrcode';
+import { monthlySpend } from './db.js';
 import {
   createUser, findUserByEmail, findUserById, countUsers, listUsers, updateUser, adoptOrphanRecords,
   createSession, findSessionUser, touchSession, deleteSession, deleteUserSessions, purgeExpiredSessions, countUserSessions,
@@ -32,6 +33,7 @@ export function publicUser(row) {
     voiceLimitUsd: row.voice_limit_usd ?? null,
     voiceLimitMinutes: row.voice_limit_minutes ?? null,
     voiceLimitWindow: row.voice_limit_window ?? null,
+    monthlyLimitUsd: row.monthly_limit_usd ?? null,
     ...(row.capture_count === undefined ? {} : { captureCount: row.capture_count, voiceCostUsd: row.voice_cost_usd, voiceSeconds: row.voice_seconds }),
   };
 }
@@ -39,7 +41,7 @@ export function publicUser(row) {
 const PENDING_LIMIT = 50;
 const fail = (res, status, code, message, extra = {}) => res.status(status).json({ error: { code, message, ...extra } });
 
-export function createAccounts({ db, now = () => new Date(), secureCookies = false, audit = () => {}, sessionTtlMs = SESSION_TTL_MS } = {}) {
+export function createAccounts({ db, now = () => new Date(), secureCookies = false, audit = () => {}, sessionTtlMs = SESSION_TTL_MS, timeZone = () => 'UTC' } = {}) {
   const at = () => now().toISOString();
   const note = (event) => { try { audit(event); } catch {} };
 
@@ -279,7 +281,15 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
     });
 
     // ── администратор ──────────────────────────────────────────────────────
-    app.get('/api/admin/users', requireAdmin, (req, res) => res.json({ users: listUsers(db).map(publicUser) }));
+    app.get('/api/admin/users', requireAdmin, (req, res) => res.json({
+      users: listUsers(db).map(row => ({
+        ...publicUser(row),
+        // Потолок ставят, глядя на расход, поэтому он приходит вместе со
+        // списком, а не отдельным запросом на каждого.
+        monthSpentUsd: monthlySpend(db, { userId: row.id, at: now(), timeZone: timeZone() }).totalUsd,
+      })),
+      month: monthlySpend(db, { userId: undefined, at: now(), timeZone: timeZone() }),
+    }));
 
     app.get('/api/admin/auth-events', requireAdmin, (req, res) => res.json({
       events: listAuthEvents(db, { limit: req.query.limit, userId: typeof req.query.userId === 'string' ? req.query.userId : null })
@@ -370,7 +380,7 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
       if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1e6) return { error: `Некорректное значение: ${name}.` };
       return parsed;
     };
-    for (const [field, key, name] of [['voice_limit_usd', 'voiceLimitUsd', 'предел в долларах'], ['voice_limit_minutes', 'voiceLimitMinutes', 'предел в минутах']]) {
+    for (const [field, key, name] of [['voice_limit_usd', 'voiceLimitUsd', 'предел разговора в долларах'], ['voice_limit_minutes', 'voiceLimitMinutes', 'предел разговора в минутах'], ['monthly_limit_usd', 'monthlyLimitUsd', 'потолок расходов на месяц']]) {
       if (!Object.hasOwn(body || {}, key)) continue;
       const parsed = number(body[key], name);
       if (parsed && parsed.error) return { error: parsed.error };

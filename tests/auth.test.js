@@ -10,7 +10,7 @@ import request from 'supertest';
 import { createApp } from '../server/index.js';
 import { fakeModelService } from './helpers/fake-model.js';
 import { authed, seedUser, TEST_PASSWORD } from './helpers/auth.js';
-import { recordUsage } from '../server/db.js';
+import { recordUsage, monthBounds, monthlySpend, openVoiceSession, closeVoiceSession } from '../server/db.js';
 import { totpCode, verifyTotp, base32Encode, base32Decode, hashPassword, verifyPassword, generateRecoveryCodes, normalizeRecoveryCode, validEmail, passwordProblem } from '../server/auth.js';
 
 function app(options = {}) {
@@ -322,4 +322,104 @@ test('очередь заявок не бесконечна', async () => {
     seedUser(application, { email: `pending-${index}@example.com`, role: 'user', status: 'pending' });
   const refused = await api.post('/api/auth/register').send({ email: 'last@example.com', password: 'very-long-password' }).expect(429);
   assert.equal(refused.body.error.code, 'too_many_pending');
+});
+
+// ── потолок расходов на месяц ────────────────────────────────────────────────
+// Он про деньги, а деньги человек считает по календарю: «сколько ушло в
+// августе» и «первого числа снова можно». Поэтому границы календарные.
+test('границы месяца считаются в поясе приложения, а не в UTC', () => {
+  const august = monthBounds(new Date('2026-08-15T12:00:00Z'), 'Europe/Samara');
+  assert.equal(august.month, '2026-08');
+  assert.equal(august.start, '2026-07-31T20:00:00.000Z', 'полночь первого августа в Самаре');
+  assert.equal(august.end, '2026-08-31T20:00:00.000Z');
+  // Тридцать первое августа, девять вечера по Гринвичу — в Самаре уже сентябрь.
+  assert.equal(monthBounds(new Date('2026-08-31T21:00:00Z'), 'Europe/Samara').month, '2026-09');
+  // Перевод часов внутри месяца не сдвигает границу на час.
+  const march = monthBounds(new Date('2026-03-20T12:00:00Z'), 'America/New_York');
+  assert.equal(march.start, '2026-03-01T05:00:00.000Z');
+  assert.equal(march.end, '2026-04-01T04:00:00.000Z');
+});
+
+test('в сумму входят и модель, и разговор, и только за этот месяц', () => {
+  const application = app();
+  const db = application.database;
+  const user = seedUser(application, { email: 'user@example.com', role: 'user' });
+  const now = new Date('2026-08-15T12:00:00Z');
+  recordUsage(db, { provider: 'openrouter', model: 'x', kind: 'classify', costUsd: 1.5, userId: user.id });
+  recordUsage(db, { provider: 'openai', model: 'y', kind: 'classify', costUsd: null, userId: user.id });
+  const voice = openVoiceSession(db, { userId: user.id, provider: 'openai', ratePerMinute: 6, startedAt: now.toISOString() });
+  closeVoiceSession(db, voice, { seconds: 60, at: new Date(now.getTime() + 60000).toISOString() });
+  // Расход прошлого месяца в этот не попадает.
+  db.prepare('INSERT INTO usage_events(id,provider,model,kind,input_tokens,output_tokens,cost_usd,created_at,user_id) VALUES(?,?,?,?,0,0,?,?,?)')
+    .run('прошлый', 'openrouter', 'x', 'classify', 99, '2026-07-15T12:00:00.000Z', user.id);
+
+  const spend = monthlySpend(db, { userId: user.id, at: now, timeZone: 'Europe/Samara' });
+  assert.equal(spend.month, '2026-08');
+  assert.equal(spend.modelUsd, 1.5);
+  assert.ok(Math.abs(spend.voiceUsd - 6) < 1e-9, 'минута по шесть долларов');
+  assert.ok(Math.abs(spend.totalUsd - 7.5) < 1e-9);
+  assert.equal(spend.unpriced, 1, 'вызов без цены посчитан отдельно и в сумму не вошёл');
+  // Чужой расход в свою сумму не входит.
+  const other = seedUser(application, { email: 'other@example.com', role: 'user' });
+  assert.equal(monthlySpend(db, { userId: other.id, at: now, timeZone: 'Europe/Samara' }).totalUsd, 0);
+});
+
+test('потолок ставит администратор, личный сильнее общего', async () => {
+  const application = app();
+  const admin = authed(application, { email: 'admin@example.com' });
+  const gost = authed(application, { email: 'gost@example.com', role: 'user' });
+
+  await admin.put('/api/settings').send({ monthlyLimitUsd: '10' }).expect(200);
+  assert.equal((await gost.get('/api/usage').expect(200)).body.spend.limitUsd, 10, 'общий потолок действует на всех');
+
+  await admin.post(`/api/admin/users/${gost.user.id}/limits`).send({ monthlyLimitUsd: '3' }).expect(200);
+  const personal = (await gost.get('/api/usage').expect(200)).body.spend;
+  assert.equal(personal.limitUsd, 3, 'личный сильнее общего');
+  assert.equal(personal.allowed, true);
+
+  // Пустое поле — «своего нет», а не ноль.
+  await admin.post(`/api/admin/users/${gost.user.id}/limits`).send({ monthlyLimitUsd: '' }).expect(200);
+  assert.equal((await gost.get('/api/usage')).body.spend.limitUsd, 10);
+  await admin.post(`/api/admin/users/${gost.user.id}/limits`).send({ monthlyLimitUsd: 'много' }).expect(400);
+  // Свой потолок человек себе не ставит.
+  await gost.put('/api/settings').send({ monthlyLimitUsd: '1000' }).expect(403);
+});
+
+test('за потолком запись сохраняется, но разбирается по правилам', async () => {
+  const application = app();
+  const admin = authed(application, { email: 'admin@example.com' });
+  const gost = authed(application, { email: 'gost@example.com', role: 'user' });
+  await admin.post(`/api/admin/users/${gost.user.id}/limits`).send({ monthlyLimitUsd: '1' }).expect(200);
+  recordUsage(application.database, { provider: 'openrouter', model: 'x', kind: 'classify', costUsd: 2, userId: gost.user.id });
+
+  const created = await gost.post('/api/captures').send({ raw: 'мысль за потолком', provider: 'openrouter' }).expect(201);
+  assert.equal(created.body.entry.raw, 'мысль за потолком', 'мысль не потеряна');
+  assert.equal(created.body.provenance.usedProvider, 'fallback');
+  assert.equal(created.body.provenance.fallbackReason, 'spend_limit', 'сказано, почему разобрали правилами');
+  assert.equal(created.body.spend.allowed, false);
+
+  // Повторный разбор — действие платное и по своей воле: подменять модель
+  // правилами нельзя, хороший разбор затёрся бы худшим.
+  const refused = await gost.post(`/api/captures/${created.body.entry.id}/classify`).send({ provider: 'openrouter' }).expect(429);
+  assert.equal(refused.body.error.code, 'spend_limit');
+  // Разговор тоже закрыт.
+  const voice = await gost.post('/api/voice/session').send({}).expect(429);
+  assert.equal(voice.body.error.code, 'spend_limit');
+
+  // У соседа потолка нет — у него всё по-прежнему.
+  const mine = await admin.post('/api/captures').send({ raw: 'запись администратора', provider: 'openrouter' }).expect(201);
+  assert.equal(mine.body.provenance.usedProvider, 'openrouter');
+  assert.equal(mine.body.spend, undefined);
+});
+
+test('администратор видит расход каждого рядом с его потолком', async () => {
+  const application = app();
+  const admin = authed(application, { email: 'admin@example.com' });
+  const gost = authed(application, { email: 'gost@example.com', role: 'user' });
+  recordUsage(application.database, { provider: 'openrouter', model: 'x', kind: 'classify', costUsd: 4.25, userId: gost.user.id });
+  await admin.post(`/api/admin/users/${gost.user.id}/limits`).send({ monthlyLimitUsd: '9' }).expect(200);
+  const listed = (await admin.get('/api/admin/users').expect(200)).body.users.find((user) => user.email === 'gost@example.com');
+  assert.equal(listed.monthSpentUsd, 4.25);
+  assert.equal(listed.monthlyLimitUsd, 9);
+  await gost.get('/api/admin/users').expect(403);
 });
