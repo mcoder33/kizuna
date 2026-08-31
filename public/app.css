@@ -2000,13 +2000,13 @@ body.capture-large-open::before {
 #review-dialog /* ── настройки приложения ────────────────────────────────────────────────── */
 .settings-form {
   display: grid;
-  gap: 22px;
+  gap: 26px;
   max-width: 720px;
   margin: 0 auto 26px;
 }
 .settings-group {
   display: grid;
-  gap: 12px;
+  gap: 14px;
   margin: 0;
   padding: 18px 20px 20px;
   border: 1px solid var(--line);
@@ -3572,11 +3572,13 @@ dialog form > div {
 
 /* Кнопки действий в настройках стоят строкой: их немного, и каждая — поступок,
    а не значение поля. */
+/* Кнопки — не строка формы, а действие: без воздуха сверху они липнут к полю
+   над ними, а без воздуха снизу — к краю раздела. */
 .setting-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 6px;
+  gap: 10px;
+  margin: 14px 0 4px;
 }
 .quota-exhausted {
   color: var(--red-49);
@@ -3584,9 +3586,9 @@ dialog form > div {
 }
 .totp-setup {
   display: grid;
-  gap: 10px;
+  gap: 12px;
   justify-items: start;
-  margin: 8px 0;
+  margin: 12px 0 4px;
 }
 .totp-qr {
   width: 168px;
