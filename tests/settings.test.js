@@ -119,6 +119,10 @@ test('the chosen voice sets the gender the model speaks in, and the addition is 
   // умолчанию — мягкий японский акцент.
   assert.match(base.instructions, /От человека: Говори с лёгким японским акцентом/);
 
+  // Ключ кладём через сами настройки: без ключа выбор Gemini-провайдера не
+  // вступает в силу, а тест не должен зависеть от .env машины, на которой идёт.
+  await api.put('/api/settings').send({ geminiKey: 'тестовый-ключ-для-рода' }).expect(200);
+
   // Мужской голос — мужской род.
   await api.put('/api/settings').send({ voiceProvider: 'gemini', geminiVoiceName: 'Charon' }).expect(200);
   const male = (await api.get('/api/voice/status').expect(200)).body;
