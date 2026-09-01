@@ -718,9 +718,28 @@ function closeCard() {
 // Карточка открывается модальным окном, а не панелью внутри страницы: панель
 // жила в разделе «Сегодня» и на страницах журнала строилась на скрытой
 // странице — кнопка срабатывала, но человек не видел ничего.
-function propertyRow(label, control) {
+// Значки свойств — как в Notion: монохромные контуры слева от имени. Инлайновый
+// SVG, а не символы шрифта: глифы в каждом шрифте сидят по-своему.
+const PROP_ICONS = {
+  type: '<circle cx="8" cy="8" r="5.7" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5.7 7.2 8 9.5l2.3-2.3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>',
+  schedule: '<rect x="2.6" y="3.4" width="10.8" height="10" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5.4 1.9v2.6M10.6 1.9v2.6M2.6 6.9h10.8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
+  project: '<path d="M2.6 4.4h10.8M2.6 8h10.8M2.6 11.6h6.6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
+  people: '<circle cx="8" cy="5.1" r="2.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2.9 13.6a5.3 5.3 0 0 1 10.2 0" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
+  next: '<path d="M2.6 8h10M9.2 4.6 12.6 8l-3.4 3.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>',
+  done: '<rect x="2.6" y="2.6" width="10.8" height="10.8" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="m5.3 8.2 1.9 1.9 3.6-4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>',
+  written: '<circle cx="8" cy="8" r="5.7" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 4.9V8l2.2 1.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
+};
+function propIcon(name) {
+  const glyph = node("span", undefined, "prop-icon");
+  glyph.setAttribute("aria-hidden", "true");
+  glyph.innerHTML = `<svg viewBox="0 0 16 16" width="16" height="16">${PROP_ICONS[name]}</svg>`;
+  return glyph;
+}
+function propertyRow(label, control, icon) {
   const row = node("div", undefined, "prop");
-  row.append(node("span", label, "prop-label"), control);
+  const name = node("span", label, "prop-label");
+  if (icon) name.prepend(propIcon(icon));
+  row.append(name, control);
   return row;
 }
 // ── вложения записи ──────────────────────────────────────────────────────────
@@ -887,7 +906,7 @@ function cardBody(entry) {
   const field = createMarkdownField({
     id: "card-body-editor",
     ariaLabel: "Заметки к записи",
-    placeholder: "Добавьте заметки в Markdown…",
+    placeholder: "Введите «/» для команд разметки…",
     onSubmit: () => save(),
   });
   field.element.classList.add("card-markdown");
@@ -962,7 +981,11 @@ function showReview(entry, review, undoGroupId, provenance) {
   // Когда запись сделана — в самой карточке: «Срок» ниже это про будущее, а
   // здесь ответ на вопрос «когда это было».
   const written = entryClock(entry);
-  if (written) area.append(node("p", `Записано: ${written}`, "card-written"));
+  if (written) {
+    const stamp = node("p", `Записано: ${written}`, "card-written");
+    stamp.prepend(propIcon("written"));
+    area.append(stamp);
+  }
   if (review.question)
     area.append(node("p", review.question, "review-question"));
 
@@ -1014,17 +1037,17 @@ function showReview(entry, review, undoGroupId, provenance) {
 
   const scheduleRow = node("div", undefined, "review-schedule");
   scheduleRow.append(date, time);
-  const scheduleWrap = propertyRow("Срок", scheduleRow),
-    peopleWrap = propertyRow("Участники", people),
-    followUpWrap = propertyRow("Далее", followUp);
+  const scheduleWrap = propertyRow("Срок", scheduleRow, "schedule"),
+    peopleWrap = propertyRow("Участники", people, "people"),
+    followUpWrap = propertyRow("Далее", followUp, "next");
   const props = node("div", undefined, "props");
   props.append(
-    propertyRow("Тип", type),
+    propertyRow("Тип", type, "type"),
     scheduleWrap,
-    propertyRow("Проект", project),
+    propertyRow("Проект", project, "project"),
     peopleWrap,
     followUpWrap,
-    propertyRow("Сделано", doneToggle),
+    propertyRow("Сделано", doneToggle, "done"),
   );
   form.append(props);
   const updateVisibility = () => {

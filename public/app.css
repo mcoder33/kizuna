@@ -3808,3 +3808,499 @@ dialog form > div {
   color: var(--n-66);
   white-space: nowrap;
 }
+
+/* ── карточка записи: страница Notion один в один ────────────────────────────
+   Открытая запись выглядит как страница Notion в центральном «peek»: белый
+   лист со скруглением 10px на тёмной подложке, колонка контента 708px,
+   заголовок 40px, строки свойств со значками, разделитель и тело. Палитра и
+   метрики сняты с Notion; токены локальны карточке, чтобы остальное
+   приложение осталось в своей гамме. */
+#review-dialog {
+  --nt-bg: #ffffff;
+  --nt-text: rgb(55, 53, 47);
+  --nt-secondary: rgba(55, 53, 47, 0.65);
+  --nt-tertiary: rgba(55, 53, 47, 0.45);
+  --nt-divider: rgba(55, 53, 47, 0.09);
+  --nt-hr: rgba(55, 53, 47, 0.16);
+  --nt-hover: rgba(55, 53, 47, 0.08);
+  --nt-code-bg: #f7f6f3;
+  --nt-inline-code: #eb5757;
+  --nt-inline-code-bg: rgba(135, 131, 120, 0.15);
+  --nt-blue: #2383e2;
+  --nt-red: #eb5757;
+  --nt-mark: rgb(251, 243, 219);
+  --nt-table-border: rgb(233, 233, 231);
+  --nt-table-head: rgb(247, 247, 245);
+  --nt-callout-gray: rgb(241, 241, 239);
+  --nt-callout-yellow: rgb(251, 243, 219);
+  --nt-callout-red: rgb(253, 235, 236);
+  --nt-callout-green: rgb(237, 243, 236);
+  --nt-callout-blue: rgb(231, 243, 248);
+  width: min(1150px, calc(100vw - 80px));
+  height: calc(100vh - 72px);
+  max-width: none;
+  max-height: none;
+  margin: 36px auto;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: var(--nt-bg);
+  color: var(--nt-text);
+  font-family:
+    ui-sans-serif,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI Variable Display",
+    "Segoe UI",
+    Helvetica,
+    "Apple Color Emoji",
+    Arial,
+    sans-serif,
+    "Segoe UI Emoji",
+    "Segoe UI Symbol";
+  box-shadow:
+    rgba(15, 15, 15, 0.05) 0 0 0 1px,
+    rgba(15, 15, 15, 0.1) 0 3px 6px,
+    rgba(15, 15, 15, 0.2) 0 9px 24px;
+  overflow-y: auto;
+}
+:root[data-theme="dark"] #review-dialog {
+  --nt-bg: #252525;
+  --nt-text: rgba(255, 255, 255, 0.81);
+  --nt-secondary: rgba(255, 255, 255, 0.46);
+  --nt-tertiary: rgba(255, 255, 255, 0.32);
+  --nt-divider: rgba(255, 255, 255, 0.094);
+  --nt-hr: rgba(255, 255, 255, 0.14);
+  --nt-hover: rgba(255, 255, 255, 0.055);
+  --nt-code-bg: #1f1f1f;
+  --nt-inline-code: #ff7369;
+  --nt-inline-code-bg: rgba(135, 131, 120, 0.25);
+  --nt-mark: rgba(250, 177, 67, 0.2);
+  --nt-table-border: rgb(63, 63, 63);
+  --nt-table-head: rgba(255, 255, 255, 0.03);
+  --nt-callout-gray: rgba(255, 255, 255, 0.045);
+  --nt-callout-yellow: rgba(250, 177, 67, 0.13);
+  --nt-callout-red: rgba(255, 115, 105, 0.13);
+  --nt-callout-green: rgba(77, 171, 154, 0.13);
+  --nt-callout-blue: rgba(82, 156, 202, 0.13);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) #review-dialog {
+    --nt-bg: #252525;
+    --nt-text: rgba(255, 255, 255, 0.81);
+    --nt-secondary: rgba(255, 255, 255, 0.46);
+    --nt-tertiary: rgba(255, 255, 255, 0.32);
+    --nt-divider: rgba(255, 255, 255, 0.094);
+    --nt-hr: rgba(255, 255, 255, 0.14);
+    --nt-hover: rgba(255, 255, 255, 0.055);
+    --nt-code-bg: #1f1f1f;
+    --nt-inline-code: #ff7369;
+    --nt-inline-code-bg: rgba(135, 131, 120, 0.25);
+    --nt-mark: rgba(250, 177, 67, 0.2);
+    --nt-table-border: rgb(63, 63, 63);
+    --nt-table-head: rgba(255, 255, 255, 0.03);
+    --nt-callout-gray: rgba(255, 255, 255, 0.045);
+    --nt-callout-yellow: rgba(250, 177, 67, 0.13);
+    --nt-callout-red: rgba(255, 115, 105, 0.13);
+    --nt-callout-green: rgba(77, 171, 154, 0.13);
+    --nt-callout-blue: rgba(82, 156, 202, 0.13);
+  }
+}
+@media (max-width: 760px) {
+  #review-dialog {
+    width: 100vw;
+    height: 100dvh;
+    margin: 0;
+    border-radius: 0;
+  }
+}
+#review-dialog::backdrop {
+  background: rgba(15, 15, 15, 0.6);
+}
+/* Колонка страницы: 708px по центру, снизу — воздух, как на пустой странице. */
+#review-dialog .review {
+  max-width: 708px;
+  margin: 0 auto;
+  padding: 54px 32px 20vh;
+  font-size: 16px;
+  line-height: 1.5;
+}
+#review-dialog .dialog-close {
+  position: sticky;
+  top: 12px;
+  float: right;
+  margin: 12px 12px 0 0;
+  z-index: 2;
+  background: transparent;
+  color: var(--nt-tertiary);
+}
+#review-dialog .dialog-close:hover {
+  background: var(--nt-hover);
+  color: var(--nt-secondary);
+}
+/* Заголовок страницы. */
+#review-dialog .review h2 {
+  margin: 0 0 10px;
+  padding: 0;
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--nt-text);
+}
+/* «Записано» — первая строка свойств, с часами. */
+#review-dialog .card-written {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  margin: 8px 0 0;
+  font-size: 14px;
+  color: var(--nt-secondary);
+}
+#review-dialog .review-question {
+  font-size: 14px;
+  color: var(--nt-red);
+}
+/* Свойства: колонка имени 160px со значком, значение — обычный текст. */
+#review-dialog .review-form {
+  display: block;
+  margin-top: 0;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--nt-divider);
+}
+#review-dialog .props {
+  gap: 2px;
+}
+#review-dialog .prop {
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 8px;
+  min-height: 34px;
+  align-items: center;
+  border-radius: 4px;
+}
+#review-dialog .prop:hover {
+  background: none;
+}
+#review-dialog .prop-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  align-self: stretch;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1.2;
+  color: var(--nt-secondary);
+}
+#review-dialog .prop-label:hover {
+  background: var(--nt-hover);
+}
+#review-dialog .prop-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--nt-tertiary);
+}
+#review-dialog .prop-icon svg {
+  display: block;
+}
+#review-dialog .props select,
+#review-dialog .props input {
+  min-height: 30px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 4px;
+  font-size: 14px;
+  color: var(--nt-text);
+}
+#review-dialog .props select:hover,
+#review-dialog .props input:hover {
+  border: 0;
+  background: var(--nt-hover);
+}
+#review-dialog .props select:focus,
+#review-dialog .props input:focus {
+  border: 0;
+  outline: 0;
+  background: var(--nt-hover);
+  box-shadow: inset 0 0 0 1px rgba(35, 131, 226, 0.57);
+}
+#review-dialog .props input::placeholder {
+  color: var(--nt-tertiary);
+}
+/* «Сделано» — квадратный чекбокс Notion: синяя заливка с белой галкой. */
+#review-dialog .completion-button {
+  width: 16px;
+  height: 16px;
+  margin: 0 0 0 8px;
+  border: 1.4px solid var(--nt-tertiary);
+  border-radius: 3px;
+  background: none;
+  color: transparent;
+}
+#review-dialog .completion-button:hover {
+  border-color: var(--nt-secondary);
+}
+#review-dialog .completion-button.is-done {
+  border-color: var(--nt-blue);
+  background: var(--nt-blue);
+  color: #fff;
+}
+#review-dialog .completion-button::before {
+  font-size: 10px;
+}
+#review-dialog .review-form > button {
+  margin-top: 10px;
+  padding: 4px 10px;
+  border: 1px solid var(--nt-hr);
+  border-radius: 6px;
+  background: none;
+  font-size: 14px;
+  color: var(--nt-secondary);
+  box-shadow: none;
+}
+#review-dialog .review-form > button:hover {
+  background: var(--nt-hover);
+  color: var(--nt-text);
+}
+/* Тело страницы: без рамок и подложек, текст сразу на листе. */
+#review-dialog .prop-section {
+  margin: 14px 0 0;
+  font-size: 12px;
+  color: var(--nt-tertiary);
+}
+#review-dialog .card-body > .card-markdown {
+  min-height: 200px;
+}
+#review-dialog .md-field {
+  padding: 6px 0;
+  border-radius: 0;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--nt-text);
+}
+#review-dialog .md-field:hover,
+#review-dialog .md-field:focus {
+  background: none;
+  box-shadow: none;
+}
+#review-dialog .md-field[data-empty="true"]::before {
+  color: var(--nt-tertiary);
+}
+#review-dialog .card-body-hint {
+  font-size: 12px;
+  color: var(--nt-tertiary);
+}
+/* Разметка в карточке — блоки Notion: заголовки, цитаты, код, выноски. */
+#review-dialog .md-field .md-heading {
+  font-weight: 600;
+}
+#review-dialog .md-field .md-h1 { font-size: 1.875em; }
+#review-dialog .md-field .md-h2 { font-size: 1.5em; }
+#review-dialog .md-field .md-h3 { font-size: 1.25em; }
+#review-dialog .md-field .md-h4,
+#review-dialog .md-field .md-h5,
+#review-dialog .md-field .md-h6 { font-size: 1em; }
+#review-dialog .md-field > .md-line:has(.md-h1) { margin-top: 24px; }
+#review-dialog .md-field > .md-line:has(.md-h2) { margin-top: 17px; }
+#review-dialog .md-field > .md-line:has(.md-h3) { margin-top: 11px; }
+#review-dialog .md-field > .md-line:first-child { margin-top: 0; }
+#review-dialog .md-block .md-h1 { font-size: 1.875em; font-weight: 600; }
+#review-dialog .md-block .md-h2 { font-size: 1.5em; font-weight: 600; }
+#review-dialog .md-block .md-h3 { font-size: 1.25em; font-weight: 600; }
+#review-dialog .md-field .md-quote,
+#review-dialog .md-block blockquote {
+  border-left: 3px solid var(--nt-text);
+  padding-left: 14px;
+  color: var(--nt-text);
+  font-style: normal;
+  background: none;
+}
+#review-dialog .md-block blockquote {
+  margin: 6px 0;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+#review-dialog code {
+  border-radius: 3px;
+  padding: 0.1em 0.4em;
+  background: var(--nt-inline-code-bg);
+  color: var(--nt-inline-code);
+  font-family: SFMono-Regular, Menlo, Consolas, "PT Mono", "Liberation Mono", Courier, monospace;
+  font-size: 85%;
+}
+#review-dialog pre {
+  border: 0;
+  border-radius: 4px;
+  padding: 16px;
+  background: var(--nt-code-bg);
+}
+#review-dialog pre code {
+  padding: 0;
+  background: none;
+  color: var(--nt-text);
+  font-size: 87.5%;
+}
+#review-dialog mark {
+  background: var(--nt-mark);
+  color: inherit;
+}
+#review-dialog hr {
+  border: 0;
+  border-top: 1px solid var(--nt-hr);
+  margin: 10px 0;
+}
+#review-dialog .md-field .md-rule {
+  color: var(--nt-tertiary);
+}
+#review-dialog .md-mark {
+  color: var(--nt-tertiary);
+}
+#review-dialog a,
+#review-dialog .md-link,
+#review-dialog .md-wikilink {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--nt-hr);
+  text-underline-offset: 2px;
+}
+#review-dialog .md-field .md-checkbox-done,
+#review-dialog .md-block .md-task-done .md-checkbox {
+  color: var(--nt-blue);
+}
+#review-dialog .md-field .md-task-done,
+#review-dialog .md-block .md-task-done {
+  color: var(--nt-secondary);
+  text-decoration: line-through;
+}
+#review-dialog .md-table {
+  font-size: 14px;
+}
+#review-dialog .md-table th,
+#review-dialog .md-table td {
+  border: 1px solid var(--nt-table-border);
+  padding: 6px 9px;
+}
+#review-dialog .md-table th {
+  background: var(--nt-table-head);
+  font-weight: 500;
+  text-align: left;
+}
+/* Выноски: мягкие подложки Notion вместо цветных полос. */
+#review-dialog .md-field .md-callout-head,
+#review-dialog .md-field .md-callout-body {
+  border-left: 0;
+}
+#review-dialog :is(.md-field .md-callout-head, .md-field .md-callout-body, .md-block .md-callout):is(
+    .md-callout-info, .md-callout-note, .md-callout-example, .md-callout-quote,
+    .md-callout-cite, .md-callout-abstract, .md-callout-summary, .md-callout-tldr) {
+  background: var(--nt-callout-gray);
+}
+#review-dialog :is(.md-field .md-callout-head, .md-field .md-callout-body, .md-block .md-callout):is(
+    .md-callout-warning, .md-callout-caution, .md-callout-attention) {
+  background: var(--nt-callout-yellow);
+}
+#review-dialog :is(.md-field .md-callout-head, .md-field .md-callout-body, .md-block .md-callout):is(
+    .md-callout-danger, .md-callout-error, .md-callout-bug, .md-callout-failure,
+    .md-callout-fail, .md-callout-missing) {
+  background: var(--nt-callout-red);
+}
+#review-dialog :is(.md-field .md-callout-head, .md-field .md-callout-body, .md-block .md-callout):is(
+    .md-callout-success, .md-callout-check, .md-callout-done, .md-callout-tip, .md-callout-hint) {
+  background: var(--nt-callout-green);
+}
+#review-dialog :is(.md-field .md-callout-head, .md-field .md-callout-body, .md-block .md-callout):is(
+    .md-callout-question, .md-callout-help, .md-callout-faq, .md-callout-todo, .md-callout-important) {
+  background: var(--nt-callout-blue);
+}
+#review-dialog .md-block .md-callout {
+  border: 0;
+  border-radius: 4px;
+  padding: 16px 16px 16px 12px;
+}
+/* Вложения и источник — служебные ряды внизу страницы. */
+#review-dialog .card-files {
+  margin-top: 24px;
+  padding-top: 0;
+  border-top: 0;
+}
+#review-dialog .card-files > button {
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  font-size: 14px;
+  color: var(--nt-secondary);
+  box-shadow: none;
+}
+#review-dialog .card-files > button::before {
+  content: "+";
+  margin-right: 6px;
+  color: var(--nt-tertiary);
+}
+#review-dialog .card-files > button:hover {
+  background: var(--nt-hover);
+  color: var(--nt-text);
+}
+#review-dialog .file-tile {
+  border-radius: 4px;
+}
+#review-dialog .card-source {
+  margin-top: 20px;
+  padding-top: 6px;
+  border-top: 1px solid var(--nt-divider);
+}
+#review-dialog .card-source summary {
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 14px;
+  color: var(--nt-secondary);
+}
+#review-dialog .card-source summary:hover {
+  background: var(--nt-hover);
+}
+#review-dialog .review-raw {
+  margin-top: 8px;
+  border: 1px solid var(--nt-divider);
+  border-radius: 4px;
+  background: none;
+  font-size: 14px;
+}
+#review-dialog .entry-meta {
+  color: var(--nt-tertiary);
+}
+#review-dialog .card-delete {
+  margin-top: 14px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+  color: var(--nt-red);
+}
+#review-dialog .card-delete:hover {
+  background: rgba(235, 87, 87, 0.1);
+  color: var(--nt-red);
+}
+/* Тело — прямо на листе: рамка и подложка остались от textarea-эпохи. */
+#review-dialog #card-body-editor {
+  min-height: 220px;
+  padding: 6px 0;
+  border: 0;
+  border-radius: 0;
+  font-size: 16px;
+}
+#review-dialog .card-body {
+  margin-top: 10px;
+  padding-top: 0;
+  border-top: 0;
+}
+/* Внутри выноски цитатная полоса не рисуется: у Notion это один мягкий блок. */
+#review-dialog .md-field .md-callout-head .md-callout-line,
+#review-dialog .md-field .md-callout-body .md-quote {
+  border-left: 0;
+  margin-left: 0;
+  padding-left: 0;
+}
+/* Заголовок выноски — обычным цветом текста: цвет несёт подложка, а роль
+   значка играет сам маркер [!tip]. */
+#review-dialog .md-field .md-callout-line .md-callout-title {
+  color: var(--nt-text);
+}

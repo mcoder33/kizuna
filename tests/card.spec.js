@@ -627,30 +627,33 @@ test("лист и карточка тихо проявляются, а не ле
   expect(blockAnimations).toBe(0);
 });
 
-test("the entry card is the same sheet as the grown capture card", async ({ page, request }) => {
+// Раньше карточка повторяла «лист» выросшего поля ввода. Теперь открытая
+// запись — страница Notion: широкий центральный peek с колонкой контента
+// 708px, а лист остался только у поля ввода.
+test("the entry card opens as a notion page: wide peek with a 708px column", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
 
-  // Размер листа у поля ввода.
   await page.getByLabel("Новая запись").click();
-  await page.keyboard.type("запись для сравнения листов");
-  await page.locator("#capture-expand").click();
-  await page.waitForTimeout(760);
-  const sheet = await page.locator("#capture-form").boundingBox();
-  await page.keyboard.press("Escape");
-  await page.waitForTimeout(760);
-
-  // Тот же размер у карточки записи.
+  await page.keyboard.type("запись для проверки страницы");
   await page.getByRole("button", { name: "Сохранить запись" }).click();
-  const entry = page.locator("#today .entry").filter({ hasText: "запись для сравнения" }).first();
+  const entry = page.locator("#today .entry").filter({ hasText: "проверки страницы" }).first();
   await expect(entry).toBeVisible({ timeout: 15000 });
   await entry.locator(".entry-title").click();
   await page.waitForTimeout(760);
-  const card = await page.locator("#review-dialog").boundingBox();
 
-  expect(Math.round(card.width)).toBe(Math.round(sheet.width));
-  expect(Math.round(card.height)).toBe(Math.round(sheet.height));
+  // Геометрия peek: ширина min(1150, окно − 80), высота — окно без 72px.
+  const card = await page.locator("#review-dialog").boundingBox();
+  expect(Math.round(card.width)).toBe(1150);
+  expect(Math.round(card.height)).toBe(900 - 72);
+
+  // Контент собран в колонку страницы, как в Notion.
+  const column = await page.locator("#review").boundingBox();
+  expect(Math.round(column.width)).toBeLessThanOrEqual(708);
+  // Колонка стоит по центру peek, а не прижата к краю.
+  const offCenter = Math.abs(column.x + column.width / 2 - (card.x + card.width / 2));
+  expect(offCenter).toBeLessThan(16);
 });
 
 test("a capture can be deleted from its card and brought back from the toast", async ({ page, request }) => {
