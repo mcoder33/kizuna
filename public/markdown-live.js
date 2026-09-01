@@ -394,6 +394,26 @@ export function createMarkdownField({ id, ariaLabel, placeholder = "", onInput, 
     setValue,
     clear: () => setValue(""),
     focus: () => root.focus(),
+    // Узкий шов для меню разметки: оно должно знать, что набрано на строке до
+    // каретки, и уметь заменить этот кусок. Больше внутренностей поля наружу не
+    // отдаём — иначе меню начнёт лезть в отрисовку и модель строк.
+    caret: readCaret,
+    lineAt: (index) => lines[index] ?? "",
+    replaceInLine: (index, from, to, text, caretOffset = text.length) => {
+      const current = lines[index] ?? "";
+      // Вставка может быть в несколько строк (блок кода, таблица). Перенос
+      // внутри одной строки модели сломал бы её: строки должны оставаться
+      // строками, поэтому вставка сразу разворачивается в отдельные.
+      const head = current.slice(0, from);
+      const tail = current.slice(to);
+      const parts = (head + text + tail).split("\n");
+      lines.splice(index, 1, ...parts);
+      // Каретка задана смещением внутри вставки — переводим его в «строка и
+      // смещение», считая переносы до него.
+      const before = (head + text.slice(0, caretOffset)).split("\n");
+      render({ line: index + before.length - 1, offset: before[before.length - 1].length });
+      if (onInput) onInput(getValue());
+    },
     setPlaceholder: (text) => {
       root.dataset.placeholder = text;
     },

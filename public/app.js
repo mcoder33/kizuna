@@ -1,5 +1,6 @@
 import { renderMarkdown, renderInlineMarkdown } from "./markdown.js";
 import { createMarkdownField } from "./markdown-live.js";
+import { attachSlashMenu } from "./slash-menu.js";
 import { createVoiceDialog } from "./voice.js";
 
 const $ = (selector) => document.querySelector(selector);
@@ -681,6 +682,9 @@ function appear(element, { shift = 10, duration = APPEAR_DURATION, base = "" } =
 // Незаписанная правка заметки: карточку закрывают крестиком, фоном и Esc —
 // и во всех трёх случаях набранное должно остаться, а не пропасть.
 let flushCardBody = null;
+// Поле заметки пересоздаётся на каждое открытие карточки, а меню разметки
+// вешает слушатель на документ: без уборки они копились бы с каждым разом.
+let closeCardSlashMenu = null;
 function closeCard() {
   const dialog = $("#review-dialog");
   // Сохранение уходит своим ходом: карточка закрывается сразу, но значение
@@ -688,6 +692,7 @@ function closeCard() {
   const flush = flushCardBody;
   flushCardBody = null;
   flush?.();
+  closeCardSlashMenu?.();
   if (!dialog.open) {
     clear($("#review"));
     return;
@@ -886,6 +891,10 @@ function cardBody(entry) {
     onSubmit: () => save(),
   });
   field.element.classList.add("card-markdown");
+  // Разметку помнить наизусть незачем: «/» показывает, что тут вообще бывает.
+  closeCardSlashMenu?.();
+  const slashMenu = attachSlashMenu(field);
+  closeCardSlashMenu = () => { slashMenu.destroy(); closeCardSlashMenu = null; };
   field.setValue(body);
   hint.hidden = true;
 
@@ -1400,6 +1409,7 @@ const captureField = createMarkdownField({
   onSubmit: () => $("#capture-form").requestSubmit(),
 });
 $("#capture-form").prepend(captureField.element);
+attachSlashMenu(captureField);
 const captureTypes = [
   { value: "auto", label: "Авто", cssVar: "auto", placeholder: "Запишите мысль, план, встречу или итог дня" },
   { value: "todo", label: "ТУДУ", cssVar: "todo", placeholder: "Что нужно сделать — и когда" },
