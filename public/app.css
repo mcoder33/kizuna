@@ -805,15 +805,18 @@ main {
   border-top: 1px solid var(--hairline);
 }
 /* ── кнопка разговора: такой же тихий значок, что и «развернуть» ── */
+/* Кнопка разговора и кнопка отправки стоят в одном месте и меняются: пока
+   писать нечего — это разговор, появился текст — отправка. Значит и выглядеть
+   они должны одинаково, иначе на глазах у человека кнопка «прыгнет». */
 .capture-voice {
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   padding: 0;
   border: 0;
   border-radius: 50%;
-  background: var(--voice-button);
-  color: var(--brand-on-hanko);
+  background: var(--coral);
+  color: var(--n-100);
   cursor: pointer;
   display: grid;
   place-items: center;
@@ -823,11 +826,11 @@ main {
     transform 0.1s;
 }
 .capture-voice svg {
-  width: 18px;
-  height: 18px;
+  width: 19px;
+  height: 19px;
 }
 .capture-voice:hover {
-  background: var(--voice-button-hover);
+  background: var(--red-54);
 }
 .capture-voice:focus-visible {
   outline: 2px solid var(--focus);
@@ -836,8 +839,7 @@ main {
 /* Идёт разговор — кнопка не меняет цвет, а обрастает кольцом: смена заливки
    читалась бы как «другая кнопка», а это та же самая, только сейчас включена. */
 .capture-voice[aria-pressed='true'] {
-  background: var(--voice-button-hover);
-  box-shadow: 0 0 0 3px var(--voice-button-ring);
+  box-shadow: 0 0 0 3px var(--red-90);
 }
 .capture-voice:active {
   transform: scale(0.92);
@@ -1091,7 +1093,10 @@ body.voice-live-open {
     radial-gradient(90vmin 70vmin at 50% 34%, var(--violet-98) 0%, var(--violet-98-a0) 72%),
     linear-gradient(168deg, var(--violet-96-2) 0%, var(--violet-96-3) 52%, var(--violet-96-4) 100%);
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  /* minmax(0, …), а не просто 1fr: иначе средняя строка держит свой
+     минимальный размер, и на низком окне подпись с полем ввода уезжает за
+     край — последняя строка обрезается пополам. */
+  grid-template-rows: auto minmax(0, 1fr) auto;
   animation: voice-live-enter 0.36s cubic-bezier(0.16, 1, 0.3, 1);
 }
 @keyframes voice-live-enter {
@@ -1187,10 +1192,17 @@ body.voice-live-open {
 .voice-panel.voice-live .voice-stage {
   align-content: center;
   gap: 22px;
+  /* Если и ужатого круга много (совсем низкое окно), прокручивается сцена —
+     шапка и поле ввода при этом остаются на месте. */
+  min-height: 0;
+  overflow-y: auto;
 }
+/* На низком окне ужимается круг, а не текст: круг — украшение происходящего,
+   а подпись и поле ввода — само происходящее. На высоком экране 44vh больше
+   380px и ничего не меняет. */
 .voice-panel.voice-live .voice-orb {
-  width: min(52vmin, 380px);
-  height: min(52vmin, 380px);
+  width: min(52vmin, 380px, 44vh);
+  height: min(52vmin, 380px, 44vh);
 }
 .voice-panel.voice-live .voice-arc-1 { border-width: 11px; }
 .voice-panel.voice-live .voice-arc-2 { border-width: 7px; }
@@ -3750,27 +3762,6 @@ dialog form > div {
   font-size: 13px;
 }
 
-/* Кнопка разговора — единственная цветная в подвале карточки ввода рядом с
-   кнопкой сохранения: разговор это не «ещё одно действие», а другой способ
-   вести журнал, и он должен читаться с первого взгляда. Цвет свой и с темой не
-   переворачивается — на тёмном фоне он лишь светлеет, чтобы не слиться с ним. */
-:root {
-  --voice-button: #1f3aa0;
-  --voice-button-hover: #2a48bd;
-  --voice-button-ring: rgba(31, 58, 160, 0.25);
-}
-:root[data-theme='dark'] {
-  --voice-button: #3a55cc;
-  --voice-button-hover: #4c67e0;
-  --voice-button-ring: rgba(90, 118, 235, 0.3);
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    --voice-button: #3a55cc;
-    --voice-button-hover: #4c67e0;
-    --voice-button-ring: rgba(90, 118, 235, 0.3);
-  }
-}
 
 /* ── меню разметки по «/» ────────────────────────────────────────────────────
    Живёт в body, а не внутри поля: поле прокручивается и обрезает содержимое,

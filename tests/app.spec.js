@@ -827,8 +827,10 @@ test("initial root load and legacy deck produce no console, page or resource err
   });
   await page.goto("/");
   await expect(page.getByLabel("Новая запись")).toBeVisible();
+  // На пустом поле главное действие — разговор: кнопка отправки появляется
+  // только вместе с текстом, поэтому на свежей странице ждём именно эту.
   await expect(
-    page.getByRole("button", { name: "Сохранить запись" }),
+    page.getByRole("button", { name: "Поговорить с журналом" }),
   ).toBeVisible();
   await expect(page.locator('link[rel="icon"]')).toHaveAttribute(
     "href",
@@ -1203,4 +1205,33 @@ test("расходы видно в настройках", async ({ page, request
   await page.goto("/#settings");
   await expect(page.locator("#usage-table")).not.toContainText("Пока ничего не потрачено");
   await expect(page.locator("#usage-table .usage-detail")).toContainText("fake/fast");
+});
+
+// Одна кнопка на два дела, как в разговорных приложениях: пока писать нечего —
+// это разговор, появился текст — отправка. Проверяется не картинка, а то, что в
+// каждый момент на месте ровно одна кнопка и она делает то, что обещает.
+test("кнопка в углу поля меняется: разговор на пустом, отправка на наборе", async ({ page }) => {
+  await page.goto("/");
+  const voice = page.getByRole("button", { name: "Поговорить с журналом" });
+  const submit = page.getByRole("button", { name: "Сохранить запись" });
+
+  await expect(voice).toBeVisible();
+  await expect(submit).toBeHidden();
+
+  await page.getByLabel("Новая запись").fill("купить кофе");
+  await expect(submit).toBeVisible();
+  await expect(voice).toBeHidden();
+
+  // Обе занимают одно место: иначе кнопка прыгала бы на глазах у человека.
+  const submitBox = await submit.boundingBox();
+  await page.getByLabel("Новая запись").fill("");
+  await expect(voice).toBeVisible();
+  const voiceBox = await voice.boundingBox();
+  expect(Math.round(voiceBox.x)).toBe(Math.round(submitBox.x));
+  expect(Math.round(voiceBox.width)).toBe(Math.round(submitBox.width));
+
+  // Одни пробелы — ещё не запись.
+  await page.getByLabel("Новая запись").fill("   ");
+  await expect(voice).toBeVisible();
+  await expect(submit).toBeHidden();
 });

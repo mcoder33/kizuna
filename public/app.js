@@ -1406,10 +1406,25 @@ const captureField = createMarkdownField({
   id: "capture-input",
   ariaLabel: "Новая запись",
   placeholder: "Запишите мысль, план, встречу или итог дня",
+  onInput: (value) => paintCaptureAction(value),
   onSubmit: () => $("#capture-form").requestSubmit(),
 });
 $("#capture-form").prepend(captureField.element);
 attachSlashMenu(captureField);
+// Одна кнопка на два дела: пока писать нечего — это разговор, как только
+// появился текст — отправка. Две кнопки рядом заставляли бы выбирать там, где
+// выбор уже сделан тем, что набрано (или не набрано).
+function paintCaptureAction(value = captureField.getValue()) {
+  const typing = Boolean(String(value).trim());
+  // Пока разговор идёт, кнопку не прячем даже с текстом: она сейчас — «закончить
+  // разговор», и убирать её значило бы отнять единственную привычную дверь.
+  const talking = $("#capture-voice").getAttribute("aria-pressed") === "true";
+  $("#capture-voice").hidden = typing && !talking;
+  $("#capture-submit").hidden = !typing;
+}
+// Начало и конец разговора меняют роль кнопки, а ввода при этом может и не быть.
+$("#capture-voice").addEventListener("click", () => setTimeout(paintCaptureAction, 0));
+paintCaptureAction();
 const captureTypes = [
   { value: "auto", label: "Авто", cssVar: "auto", placeholder: "Запишите мысль, план, встречу или итог дня" },
   { value: "todo", label: "ТУДУ", cssVar: "todo", placeholder: "Что нужно сделать — и когда" },
@@ -2312,6 +2327,10 @@ $("#theme-toggle")?.addEventListener("click", () => {
 settingInput("theme")?.addEventListener("change", (event) => {
   window.pagentTheme.set(event.target.value);
   paintThemeButton();
+  // Выбор из списка сохраняется сразу, как и нажатие кнопки в шапке: иначе
+  // тема держалась только в этом браузере и «забывалась» на другом устройстве
+  // или после чистки хранилища — выглядело как будто выбор не запомнился.
+  saveSettings({ theme: event.target.value }, { announce: null }).catch(() => {});
 });
 paintThemeButton();
 

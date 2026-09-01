@@ -202,3 +202,29 @@ test("свой расход за месяц виден в настройках",
   await page.reload();
   await expect(page.locator("#spend-state")).toContainText("потолка нет");
 });
+
+test("выбор темы в настройках запоминается за учётной записью, а не только в браузере", async ({ page, request }) => {
+  await page.goto("/#settings");
+  await page.locator("#setting-theme").selectOption("light");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+
+  // Список темы сохраняет сразу: раньше он менял вид, но в учётную запись
+  // ничего не писал — и на другом устройстве тема «забывалась».
+  await expect
+    .poll(async () => (await (await request.get("/api/settings")).json()).settings.theme)
+    .toBe("light");
+
+  // Так выглядит другое устройство: браузер ничего не помнит, а тема приходит
+  // из учётной записи.
+  await page.evaluate(() => localStorage.removeItem("pagent.theme"));
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  const background = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  const [red, green, blue] = background.match(/\d+/g).map(Number);
+  expect((red + green + blue) / 3).toBeGreaterThan(200, "светлая тема — светлый фон");
+
+  await page.locator("#setting-theme").selectOption("system");
+  await expect
+    .poll(async () => (await (await request.get("/api/settings")).json()).settings.theme)
+    .toBe("system");
+});

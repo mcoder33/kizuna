@@ -884,3 +884,40 @@ test("с одним ключом переключать голос нечем", 
   // Выбора нет — и строки нет: пустой список только мешал бы.
   await expect(page.locator(".voice-quick-picker")).toBeHidden();
 });
+
+// На низком окне экран разговора обрезал последнюю строку подсказки, а поле
+// ввода уезжало за край: средняя строка раскладки не умела сжиматься.
+test("экран разговора влезает в низкое окно: ужимается круг, а не текст", async ({ page }) => {
+  await page.setViewportSize({ width: 1120, height: 620 });
+  await installFakeRealtime(page);
+  await page.goto("/");
+  await page.locator("#capture-voice").click();
+  const panel = page.locator("#voice-panel");
+  await expect(panel).toHaveClass(/voice-live/, { timeout: 15000 });
+
+  const fits = await page.evaluate(() => {
+    const box = document.querySelector("#voice-panel");
+    const hint = document.querySelector("#voice-hint");
+    const form = box.querySelector("form");
+    return {
+      целиком: box.scrollHeight <= window.innerHeight + 1,
+      подсказка: Math.round(hint.getBoundingClientRect().bottom) <= window.innerHeight,
+      поле: Math.round(form.getBoundingClientRect().bottom) <= window.innerHeight,
+      круг: parseFloat(getComputedStyle(document.querySelector(".voice-orb")).width),
+    };
+  });
+  expect(fits.целиком).toBe(true);
+  expect(fits.подсказка).toBe(true);
+  expect(fits.поле).toBe(true);
+  // Уступает место именно круг: он украшение, а подпись и поле — само дело.
+  expect(fits.круг).toBeLessThan(300);
+
+  // На высоком окне круг возвращается к своему полному размеру: правка
+  // забирает место только тогда, когда его правда нет. Сравниваем с низким
+  // окном, а не с числом: точное значение зависит от того, как быстро браузер
+  // пересчитает vh после смены размера.
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await expect
+    .poll(async () => page.evaluate(() => parseFloat(getComputedStyle(document.querySelector(".voice-orb")).width)))
+    .toBeGreaterThan(fits.круг);
+});
