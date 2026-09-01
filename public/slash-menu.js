@@ -3,21 +3,49 @@
 // и выбрал. Отдельный модуль, потому что это не про разбор разметки, а про
 // подсказку; поле отдаёт ему только каретку и замену куска строки.
 
+import { CALLOUTS } from "./markdown.js";
+
 // В списке лежит лишь то, что поле правда рисует: предложить блок, который
 // останется серым текстом, — хуже, чем не предлагать ничего. Ключевые слова
 // нарочно на двух языках: «/h1» и «/заг» должны находить одно и то же.
+// Выноски не перечислены руками: пункты собираются из того же словаря, что
+// использует рендер, — новый тип сам появится в меню. Синонимы (hint, check,
+// faq…) отдельных пунктов не плодят: они складываются в ключи поиска своего
+// заголовка, поэтому «/hint» приводит к «Выноска: совет».
+const CALLOUT_SYNONYMS = { note: "примечание", warning: "предупреждение", tip: "подсказка", danger: "опасность" };
+const CALLOUT_ITEMS = [];
+{
+  const byTitle = new Map();
+  for (const [kind, title] of Object.entries(CALLOUTS)) {
+    const known = byTitle.get(title);
+    if (known) {
+      known.keys += ` ${kind}`;
+      continue;
+    }
+    const item = {
+      id: `callout-${kind}`,
+      title: `Выноска: ${title.toLowerCase()}`,
+      hint: `> [!${kind}]`,
+      keys: `callout выноска ${kind} ${title.toLowerCase()} ${CALLOUT_SYNONYMS[kind] ?? ""}`.trimEnd(),
+      kind: "prefix",
+      value: `> [!${kind}] `,
+    };
+    byTitle.set(title, item);
+    CALLOUT_ITEMS.push(item);
+  }
+}
+
 export const SLASH_ITEMS = [
   { id: "h1", title: "Заголовок 1", hint: "# ", keys: "h1 heading zagolovok заголовок большой", kind: "prefix", value: "# " },
   { id: "h2", title: "Заголовок 2", hint: "## ", keys: "h2 heading подзаголовок заголовок", kind: "prefix", value: "## " },
   { id: "h3", title: "Заголовок 3", hint: "### ", keys: "h3 heading заголовок мелкий", kind: "prefix", value: "### " },
+  { id: "h4", title: "Заголовок 4", hint: "#### ", keys: "h4 heading заголовок", kind: "prefix", value: "#### " },
+  { id: "h5", title: "Заголовок 5", hint: "##### ", keys: "h5 heading заголовок", kind: "prefix", value: "##### " },
+  { id: "h6", title: "Заголовок 6", hint: "###### ", keys: "h6 heading заголовок", kind: "prefix", value: "###### " },
   { id: "bullet", title: "Список", hint: "- ", keys: "list bullet список маркер пункт", kind: "prefix", value: "- " },
   { id: "ordered", title: "Нумерованный список", hint: "1. ", keys: "ordered number нумерованный список цифры", kind: "prefix", value: "1. " },
   { id: "task", title: "Задача", hint: "- [ ] ", keys: "todo task чекбокс задача галочка дело", kind: "prefix", value: "- [ ] " },
   { id: "quote", title: "Цитата", hint: "> ", keys: "quote цитата", kind: "prefix", value: "> " },
-  { id: "note", title: "Выноска: заметка", hint: "> [!note]", keys: "callout note выноска заметка", kind: "prefix", value: "> [!note] " },
-  { id: "warning", title: "Выноска: внимание", hint: "> [!warning]", keys: "callout warning выноска внимание предупреждение", kind: "prefix", value: "> [!warning] " },
-  { id: "tip", title: "Выноска: совет", hint: "> [!tip]", keys: "callout tip выноска совет подсказка", kind: "prefix", value: "> [!tip] " },
-  { id: "danger", title: "Выноска: опасность", hint: "> [!danger]", keys: "callout danger выноска опасность ошибка", kind: "prefix", value: "> [!danger] " },
   { id: "code", title: "Блок кода", hint: "```", keys: "code блок кода программа", kind: "block", value: "```\n\n```", caret: 4 },
   { id: "divider", title: "Разделитель", hint: "---", keys: "divider hr разделитель черта линия", kind: "block", value: "---" },
   // Ячейки пустые, а не с примером внутри: заготовку с «Что» и «Сколько»
@@ -32,6 +60,21 @@ export const SLASH_ITEMS = [
   // полным адресом, и с обрубком человек видел бы серый текст вместо ссылки.
   // example.com зарезервирован стандартом и никуда не ведёт.
   { id: "link", title: "Ссылка", hint: "[текст](адрес)", keys: "link ссылка адрес url", kind: "wrap", before: "[", after: "](https://example.com)" },
+  { id: "image", title: "Изображение", hint: "![подпись](адрес)", keys: "image picture photo изображение картинка фото", kind: "wrap", before: "![", after: "](https://example.com)" },
+  { id: "wikilink", title: "Внутренняя ссылка", hint: "[[запись]]", keys: "wikilink internal вики внутренняя ссылка память", kind: "wrap", before: "[[", after: "]]" },
+  { id: "embed", title: "Встраивание записи", hint: "![[запись]]", keys: "embed transclude встраивание вложение записи", kind: "wrap", before: "![[", after: "]]" },
+  ...CALLOUT_ITEMS,
+  { id: "math", title: "Формула", hint: "$x$", keys: "math formula latex формула математика", kind: "wrap", before: "$", after: "$" },
+  { id: "math-block", title: "Формула блоком", hint: "$$x$$", keys: "math formula block формула блоком выключная", kind: "wrap", before: "$$", after: "$$" },
+  { id: "comment", title: "Комментарий", hint: "%%текст%%", keys: "comment hidden комментарий скрытый черновик", kind: "wrap", before: "%%", after: "%%" },
+  { id: "footnote", title: "Сноска", hint: "^[текст]", keys: "footnote inline сноска примечание", kind: "wrap", before: "^[", after: "]" },
+  { id: "footnote-ref", title: "Сноска: ссылка", hint: "[^1]", keys: "footnote ref сноска ссылка номер", kind: "wrap", before: "[^", after: "]" },
+  { id: "footnote-def", title: "Сноска: определение", hint: "[^1]:", keys: "footnote definition сноска определение внизу", kind: "prefix", value: "[^1]: " },
+  // У тега нет закрывающей пары: after пустой, набранное после решётки и есть тег.
+  { id: "tag", title: "Тег", hint: "#тег", keys: "tag hashtag тег метка рубрика", kind: "wrap", before: "#", after: "" },
+  // Имя якоря — латиницей: поле рисует только такие, поэтому в заготовке
+  // настоящее имя-пример, как адрес у ссылки, а не кириллический обрубок.
+  { id: "anchor", title: "Якорь блока", hint: "^имя", keys: "anchor block якорь блока метка ссылка", kind: "block", value: "^anchor" },
 ];
 
 const normalize = (value) => String(value).toLowerCase().replace(/ё/g, "е");
@@ -73,7 +116,15 @@ export function attachSlashMenu(field, { document: doc = document } = {}) {
   menu.setAttribute("role", "listbox");
   menu.setAttribute("aria-label", "Разметка");
   menu.hidden = true;
+  // Пока меню закрыто, оно лежит в body; перед показом переезжает в модальную
+  // карточку, если поле живёт в ней: элемент вне <dialog> рисуется под
+  // top-layer'ом диалога — его не видно, а клики до него не доходят. Искать
+  // диалог при подключении нельзя: поле заметки собирается до вставки в DOM.
   doc.body.append(menu);
+  const mount = () => {
+    const host = root.closest("dialog") ?? doc.body;
+    if (menu.parentNode !== host) host.append(menu);
+  };
 
   let visible = [];
   let active = 0;
@@ -104,14 +155,31 @@ export function attachSlashMenu(field, { document: doc = document } = {}) {
     menu.style.left = `${Math.min(base.left, window.innerWidth - menu.offsetWidth - 12)}px`;
   }
 
+  // Подсветка отделена от перестройки списка: перерисовывать пункты на каждое
+  // движение было бы не только расточительно — replaceChildren пересоздаёт
+  // узел прямо под курсором, и нажатие мыши приходится в уже отсоединённый
+  // элемент. Список строится один раз на запрос, дальше ходит только подсветка.
+  function setActive(index) {
+    active = index;
+    [...menu.children].forEach((option, position) => {
+      option.classList.toggle("is-active", position === active);
+      option.setAttribute("aria-selected", String(position === active));
+    });
+    const current = visible[active];
+    if (current) root.setAttribute("aria-activedescendant", `slash-option-${current.id}`);
+    // Пунктов больше, чем помещается: выбранный подтягивается в видимую часть,
+    // иначе стрелки уводят выделение за край прокрутки.
+    menu.children[active]?.scrollIntoView?.({ block: "nearest" });
+  }
+
   function paint() {
+    mount();
     menu.replaceChildren();
     visible.forEach((item, index) => {
       const option = doc.createElement("div");
-      option.className = `slash-option${index === active ? " is-active" : ""}`;
+      option.className = "slash-option";
       option.id = `slash-option-${item.id}`;
       option.setAttribute("role", "option");
-      option.setAttribute("aria-selected", String(index === active));
       const title = doc.createElement("span");
       title.className = "slash-title";
       title.textContent = item.title;
@@ -126,15 +194,13 @@ export function attachSlashMenu(field, { document: doc = document } = {}) {
         choose(index);
       });
       option.addEventListener("mouseenter", () => {
-        active = index;
-        paint();
+        if (index !== active) setActive(index);
       });
       menu.append(option);
     });
-    const current = visible[active];
-    if (current) root.setAttribute("aria-activedescendant", `slash-option-${current.id}`);
     menu.hidden = false;
     place();
+    setActive(active);
   }
 
   function choose(index) {
@@ -179,8 +245,8 @@ export function attachSlashMenu(field, { document: doc = document } = {}) {
     if (!root.contains(event.target)) return;
     if (!open()) return;
     const keys = {
-      ArrowDown: () => { active = (active + 1) % visible.length; paint(); },
-      ArrowUp: () => { active = (active - 1 + visible.length) % visible.length; paint(); },
+      ArrowDown: () => setActive((active + 1) % visible.length),
+      ArrowUp: () => setActive((active - 1 + visible.length) % visible.length),
       Enter: () => choose(active),
       Tab: () => choose(active),
       Escape: close,

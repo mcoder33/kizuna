@@ -2,6 +2,7 @@
 // Проверяется не наличие списка, а то, что после выбора в поле оказалась
 // настоящая разметка и каретка стоит там, откуда удобно печатать дальше.
 import { test, expect } from "@playwright/test";
+import { SLASH_ITEMS } from "../public/slash-menu.js";
 
 const field = "#capture-input";
 const menu = ".slash-menu:not([hidden])";
@@ -25,6 +26,9 @@ test("косая черта открывает список, а он подск�
   await typeIn(page, "/");
   await expect(page.locator(menu)).toBeVisible();
   const options = page.locator(".slash-option");
+  // Пустой запрос показывает весь набор: каждый вариант разметки, который поле
+  // умеет рисовать, отсюда достижим.
+  await expect(options).toHaveCount(SLASH_ITEMS.length);
   await expect(options.first()).toContainText("Заголовок 1");
   // Рядом с названием стоит то, что вставится: список не только называет, но и
   // учит разметке.
@@ -34,7 +38,8 @@ test("косая черта открывает список, а он подск�
 
 test("набор после косой черты сужает список", async ({ page }) => {
   await typeIn(page, "/зада");
-  await expect(page.locator(".slash-option")).toHaveCount(1);
+  // Сужается до дел: пункт «Задача» и выноска-задача, а не весь список.
+  await expect(page.locator(".slash-option")).toHaveCount(2);
   await expect(page.locator(active)).toHaveText("Задача");
   // Латиницей находится то же самое.
   await page.keyboard.press("ControlOrMeta+a");
@@ -61,7 +66,9 @@ test("стрелки водят по списку, Escape закрывает б�
   await expect(page.locator(active)).toHaveText("Заголовок 2");
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("ArrowUp");
-  await expect(page.locator(active)).toHaveText("Ссылка", { timeout: 3000 });
+  await expect(page.locator(active)).toHaveText("Якорь блока", { timeout: 3000 });
+  // Список длиннее окна меню: выделенный пункт подъезжает в видимую часть.
+  await expect(page.locator(".slash-option.is-active")).toBeInViewport();
 
   await page.keyboard.press("Escape");
   await expect(page.locator(menu)).toBeHidden();
@@ -116,8 +123,12 @@ test("меню есть и в заметке карточки, и уходит �
   await page.keyboard.press("ControlOrMeta+a");
   await page.keyboard.press("Backspace");
   await editor.pressSequentially("/спис");
-  await expect(page.locator(menu)).toBeVisible();
-  await page.keyboard.press("Enter");
+  // Меню живёт внутри модальной карточки: снаружи, в body, оно рисовалось бы
+  // под top-layer'ом диалога — невидимое и не отвечающее на клики.
+  const cardMenu = page.locator("#review-dialog .slash-menu:not([hidden])");
+  await expect(cardMenu).toBeVisible();
+  // Пункт выбирается мышью: до элемента вне top-layer клик бы не дошёл.
+  await cardMenu.locator(".slash-option").first().click();
   await expect(editor).toHaveText("-", { useInnerText: true });
 
   // Карточку закрыли — меню не должно остаться висеть на странице.
@@ -126,4 +137,28 @@ test("меню есть и в заметке карточки, и уходит �
   // Меню поля записи при этом на месте: убирается только то, что принадлежало
   // закрытой карточке.
   await expect(page.locator(".slash-menu")).toHaveCount(1);
+});
+
+test("новые варианты из меню рисуются делом: формула, выноска, тег", async ({ page }) => {
+  await typeIn(page, "/формул");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("E=mc^2");
+  await expect(page.locator(`${field} .md-math`)).toBeVisible();
+  expect(await valueOf(page)).toBe("$E=mc^2$");
+
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.press("Backspace");
+  await typeIn(page, "/важно");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("не забыть");
+  await expect(page.locator(`${field} .md-callout-line.md-callout-important`)).toBeVisible();
+  expect(await valueOf(page)).toBe("> [!important] не забыть");
+
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.press("Backspace");
+  await typeIn(page, "/тег");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("проект");
+  await expect(page.locator(`${field} .md-tag`)).toBeVisible();
+  expect(await valueOf(page)).toBe("#проект");
 });

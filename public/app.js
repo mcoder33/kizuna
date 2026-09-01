@@ -2232,7 +2232,12 @@ $("#ai-provider").addEventListener("change", onProviderChange);
 $("#ai-model").addEventListener("change", onModelChange);
 $("#review-close").addEventListener("click", closeCard);
 // Escape и клик по подложке закрывают карточку без сохранения.
-$("#review-dialog").addEventListener("close", () => clear($("#review")));
+$("#review-dialog").addEventListener("close", () => {
+  // Esc закрывает диалог сам, мимо closeCard: меню разметки убираем и здесь,
+  // иначе оно останется на документе вместе со своим слушателем клавиш.
+  closeCardSlashMenu?.();
+  clear($("#review"));
+});
 $("#review-dialog").addEventListener("click", (event) => {
   if (event.target === $("#review-dialog")) closeCard();
 });

@@ -6,6 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SLASH_ITEMS, filterItems, readQuery } from '../public/slash-menu.js';
 import { decorateLine, listContinuation } from '../public/markdown-live.js';
+import { CALLOUTS } from '../public/markdown.js';
 
 // ── когда меню открывается ───────────────────────────────────────────────────
 test('косая черта в начале строки и после пробела открывает меню', () => {
@@ -44,7 +45,7 @@ test('пустой запрос показывает всё, а совпаден
 });
 
 test('пункты находятся и по-русски, и латиницей', () => {
-  for (const [query, expected] of [['h1', 'h1'], ['заголовок', 'h1'], ['todo', 'task'], ['задача', 'task'], ['quote', 'quote'], ['цитат', 'quote'], ['table', 'table'], ['таблиц', 'table'], ['bold', 'bold'], ['жирн', 'bold']])
+  for (const [query, expected] of [['h1', 'h1'], ['заголовок', 'h1'], ['h4', 'h4'], ['todo', 'task'], ['задача', 'task'], ['quote', 'quote'], ['цитат', 'quote'], ['table', 'table'], ['таблиц', 'table'], ['bold', 'bold'], ['жирн', 'bold'], ['формул', 'math'], ['image', 'image'], ['картинк', 'image'], ['вики', 'wikilink'], ['сноск', 'footnote'], ['тег', 'tag'], ['важно', 'callout-important'], ['hint', 'callout-tip'], ['предупрежд', 'callout-warning']])
     assert.equal(filterItems(query)[0].id, expected, `«${query}» должно находить ${expected}`);
 });
 
@@ -86,7 +87,11 @@ test('у пунктов нет повторов и все поля на мест
   for (const item of SLASH_ITEMS) {
     assert.ok(item.title && item.hint && item.keys, `«${item.id}»: неполный пункт`);
     if (item.kind === 'prefix') assert.ok(item.value.endsWith(' '), `«${item.title}»: без пробела текст слипнется с разметкой`);
-    if (item.kind === 'wrap') assert.ok(item.before && item.after, `«${item.title}»: обёртка без второй половины`);
+    if (item.kind === 'wrap') {
+      assert.ok(item.before, `«${item.title}»: обёртка без начала`);
+      // «#» и подобные маркеры без закрывающей пары честно держат after пустым.
+      assert.equal(typeof item.after, 'string', `«${item.title}»: обёртка без второй половины`);
+    }
   }
 });
 
@@ -100,4 +105,42 @@ test('подсказка рядом с названием не расходит�
     assert.equal(shown[0], inserted[0], `«${item.title}»: подсказка «${shown}» начинается не так, как вставка («${inserted}»)`);
     if (item.kind === 'prefix') assert.equal(shown, item.value.trim(), `«${item.title}»: у строчного блока подсказка должна быть дословной`);
   }
+});
+
+// ── полнота списка ───────────────────────────────────────────────────────────
+// Обратная сторона честности: не только каждый пункт рисуется, но и всё, что
+// поле умеет рисовать, из меню достижимо. Появится новая разметка в
+// markdown-live — этот список напомнит завести пункт.
+test('меню покрывает все варианты разметки, которые поле рисует', () => {
+  const drawn = SLASH_ITEMS.map((item) => decorateLine(
+    item.kind === 'prefix' ? `${item.value}текст`
+      : item.kind === 'wrap' ? `${item.before}текст${item.after}`
+      : item.value.split('\n')[0],
+  )).join('\n');
+  for (const feature of [
+    'md-h1', 'md-h2', 'md-h3', 'md-h4', 'md-h5', 'md-h6',
+    'md-bullet', 'md-ordered', 'md-checkbox', 'md-quote', 'md-callout-line',
+    'md-fence', 'md-rule', 'md-table-line',
+    '<strong>', '<em>', '<del>', '<mark>', '<code>',
+    'md-math"', 'md-math-block', 'md-comment',
+    'md-link', 'md-image', 'md-wikilink',
+    'md-footnote-ref', 'md-footnote-def', 'md-tag', 'md-anchor',
+  ]) assert.ok(drawn.includes(feature), `в меню нет пункта, дающего ${feature}`);
+});
+
+test('каждая выноска рендера доступна из меню, и любой синоним её находит', () => {
+  const offered = new Set(
+    SLASH_ITEMS.filter((item) => item.value?.startsWith('> [!'))
+      .map((item) => item.value.match(/^> \[!([\w-]+)\] $/)[1]),
+  );
+  const titles = new Map();
+  for (const [kind, title] of Object.entries(CALLOUTS)) {
+    if (!titles.has(title)) titles.set(title, []);
+    titles.get(title).push(kind);
+  }
+  for (const [title, kinds] of titles)
+    assert.ok(kinds.some((kind) => offered.has(kind)), `выноска «${title}» из меню недоступна`);
+  // Синонимы не пункты, а ключи поиска: «/hint», «/faq» и «/done» находят своё.
+  for (const kind of Object.keys(CALLOUTS))
+    assert.ok(filterItems(kind).some((item) => item.id.startsWith('callout-')), `«/${kind}» не находит выноску`);
 });
