@@ -2337,7 +2337,7 @@ $("#logout-everywhere")?.addEventListener("click", () => logout(true));
 function paintThemeButton() {
   const button = $("#theme-toggle");
   if (!button) return;
-  button.textContent = window.pagentTheme.icon();
+  button.innerHTML = window.pagentTheme.icon();
   button.title = `Тема: ${window.pagentTheme.label()}`;
   button.setAttribute("aria-label", `Тема оформления: ${window.pagentTheme.label()}`);
   const field = settingInput("theme");

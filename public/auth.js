@@ -118,7 +118,7 @@ $("#auth-switch").addEventListener("click", () => {
 // смотреть на белый экран ночью уже не хочет.
 const themeButton = $("#auth-theme");
 function paintTheme() {
-  themeButton.textContent = window.pagentTheme.icon();
+  themeButton.innerHTML = window.pagentTheme.icon();
   themeButton.title = `Тема: ${window.pagentTheme.label()}`;
   themeButton.setAttribute("aria-label", `Тема оформления: ${window.pagentTheme.label()}`);
 }

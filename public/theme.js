@@ -46,8 +46,24 @@
     label: function (theme) {
       return { system: "как в системе", light: "светлая", dark: "тёмная" }[theme || this.read()];
     },
+    // Значок — инлайновый SVG, а не символ шрифта: глифы вроде «◐» и «☀»
+    // в каждом шрифте сидят по-своему и в круглой кнопке стояли криво.
+    // Геометрия SVG центрируется точно и везде одинакова.
     icon: function (theme) {
-      return { system: "◐", light: "☀", dark: "☾" }[theme || this.read()];
+      var head = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">';
+      return {
+        system:
+          head +
+          '<circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="1.8"/>' +
+          '<path d="M12 3.6a8.4 8.4 0 0 1 0 16.8z" fill="currentColor" stroke="none"/></svg>',
+        light:
+          head +
+          '<circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/>' +
+          '<path d="M12 2.4v2.2M12 19.4v2.2M2.4 12h2.2M19.4 12h2.2M5.2 5.2l1.6 1.6M17.2 17.2l1.6 1.6M18.8 5.2l-1.6 1.6M6.8 17.2l-1.6 1.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+        dark:
+          head +
+          '<path d="M20.4 13.6A8.5 8.5 0 1 1 10.4 3.6a6.9 6.9 0 0 0 10 10z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
+      }[theme || this.read()];
     },
   };
 })();

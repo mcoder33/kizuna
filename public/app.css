@@ -3515,6 +3515,9 @@ dialog form > div {
   display: inline-grid;
   place-items: center;
 }
+.theme-toggle svg {
+  display: block;
+}
 .theme-toggle:hover {
   color: var(--n-25);
   border-color: var(--n-85);
