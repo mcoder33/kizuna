@@ -180,6 +180,33 @@ function migrate(db) {
     // есть хозяин, а войти можно только своей учётной записью.
     migrateUsers(db);
     db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(8, now());
+    // Миграция 9: Google как модель разбора. Список провайдеров зашит в
+    // ограничения таблиц, а ALTER TABLE их не меняет — приходится переписывать
+    // таблицу копией.
+    for (const table of ['interpretations', 'capture_jobs']) rebuildWithGemini(db, table);
+    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(9, now());
+}
+// Ограничение переписывается из собственного определения таблицы, а не из
+// зашитой здесь копии: копия разошлась бы с настоящей схемой на первой же новой
+// колонке, и миграция молча потеряла бы её.
+function rebuildWithGemini(db, table) {
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(table);
+  if (!row?.sql || row.sql.includes("'gemini'")) return false;
+  const indexes = db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL").all(table).map(entry => entry.sql);
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all().map(column => column.name).join(',');
+  const nextSql = row.sql
+    .replaceAll("'openrouter'", "'openrouter','gemini'")
+    .replace(new RegExp(`CREATE TABLE\\s+\"?${table}\"?`), `CREATE TABLE ${table}_next`);
+  db.pragma('foreign_keys = OFF');
+  try {
+    withImmediateTransaction(db, () => {
+      db.exec(nextSql);
+      db.exec(`INSERT INTO ${table}_next(${columns}) SELECT ${columns} FROM ${table}; DROP TABLE ${table}; ALTER TABLE ${table}_next RENAME TO ${table};`);
+      for (const sql of indexes) db.exec(sql);
+    });
+  } finally { db.pragma('foreign_keys = ON'); }
+  if (db.prepare('PRAGMA foreign_key_check').all().length) throw new Error(`Gemini provider migration broke foreign keys in ${table}.`);
+  return true;
 }
 // Учётные записи, входы и расход голоса. Пароль хранится только хешем, секрет
 // второго фактора — в открытом виде: проверить код без него нельзя, поэтому

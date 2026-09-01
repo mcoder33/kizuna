@@ -344,14 +344,17 @@ test('в сумму входят и модель, и разговор, и тол
   const application = app();
   const db = application.database;
   const user = seedUser(application, { email: 'user@example.com', role: 'user' });
+  // Время расхода задаётся явно, а не берётся у часов: иначе проверка живёт до
+  // первого числа следующего месяца и падает не потому, что что-то сломалось.
   const now = new Date('2026-08-15T12:00:00Z');
-  recordUsage(db, { provider: 'openrouter', model: 'x', kind: 'classify', costUsd: 1.5, userId: user.id });
-  recordUsage(db, { provider: 'openai', model: 'y', kind: 'classify', costUsd: null, userId: user.id });
+  const spent = (id, cost, at) => db.prepare('INSERT INTO usage_events(id,provider,model,kind,input_tokens,output_tokens,cost_usd,created_at,user_id) VALUES(?,?,?,?,0,0,?,?,?)')
+    .run(id, 'openrouter', 'x', 'classify', cost, at, user.id);
+  spent('в месяце', 1.5, '2026-08-15T12:00:00.000Z');
+  spent('без цены', null, '2026-08-15T12:01:00.000Z');
+  // Расход прошлого месяца в этот не попадает.
+  spent('прошлый', 99, '2026-07-15T12:00:00.000Z');
   const voice = openVoiceSession(db, { userId: user.id, provider: 'openai', ratePerMinute: 6, startedAt: now.toISOString() });
   closeVoiceSession(db, voice, { seconds: 60, at: new Date(now.getTime() + 60000).toISOString() });
-  // Расход прошлого месяца в этот не попадает.
-  db.prepare('INSERT INTO usage_events(id,provider,model,kind,input_tokens,output_tokens,cost_usd,created_at,user_id) VALUES(?,?,?,?,0,0,?,?,?)')
-    .run('прошлый', 'openrouter', 'x', 'classify', 99, '2026-07-15T12:00:00.000Z', user.id);
 
   const spend = monthlySpend(db, { userId: user.id, at: now, timeZone: 'Europe/Samara' });
   assert.equal(spend.month, '2026-08');

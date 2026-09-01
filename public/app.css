@@ -807,31 +807,37 @@ main {
 /* ── кнопка разговора: такой же тихий значок, что и «развернуть» ── */
 .capture-voice {
   flex: none;
-  width: 28px;
-  height: 28px;
+  width: 34px;
+  height: 34px;
   padding: 0;
   border: 0;
-  border-radius: 8px;
-  background: none;
-  color: var(--n-82);
+  border-radius: 50%;
+  background: var(--voice-button);
+  color: var(--brand-on-hanko);
   cursor: pointer;
   display: grid;
   place-items: center;
   transition:
-    color 0.15s,
-    background 0.15s;
+    background 0.15s,
+    box-shadow 0.15s,
+    transform 0.1s;
 }
 .capture-voice svg {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
 }
 .capture-voice:hover {
-  color: var(--muted);
-  background: var(--hairline);
+  background: var(--voice-button-hover);
 }
-.capture-voice[aria-pressed="true"] {
-  color: var(--type-auto);
-  background: var(--tint-auto);
+.capture-voice:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+/* Идёт разговор — кнопка не меняет цвет, а обрастает кольцом: смена заливки
+   читалась бы как «другая кнопка», а это та же самая, только сейчас включена. */
+.capture-voice[aria-pressed='true'] {
+  background: var(--voice-button-hover);
+  box-shadow: 0 0 0 3px var(--voice-button-ring);
 }
 .capture-voice:active {
   transform: scale(0.92);
@@ -3742,4 +3748,26 @@ dialog form > div {
   color: var(--n-25);
   font: inherit;
   font-size: 13px;
+}
+
+/* Кнопка разговора — единственная цветная в подвале карточки ввода рядом с
+   кнопкой сохранения: разговор это не «ещё одно действие», а другой способ
+   вести журнал, и он должен читаться с первого взгляда. Цвет свой и с темой не
+   переворачивается — на тёмном фоне он лишь светлеет, чтобы не слиться с ним. */
+:root {
+  --voice-button: #1f3aa0;
+  --voice-button-hover: #2a48bd;
+  --voice-button-ring: rgba(31, 58, 160, 0.25);
+}
+:root[data-theme='dark'] {
+  --voice-button: #3a55cc;
+  --voice-button-hover: #4c67e0;
+  --voice-button-ring: rgba(90, 118, 235, 0.3);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --voice-button: #3a55cc;
+    --voice-button-hover: #4c67e0;
+    --voice-button-ring: rgba(90, 118, 235, 0.3);
+  }
 }

@@ -14,13 +14,14 @@ const providerNames = {
   fallback: "Без разбора",
   openai: "OpenAI",
   openrouter: "OpenRouter",
+  gemini: "Google Gemini",
   "codex-cli": "Codex CLI",
   "claude-cli": "Claude CLI",
 };
 const modelStorageKey = "pagent.ai-model";
 // У кого можно выбирать модель прямо в шапке. У OpenAI каталог приходит из их
 // же API, у OpenRouter — из своего; у CLI-провайдеров модель задаёт окружение.
-const modelCapableProviders = new Set(["openrouter", "openai"]);
+const modelCapableProviders = new Set(["openrouter", "openai", "gemini"]);
 const fallbackNames = {
   unavailable: "недоступен",
   not_configured: "не настроен",

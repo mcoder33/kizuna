@@ -33,7 +33,7 @@ function validSchedule(schedule) {
 function validDate(value) { if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value))return false; const [year,month,day]=value.split('-').map(Number),parsed=new Date(Date.UTC(year,month-1,day)); return parsed.getUTCFullYear()===year&&parsed.getUTCMonth()===month-1&&parsed.getUTCDate()===day; }
 function memoryQuery(req) { const query=typeof req.body?.query==='string'?req.body.query.trim():''; if(!query||query.length>2000)return null; return query; }
 function boundedMemorySources(query, results) { let remaining=Math.max(0,15000-query.length-40); const sources=[]; for(const result of results.slice(0,12)){const overhead=result.captureId.length+5;if(remaining<=overhead)break;const snippet=result.snippet.slice(0,Math.min(1250,remaining-overhead));if(!snippet)continue;sources.push({...result,snippet});remaining-=snippet.length+overhead;} return sources; }
-const providerIds = new Set(['fallback','openai','openrouter','codex-cli','claude-cli']);
+const providerIds = new Set(['fallback','openai','openrouter','gemini','codex-cli','claude-cli']);
 function requestedProvider(value) { return value === undefined ? undefined : typeof value === 'string' && providerIds.has(value) ? value : null; }
 function requestedModel(value) { if (value === undefined || value === null || value === '') return undefined; try { return validateRemoteModel(value); } catch { return null; } }
 function requestAbortSignal(req, res) { const controller = new AbortController(); const abort = () => { if (!res.writableEnded) controller.abort(); }; req.once('aborted', abort); res.once('close', abort); return { signal:controller.signal, dispose:() => { req.removeListener('aborted', abort); res.removeListener('close', abort); } }; }

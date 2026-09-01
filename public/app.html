@@ -129,18 +129,21 @@
                 aria-pressed="false"
                 title="Поговорить с журналом"
               >
+                <!-- Волна, а не микрофон: микрофон обещает запись голоса,
+                     а здесь идёт разговор — и слышно обе стороны. -->
                 <svg
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
-                  stroke-width="1.6"
+                  stroke-width="2.2"
                   stroke-linecap="round"
-                  stroke-linejoin="round"
                   aria-hidden="true"
                 >
-                  <rect x="9" y="3.5" width="6" height="11" rx="3" />
-                  <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0" />
-                  <path d="M12 18v2.5" />
+                  <path d="M4 10v4" />
+                  <path d="M8.5 6.5v11" />
+                  <path d="M13 4v16" />
+                  <path d="M17.5 7.5v9" />
+                  <path d="M21.5 10.5v3" />
                 </svg>
               </button>
               <button
@@ -430,6 +433,7 @@
                 <option value="fallback">Без модели</option>
                 <option value="openai">OpenAI</option>
                 <option value="openrouter">OpenRouter</option>
+                <option value="gemini">Google Gemini</option>
                 <option value="codex-cli">Codex CLI</option>
                 <option value="claude-cli">Claude CLI</option>
               </select></label
