@@ -36,6 +36,16 @@ export const VOICE_INSTRUCTIONS = [
   'Если человек размышляет вслух и обращается к тебе, помоги подумать: уточняющий вопрос или следующий шаг.',
 ].join(' ');
 
+// Характер Кизуны по умолчанию — значение настройки «Системный промпт», пока
+// человек не написал свой. Лёгкий японский акцент — часть образа (絆). Текст
+// нарочно сдержанный: сильный акцент модель играет как спектакль, и страдает
+// разборчивость.
+export const DEFAULT_VOICE_CHARACTER = [
+  'Говори с лёгким японским акцентом: мягкая ровная мелодика, чуть растянутые гласные, спокойный темп.',
+  'Можно изредка вставлять короткие японские слова — «хай», «со дэс нэ», «аригато» — но русская речь должна оставаться полностью понятной.',
+  'Акцент лёгкий, не карикатурный.',
+].join(' ');
+
 // Голоса провайдеров. Род — наша разметка, а не поле их API: официально он
 // нигде не объявлен, но от него зависит, как модель говорит о себе по-русски,
 // поэтому выбор голоса и род должны совпадать.
@@ -605,8 +615,10 @@ export const geminiTools = (tools = VOICE_TOOLS) => [
 export function pickVoiceProvider({ requested, openaiKey, geminiKey } = {}) {
   if (requested === 'openai') return openaiKey ? 'openai' : null;
   if (requested === 'gemini') return geminiKey ? 'gemini' : null;
-  if (openaiKey) return 'openai';
+  // Без явного выбора предпочитается Gemini — голос Кизуны по умолчанию,
+  // а OpenAI остаётся запасным, когда ключа Gemini нет.
   if (geminiKey) return 'gemini';
+  if (openaiKey) return 'openai';
   return null;
 }
 
@@ -616,8 +628,8 @@ export function createVoiceService({
   provider: requestedProvider = process.env.PAGENT_VOICE_PROVIDER,
   model = process.env.PAGENT_VOICE_MODEL || VOICE_MODEL,
   geminiModel = process.env.PAGENT_GEMINI_VOICE_MODEL || GEMINI_VOICE_MODEL,
-  voice = process.env.PAGENT_VOICE_NAME || 'marin',
-  geminiVoice = process.env.PAGENT_GEMINI_VOICE_NAME || 'Puck',
+  voice = process.env.PAGENT_VOICE_NAME || 'coral',
+  geminiVoice = process.env.PAGENT_GEMINI_VOICE_NAME || 'Leda',
   fetch: fetchImplementation = globalThis.fetch,
   now = () => new Date(),
   timeoutMs = 8000,

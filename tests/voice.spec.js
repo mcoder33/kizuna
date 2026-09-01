@@ -695,7 +695,6 @@ test("выбор провайдера голоса появляется при �
   const picker = page.locator("#setting-voiceProvider");
   await expect(picker).toBeVisible();
   await picker.selectOption("gemini");
-  await page.locator("#settings-save").click();
   await expect(page.locator("#settings-status")).toHaveText("Сохранено");
   await page.locator('nav a[href="#today"]').click();
 

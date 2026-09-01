@@ -347,6 +347,8 @@ test('the provider is chosen by the key, and an explicit choice wins', () => {
   // Названный без ключа не выбирается: молча подменять провайдера нельзя.
   assert.equal(pickVoiceProvider({ requested: 'gemini', openaiKey: 'sk' }), null);
   // Без явного выбора берётся тот, чей ключ есть.
+  // Оба ключа без явного выбора — Gemini: голос Кизуны по умолчанию.
+  assert.equal(pickVoiceProvider({ openaiKey: 'sk', geminiKey: 'g' }), 'gemini');
   assert.equal(pickVoiceProvider({ openaiKey: 'sk' }), 'openai');
   assert.equal(pickVoiceProvider({ geminiKey: 'g' }), 'gemini');
   assert.equal(pickVoiceProvider({}), null);

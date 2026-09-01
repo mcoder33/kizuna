@@ -2017,7 +2017,7 @@ function paintSettings(payload) {
     if (SECRET_FIELDS.includes(name)) {
       // Поле ключа всегда пустое: показывать нечего, а подпись рядом говорит,
       // настроен он и откуда взялся.
-      input.value = "";
+      if (document.activeElement !== input) input.value = "";
       const state = document.getElementById(`state-${name}`);
       if (state)
         state.textContent = value?.configured
@@ -2025,7 +2025,10 @@ function paintSettings(payload) {
           : "не настроен";
       continue;
     }
-    input.value = value ?? "";
+    // Поле, в котором человек сейчас печатает, не трогаем: автосохранение
+    // соседней настройки не должно отбирать недописанный текст и каретку.
+    const next = String(value ?? "");
+    if (document.activeElement !== input && input.value !== next) input.value = next;
   }
   const voiceState = document.getElementById("state-voiceProvider");
   if (voiceState)
@@ -2149,21 +2152,38 @@ async function saveSettings(patch, { announce = "Настройки сохран
     toast(error.message);
   }
 }
-$("#settings-save")?.addEventListener("click", () => {
-  const patch = {};
-  for (const name of SETTING_FIELDS) {
-    const input = settingInput(name);
-    if (!input) continue;
-    const value = input.value.trim();
-    // Пустое поле ключа значит «не трогать», пустое обычное — «как в .env».
-    if (SECRET_FIELDS.includes(name)) {
-      if (value) patch[name] = value;
-      continue;
-    }
-    patch[name] = value;
+// Автосохранение: настройка уходит на сервер сама — списки при выборе, поля
+// при уходе фокуса из них, длинный текст промпта ещё и после паузы в наборе.
+// Кнопки «Сохранить» нет: жать её было отдельной работой, а забыть — способом
+// потерять правку. Тема не здесь: у неё свой обработчик, который ещё и
+// перекрашивает страницу.
+const AUTOSAVE_PAUSE_MS = 900;
+const autosaveTimers = new Map();
+function autosaveSetting(name, input) {
+  autosaveTimers.delete(name);
+  const value = input.value.trim();
+  // Пустое поле ключа значит «не трогать»: ключ в него не возвращается.
+  if (SECRET_FIELDS.includes(name)) {
+    if (value) saveSettings({ [name]: value }, { announce: null });
+    return;
   }
-  saveSettings(patch);
-});
+  if (value === String(appSettings[name] ?? "")) return;
+  saveSettings({ [name]: value }, { announce: null });
+}
+for (const name of SETTING_FIELDS) {
+  if (name === "theme") continue;
+  const input = settingInput(name);
+  if (!input) continue;
+  input.addEventListener("change", () => {
+    clearTimeout(autosaveTimers.get(name));
+    autosaveSetting(name, input);
+  });
+  if (input.tagName === "TEXTAREA")
+    input.addEventListener("input", () => {
+      clearTimeout(autosaveTimers.get(name));
+      autosaveTimers.set(name, setTimeout(() => autosaveSetting(name, input), AUTOSAVE_PAUSE_MS));
+    });
+}
 // Переключение из шапки — это та же настройка, только одним движением.
 $("#voice-quick-provider")?.addEventListener("change", (event) => {
   const chosen = event.target.value;

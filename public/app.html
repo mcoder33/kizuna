@@ -412,7 +412,7 @@
               ><input id="setting-wakeWord" type="text" placeholder="кизуна" /></label
             >
             <label class="setting setting-wide" for="setting-systemPrompt"
-              ><span class="setting-name">Добавка к промпту</span
+              ><span class="setting-name">Системный промпт</span
               ><textarea
                 id="setting-systemPrompt"
                 rows="4"
@@ -420,8 +420,10 @@
               ></textarea
             ></label>
             <p class="setting-hint">
-              Добавка дописывается к основному промпту разговора, а не заменяет
-              его: правила инструментов и памяти остаются в силе.
+              Дописывается к основному промпту разговора, а не заменяет его:
+              правила инструментов и памяти остаются в силе. Пустое поле
+              возвращает характер по умолчанию — мягкий японский акцент
+              Кизуны.
             </p>
           </fieldset>
 
@@ -608,9 +610,6 @@
           </fieldset>
 
           <div class="settings-bar">
-            <button id="settings-save" class="primary" type="button">
-              Сохранить настройки
-            </button>
             <button id="settings-forget" class="secondary" type="button">
               Забыть ключи
             </button>

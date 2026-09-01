@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { openDatabase, createLedger, deleteCapture, restoreCapture, saveNote, NOTE_BODY_LIMIT, readSettings, writeSettings, recordUsage, usageSummary, attachmentsFor, addAttachment, findAttachment, removeAttachment, ATTACHMENT_SIZE_LIMIT, ATTACHMENTS_PER_CAPTURE, enqueueCaptureJob, cancelCaptureJob, retryCaptureJob, getCaptureJob, getAggregate, replaceInterpretation, completeProjection, undoProjectionCompletion, dayView, getDailyBrief, findDailyBrief, findDailyBriefSource, listEntries, undo, search, exportLedger, resetLedger, fullEntry } from './db.js';
 import { createAiService } from './ai.js';
-import { createVoiceService, runVoiceTool, mockVoiceTurn, VOICE_TOOLS, VOICE_INSTRUCTIONS, VOICE_CHOICES, buildVoiceInstructions } from './voice.js';
+import { createVoiceService, runVoiceTool, mockVoiceTurn, VOICE_TOOLS, VOICE_INSTRUCTIONS, VOICE_CHOICES, buildVoiceInstructions, DEFAULT_VOICE_CHARACTER } from './voice.js';
 import { CaptureJobWorker } from './capture-job-worker.js';
 import { normalizeClassification, gateClassification, shouldMaterializeProjections, parseCaptureOverrides, applyUserOverrides } from './classifier.js';
 import { validateRemoteModel } from './cli-config.js';
@@ -96,7 +96,7 @@ const SETTINGS = {
 };
 // Голоса по умолчанию те же, что и у самой службы: без них выпадающий список
 // открывался бы пустым, хотя разговор уже идёт каким-то голосом.
-const SETTING_DEFAULTS = { sleepAfterSeconds:'25', wakeWord:'кизуна', previewLimit:'3', voiceName:'marin', geminiVoiceName:'Puck', systemPrompt:'', voiceModel:'gpt-realtime', geminiVoiceModel:'models/gemini-3.1-flash-live-preview', theme:'system',
+const SETTING_DEFAULTS = { sleepAfterSeconds:'25', wakeWord:'кизуна', previewLimit:'3', voiceName:'coral', geminiVoiceName:'Leda', systemPrompt:DEFAULT_VOICE_CHARACTER, voiceModel:'gpt-realtime', geminiVoiceModel:'models/gemini-3.1-flash-live-preview', theme:'system',
   // Цены по умолчанию нет намеренно: выдумать её значит показать человеку
   // сумму, которой он не платил. Пока цену не задали, работает предел по
   // минутам, а деньги честно показываются как неизвестные.

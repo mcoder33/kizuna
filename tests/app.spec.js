@@ -1104,14 +1104,16 @@ test("настройки меняются в приложении и приме�
   await page.locator("#setting-sleepAfterSeconds").fill("60");
   await page.locator("#setting-wakeWord").fill("журнал");
   await page.locator("#setting-previewLimit").fill("5");
-  await page.locator("#settings-save").click();
+  await page.locator("#setting-previewLimit").blur();
   await expect(page.locator("#settings-status")).toHaveText("Сохранено");
 
-  // Сохранилось на сервере, а не только на экране.
-  const saved = await (await request.get("/api/settings")).json();
-  expect(saved.settings.sleepAfterSeconds).toBe("60");
-  expect(saved.settings.wakeWord).toBe("журнал");
-  expect(saved.settings.previewLimit).toBe("5");
+  // Сохранилось на сервере само, без кнопки, — и не только на экране.
+  await expect
+    .poll(async () => {
+      const saved = (await (await request.get("/api/settings")).json()).settings;
+      return [saved.sleepAfterSeconds, saved.wakeWord, saved.previewLimit].join("|");
+    })
+    .toBe("60|журнал|5");
 
   // Колонка сразу показывает пять записей вместо трёх — без перезагрузки.
   const created = [];
@@ -1136,7 +1138,7 @@ test("настройки меняются в приложении и приме�
 test("некорректная настройка не сохраняется и объясняет причину", async ({ page, request }) => {
   await page.goto("/#settings");
   await page.locator("#setting-timeZone").fill("Не/Зона");
-  await page.locator("#settings-save").click();
+  await page.locator("#setting-timeZone").blur();
   await expect(page.locator("#toast")).toContainText("Некорректное значение");
   const saved = await (await request.get("/api/settings")).json();
   expect(saved.settings.timeZone).not.toBe("Не/Зона");
@@ -1160,22 +1162,26 @@ test("голос выбирается из списка, а добавка к п
   // действующим.
   await gemini.selectOption("Charon");
   await page.locator("#setting-voiceName").selectOption("cedar");
+  // Поле предзаполнено характером Кизуны по умолчанию.
+  await expect(page.locator("#setting-systemPrompt")).toHaveValue(/японским акцентом/);
   await page.locator("#setting-systemPrompt").fill("Отвечай короче и по делу.");
-  await page.locator("#settings-save").click();
-  await expect(page.locator("#settings-status")).toHaveText("Сохранено");
+  await page.locator("#setting-systemPrompt").blur();
 
+  // Настройки ушли сами; ждём, пока последняя долетит до инструкций.
+  await expect
+    .poll(async () => (await (await request.get("/api/voice/status")).json()).instructions)
+    .toContain("От человека: Отвечай короче и по делу.");
   const voice = await (await request.get("/api/voice/status")).json();
   expect(voice.instructions).toContain("мужским голосом");
-  expect(voice.instructions).toContain("От человека: Отвечай короче и по делу.");
   // Основные правила разговора добавка не отменяет.
   expect(voice.instructions).toContain("Кизуна");
 
   // Женский голос меняет род, а не дописывает вторую строку.
   await page.locator("#setting-voiceName").selectOption("sage");
-  await page.locator("#settings-save").click();
-  await expect(page.locator("#settings-status")).toHaveText("Сохранено");
+  await expect
+    .poll(async () => (await (await request.get("/api/voice/status")).json()).instructions)
+    .toContain("женским голосом");
   const female = await (await request.get("/api/voice/status")).json();
-  expect(female.instructions).toContain("женским голосом");
   expect(female.instructions).not.toContain("мужским голосом");
 
   await request.put("/api/settings", {

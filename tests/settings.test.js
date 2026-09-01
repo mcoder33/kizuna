@@ -115,6 +115,10 @@ test('the chosen voice sets the gender the model speaks in, and the addition is 
   assert.ok(base.voices.gemini.some((voice) => voice.id === 'Puck'), 'каталог голосов отдаётся');
   assert.ok(base.voices.openai.some((voice) => voice.id === 'cedar'));
 
+  // Пока человек не написал своего промпта, действует характер Кизуны по
+  // умолчанию — мягкий японский акцент.
+  assert.match(base.instructions, /От человека: Говори с лёгким японским акцентом/);
+
   // Мужской голос — мужской род.
   await api.put('/api/settings').send({ voiceProvider: 'gemini', geminiVoiceName: 'Charon' }).expect(200);
   const male = (await api.get('/api/voice/status').expect(200)).body;
@@ -133,9 +137,15 @@ test('the chosen voice sets the gender the model speaks in, and the addition is 
   assert.ok(custom.instructions.includes('Кизуна'), 'основные правила остались');
   assert.ok(custom.instructions.includes('женским голосом'), 'род остался');
   assert.match(custom.instructions, /От человека: Обращайся ко мне на «ты»\./);
+  assert.equal(custom.instructions.includes('японским акцентом'), false, 'свой промпт заменяет характер по умолчанию');
   // И то же самое уходит в сессию, а не только в статус.
   const session = await api.post('/api/voice/session').send({});
   if (session.status === 200) assert.match(session.body.instructions, /От человека:/);
+
+  // Пустая строка — «вернуть как было»: характер по умолчанию, а не тишина.
+  await api.put('/api/settings').send({ systemPrompt: '' }).expect(200);
+  const restored = (await api.get('/api/voice/status').expect(200)).body;
+  assert.match(restored.instructions, /От человека: Говори с лёгким японским акцентом/);
 });
 
 test('a voice outside the catalogue is refused, because gender rides on it', async () => {
