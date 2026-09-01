@@ -2330,6 +2330,9 @@ button.primary:hover {
   border-radius: 0;
   background: none;
 }
+#review-dialog .review::-webkit-scrollbar {
+  display: none;
+}
 .card-written {
   margin: -6px 0 0;
   font-size: 12px;
@@ -3836,7 +3839,7 @@ dialog form > div {
   --nt-callout-red: rgb(253, 235, 236);
   --nt-callout-green: rgb(237, 243, 236);
   --nt-callout-blue: rgb(231, 243, 248);
-  width: min(1150px, calc(100vw - 80px));
+  width: min(1020px, calc(100vw - 120px));
   height: calc(100vh - 72px);
   max-width: none;
   max-height: none;
@@ -3862,7 +3865,9 @@ dialog form > div {
     rgba(15, 15, 15, 0.05) 0 0 0 1px,
     rgba(15, 15, 15, 0.1) 0 3px 6px,
     rgba(15, 15, 15, 0.2) 0 9px 24px;
-  overflow-y: auto;
+  /* Прокрутка живёт во внутренней колонке: скроллбар самого диалога втискивался
+     бы в скругление и правые углы выглядели бы срезанными. */
+  overflow: hidden;
 }
 :root[data-theme="dark"] #review-dialog {
   --nt-bg: #252525;
@@ -3919,17 +3924,23 @@ dialog form > div {
 }
 /* Колонка страницы: 708px по центру, снизу — воздух, как на пустой странице. */
 #review-dialog .review {
-  max-width: 708px;
-  margin: 0 auto;
-  padding: 54px 32px 20vh;
+  height: 100%;
+  margin: 0;
+  overflow-y: auto;
+  /* Полосу прокрутки не показываем: колесо и трекпад работают, а серый
+     столбик у края ломал бы чистый лист. */
+  scrollbar-width: none;
+  /* Колонка 708px по центру рисуется полями прокручиваемой области. */
+  padding: 54px max(32px, calc((100% - 708px) / 2)) 20vh;
   font-size: 16px;
   line-height: 1.5;
 }
 #review-dialog .dialog-close {
-  position: sticky;
+  position: absolute;
   top: 12px;
-  float: right;
-  margin: 12px 12px 0 0;
+  right: 12px;
+  float: none;
+  margin: 0;
   z-index: 2;
   background: transparent;
   color: var(--nt-tertiary);
@@ -4303,4 +4314,74 @@ dialog form > div {
    значка играет сам маркер [!tip]. */
 #review-dialog .md-field .md-callout-line .md-callout-title {
   color: var(--nt-text);
+}
+
+/* ── чистовик поля: маркеры видны только на строке с кареткой ────────────────
+   Как в Notion и Typora: готовый текст без серого синтаксиса, а строка, в
+   которой стоит каретка, раскрывает маркеры для правки. Текст модели при этом
+   не меняется — прячет и показывает только CSS. */
+.md-line:not(.is-current) .md-mark,
+.md-line:not(.is-current) .md-callout-kind {
+  display: none;
+}
+/* Номер в нумерованном списке — не шум, а содержимое: остаётся и темнеет. */
+.md-line:not(.is-current) .md-ordered .md-mark {
+  display: inline;
+  color: inherit;
+}
+/* Маркер списка рисуем сами: точка вместо дефиса. */
+.md-line:not(.is-current) .md-bullet:not(.md-ordered):not(.md-bullet-task)::before {
+  content: "•";
+  display: inline-block;
+  width: 1.15em;
+}
+/* Чекбокс задачи — настоящий квадрат: текст «[x]» уходит в нулевой кегль,
+   геометрия и галка рисуются стилем. Клик по нему по-прежнему переключает. */
+.md-line:not(.is-current) .md-checkbox {
+  display: inline-block;
+  width: 15px;
+  height: 15px;
+  margin: 0 8px 0 1px;
+  border: 1.4px solid var(--n-78);
+  border-radius: 3px;
+  vertical-align: middle;
+  transform: translateY(-1px);
+  font-size: 0;
+  line-height: 15px;
+  text-align: center;
+  cursor: pointer;
+}
+.md-line:not(.is-current) .md-checkbox-done {
+  border-color: var(--blue-54, #2383e2);
+  background: var(--blue-54, #2383e2);
+}
+.md-line:not(.is-current) .md-checkbox-done::after {
+  content: "✓";
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+}
+/* Разделитель — линия, а не три дефиса. */
+.md-line:not(.is-current) .md-rule {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+  color: transparent;
+}
+.md-line:not(.is-current) .md-rule::after {
+  content: "";
+  position: absolute;
+  inset: 50% 0 auto;
+  border-top: 1px solid var(--line);
+}
+/* В карточке чекбокс и линия говорят на палитре Notion. */
+#review-dialog .md-line:not(.is-current) .md-checkbox {
+  border-color: var(--nt-tertiary);
+}
+#review-dialog .md-line:not(.is-current) .md-checkbox-done {
+  border-color: var(--nt-blue);
+  background: var(--nt-blue);
+}
+#review-dialog .md-line:not(.is-current) .md-rule::after {
+  border-top-color: var(--nt-hr);
 }

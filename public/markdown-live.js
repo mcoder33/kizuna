@@ -1,11 +1,13 @@
 // Поле ввода, которое рендерит Markdown прямо во время набора.
 //
 // Главный приём: разметка оформляется, но **ни один символ не удаляется** —
-// маркеры (`**`, `#`, `- `) остаются в тексте и лишь приглушаются. Благодаря
-// этому textContent строки посимвольно совпадает с исходником, каретку можно
-// восстановить по смещению, и перерисовывать можно на каждый ввод, включая
-// строку под кареткой. Скрывать маркеры нельзя: тогда в них некуда поставить
-// каретку и разметку стало бы не отредактировать.
+// маркеры (`**`, `#`, `- `) остаются в тексте. Благодаря этому textContent
+// строки посимвольно совпадает с исходником, каретку можно восстановить по
+// смещению, и перерисовывать можно на каждый ввод, включая строку под
+// кареткой. Прячет маркеры только CSS и только на строках без каретки
+// (класс is-current): текст модели не меняется, а на активной строке маркеры
+// раскрываются — иначе в них некуда поставить каретку и разметку стало бы
+// не отредактировать.
 const escapes = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => escapes[character]);
 const mark = (text) => `<span class="md-mark">${escapeHtml(text)}</span>`;
@@ -255,6 +257,26 @@ export function createMarkdownField({ id, ariaLabel, placeholder = "", onInput, 
     selection.addRange(range);
   };
 
+  // Чистовик, как в Notion: маркеры разметки видны только на строке с
+  // кареткой, остальные строки показывают готовый текст. Прячет и раскрывает
+  // маркеры CSS по классу is-current — перерисовка для этого не нужна.
+  const paintCurrentLine = (index) => {
+    lineNodes().forEach((node, position) => node.classList.toggle("is-current", position === index));
+  };
+  let wasConnected = false;
+  const onSelectionChange = () => {
+    if (root.isConnected) wasConnected = true;
+    else {
+      // Поле заметки пересоздаётся на каждое открытие карточки: слушатель
+      // убирает себя, когда его поле ушло из DOM, иначе копился бы на документе.
+      if (wasConnected) document.removeEventListener("selectionchange", onSelectionChange);
+      return;
+    }
+    const caret = readCaret();
+    paintCurrentLine(caret ? caret.line : -1);
+  };
+  document.addEventListener("selectionchange", onSelectionChange);
+
   const render = (caret) => {
     // Тело callout — обычные строки цитаты, но полоса у них должна быть цвета
     // заголовка: иначе блок распадается на разноцветную шапку и серый хвост.
@@ -284,6 +306,8 @@ export function createMarkdownField({ id, ariaLabel, placeholder = "", onInput, 
     root.replaceChildren(...nodes);
     root.dataset.empty = String(lines.length === 1 && lines[0] === "");
     placeCaret(caret);
+    // Сразу, не дожидаясь selectionchange: иначе маркеры мигают на перерисовке.
+    paintCurrentLine(caret ? caret.line : -1);
   };
 
   const sync = () => {

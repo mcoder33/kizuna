@@ -249,7 +249,10 @@ test("markdown is decorated inside the capture field as it is typed", async ({ p
   await page.keyboard.type(" --правка-- в **карточке**");
   await expect(noteField.locator("del").last()).toHaveText("правка");
   await expect(noteField.locator("strong").last()).toHaveText("карточке");
-  await expect(noteField.locator(".md-mark").first()).toBeVisible();
+  // Чистовик: маркеры раскрыты только на строке с кареткой, остальные строки
+  // показывают готовый текст без серого синтаксиса.
+  await expect(noteField.locator(".md-line.is-current .md-mark").first()).toBeVisible();
+  await expect(noteField.locator(".md-line").first().locator(".md-mark").first()).toBeHidden();
 });
 
 test("obsidian markup works end to end: typed in the field, rendered in the card", async ({ page, request }) => {
@@ -339,8 +342,10 @@ test("lists continue on enter and checkboxes are clickable", async ({ page, requ
   await page.keyboard.type("второй пункт");
   await expect(field.locator(".md-line").nth(3)).toHaveText("2. второй пункт");
 
-  // Обычный дефис даёт буллет, у задачи — чекбокс вместо буллета.
-  await expect(field.locator(".md-bullet-task").first()).toBeVisible();
+  // Обычный дефис даёт буллет, у задачи — чекбокс вместо буллета; сам дефис
+  // задачи в чистовике спрятан, квадрат рисует стиль.
+  await expect(field.locator(".md-line").first().locator(".md-checkbox")).toBeVisible();
+  await expect(field.locator(".md-bullet-task").first()).toBeHidden();
   await expect(field.locator(".md-ordered").first()).toBeVisible();
 
   // Чекбокс переключается мышью, и это меняет сам текст записи.
@@ -645,11 +650,12 @@ test("the entry card opens as a notion page: wide peek with a 708px column", asy
 
   // Геометрия peek: ширина min(1150, окно − 80), высота — окно без 72px.
   const card = await page.locator("#review-dialog").boundingBox();
-  expect(Math.round(card.width)).toBe(1150);
+  expect(Math.round(card.width)).toBe(1020);
   expect(Math.round(card.height)).toBe(900 - 72);
 
-  // Контент собран в колонку страницы, как в Notion.
-  const column = await page.locator("#review").boundingBox();
+  // Контент собран в колонку страницы, как в Notion: сам #review — прокрутка
+  // во всю ширину, колонку задают его поля, поэтому меряем заголовок.
+  const column = await page.locator("#review h2").boundingBox();
   expect(Math.round(column.width)).toBeLessThanOrEqual(708);
   // Колонка стоит по центру peek, а не прижата к краю.
   const offCenter = Math.abs(column.x + column.width / 2 - (card.x + card.width / 2));
