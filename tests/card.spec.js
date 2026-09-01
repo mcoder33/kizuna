@@ -23,6 +23,8 @@ test("the card shows properties as rows and hides the ones the type does not use
   await capture(page, raw);
   await openCard(page, "#todo", raw);
 
+  const propsBar = page.locator(".props-bar");
+  if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
   for (const label of ["Тип", "Срок", "Проект", "Участники", "Далее", "Сделано"]) {
     await expect(page.locator(".prop-label", { hasText: label })).toBeVisible();
   }
@@ -196,6 +198,8 @@ test("the done toggle overrides the model and moves the entry into reported work
   await expect(page.locator("#todo")).toContainText(raw);
   await openCard(page, "#todo", raw);
 
+  const propsBar = page.locator(".props-bar");
+  if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
   await page.locator("#review-completed").click();
   await expect(page.locator("#review-completed")).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "Сохранить уточнение" }).click();
@@ -648,9 +652,9 @@ test("the entry card opens as a notion page: wide peek with a 708px column", asy
   await entry.locator(".entry-title").click();
   await page.waitForTimeout(760);
 
-  // Геометрия peek: ширина min(1150, окно − 80), высота — окно без 72px.
+  // Геометрия peek: ширина min(820, окно − 48), высота — окно без 72px.
   const card = await page.locator("#review-dialog").boundingBox();
-  expect(Math.round(card.width)).toBe(1020);
+  expect(Math.round(card.width)).toBe(820);
   expect(Math.round(card.height)).toBe(900 - 72);
 
   // Контент собран в колонку страницы, как в Notion: сам #review — прокрутка

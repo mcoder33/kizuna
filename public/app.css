@@ -3984,6 +3984,48 @@ dialog form > div {
 #review-dialog .props {
   gap: 2px;
 }
+#review-dialog .props-bar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  margin: 4px 0;
+  padding: 6px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--nt-secondary);
+}
+#review-dialog .props-bar:hover {
+  background: var(--nt-hover);
+}
+#review-dialog .props-chevron {
+  flex: none;
+  width: 0;
+  height: 0;
+  border-left: 5px solid var(--nt-tertiary);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 0.15s ease;
+}
+#review-dialog .props-bar.open .props-chevron {
+  transform: rotate(90deg);
+}
+#review-dialog .props-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--nt-text);
+}
+#review-dialog .props-summary.is-label {
+  color: var(--nt-secondary);
+}
 #review-dialog .prop {
   grid-template-columns: 160px minmax(0, 1fr);
   gap: 8px;
@@ -4061,7 +4103,7 @@ dialog form > div {
 #review-dialog .completion-button::before {
   font-size: 10px;
 }
-#review-dialog .review-form > button {
+#review-dialog .review-form > button.secondary {
   margin-top: 10px;
   padding: 4px 10px;
   border: 1px solid var(--nt-hr);
@@ -4071,7 +4113,7 @@ dialog form > div {
   color: var(--nt-secondary);
   box-shadow: none;
 }
-#review-dialog .review-form > button:hover {
+#review-dialog .review-form > button.secondary:hover {
   background: var(--nt-hover);
   color: var(--nt-text);
 }

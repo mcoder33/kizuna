@@ -1064,7 +1064,7 @@ function showReview(entry, review, undoGroupId, provenance) {
     followUpWrap,
     propertyRow("Сделано", doneToggle, "done"),
   );
-  form.append(props);
+  props.id = "review-props";
   const updateVisibility = () => {
     const scheduled =
       ["meeting_event", "task"].includes(type.value) || review.field === "schedule";
@@ -1073,11 +1073,42 @@ function showReview(entry, review, undoGroupId, provenance) {
     followUpWrap.hidden =
       type.value === "note" || type.value === "idea_question";
   };
-  type.addEventListener("change", updateVisibility);
-  updateVisibility();
   const apply = node("button", "Сохранить уточнение", "secondary");
   apply.type = "submit";
-  form.append(apply);
+  // Свойства свёрнуты в строку-сводку: карточку открывают ради заметок, а не
+  // ради формы. Кнопка-строка разворачивает полный список; когда карточка
+  // открыта под уточнение (есть вопрос модели) — свойства сразу развёрнуты.
+  const propsBar = node("button", undefined, "props-bar");
+  propsBar.type = "button";
+  propsBar.setAttribute("aria-controls", "review-props");
+  const propsChevron = node("span", undefined, "props-chevron");
+  propsChevron.setAttribute("aria-hidden", "true");
+  const propsSummary = node("span", undefined, "props-summary");
+  propsBar.append(propsChevron, propsSummary);
+  let propsOpen = Boolean(review.question || review.field);
+  const summaryText = () => {
+    const parts = [typeNames[type.value] || type.value];
+    if (project.value.trim()) parts.push(project.value.trim());
+    const due = scheduleLabel({ state: "ok", date: date.value || null, time: time.value || null });
+    if (!scheduleWrap.hidden && due) parts.push(`срок: ${due}`);
+    if (!peopleWrap.hidden && people.value.trim()) parts.push(people.value.trim());
+    if (!followUpWrap.hidden && followUp.value.trim()) parts.push(`далее: ${followUp.value.trim()}`);
+    if (done) parts.push("сделано");
+    return parts.join("   ·   ");
+  };
+  const paintProps = () => {
+    props.hidden = !propsOpen;
+    apply.hidden = !propsOpen;
+    propsBar.setAttribute("aria-expanded", String(propsOpen));
+    propsBar.classList.toggle("open", propsOpen);
+    propsSummary.textContent = propsOpen ? "Свойства" : summaryText();
+    propsSummary.classList.toggle("is-label", propsOpen);
+  };
+  type.addEventListener("change", () => { updateVisibility(); });
+  updateVisibility();
+  propsBar.addEventListener("click", () => { propsOpen = !propsOpen; paintProps(); });
+  paintProps();
+  form.append(propsBar, props, apply);
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (correctionInFlight) return;
