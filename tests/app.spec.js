@@ -1235,3 +1235,46 @@ test("кнопка в углу поля меняется: разговор на 
   await expect(voice).toBeVisible();
   await expect(submit).toBeHidden();
 });
+
+// Значок на кнопке рисуется вручную путями, и однажды он уже уехал: полосы
+// стояли с разным шагом, а вся волна — правее центра. Проверяется геометрия, а
+// не картинка: центр краски должен совпадать с центром кнопки.
+test("волна на кнопке разговора стоит ровно по центру круга", async ({ page }) => {
+  await page.goto("/");
+  const geometry = await page.evaluate(() => {
+    const button = document.querySelector("#capture-voice");
+    const paths = [...button.querySelectorAll("path")];
+    const stroke = parseFloat(getComputedStyle(paths[0]).strokeWidth);
+    const boxes = paths.map((path) => path.getBoundingClientRect());
+    const button_ = button.getBoundingClientRect();
+    const ink = {
+      left: Math.min(...boxes.map((box) => box.left)) - stroke / 2,
+      right: Math.max(...boxes.map((box) => box.right)) + stroke / 2,
+      top: Math.min(...boxes.map((box) => box.top)) - stroke / 2,
+      bottom: Math.max(...boxes.map((box) => box.bottom)) + stroke / 2,
+    };
+    return {
+      сдвигX: (ink.left + ink.right) / 2 - (button_.left + button_.right) / 2,
+      сдвигY: (ink.top + ink.bottom) / 2 - (button_.top + button_.bottom) / 2,
+      доля: (ink.right - ink.left) / button_.width,
+      // Шаг между полосами должен быть одинаковым: разный читается как «криво».
+      шаги: boxes
+        .map((box) => box.left)
+        .sort((left, right) => left - right)
+        .slice(1)
+        .map((value, index, all) => value - boxes.map((box) => box.left).sort((a, b) => a - b)[index]),
+      круглая: getComputedStyle(button).borderRadius,
+      квадратная: Math.abs(button_.width - button_.height) < 0.5,
+    };
+  });
+
+  expect(Math.abs(geometry.сдвигX)).toBeLessThan(0.5);
+  expect(Math.abs(geometry.сдвигY)).toBeLessThan(0.5);
+  expect(geometry.квадратная).toBe(true);
+  expect(geometry.круглая).toBe("50%");
+  // Волна заполняет круг, а не теряется в нём.
+  expect(geometry.доля).toBeGreaterThan(0.4);
+  expect(geometry.доля).toBeLessThan(0.6);
+  const шаг = geometry.шаги[0];
+  for (const value of geometry.шаги) expect(Math.abs(value - шаг)).toBeLessThan(0.5);
+});

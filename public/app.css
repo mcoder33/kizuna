@@ -826,8 +826,8 @@ main {
     transform 0.1s;
 }
 .capture-voice svg {
-  width: 19px;
-  height: 19px;
+  width: 20px;
+  height: 20px;
 }
 .capture-voice:hover {
   background: var(--red-54);
