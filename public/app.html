@@ -39,6 +39,7 @@
             <a href="#history-notes">Заметки</a>
           </div>
         </details>
+        <a href="#reports">Обзор</a>
       </nav>
       <div class="header-tail">
       <details class="ai-menu">
@@ -111,6 +112,7 @@
           <form id="capture-form" class="capture">
             <!-- Поле ввода создаётся из public/markdown-live.js: разметка
                  оформляется прямо во время набора, поэтому это не textarea. -->
+            <div id="capture-shots" class="capture-shots" hidden></div>
             <div id="capture-todo-line" class="todo-line" hidden></div>
             <div class="capture-foot">
               <div
@@ -247,6 +249,34 @@
         <option value="Монетизация"></option>
         <option value="CP"></option>
       </datalist>
+      <section id="reports" class="app-page reports-page" hidden>
+        <div class="page-heading">
+          <p class="eyebrow">ПАМЯТЬ · ОТЧЁТЫ</p>
+          <h2>Обзор</h2>
+          <p>Что происходит с записями: сделанное, хвосты, проекты и пульс.</p>
+        </div>
+        <div class="reports-controls">
+          <div class="reports-tabs" role="tablist" aria-label="Вкладки обзора">
+            <button type="button" data-reports-tab="life" aria-pressed="true">Записи</button>
+            <button type="button" data-reports-tab="day" aria-pressed="false">День</button>
+            <button type="button" data-reports-tab="service" aria-pressed="false">Служебное</button>
+          </div>
+          <div class="reports-period" id="reports-period" role="group" aria-label="Период">
+            <button type="button" data-reports-period="week" aria-pressed="true">Неделя</button>
+            <button type="button" data-reports-period="month" aria-pressed="false">Месяц</button>
+            <button type="button" data-reports-period="all" aria-pressed="false">Всё время</button>
+          </div>
+          <div class="reports-daynav" id="reports-daynav" hidden>
+            <button type="button" id="reports-day-prev" aria-label="Предыдущий день">‹</button>
+            <span id="reports-day-label"></span>
+            <button type="button" id="reports-day-next" aria-label="Следующий день">›</button>
+          </div>
+        </div>
+        <div id="reports-life" class="reports-view"></div>
+        <div id="reports-day" class="reports-view" hidden></div>
+        <div id="reports-service" class="reports-view" hidden></div>
+      </section>
+
       <section id="brief" class="app-page" hidden>
         <section id="daily-brief" class="daily-brief" aria-live="polite">
           <div class="daily-brief-head">

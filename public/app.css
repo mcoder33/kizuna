@@ -426,6 +426,8 @@
   --type-todo: var(--violet-54);
   --type-outcome: var(--blue-61);
   --type-note: var(--blue-71);
+  /* встречи в отчётах: янтарный из общей шкалы, в тёмной теме светлеет сам */
+  --type-meeting: var(--orange-56);
   --tint-auto: var(--pink-96);
   --tint-todo: var(--violet-96);
   --tint-outcome: var(--blue-96);
@@ -4384,4 +4386,424 @@ dialog form > div {
 }
 #review-dialog .md-line:not(.is-current) .md-rule::after {
   border-top-color: var(--nt-hr);
+}
+
+/* ── страница «Обзор»: отчёты по записям ─────────────────────────────────────
+   Правила из концепта reports-concept.html: списки важнее графиков, каждая
+   строка открывает карточку записи, смысл назван словом, цвет — помощник. */
+.reports-page {
+  max-width: 980px;
+  margin: 0 auto;
+}
+.reports-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 4px 0 18px;
+}
+.reports-tabs {
+  display: flex;
+  gap: 16px;
+}
+.reports-tabs button {
+  font: inherit;
+  font-size: 13.5px;
+  cursor: pointer;
+  border: 0;
+  background: none;
+  padding: 2px 0 6px;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+}
+.reports-tabs button[aria-pressed='true'] {
+  color: var(--ink);
+  font-weight: 700;
+  border-bottom-color: var(--ink);
+}
+.reports-period,
+.reports-daynav {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  border-radius: 99px;
+  padding: 3px;
+}
+.reports-period button,
+.reports-daynav button {
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  border-radius: 99px;
+  padding: 4px 12px;
+  white-space: nowrap;
+}
+.reports-period button[aria-pressed='true'] {
+  background: var(--ink);
+  color: var(--paper);
+}
+.reports-daynav button {
+  font-size: 15px;
+  line-height: 1;
+  padding: 3px 10px 5px;
+}
+.reports-daynav button:hover:not([disabled]) {
+  background: var(--hairline);
+}
+.reports-daynav button[disabled] {
+  opacity: 0.3;
+  cursor: default;
+}
+#reports-day-label {
+  font-size: 12px;
+  color: var(--ink);
+  padding: 0 6px;
+  white-space: nowrap;
+}
+.report-counters {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.report-counter {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 13px 16px 12px;
+}
+.report-counter .num {
+  font-size: 25px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  line-height: 1.1;
+}
+.report-counter .num.bad {
+  color: var(--orange-54);
+}
+.report-counter .num.good {
+  color: var(--green);
+}
+.report-counter .cap {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.report-counter .sub {
+  font-size: 11.5px;
+  color: var(--n-72);
+  margin-top: 5px;
+}
+.report-card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px 19px 17px;
+  margin-bottom: 14px;
+}
+.report-card h3 {
+  font-size: 13.5px;
+  margin: 0 0 3px;
+  letter-spacing: -0.1px;
+}
+.report-card .report-hint {
+  font-size: 12px;
+  color: var(--n-72);
+  margin: 0 0 10px;
+}
+.report-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.report-card-head .right {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--n-72);
+  white-space: nowrap;
+}
+.report-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.report-grid-2 {
+  display: grid;
+  grid-template-columns: 1.25fr 1fr;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.report-grid-3 > .report-card,
+.report-grid-2 > .report-card {
+  margin-bottom: 0;
+}
+/* пульс */
+.report-chart {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 6px;
+  height: 104px;
+  margin-top: 6px;
+}
+.report-chart .col {
+  flex: 1;
+  max-width: 44px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 2px;
+}
+.report-chart .seg {
+  border-radius: 2.5px;
+  min-height: 3px;
+  display: block;
+}
+.report-chart .col.empty::after {
+  content: '';
+  display: block;
+  height: 3px;
+  border-radius: 2.5px;
+  background: var(--hairline);
+}
+.report-chart-labels {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.report-chart-labels span {
+  flex: 1;
+  max-width: 44px;
+  min-width: 0;
+  text-align: center;
+  font-size: 10.5px;
+  color: var(--n-72);
+  white-space: nowrap;
+}
+.report-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 16px;
+  margin-top: 14px;
+}
+.report-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.report-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.report-dot.task { background: var(--type-todo); }
+.report-dot.meeting_event { background: var(--type-meeting); }
+.report-dot.note { background: var(--type-note); }
+.report-dot.outcome_decision { background: var(--type-outcome); }
+.report-dot.idea_question { background: var(--type-auto); }
+/* списки-хвосты: строка открывает карточку записи */
+.report-items {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+.report-items li {
+  display: flex;
+  gap: 9px;
+  align-items: baseline;
+  padding: 7px 8px;
+  margin: 0 -8px;
+  border-radius: 9px;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+.report-items li:hover {
+  background: var(--hairline);
+}
+.report-items .report-dot {
+  width: 7px;
+  height: 7px;
+  position: relative;
+  top: -1px;
+}
+.report-items .t {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.report-items .meta {
+  margin-left: auto;
+  flex: none;
+  font-size: 11.5px;
+  color: var(--n-72);
+  white-space: nowrap;
+  padding-left: 10px;
+}
+.report-items .meta.bad { color: var(--orange-54); }
+.report-items .meta.ok { color: var(--green); }
+.report-empty {
+  font-size: 13px;
+  color: var(--n-72);
+  padding: 6px 0 2px;
+}
+/* полосы проектов и расходов */
+.report-bars { margin-top: 8px; }
+.report-bar {
+  display: grid;
+  grid-template-columns: minmax(90px, 130px) 1fr 56px;
+  gap: 10px;
+  align-items: center;
+  padding: 5px 0;
+  font-size: 13px;
+}
+.report-bar .name {
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.report-bar .name small {
+  display: block;
+  font-size: 11px;
+  color: var(--n-72);
+}
+.report-bar .track {
+  display: block;
+  height: 7px;
+  border-radius: 99px;
+  background: var(--hairline);
+  overflow: hidden;
+}
+.report-bar .fill {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  background: var(--n-23-a22);
+}
+.report-bar .fill.cost { background: var(--type-outcome); opacity: 0.55; }
+.report-bar .n {
+  text-align: right;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.report-stale {
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid var(--hairline);
+}
+.report-stale .lbl,
+.report-chip-lbl {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--n-72);
+  margin: 0 0 4px;
+}
+.report-chip-lbl { margin-top: 14px; }
+.report-stale .row {
+  font-size: 13px;
+  color: var(--orange-51);
+  padding: 3px 0;
+}
+.report-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 9px;
+}
+.report-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12.5px;
+  background: var(--hairline);
+  border-radius: 99px;
+  padding: 4px 11px;
+}
+.report-chip .n {
+  color: var(--n-72);
+  font-size: 11px;
+}
+.report-facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 10px;
+}
+.report-fact {
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.report-fact b {
+  display: block;
+  font-size: 21px;
+  font-weight: 800;
+  color: var(--ink);
+  letter-spacing: -0.4px;
+  margin-bottom: 2px;
+}
+.reports-view > .empty { padding: 18px 2px; }
+@media (max-width: 760px) {
+  .report-counters { grid-template-columns: 1fr 1fr; gap: 9px; }
+  .report-grid-3, .report-grid-2 { grid-template-columns: 1fr; }
+  .reports-period, .reports-daynav { margin-left: 0; }
+}
+
+/* ── снимки из буфера в карточке ввода ───────────────────────────────────────
+   ⌘V со скриншотом кладёт картинку сюда; вложение уедет вместе с записью. */
+.capture-shots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 16px 0;
+}
+.capture-shot {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+.capture-shot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.capture-shot button {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 99px;
+  border: 0;
+  background: var(--n-0-a40);
+  color: var(--n-100);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.capture-shot button:hover { background: var(--n-0-a27); }
+.report-chart .seg {
+  width: auto;
+  height: auto;
+  border-radius: 2.5px;
 }

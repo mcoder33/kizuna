@@ -208,6 +208,9 @@ function updatePageFromHash() {
   // страница может висеть открытой долго.
   if (activePage === "settings") loadUsage();
   if (activePage === "admin") loadAdmin();
+  // «Обзор» пересчитывается при каждом открытии: цифры меняются от каждой
+  // записи, а страница может быть открыта спустя часы.
+  if (activePage === "reports") loadReports();
   // Запрос из ссылки сразу уходит в поиск: человек щёлкнул по имени, а не по
   // пустой странице памяти.
   const query = activePage === "memory" ? params.get("query")?.trim() : "";
@@ -876,6 +879,18 @@ function attachmentsBlock(entry) {
     const dropped = [...(dropEvent.dataTransfer?.files || [])];
     if (dropped.length) upload(dropped);
   });
+  // ⌘V со скриншотом прикладывает его к открытой записи. Фокус при открытой
+  // карточке живёт внутри неё, поэтому слушается документ — пока блок на
+  // странице; после закрытия карточки слушатель снимает себя сам.
+  const onPaste = (event) => {
+    if (!wrap.isConnected) { document.removeEventListener("paste", onPaste); return; }
+    if (event.target instanceof Element && event.target.closest("#capture-form")) return;
+    const images = pastedImages(event.clipboardData);
+    if (!images.length) return;
+    event.preventDefault();
+    upload(images.map(namedShot));
+  };
+  document.addEventListener("paste", onPaste);
 
   paint();
   wrap.append(label, grid, add, input, hint);
@@ -1775,6 +1790,7 @@ $("#capture-form").addEventListener("submit", async (event) => {
     // испортили бы следующие записи.
     resetComposerOverrides();
     startCapturePolling({ ...result.data, raw, provider: provider || "fallback" });
+    uploadPendingShots(result.data.captureId);
     // Потолок исчерпан — запись сохранится, но разберут её правила. Сказать об
     // этом надо сразу: иначе человек решит, что разбор сломался.
     if (result.data.spend && !result.data.spend.allowed)
@@ -2654,3 +2670,424 @@ async function loadAdmin() {
 }
 
 loadAccount();
+
+// ── страница «Обзор»: отчёты по записям ─────────────────────────────────────
+// Правила из концепта reports-concept.html: списки важнее графиков, каждая
+// строка открывает карточку записи, всё названо словом. Данные считает сервер
+// одним запросом; здесь только отрисовка.
+const reportsState = { tab: "life", period: "week", dayDate: null };
+const REPORT_TYPES = ["task", "meeting_event", "note", "outcome_decision", "idea_question"];
+const reportLegendNames = { task: "Задачи", meeting_event: "Встречи", note: "Заметки", outcome_decision: "Решения", idea_question: "Вопросы" };
+const correctionFieldNames = { schedule: "срок", primaryType: "тип", project: "проект", projects: "проекты", people: "люди", followUp: "следующий шаг", tags: "теги", priority: "важность", summary: "формулировка" };
+function pluralRu(count, one, few, many) {
+  const mod10 = count % 10, mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
+}
+// Подписи дат считаются от строки YYYY-MM-DD через полдень UTC: label не
+// зависит от пояса браузера, а время конкретных событий форматируется в поясе
+// журнала, который присылает сервер.
+function reportDateLabel(date, options = { day: "numeric", month: "short" }) {
+  return new Intl.DateTimeFormat("ru-RU", { timeZone: "UTC", ...options }).format(new Date(`${date}T12:00:00Z`));
+}
+function reportTimeLabel(at, timeZone) {
+  return new Intl.DateTimeFormat("ru-RU", { timeZone, hour: "2-digit", minute: "2-digit" }).format(new Date(at));
+}
+function reportCounter({ num, cap, sub, cls = "" }) {
+  const box = node("div", undefined, "report-counter");
+  box.append(node("div", String(num), `num ${cls}`.trim()), node("div", cap, "cap"));
+  if (sub) box.append(node("div", sub, "sub"));
+  return box;
+}
+function reportCard(title, { right = null, hint = null } = {}) {
+  const card = node("div", undefined, "report-card"),
+    head = node("div", undefined, "report-card-head");
+  head.append(node("h3", title));
+  if (right) head.append(node("span", right, "right"));
+  card.append(head);
+  if (hint) card.append(node("p", hint, "report-hint"));
+  return card;
+}
+// Каждая строка — дверь: клик открывает ту же карточку записи, что и журнал.
+async function openReportEntry(captureId) {
+  try {
+    const { entries } = await request("/api/entries?limit=100");
+    const entry = entries.find((candidate) => candidate.id === captureId);
+    if (!entry) { toast("Запись не нашлась среди последних ста."); return; }
+    const review = reviewFromEntry(entry);
+    showCorrection(entry, review.level === "high" ? undefined : review);
+  } catch (error) {
+    toast(error.message);
+  }
+}
+function reportItem({ captureId, title, type = null, meta = null, metaCls = "" }) {
+  const item = node("li", undefined, undefined);
+  item.title = "Откроется карточка записи";
+  if (type) item.append(node("i", undefined, `report-dot ${type}`));
+  item.append(node("span", String(title).split("\n")[0], "t"));
+  if (meta) item.append(node("span", meta, `meta ${metaCls}`.trim()));
+  item.addEventListener("click", () => openReportEntry(captureId));
+  return item;
+}
+function reportItemList(rows, emptyText) {
+  if (!rows.length) return node("p", emptyText, "report-empty");
+  const list = node("ul", undefined, "report-items");
+  for (const row of rows) list.append(reportItem(row));
+  return list;
+}
+function reportBar({ name, caption = null, share, value, cost = false }) {
+  const row = node("div", undefined, "report-bar"),
+    label = node("span", name, "name"),
+    track = node("span", undefined, "track"),
+    fill = node("span", undefined, `fill${cost ? " cost" : ""}`);
+  if (caption) label.append(node("small", caption));
+  fill.style.width = `${Math.max(Math.round(share * 100), 2)}%`;
+  track.append(fill);
+  row.append(label, track, node("span", value, "n"));
+  return row;
+}
+function reportPulseCard(pulse, captionText) {
+  const card = reportCard("Пульс", { right: captionText });
+  const chart = node("div", undefined, "report-chart"),
+    labels = node("div", undefined, "report-chart-labels");
+  const max = Math.max(...pulse.columns.map((column) => column.total), 1);
+  const unitHeight = 88 / max;
+  let previousMonth = null;
+  for (const [index, column] of pulse.columns.entries()) {
+    const col = node("div", undefined, `col${column.total ? "" : " empty"}`);
+    col.title = `${reportDateLabel(column.date)} — ${column.total}`;
+    for (const type of REPORT_TYPES) {
+      if (!column.types[type]) continue;
+      const seg = node("span", undefined, `seg report-dot ${type}`);
+      seg.style.height = `${Math.max(column.types[type] * unitHeight, 4)}px`;
+      col.append(seg);
+    }
+    chart.append(col);
+    let text = "";
+    if (pulse.unit === "week") {
+      const month = column.date.slice(5, 7);
+      if (month !== previousMonth) { text = reportDateLabel(column.date, { month: "short" }); previousMonth = month; }
+    } else if (pulse.columns.length <= 7) {
+      text = reportDateLabel(column.date, { weekday: "short" });
+    } else if (index % 7 === 0) {
+      text = String(Number(column.date.slice(8, 10)));
+    }
+    labels.append(node("span", text));
+  }
+  const legend = node("div", undefined, "report-legend");
+  for (const type of REPORT_TYPES) {
+    const key = node("span");
+    key.append(node("i", undefined, `report-dot ${type}`), document.createTextNode(reportLegendNames[type]));
+    legend.append(key);
+  }
+  card.append(chart, labels, legend);
+  return card;
+}
+function renderReportsLife(area, data) {
+  clear(area);
+  const c = data.counters;
+  const counters = node("div", undefined, "report-counters");
+  const periodNames = { week: "за неделю", month: "за месяц", all: "за всё время" };
+  const prevNames = { week: "прошлая неделя", month: "прошлый месяц" };
+  counters.append(
+    reportCounter({ num: c.done, cls: c.done ? "good" : "", cap: pluralRu(c.done, "задача сделана", "задачи сделано", "задач сделано"), sub: periodNames[data.period] }),
+    reportCounter({ num: c.captures, cap: pluralRu(c.captures, "новая запись", "новые записи", "новых записей"), sub: c.capturesPrev === null ? "с самого начала" : `${prevNames[data.period]} — ${c.capturesPrev}` }),
+    reportCounter({ num: c.overdue, cls: c.overdue ? "bad" : "", cap: "просрочено", sub: c.overdue ? `старейшей — ${c.overdueOldestDays} ${pluralRu(c.overdueOldestDays, "день", "дня", "дней")}` : "хвостов нет" }),
+    reportCounter({ num: c.questions, cap: pluralRu(c.questions, "вопрос без ответа", "вопроса без ответа", "вопросов без ответа"), sub: c.questions ? `старейшему — ${c.questionsOldestDays} ${pluralRu(c.questionsOldestDays, "день", "дня", "дней")}` : "всё отвечено" }),
+  );
+  area.append(counters);
+
+  const pulseCaption = data.pulse.unit === "week"
+    ? "записи по неделям"
+    : `записи по дням, ${reportDateLabel(data.from)} — ${reportDateLabel(shiftDate(data.to, -1))}`;
+  area.append(reportPulseCard(data.pulse, pulseCaption));
+
+  const tails = node("div", undefined, "report-grid-3");
+  const overdueCard = reportCard("Просрочено", { right: String(data.overdue.length || ""), hint: "Задачи со сроком в прошлом" });
+  overdueCard.append(reportItemList(data.overdue.map((row) => ({
+    captureId: row.captureId, title: row.title, type: "task",
+    meta: row.daysLate === 1 ? "вчера" : `${row.daysLate} ${pluralRu(row.daysLate, "день", "дня", "дней")}`, metaCls: "bad",
+  })), "Хвостов нет."));
+  const questionsCard = reportCard("Без ответа", { right: String(data.questions.length || ""), hint: "Открытые вопросы и идеи" });
+  questionsCard.append(reportItemList(data.questions.map((row) => ({
+    captureId: row.captureId, title: row.title, type: "idea_question",
+    meta: reportDateLabel(row.createdAt.slice(0, 10)),
+  })), "Открытых вопросов нет."));
+  const silentCard = reportCard("Встречи без следа", { right: String(data.silentMeetings.length || ""), hint: "Прошли, но итог не записан" });
+  silentCard.append(reportItemList(data.silentMeetings.map((row) => ({
+    captureId: row.captureId, title: row.title, type: "meeting_event",
+    meta: reportDateLabel(row.date),
+  })), "У всех встреч есть след."));
+  tails.append(overdueCard, questionsCard, silentCard);
+  area.append(tails);
+
+  const slices = node("div", undefined, "report-grid-2");
+  const projectsCard = reportCard("Проекты", { right: "по числу записей" });
+  if (data.projects.length) {
+    const bars = node("div", undefined, "report-bars");
+    const max = Math.max(...data.projects.map((row) => row.count), 1);
+    for (const row of data.projects) bars.append(reportBar({ name: row.name, share: row.count / max, value: String(row.count) }));
+    projectsCard.append(bars);
+  } else {
+    projectsCard.append(node("p", "В записях периода проектов нет.", "report-empty"));
+  }
+  if (data.stalled.length) {
+    const stale = node("div", undefined, "report-stale");
+    stale.append(node("p", "Заглохло", "lbl"));
+    for (const row of data.stalled)
+      stale.append(node("div", `${row.name} — ${row.daysQuiet} ${pluralRu(row.daysQuiet, "день", "дня", "дней")} без записей`, "row"));
+    projectsCard.append(stale);
+  }
+  const peopleCard = reportCard("Люди и теги");
+  const chips = (rows, formatName) => {
+    const wrap = node("div", undefined, "report-chips");
+    for (const row of rows) {
+      const chip = node("span", undefined, "report-chip");
+      chip.append(node("b", formatName(row.name)), node("span", String(row.count), "n"));
+      wrap.append(chip);
+    }
+    return wrap;
+  };
+  peopleCard.append(data.people.length ? chips(data.people, (name) => name) : node("p", "Людей в записях периода нет.", "report-empty"));
+  peopleCard.append(node("p", "Теги", "report-chip-lbl"));
+  peopleCard.append(data.tags.length ? chips(data.tags, (name) => `#${name}`) : node("p", "Тегов пока нет.", "report-empty"));
+  slices.append(projectsCard, peopleCard);
+  area.append(slices);
+
+  const discipline = reportCard("Дисциплина", { right: "по закрытым записям периода" });
+  if (!data.discipline.closed) {
+    discipline.append(node("p", "В этом периоде ничего не закрыто.", "report-empty"));
+  } else {
+    const facts = node("div", undefined, "report-facts");
+    if (data.discipline.medianDays !== null) {
+      const fact = node("div", undefined, "report-fact");
+      fact.append(node("b", `${String(data.discipline.medianDays).replace(".", ",")} ${pluralRu(Math.round(data.discipline.medianDays) || 1, "день", "дня", "дней")}`));
+      fact.append(document.createTextNode("живёт дело — от записи до «готово» (медиана)"));
+      facts.append(fact);
+    }
+    if (data.discipline.withDue) {
+      const fact = node("div", undefined, "report-fact");
+      fact.append(node("b", `${data.discipline.onTime} из ${data.discipline.withDue}`));
+      fact.append(document.createTextNode("дел со сроком закрыты вовремя"));
+      facts.append(fact);
+    }
+    if (!facts.childNodes.length) facts.append(node("p", "Закрытых дел со сроком в периоде нет.", "report-empty"));
+    discipline.append(facts);
+  }
+  area.append(discipline);
+}
+function renderReportsService(area, data) {
+  clear(area);
+  const service = data.service;
+  const counters = node("div", undefined, "report-counters");
+  const minutes = Math.round((service.voice.seconds || 0) / 60);
+  counters.append(
+    reportCounter({ num: money(service.usage.costUsd), cap: "потрачено на разбор", sub: service.usage.unpriced ? `${service.usage.unpriced} ${pluralRu(service.usage.unpriced, "вызов", "вызова", "вызовов")} без цены` : "по данным провайдеров" }),
+    reportCounter({ num: service.usage.calls, cap: pluralRu(service.usage.calls, "вызов модели", "вызова модели", "вызовов модели"), sub: service.quality.failed ? `${service.quality.failed} неудачных` : "все удались" }),
+    reportCounter({ num: service.quality.corrections, cap: pluralRu(service.quality.corrections, "правка после модели", "правки после модели", "правок после модели"), sub: service.quality.topField ? `чаще всего — ${correctionFieldNames[service.quality.topField.field] || service.quality.topField.field}` : "правок не было" }),
+    reportCounter({ num: `${minutes} мин`, cap: "голосом", sub: service.voice.sessions ? `${service.voice.sessions} ${pluralRu(service.voice.sessions, "сессия", "сессии", "сессий")} · ${money(service.voice.costUsd)}` : "голос не использовался" }),
+  );
+  area.append(counters);
+
+  const grid = node("div", undefined, "report-grid-2");
+  const usageCard = reportCard("Расходы на модели", { right: "за период" });
+  if (service.usage.rows.length) {
+    const bars = node("div", undefined, "report-bars");
+    const max = Math.max(...service.usage.rows.map((row) => row.costUsd), 0.0001);
+    for (const row of service.usage.rows)
+      bars.append(reportBar({ name: providerNames[row.provider] || row.provider, caption: row.model || null, share: row.costUsd / max, value: money(row.costUsd), cost: true }));
+    usageCard.append(bars);
+  } else {
+    usageCard.append(node("p", "В этом периоде модели не вызывались.", "report-empty"));
+  }
+  const qualityCard = reportCard("Качество разбора");
+  const rows = [
+    ["Правок после модели", service.quality.corrections],
+    ["Переразборов моделью", service.quality.reclassified],
+    ["Ждут разбора сейчас", service.quality.pendingNow],
+    ["Неудачных разборов", service.quality.failed],
+  ];
+  const list = node("ul", undefined, "report-items");
+  for (const [label, value] of rows) {
+    const item = node("li");
+    item.style.cursor = "default";
+    item.append(node("span", label, "t"), node("span", String(value), "meta"));
+    list.append(item);
+  }
+  qualityCard.append(list);
+  grid.append(usageCard, qualityCard);
+  area.append(grid);
+
+  if (service.quality.providers.length) {
+    const accuracy = reportCard("Точность по провайдерам", { right: "правки на разбор — меньше лучше" });
+    const bars = node("div", undefined, "report-bars");
+    for (const row of service.quality.providers)
+      bars.append(reportBar({ name: providerNames[row.provider] || row.provider, share: row.parses ? row.corrections / row.parses : 0, value: `${row.corrections}/${row.parses}` }));
+    accuracy.append(bars);
+    area.append(accuracy);
+  }
+}
+function renderReportsDay(area, data) {
+  clear(area);
+  reportsState.dayDate = data.date;
+  const weekday = reportDateLabel(data.date, { weekday: "short" });
+  const label = `${weekday}, ${reportDateLabel(data.date)}`;
+  $("#reports-day-label").textContent = data.date === data.latest ? `вчера — ${label}` : label;
+  $("#reports-day-prev").disabled = !data.hasOlder;
+  $("#reports-day-next").disabled = data.date >= data.latest;
+  const counters = node("div", undefined, "report-counters");
+  const times = data.feed.map((row) => reportTimeLabel(row.at, data.timeZone));
+  counters.append(
+    reportCounter({ num: data.done.length, cls: data.done.length ? "good" : "", cap: pluralRu(data.done.length, "дело закрыто", "дела закрыто", "дел закрыто"), sub: data.done.length ? null : "в этот день — ничего" }),
+    reportCounter({ num: data.feed.length, cap: pluralRu(data.feed.length, "новая запись", "новые записи", "новых записей"), sub: times.length > 1 ? `с ${times[0]} до ${times.at(-1)}` : null }),
+    reportCounter({ num: data.meetings, cap: pluralRu(data.meetings, "встреча", "встречи", "встреч"), sub: null }),
+    reportCounter({ num: data.missed.length, cls: data.missed.length ? "bad" : "", cap: "не успел", sub: data.missed.length ? "срок был в этот день" : "хвостов не осталось" }),
+  );
+  area.append(counters);
+
+  const grid = node("div", undefined, "report-grid-2");
+  const doneCard = reportCard("Сделано", { right: String(data.done.length || ""), hint: "Дела, закрытые в этот день — когда бы ни были записаны" });
+  doneCard.append(reportItemList(data.done.map((row) => ({
+    captureId: row.captureId, title: row.title, type: row.type,
+    meta: reportTimeLabel(row.at, data.timeZone), metaCls: "ok",
+  })), "В этот день ничего не закрыто."));
+  const missedCard = reportCard("Не успел", { right: String(data.missed.length || ""), hint: "Срок был в этот день, к вечеру не закрыто" });
+  missedCard.append(reportItemList(data.missed.map((row) => ({
+    captureId: row.captureId, title: row.title, type: "task",
+    meta: row.closedLater ? "закрыто позже" : "теперь в «Просрочено»", metaCls: row.closedLater ? "" : "bad",
+  })), "Всё со сроком на этот день — закрыто."));
+  grid.append(doneCard, missedCard);
+  area.append(grid);
+
+  const feedCard = reportCard("Записано за день", { right: String(data.feed.length || ""), hint: "Все записи дня по времени" });
+  feedCard.append(reportItemList(data.feed.map((row) => ({
+    captureId: row.captureId, title: row.title, type: row.type,
+    meta: reportTimeLabel(row.at, data.timeZone),
+  })), "Записей в этот день нет."));
+  area.append(feedCard);
+}
+function reportsView(tab) {
+  return { life: $("#reports-life"), day: $("#reports-day"), service: $("#reports-service") }[tab];
+}
+async function loadReports() {
+  const tab = reportsState.tab;
+  for (const name of ["life", "day", "service"]) reportsView(name).hidden = name !== tab;
+  $("#reports-period").hidden = tab === "day";
+  $("#reports-daynav").hidden = tab !== "day";
+  const area = reportsView(tab);
+  if (!area.childNodes.length) area.append(node("p", "Считаем…", "empty"));
+  try {
+    if (tab === "day") {
+      const query = reportsState.dayDate ? `?date=${reportsState.dayDate}` : "";
+      renderReportsDay(area, await request(`/api/reports/day${query}`));
+    } else {
+      const data = await request(`/api/reports?period=${reportsState.period}`);
+      if (tab === "life") renderReportsLife(area, data);
+      else renderReportsService(area, data);
+    }
+  } catch (error) {
+    clear(area);
+    area.append(node("p", error.message, "empty"));
+  }
+}
+for (const button of document.querySelectorAll("[data-reports-tab]"))
+  button.addEventListener("click", () => {
+    reportsState.tab = button.dataset.reportsTab;
+    for (const other of document.querySelectorAll("[data-reports-tab]"))
+      other.setAttribute("aria-pressed", String(other === button));
+    loadReports();
+  });
+for (const button of document.querySelectorAll("[data-reports-period]"))
+  button.addEventListener("click", () => {
+    reportsState.period = button.dataset.reportsPeriod;
+    for (const other of document.querySelectorAll("[data-reports-period]"))
+      other.setAttribute("aria-pressed", String(other === button));
+    loadReports();
+  });
+$("#reports-day-prev")?.addEventListener("click", () => {
+  if (reportsState.dayDate) { reportsState.dayDate = shiftDate(reportsState.dayDate, -1); loadReports(); }
+});
+$("#reports-day-next")?.addEventListener("click", () => {
+  if (reportsState.dayDate) { reportsState.dayDate = shiftDate(reportsState.dayDate, 1); loadReports(); }
+});
+
+// ── снимки из буфера: ⌘V прикладывает картинку ──────────────────────────────
+// В карточке ввода снимок ждёт отправки и уезжает вложением следом за записью;
+// в открытой карточке записи — прикладывается сразу.
+const SHOT_LIMIT = 10;
+const SHOT_SIZE_LIMIT = 10 * 1024 * 1024;
+const pendingShots = [];
+function pastedImages(data) {
+  return [...(data?.files || [])].filter((file) => file.type.startsWith("image/"));
+}
+// Скриншот приходит безликим «image.png» — называем моментом вставки, чтобы
+// в списке вложений снимки различались.
+function shotName(file) {
+  if (file.name && !/^image\.\w+$/i.test(file.name)) return file.name;
+  const stamp = new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date()).replaceAll(":", "-");
+  const extension = (file.type.split("/")[1] || "png").replace("jpeg", "jpg");
+  return `снимок-${stamp}.${extension}`;
+}
+function namedShot(file) {
+  return new File([file], shotName(file), { type: file.type });
+}
+function paintCaptureShots() {
+  const strip = $("#capture-shots");
+  clear(strip);
+  strip.hidden = !pendingShots.length;
+  for (const shot of pendingShots) {
+    const tile = node("div", undefined, "capture-shot"),
+      image = node("img"),
+      remove = node("button", "×");
+    image.src = shot.url;
+    image.alt = shot.file.name;
+    remove.type = "button";
+    remove.title = "Убрать снимок";
+    remove.setAttribute("aria-label", `Убрать ${shot.file.name}`);
+    remove.addEventListener("click", () => {
+      URL.revokeObjectURL(shot.url);
+      pendingShots.splice(pendingShots.indexOf(shot), 1);
+      paintCaptureShots();
+    });
+    tile.append(image, remove);
+    strip.append(tile);
+  }
+}
+function queueShots(files) {
+  for (const file of files) {
+    if (pendingShots.length >= SHOT_LIMIT) { toast(`До ${SHOT_LIMIT} снимков на запись.`); break; }
+    if (file.size > SHOT_SIZE_LIMIT) { toast("Снимок больше 10 МБ не приложится."); continue; }
+    const named = namedShot(file);
+    pendingShots.push({ file: named, url: URL.createObjectURL(named) });
+  }
+  paintCaptureShots();
+}
+$("#capture-form").addEventListener("paste", (event) => {
+  const images = pastedImages(event.clipboardData);
+  if (!images.length) return;
+  event.preventDefault();
+  queueShots(images);
+});
+// Запись уже создана (202 отдаёт captureId), снимки догоняют её своим ходом:
+// отправка не ждёт сети вложений.
+async function uploadPendingShots(captureId) {
+  if (!pendingShots.length) return;
+  const shots = pendingShots.splice(0, pendingShots.length);
+  paintCaptureShots();
+  for (const shot of shots) {
+    try {
+      const response = await fetch(`/api/captures/${captureId}/attachments`, {
+        method: "POST",
+        headers: { "Content-Type": shot.file.type || "application/octet-stream", "X-Attachment-Name": encodeURIComponent(shot.file.name) },
+        body: shot.file,
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error?.message || "Снимок не приложился.");
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      URL.revokeObjectURL(shot.url);
+    }
+  }
+}
