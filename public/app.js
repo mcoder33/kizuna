@@ -2939,7 +2939,7 @@ function renderReportsDay(area, data) {
   const counters = node("div", undefined, "report-counters");
   const times = data.feed.map((row) => reportTimeLabel(row.at, data.timeZone));
   counters.append(
-    reportCounter({ num: data.done.length, cls: data.done.length ? "good" : "", cap: pluralRu(data.done.length, "дело закрыто", "дела закрыто", "дел закрыто"), sub: data.done.length ? null : "в этот день — ничего" }),
+    reportCounter({ num: data.done.length, cls: data.done.length ? "good" : "", cap: pluralRu(data.done.length, "дело сделано", "дела сделано", "дел сделано"), sub: data.done.length ? null : "в этот день — ничего" }),
     reportCounter({ num: data.feed.length, cap: pluralRu(data.feed.length, "новая запись", "новые записи", "новых записей"), sub: times.length > 1 ? `с ${times[0]} до ${times.at(-1)}` : null }),
     reportCounter({ num: data.meetings, cap: pluralRu(data.meetings, "встреча", "встречи", "встреч"), sub: null }),
     reportCounter({ num: data.missed.length, cls: data.missed.length ? "bad" : "", cap: "не успел", sub: data.missed.length ? "срок был в этот день" : "хвостов не осталось" }),
@@ -2947,11 +2947,11 @@ function renderReportsDay(area, data) {
   area.append(counters);
 
   const grid = node("div", undefined, "report-grid-2");
-  const doneCard = reportCard("Сделано", { right: String(data.done.length || ""), hint: "Дела, закрытые в этот день — когда бы ни были записаны" });
+  const doneCard = reportCard("Сделано", { right: String(data.done.length || ""), hint: "Зафиксированная работа за этот день — как в «Что делал»" });
   doneCard.append(reportItemList(data.done.map((row) => ({
     captureId: row.captureId, title: row.title, type: row.type,
     meta: reportTimeLabel(row.at, data.timeZone), metaCls: "ok",
-  })), "В этот день ничего не закрыто."));
+  })), "За этот день работа не зафиксирована."));
   const missedCard = reportCard("Не успел", { right: String(data.missed.length || ""), hint: "Срок был в этот день, к вечеру не закрыто" });
   missedCard.append(reportItemList(data.missed.map((row) => ({
     captureId: row.captureId, title: row.title, type: "task",

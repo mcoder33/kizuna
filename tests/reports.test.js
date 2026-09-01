@@ -52,14 +52,18 @@ test('period report counts by captures: counters, tails, projects and discipline
 
 test('day report keeps day boundaries: feed, done, missed and defaults',async()=>{
   const api=authed(freshApp()),day=today(),yesterday=shiftDate(day,-1);
+  // «Сделано» — отчётная работа (completed===true), как в «Что делал».
+  const reported=(await api.post('/api/captures').send({raw:'Сделал ревью по Hub'}).expect(201)).body.entry;
+  assert.equal(reported.interpretation.classification.completed,true);
   const taskEntry=(await api.post('/api/captures').send({raw:'Нужно подготовить отчёт'}).expect(201)).body.entry;
   await api.post('/api/captures').send({raw:'Просто дневная запись'}).expect(201);
   const missed=(await api.post('/api/captures').send({raw:'позвонить в салон',primaryType:'todo',due:{date:yesterday}}).expect(201)).body.entry;
+  // Задача, снятая галочкой, — уход из TODO, а не запись в дневник: в «Сделано» её нет.
   const projection=taskEntry.projections.find(item=>item.type==='task');
   await api.post(`/api/projections/${projection.id}/complete`).send({}).expect(200);
   const todayReport=(await api.get(`/api/reports/day?date=${day}`).expect(200)).body;
-  assert.equal(todayReport.feed.length,3);
-  assert.deepEqual(todayReport.done.map(row=>row.captureId),[taskEntry.id]);
+  assert.equal(todayReport.feed.length,4);
+  assert.deepEqual(todayReport.done.map(row=>row.captureId),[reported.id]);
   // Сегодняшний день ещё не кончился — «не успел» по нему не выносится.
   assert.equal(todayReport.missed.length,0);
   const yesterdayReport=(await api.get('/api/reports/day').expect(200)).body;

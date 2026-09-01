@@ -68,12 +68,13 @@ function loadEntries(db, userId) {
     const completable = byCapture.get(row.id) || [];
     const closed = completable.length > 0 && completable.every(projection => completion.get(projection.id)?.event_type === 'completed');
     const closedAt = closed ? completable.map(projection => completion.get(projection.id).occurred_at).sort().at(-1) : null;
-    return { id: row.id, createdAt: row.created_at, classification, closed, closedAt };
+    return { id: row.id, createdAt: row.created_at, occurredAt: row.occurred_at, classification, closed, closedAt };
   });
 }
 
 function inRange(at, fromAt, toAt) { const time = new Date(at).getTime(); return time >= fromAt.getTime() && time < toAt.getTime(); }
 function summaryOf(entry) { return entry.classification.summary || ''; }
+function stampOf(entry) { return entry.occurredAt || entry.createdAt; }
 function scheduleOf(entry) { return entry.classification.entities?.schedule || null; }
 function median(values) { if (!values.length) return null; const sorted = [...values].sort((a, b) => a - b); const middle = Math.floor(sorted.length / 2); return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2; }
 function topCounts(map, limit) { return [...map.values()].sort((a, b) => b.count - a.count).slice(0, limit); }
@@ -257,11 +258,14 @@ export function dayReport(db, { date, now, timeZone, userId }) {
   const today = dateInZone(now, timeZone);
   const startAt = dayStartInZone(date, timeZone), endAt = dayStartInZone(shiftDate(date, 1), timeZone);
   const feed = entries
-    .filter(entry => inRange(entry.createdAt, startAt, endAt))
-    .map(entry => ({ captureId: entry.id, title: summaryOf(entry), type: entry.classification.primaryType, at: entry.createdAt }));
+    .filter(entry => inRange(stampOf(entry), startAt, endAt))
+    .map(entry => ({ captureId: entry.id, title: summaryOf(entry), type: entry.classification.primaryType, at: stampOf(entry) }));
+  // «Сделано» — зафиксированная работа этого дня, тот же источник, что и «Что
+  // делал»: classification.completed === true. Снятая галочкой задача — это уход
+  // из TODO, а не запись в дневник, поэтому сюда не попадает (живёт в журнале TODO).
   const done = entries
-    .filter(entry => entry.closed && entry.closedAt && inRange(entry.closedAt, startAt, endAt))
-    .map(entry => ({ captureId: entry.id, title: summaryOf(entry), type: entry.classification.primaryType, at: entry.closedAt }))
+    .filter(entry => entry.classification.completed === true && inRange(stampOf(entry), startAt, endAt))
+    .map(entry => ({ captureId: entry.id, title: summaryOf(entry), type: entry.classification.primaryType, at: stampOf(entry) }))
     .sort((a, b) => (a.at < b.at ? -1 : 1));
   // Не успел: срок был в этот день, к концу дня не закрыто. Если закрыли позже —
   // так и говорим, это честнее, чем молча убрать строку из прошлого дня.

@@ -3841,7 +3841,7 @@ dialog form > div {
   --nt-callout-red: rgb(253, 235, 236);
   --nt-callout-green: rgb(237, 243, 236);
   --nt-callout-blue: rgb(231, 243, 248);
-  width: min(1020px, calc(100vw - 120px));
+  width: min(720px, calc(100vw - 48px));
   height: calc(100vh - 72px);
   max-width: none;
   max-height: none;
