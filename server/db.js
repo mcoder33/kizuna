@@ -185,6 +185,25 @@ function migrate(db) {
     // таблицу копией.
     for (const table of ['interpretations', 'capture_jobs']) rebuildWithGemini(db, table);
     db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(9, now());
+    // Миграция 10: доска. Колонки — свои у каждого; раскладка хранит, в какой
+    // колонке и на каком месте лежит открытое дело. column_id NULL — «Входящие».
+    db.exec(`CREATE TABLE IF NOT EXISTS board_columns (
+      id TEXT PRIMARY KEY,
+      user_id TEXT REFERENCES users(id),
+      name TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    )`);
+    db.exec('CREATE INDEX IF NOT EXISTS board_columns_user ON board_columns(user_id, position)');
+    db.exec(`CREATE TABLE IF NOT EXISTS board_placements (
+      capture_id TEXT PRIMARY KEY REFERENCES captures(id),
+      user_id TEXT REFERENCES users(id),
+      column_id TEXT REFERENCES board_columns(id),
+      position INTEGER NOT NULL,
+      updated_at TEXT NOT NULL
+    )`);
+    db.exec('CREATE INDEX IF NOT EXISTS board_placements_column ON board_placements(user_id, column_id, position)');
+    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(10, now());
 }
 // Ограничение переписывается из собственного определения таблицы, а не из
 // зашитой здесь копии: копия разошлась бы с настоящей схемой на первой же новой
