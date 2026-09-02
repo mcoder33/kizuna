@@ -1563,8 +1563,10 @@ body.capture-large-open::before {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  font-size: 18px;
-  line-height: 1.62;
+  /* Чуть крупнее обычного поля (15px), но без «плаката»: 18px с заголовками
+     в 24px читались как афиша, а не как документ. */
+  font-size: 16px;
+  line-height: 1.55;
 }
 @media (prefers-reduced-motion: reduce) {
   body.capture-large-open::before {
