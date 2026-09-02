@@ -4916,12 +4916,8 @@ dialog form > div {
   gap: 14px;
   align-items: flex-start;
   overflow-x: auto;
-  /* Лента колонок выходит из контентной колонки до краёв окна: слева
-     первая колонка стоит вровень с заголовком (отступ = поле main), справа
-     колонки едут до самого края, а не режутся рамкой страницы. */
-  margin-left: calc(50% - 50vw);
-  margin-right: calc(50% - 50vw);
-  padding: 4px 24px 26px calc(50vw - 50%);
+  /* Правый край ленты — край окна: страница дел сама во всю ширину. */
+  padding: 4px 24px 26px 0;
   /* Полосу прокрутки не показываем: колесо, трекпад и перетаскивание работают,
      а серый столбик под колонками читался как чужой элемент интерфейса. */
   scrollbar-width: none;
@@ -5140,6 +5136,105 @@ body {
   color: var(--nt-text);
   resize: none;
   overflow: hidden;
+}
+
+/* ── страница дел: рейка разделов слева, лента справа до края окна ────────── */
+.board-page {
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  /* левое поле равно отступу контентной колонки main на любой ширине */
+  padding: 0 0 0 calc(50vw - 50%);
+  display: grid;
+  grid-template-columns: 216px minmax(0, 1fr);
+  gap: 0 28px;
+  align-items: start;
+}
+.board-main { min-width: 0; }
+.board-rail {
+  position: sticky;
+  top: 88px;
+  padding-top: 8px;
+}
+.board-rail-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 12px -8px;
+  padding: 6px 10px 6px 8px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--coral);
+  cursor: pointer;
+}
+.board-rail-add .plus {
+  width: 20px;
+  height: 20px;
+  border-radius: 99px;
+  background: var(--coral);
+  color: var(--n-100);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1;
+}
+.board-rail-add:hover { background: var(--hairline); }
+.board-rail-nav { display: flex; flex-direction: column; gap: 1px; }
+.board-rail-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: calc(100% + 8px);
+  margin-left: -8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.board-rail-item:hover { background: var(--hairline); }
+.board-rail-item[aria-current="true"] {
+  background: var(--pink);
+  color: var(--coral);
+  font-weight: 700;
+}
+.board-rail-item .glyph {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  flex: none;
+  color: var(--n-72);
+}
+.board-rail-item[aria-current="true"] .glyph { color: var(--coral); }
+.board-rail-item .glyph svg { display: block; width: 16px; height: 16px; }
+.board-rail-item .glyph.hash { font-weight: 700; justify-content: center; font-size: 13px; }
+.board-rail-item .lbl { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-rail-item .n { margin-left: auto; font-size: 11.5px; color: var(--n-72); flex: none; }
+.board-rail-group {
+  margin: 16px 0 4px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--n-72);
+}
+@media (max-width: 760px) {
+  .board-page { grid-template-columns: 1fr; gap: 12px; }
+  .board-rail { position: static; padding-top: 0; }
+  .board-rail-nav { flex-direction: row; flex-wrap: wrap; gap: 6px; }
+  .board-rail-item { width: auto; margin-left: 0; padding: 5px 11px; background: var(--hairline); border-radius: 99px; }
+  .board-rail-item .n { margin-left: 6px; }
+  .board-rail-group { flex-basis: 100%; margin: 6px 0 0; }
+  .board-rail-add { margin-left: 0; }
 }
 
 /* переключатель вида и группировка по датам */

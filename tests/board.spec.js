@@ -32,6 +32,21 @@ test("доска: колонка, быстрое дело, статус, кар�
   await page.keyboard.press("Escape");
   await expect(page.locator("#review-dialog")).toBeHidden();
 
+  // Рейка разделов слева: счётчики считаются по всем делам, раздел меняет
+  // заголовок и оставляет только свои карточки.
+  await expect(page.locator('.board-rail-item[data-scope="all"] .n')).toHaveText("1");
+  await expect(page.locator('.board-rail-item[data-scope="inbox"] .n')).toHaveText("0");
+  await page.locator('.board-rail-item[data-scope="inbox"]').click();
+  await expect(page.locator("#board-title")).toHaveText("Входящие");
+  await expect(page.locator(".board-card")).toHaveCount(0);
+  await page.locator('.board-rail-item[data-scope="all"]').click();
+  await expect(page.locator("#board-title")).toHaveText("Все дела");
+  await expect(card).toBeVisible();
+  // «+ Дело» в рейке открывает ввод во «Входящих».
+  await page.locator("#board-quick-add").click();
+  await expect(page.locator(".board-column.inbox .board-add input")).toBeFocused();
+  await page.keyboard.press("Escape");
+
   // Группировка по датам: колонки считаются из сроков, внутри — группы видов.
   await page.locator('[data-board-view="dates"]').click();
   await expect(page.locator(".board-column.dated .board-col-name")).toHaveText([
