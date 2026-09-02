@@ -4849,3 +4849,44 @@ dialog form > div {
   height: auto;
   border-radius: 2.5px;
 }
+
+/* ── статус записи: «значок и слово» ─────────────────────────────────────────
+   Цвета — семантические поверх общей шкалы: в тёмной теме сама шкала светлеет,
+   отдельных тёмных значений здесь не нужно. */
+:root {
+  --st-done: var(--green);
+  --st-late: var(--orange-54);
+  --st-today: var(--orange-56);
+  --st-ontime: var(--blue-61);
+  --st-none: var(--n-62);
+}
+.entry-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+.entry-status .status-icon { display: inline-flex; }
+.entry-status .status-icon svg { display: block; }
+.entry-status.st-done { color: var(--st-done); }
+.entry-status.st-late { color: var(--st-late); }
+.entry-status.st-today { color: var(--st-today); }
+.entry-status.st-ontime { color: var(--st-ontime); }
+.entry-status.st-none { color: var(--st-none); }
+/* строка статуса в карточке — как строка свойства Notion, под заголовком */
+#review-dialog .card-status {
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  margin: 4px 0 0;
+  padding: 0;
+}
+/* чип в свёрнутой строке свойств — чуть мельче, по базовой линии текста */
+#review-dialog .props-summary .entry-status {
+  font-size: 12.5px;
+  position: relative;
+  top: 1.5px;
+}

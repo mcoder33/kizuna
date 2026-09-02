@@ -980,6 +980,39 @@ function cardBody(entry) {
   wrap.append(label, field.element, hint);
   return wrap;
 }
+// ── статус записи ────────────────────────────────────────────────────────────
+// Выводится, а не вводится: из типа, срока и «сделано». Стиль — «значок и
+// слово», по-нотионовски строкой свойства; цвет помогает, смысл назван словом.
+const STATUS_ICONS = {
+  done: '<path d="M3.5 8.5l3 3 6-6.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
+  late: '<path d="M8 2.6 14.4 13H1.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6.4v3.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11.6" r="0.6" fill="currentColor"/>',
+  clock: '<circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.7V8l2.3 1.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+  none: '<path d="M4 8h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
+};
+function entryStatus(entry, today = currentDayDate) {
+  const c = entry.interpretation.classification;
+  if (isReportedWork(entry) || isClosed(entry))
+    return { key: "done", label: "Сделано", icon: "done" };
+  // Статус есть только у дел: заметки, идеи и незакрытые результаты живут без него.
+  if (
+    !completableProjections(entry).length &&
+    !["task", "meeting_event"].includes(c.primaryType)
+  )
+    return null;
+  const date = c.entities.schedule?.date || null;
+  if (!date) return { key: "none", label: "Без срока", icon: "none" };
+  if (today && date < today) return { key: "late", label: "Просрочено", icon: "late" };
+  if (today && date === today) return { key: "today", label: "Сегодня", icon: "clock" };
+  return { key: "ontime", label: "В срок", icon: "clock" };
+}
+function statusBadge(status) {
+  const badge = node("span", undefined, `entry-status st-${status.key}`),
+    icon = node("span", undefined, "status-icon");
+  icon.setAttribute("aria-hidden", "true");
+  icon.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14">${STATUS_ICONS[status.icon]}</svg>`;
+  badge.append(icon, document.createTextNode(status.label));
+  return badge;
+}
 // Карточка открывается модальным окном, а не панелью внутри страницы: панель
 // жила в разделе «Сегодня» и на страницах журнала строилась на скрытой
 // странице — кнопка срабатывала, но человек не видел ничего.
@@ -993,6 +1026,13 @@ function showReview(entry, review, undoGroupId, provenance) {
     return;
   }
   area.append(markdownNode("h2", c.summary, undefined, { inline: true, firstLine: true }));
+  // Статус — первой строкой свойств: это то, что хочется узнать, открыв запись.
+  const entryState = entryStatus(entry);
+  if (entryState) {
+    const stateRow = node("p", undefined, "card-status");
+    stateRow.append(statusBadge(entryState));
+    area.append(stateRow);
+  }
   // Когда запись сделана — в самой карточке: «Срок» ниже это про будущее, а
   // здесь ответ на вопрос «когда это было».
   const written = entryClock(entry);
@@ -1093,7 +1133,6 @@ function showReview(entry, review, undoGroupId, provenance) {
     if (!scheduleWrap.hidden && due) parts.push(`срок: ${due}`);
     if (!peopleWrap.hidden && people.value.trim()) parts.push(people.value.trim());
     if (!followUpWrap.hidden && followUp.value.trim()) parts.push(`далее: ${followUp.value.trim()}`);
-    if (done) parts.push("сделано");
     return parts.join("   ·   ");
   };
   const paintProps = () => {
@@ -1101,7 +1140,15 @@ function showReview(entry, review, undoGroupId, provenance) {
     apply.hidden = !propsOpen;
     propsBar.setAttribute("aria-expanded", String(propsOpen));
     propsBar.classList.toggle("open", propsOpen);
-    propsSummary.textContent = propsOpen ? "Свойства" : summaryText();
+    clear(propsSummary);
+    if (propsOpen) propsSummary.append(document.createTextNode("Свойства"));
+    else {
+      // Чип статуса ведёт строку: состояние видно, не разворачивая свойства.
+      // Берётся из сохранённой записи — правки живут в развёрнутой форме.
+      const state = entryStatus(entry);
+      if (state) propsSummary.append(statusBadge(state), document.createTextNode("   ·   "));
+      propsSummary.append(document.createTextNode(summaryText()));
+    }
     propsSummary.classList.toggle("is-label", propsOpen);
   };
   type.addEventListener("change", () => { updateVisibility(); });
