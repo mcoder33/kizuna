@@ -5449,10 +5449,8 @@ body {
 #review-dialog.task-layout .review {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 264px;
-  /* одна строка во всю высоту листа: футер главной колонки прижат к низу,
-     а разделитель справа тянется на всю высоту, как панель в Todoist */
-  grid-template-rows: minmax(0, 1fr);
   gap: 0 28px;
+  align-content: start;
   padding: 40px 32px 28px;
 }
 #review-dialog.task-layout .card-main {
