@@ -21,7 +21,8 @@ function parseJson(value) {
 function configError(code) { return Object.assign(new Error(code), { code }); }
 
 function statusError(status) {
-  if (status === 401 || status === 403) return new CliRunnerError('unavailable');
+  // Отказ по ключу — не случайность: повторять такой запрос незачем.
+  if (status === 401 || status === 403) return Object.assign(new CliRunnerError('unavailable'), { permanent: true });
   if (status === 429) return new CliRunnerError('rate_limited');
   return new CliRunnerError('nonzero');
 }
@@ -162,8 +163,11 @@ export function createOpenRouterProvider({ config, fetch: fetchImplementation = 
         model: selected,
         temperature: 0,
         // «Думающие» модели (например Gemini Flash) тратят часть бюджета на
-        // reasoning; при тесном лимите ответ приходит с content: null.
-        max_tokens: 3000,
+        // reasoning; при тесном лимите ответ приходит с content: null. Поэтому
+        // бюджет шире, а рассуждение просим короткое: извлечение полей по
+        // схеме — не та задача, где долгие раздумья что-то добавляют.
+        max_tokens: 6000,
+        reasoning: { effort: 'low', exclude: true },
         messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
         response_format: { type: 'json_schema', json_schema: { name: schemaName, strict: true, schema: JSON.parse(schema) } },
       },

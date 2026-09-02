@@ -651,7 +651,7 @@ export function claimCaptureJob(db, { owner, leaseToken, leaseMs, currentTime = 
   });
 }
 
-export function completeCaptureJob(db, claim, { classification, provider, model = null }) {
+export function completeCaptureJob(db, claim, { classification, provider, model = null, fallbackReason = null }) {
   const completedAt = now();
   return withImmediateTransaction(db, () => {
     const current = db.prepare(`SELECT * FROM capture_jobs WHERE id=? AND state='running' AND lease_owner=? AND lease_token=? AND lease_fence=? AND lease_expires_at > ?`).get(claim.id, claim.lease_owner, claim.lease_token, claim.lease_fence, completedAt);
@@ -660,8 +660,10 @@ export function completeCaptureJob(db, claim, { classification, provider, model 
     const interpretationId = id(), undoGroupId = id();
     db.prepare('INSERT INTO interpretations VALUES(?,?,?,?,?,?,?,?,?,NULL)').run(interpretationId, claim.capture_id, 1, 'active', provider, model, JSON.stringify(classification), JSON.stringify(classification.confidence || {}), completedAt);
     if (shouldMaterializeProjections(classification)) insertProjections(db, interpretationId, makeProjections(claim.capture_id, classification, undoGroupId), completedAt);
-    db.prepare(`UPDATE capture_jobs SET state='succeeded',stage='complete',retryable=0,used_provider=?,model=?,lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,finished_at=?
-      WHERE id=? AND state='running' AND lease_owner=? AND lease_token=? AND lease_fence=?`).run(provider, model, completedAt, claim.id, claim.lease_owner, claim.lease_token, claim.lease_fence);
+    // Задача «успешна» и с откатом на заглушку — но причина отката остаётся
+    // в error_code: без неё после факта не понять, почему запись без разбора.
+    db.prepare(`UPDATE capture_jobs SET state='succeeded',stage='complete',retryable=0,used_provider=?,model=?,error_code=?,lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,finished_at=?
+      WHERE id=? AND state='running' AND lease_owner=? AND lease_token=? AND lease_fence=?`).run(provider, model, provider === 'fallback' ? (fallbackReason || null) : null, completedAt, claim.id, claim.lease_owner, claim.lease_token, claim.lease_fence);
     insertJobEvent(db, claim.id, 'succeeded', completedAt);
     insertLedgerEvent(db, 'capture_classified', claim.capture_id, claim.id, completedAt);
     return { interpretationId, undoGroupId };

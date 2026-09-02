@@ -149,12 +149,36 @@ test('transport and schema failures degrade to an unclassified capture with a sa
     [{ '/models': () => ok(catalogue), '/chat/completions': () => chatOk({ primaryType: 'nope' }) }, 'schema_invalid'],
   ];
   for (const [handlers, reason] of cases) {
-    const service = createAiService({ env: { OPENROUTER_API_KEY: 'key' }, fetch: stubFetch(handlers).fetch });
+    const service = createAiService({ env: { OPENROUTER_API_KEY: 'key' }, fetch: stubFetch(handlers).fetch, retryDelayMs: 0, log: () => {} });
     const result = await service.classify('Завтра в 11 созвон', 'openrouter');
     assert.equal(result.usedProvider, 'fallback', reason);
     assert.equal(result.fallbackReason, reason);
     assert.equal(result.classification.unclassified, true);
   }
+});
+
+test('a transient model failure is retried once before the capture degrades', async () => {
+  // Первый ответ — пустой content (модель истратила бюджет на рассуждение),
+  // второй — нормальный: запись разобрана, а не сохранена «без разбора».
+  let calls = 0;
+  const flaky = { '/models': () => ok(catalogue), '/chat/completions': () => (++calls === 1 ? ok({ choices: [{ message: { content: null } }] }) : chatOk(classification)) };
+  const events = [];
+  const service = createAiService({ env: { OPENROUTER_API_KEY: 'key' }, fetch: stubFetch(flaky).fetch, retryDelayMs: 0, log: (event) => events.push(event), now: () => new Date('2026-08-21T10:00:00Z') });
+  const result = await service.classify('Завтра в 11 созвон по Hub', 'openrouter');
+  assert.equal(calls, 2);
+  assert.equal(result.usedProvider, 'openrouter');
+  assert.equal(result.fallbackReason, null);
+  assert.deepEqual(events.map(event => [event.event, event.reason, event.attempt]), [['classify_attempt_failed', 'absent_output', 1]]);
+
+  // Отказ по ключу постоянен: второго запроса нет, причина — в журнале.
+  let authCalls = 0;
+  const denied = { '/models': () => ok(catalogue), '/chat/completions': () => { authCalls += 1; return { ok: false, status: 401 }; } };
+  const deniedEvents = [];
+  const deniedService = createAiService({ env: { OPENROUTER_API_KEY: 'key' }, fetch: stubFetch(denied).fetch, retryDelayMs: 0, log: (event) => deniedEvents.push(event) });
+  const deniedResult = await deniedService.classify('Завтра в 11 созвон', 'openrouter');
+  assert.equal(authCalls, 1);
+  assert.equal(deniedResult.fallbackReason, 'unavailable');
+  assert.equal(deniedEvents.at(-1).event, 'classify_fallback');
 });
 
 test('without a key OpenRouter is unavailable and reports not_configured', async () => {
