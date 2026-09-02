@@ -4849,7 +4849,17 @@ dialog form > div {
   object-fit: cover;
   display: block;
 }
-.capture-shot button {
+/* Вся плитка — кнопка просмотра; крестик лежит поверх неё в углу. */
+.capture-shot .shot-open {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+.capture-shot .shot-remove {
   position: absolute;
   top: 2px;
   right: 2px;
@@ -4866,7 +4876,7 @@ dialog form > div {
   align-items: center;
   justify-content: center;
 }
-.capture-shot button:hover { background: var(--n-0-a27); }
+.capture-shot .shot-remove:hover { background: var(--n-0-a27); }
 .report-chart .seg {
   width: auto;
   height: auto;

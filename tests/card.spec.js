@@ -915,3 +915,30 @@ test("заголовок записи правится прямо в карто�
   await expect(page.locator("#review-dialog")).toBeVisible();
   await expect(page.locator("#review-dialog h2.card-title")).toContainText("Проверить заголовок после правки");
 });
+
+test("a screenshot pasted into the capture field opens a preview on click", async ({ page }) => {
+  await page.goto("/");
+  await page.getByLabel("Новая запись").click();
+  await page.evaluate(() => {
+    // PNG 1×1 — снимок из буфера, ещё не отправленный на сервер.
+    const bytes = Uint8Array.from(
+      atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="),
+      (char) => char.charCodeAt(0),
+    );
+    const data = new DataTransfer();
+    data.items.add(new File([bytes], "image.png", { type: "image/png" }));
+    document
+      .querySelector("#capture-form")
+      .dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+  });
+  const shot = page.locator("#capture-shots .capture-shot");
+  await expect(shot).toHaveCount(1);
+  await shot.getByRole("button", { name: /^Открыть/ }).click();
+  await expect(page.locator("#preview-dialog")).toBeVisible();
+  await expect(page.locator("#preview-dialog .preview-image")).toHaveAttribute("src", /^blob:/);
+  await expect(page.locator("#preview-title")).toContainText("снимок-");
+  await page.locator("#preview-close").click();
+  await expect(page.locator("#preview-dialog")).toBeHidden();
+  // Просмотр ничего не отправляет и не убирает: снимок остаётся в полосе.
+  await expect(shot).toHaveCount(1);
+});

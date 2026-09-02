@@ -747,23 +747,25 @@ function fileSize(bytes) {
 }
 // Быстрый предпросмотр: картинка открывается прямо здесь, PDF — рамкой,
 // остальное честно предлагается скачать.
-function previewAttachment(attachment) {
+// Источник можно подменить: снимок из буфера ещё не на сервере и живёт по
+// blob-адресу, а просмотр у него тот же, что у сохранённых вложений.
+function previewAttachment(attachment, src = `/api/attachments/${attachment.id}`) {
   const dialog = $("#preview-dialog"),
     body = $("#preview-body"),
     title = $("#preview-title"),
     download = $("#preview-download");
   clear(body);
   title.textContent = attachment.filename;
-  download.href = `/api/attachments/${attachment.id}`;
+  download.href = src;
   download.download = attachment.filename;
   if (IMAGE_TYPES.has(attachment.contentType)) {
     const image = node("img", undefined, "preview-image");
-    image.src = `/api/attachments/${attachment.id}`;
+    image.src = src;
     image.alt = attachment.filename;
     body.append(image);
   } else if (attachment.contentType === "application/pdf") {
     const frame = node("iframe", undefined, "preview-frame");
-    frame.src = `/api/attachments/${attachment.id}`;
+    frame.src = src;
     frame.title = attachment.filename;
     body.append(frame);
   } else {
@@ -3175,10 +3177,23 @@ function paintCaptureShots() {
   strip.hidden = !pendingShots.length;
   for (const shot of pendingShots) {
     const tile = node("div", undefined, "capture-shot"),
+      open = node("button", undefined, "shot-open"),
       image = node("img"),
-      remove = node("button", "×");
+      remove = node("button", "×", "shot-remove");
     image.src = shot.url;
     image.alt = shot.file.name;
+    // Миниатюра в 52px — лишь знак, что снимок на месте: разглядеть его можно
+    // по клику, в том же просмотре, что и у вложений карточки.
+    open.type = "button";
+    open.title = "Открыть снимок";
+    open.setAttribute("aria-label", `Открыть ${shot.file.name}`);
+    open.addEventListener("click", () =>
+      previewAttachment(
+        { id: null, filename: shot.file.name, contentType: shot.file.type, size: shot.file.size },
+        shot.url,
+      ),
+    );
+    open.append(image);
     remove.type = "button";
     remove.title = "Убрать снимок";
     remove.setAttribute("aria-label", `Убрать ${shot.file.name}`);
@@ -3187,7 +3202,7 @@ function paintCaptureShots() {
       pendingShots.splice(pendingShots.indexOf(shot), 1);
       paintCaptureShots();
     });
-    tile.append(image, remove);
+    tile.append(open, remove);
     strip.append(tile);
   }
 }
