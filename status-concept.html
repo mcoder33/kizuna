@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Кизуна — статус записи: варианты</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='2' y='2' width='60' height='60' rx='14' fill='%23c73e3a'/%3E%3Cg fill='none' stroke='white' stroke-linecap='round' stroke-width='6'%3E%3Cpath d='M8 17q24 -6 48 0'/%3E%3Cline x1='14' y1='27' x2='50' y2='27'/%3E%3Cline x1='19' y1='22' x2='21' y2='54'/%3E%3Cline x1='45' y1='22' x2='43' y2='54'/%3E%3C/g%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        --ink: #222;
+        --muted: #6a6a6a;
+        --faint: #96918e;
+        --line: #e9e9e7;
+        --hairline: #f2f0ee;
+        --wash: #fbfaf9;
+        --paper: #fff;
+        --shadow: 0 18px 42px rgba(34, 34, 34, 0.08);
+        --soft: 0 6px 20px rgba(34, 34, 34, 0.05);
+        --hover: rgba(55, 53, 47, 0.06);
+        --nt-secondary: rgba(55, 53, 47, 0.65);
+        --nt-tertiary: rgba(55, 53, 47, 0.45);
+        --nt-divider: rgba(55, 53, 47, 0.09);
+        /* статусные цвета: текст и мягкая подложка */
+        --done: #0f7a5f;      --done-bg: #e9f5ef;
+        --late: #c0392b;      --late-bg: #fceceb;
+        --today: #b45309;     --today-bg: #fbf1e6;
+        --ontime: #0e7490;    --ontime-bg: #e7f4f7;
+        --none: #7a756f;      --none-bg: #f1efec;
+        --soon: #1f68d4;      --soon-bg: #e9f1fd;
+      }
+      :root[data-theme="dark"] {
+        --ink: rgba(255, 255, 255, 0.86);
+        --muted: rgba(255, 255, 255, 0.5);
+        --faint: rgba(255, 255, 255, 0.38);
+        --line: #34322f;
+        --hairline: #2a2825;
+        --wash: #1a1917;
+        --paper: #252525;
+        --shadow: 0 18px 42px rgba(0, 0, 0, 0.4);
+        --soft: 0 6px 20px rgba(0, 0, 0, 0.25);
+        --hover: rgba(255, 255, 255, 0.055);
+        --nt-secondary: rgba(255, 255, 255, 0.5);
+        --nt-tertiary: rgba(255, 255, 255, 0.34);
+        --nt-divider: rgba(255, 255, 255, 0.1);
+        --done: #4dc79f;      --done-bg: rgba(77, 199, 159, 0.14);
+        --late: #ff8a80;      --late-bg: rgba(255, 138, 128, 0.14);
+        --today: #f0a860;     --today-bg: rgba(240, 168, 96, 0.14);
+        --ontime: #56c4d8;    --ontime-bg: rgba(86, 196, 216, 0.14);
+        --none: #a8a5a2;      --none-bg: rgba(255, 255, 255, 0.06);
+        --soon: #7fb0ff;      --soon-bg: rgba(127, 176, 255, 0.14);
+      }
+      * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
+      body {
+        margin: 0; background: var(--wash); color: var(--ink); line-height: 1.45;
+        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main { max-width: 1120px; margin: auto; padding: 52px 24px 120px; }
+      .page-head { max-width: 780px; }
+      .eyebrow {
+        font-size: 10px; font-weight: 800; letter-spacing: 1.3px;
+        color: var(--faint); margin: 0 0 11px; text-transform: uppercase;
+      }
+      h1 { font-size: 33px; line-height: 1.15; margin: 0 0 14px; letter-spacing: -0.5px; }
+      .page-head p { color: var(--muted); font-size: 15px; margin: 0 0 10px; }
+      .page-head strong { color: var(--ink); }
+      .toolbar { display: flex; justify-content: flex-end; margin: -30px 0 22px; }
+      .theme-switch {
+        display: flex; gap: 3px; border: 1px solid var(--line); background: var(--paper);
+        border-radius: 99px; padding: 3px;
+      }
+      .theme-switch button {
+        font: inherit; font-size: 12px; cursor: pointer; border: 0; background: none;
+        color: var(--muted); border-radius: 99px; padding: 4px 13px;
+      }
+      .theme-switch button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+
+      h2.sec { font-size: 20px; letter-spacing: -0.3px; margin: 44px 0 4px; }
+      .sec-note { color: var(--muted); font-size: 14px; margin: 0 0 20px; max-width: 720px; }
+
+      /* ── статус-бейдж: базовый и варианты ─────────────────── */
+      .st {
+        --c: var(--none); --c-bg: var(--none-bg);
+        display: inline-flex; align-items: center; gap: 6px; flex: none;
+        font-size: 12.5px; font-weight: 600; line-height: 1; white-space: nowrap;
+        color: var(--c);
+      }
+      .st svg { width: 13px; height: 13px; display: block; }
+      .st .d { width: 7px; height: 7px; border-radius: 50%; background: var(--c); flex: none; }
+      .st.done { --c: var(--done); --c-bg: var(--done-bg); }
+      .st.late { --c: var(--late); --c-bg: var(--late-bg); }
+      .st.today { --c: var(--today); --c-bg: var(--today-bg); }
+      .st.ontime { --c: var(--ontime); --c-bg: var(--ontime-bg); }
+      .st.none { --c: var(--none); --c-bg: var(--none-bg); }
+      .st.soon { --c: var(--soon); --c-bg: var(--soon-bg); }
+      /* варианты внешнего вида */
+      .v-pill { padding: 4px 10px; border-radius: 99px; background: var(--c-bg); }
+      .v-dot { }
+      .v-outline { padding: 4px 10px; border-radius: 99px; border: 1px solid var(--c); }
+      .v-icon { }
+      .v-solid { padding: 4px 11px; border-radius: 99px; background: var(--c); color: #fff; font-weight: 700; }
+      :root[data-theme="dark"] .v-solid { color: #17140f; }
+      .v-solid .d { background: currentColor; }
+      .v-text { }
+
+      .style-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+      @media (max-width: 760px) { .style-grid { grid-template-columns: 1fr; } }
+      .style-card {
+        background: var(--paper); border: 1px solid var(--line); border-radius: 14px;
+        padding: 15px 17px 17px; box-shadow: var(--soft);
+      }
+      .style-card h3 { font-size: 13.5px; margin: 0 0 2px; }
+      .style-card .st-desc { font-size: 12px; color: var(--faint); margin: 0 0 13px; }
+      .style-row { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; }
+
+      /* ── мини-карточка записи для размещений ───────────────── */
+      .cards-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+      @media (max-width: 820px) { .cards-grid { grid-template-columns: 1fr; } }
+      .place { }
+      .place .cap { display: flex; align-items: baseline; gap: 8px; margin: 0 2px 8px; }
+      .place .cap .n {
+        font-size: 11px; font-weight: 800; letter-spacing: 0.5px; color: var(--paper);
+        background: var(--ink); border-radius: 6px; padding: 2px 7px; flex: none;
+      }
+      .place .cap h3 { font-size: 14px; margin: 0; }
+      .place .cap .rec { font-size: 11px; font-weight: 700; color: var(--done); margin-left: auto; flex: none; }
+      .place .why { font-size: 12.5px; color: var(--muted); margin: 8px 4px 0; }
+
+      .mcard {
+        position: relative; background: var(--paper); border: 1px solid var(--line);
+        border-radius: 12px; box-shadow: var(--shadow); padding: 22px 24px 20px; overflow: hidden;
+      }
+      .mcard .close {
+        position: absolute; top: 12px; right: 13px; width: 18px; height: 18px; color: var(--nt-tertiary);
+      }
+      .mcard .mtitle { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; line-height: 1.2; margin: 0 40px 0 0; }
+      .mcard .written {
+        display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--nt-secondary);
+        margin: 9px 0 0;
+      }
+      .mcard .written svg { width: 15px; height: 15px; color: var(--nt-tertiary); }
+      .mcard .bar {
+        display: flex; align-items: center; gap: 9px; margin: 16px 0 0; padding: 6px 8px;
+        border-radius: 6px; font-size: 13.5px; color: var(--nt-secondary); background: var(--hover);
+      }
+      .mcard .bar .chev { width: 0; height: 0; border-left: 5px solid var(--nt-tertiary); border-top: 4px solid transparent; border-bottom: 4px solid transparent; flex: none; }
+      .mcard .bar .sum { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .mcard .rule { height: 1px; background: var(--nt-divider); margin: 16px 0 12px; }
+      .mcard .nlabel { font-size: 12px; color: var(--faint); margin: 0 0 4px; }
+      .mcard .ntext { font-size: 14px; color: var(--ink); margin: 0; }
+      /* размещения статуса */
+      .mcard .status-topright { position: absolute; top: 22px; right: 44px; }
+      .mcard .title-row { display: flex; align-items: flex-start; gap: 12px; }
+      .mcard .title-row .mtitle { flex: 1; margin-right: 0; }
+      .status-underline { margin: 12px 0 0; }
+      .mcard .accent { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--done); }
+
+      .final {
+        margin-top: 40px; background: var(--paper); border: 1px solid var(--line);
+        border-radius: 16px; padding: 20px 22px; box-shadow: var(--soft);
+      }
+      .final h3 { margin: 0 0 8px; font-size: 15px; }
+      .final p { margin: 0 0 8px; font-size: 13.5px; color: var(--muted); }
+      .final b { color: var(--ink); }
+      .footnote { margin-top: 22px; font-size: 12.5px; color: var(--faint); max-width: 720px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="page-head">
+        <p class="eyebrow">Кизуна · Концепт</p>
+        <h1>Статус записи — варианты и размещение</h1>
+        <p>
+          Сейчас состояние записи спрятано в свойстве «Сделано» (галочка) и в тексте свёрнутой строки.
+          Наглядного <strong>статуса</strong> у карточки нет: непонятно с одного взгляда, дело просрочено,
+          в срок, на сегодня, без срока или уже готово.
+        </p>
+        <p>
+          Ниже — сначала как статус может <strong>выглядеть</strong> (шесть стилей на всех состояниях),
+          затем <strong>где его показать</strong> в карточке (пять размещений). Цвета — из палитры приложения;
+          смысл всегда назван словом, цвет только помогает.
+        </p>
+      </div>
+
+      <div class="toolbar">
+        <div class="theme-switch" role="group" aria-label="Тема">
+          <button type="button" data-theme-btn="light" aria-pressed="true">Светлая</button>
+          <button type="button" data-theme-btn="dark" aria-pressed="false">Тёмная</button>
+        </div>
+      </div>
+
+      <h2 class="sec">1 · Как выглядит статус</h2>
+      <p class="sec-note">
+        Одни и те же состояния — <b>Сделано, Просрочено, Сегодня, В срок, Без срока</b> — в шести стилях.
+        Выбираем один стиль, дальше он используется во всех размещениях.
+      </p>
+      <div class="style-grid" id="style-grid"></div>
+
+      <h2 class="sec">2 · Где показать статус</h2>
+      <p class="sec-note">
+        Одна и та же запись («результат», уже готово; и вариант с просроченной задачей), статус в разных местах.
+        Под каждой карточкой — чем размещение хорошо.
+      </p>
+      <div class="cards-grid" id="cards-grid"></div>
+
+      <div class="final">
+        <h3>Моя рекомендация</h3>
+        <p>
+          Стиль — <b>«Значок и слово»</b> или <b>«Пилюля с заливкой»</b>: они читаются мгновенно и не спорят
+          с тихой гаммой карточки. «Плотная» слишком кричит для спокойного листа, «просто слово» теряется.
+        </p>
+        <p>
+          Размещение — <b>строкой под заголовком (B)</b> как основное: статус — это первое, что хочется узнать,
+          открыв запись, и там он не жмётся к тексту. Плюс <b>ведущий чип в свёрнутой строке (E)</b>, чтобы
+          статус был виден и не разворачивая свойства. От «Статуса» первым свойством (D) лучше отказаться:
+          состояние задачи вычисляется из срока и «Сделано», отдельным полем его правит система, а не человек.
+        </p>
+      </div>
+      <p class="footnote">
+        Состояние выводится из типа, срока и признака «сделано»: задача со сроком в прошлом — «Просрочено»,
+        со сроком сегодня — «Сегодня», впереди — «В срок», без срока — «Без срока», закрытая — «Сделано».
+        У заметок, идей и результатов срока нет: результат показывает «Готово», заметка/идея — без статуса.
+      </p>
+    </main>
+
+    <script>
+      const ICONS = {
+        check: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-6.5"/></svg>',
+        warn: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.6 14.4 13H1.6z"/><path d="M8 6.6v3.1"/><circle cx="8" cy="11.4" r="0.5" fill="currentColor" stroke="none"/></svg>',
+        clock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4.7V8l2.3 1.5" stroke-linecap="round"/></svg>',
+        dash: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 8h8"/></svg>',
+      };
+      const STATES = [
+        { key: "done", label: "Сделано", icon: "check" },
+        { key: "late", label: "Просрочено", icon: "warn" },
+        { key: "today", label: "Сегодня", icon: "clock" },
+        { key: "ontime", label: "В срок", icon: "clock" },
+        { key: "none", label: "Без срока", icon: "dash" },
+      ];
+      const STYLES = [
+        { key: "pill", name: "Пилюля с заливкой", desc: "Мягкая подложка, точка, слово", cls: "v-pill", mark: "dot" },
+        { key: "icon", name: "Значок и слово", desc: "Галочка, часы, восклицание", cls: "v-icon", mark: "icon" },
+        { key: "dot", name: "Точка и слово", desc: "Минимум: цветная точка + текст", cls: "v-dot", mark: "dot" },
+        { key: "outline", name: "Контур", desc: "Обводка цветом, без заливки", cls: "v-outline", mark: "dot" },
+        { key: "solid", name: "Плотная", desc: "Заливка цветом, белый текст", cls: "v-solid", mark: "dot" },
+        { key: "text", name: "Просто слово", desc: "Только цветной текст", cls: "v-text", mark: "none" },
+      ];
+
+      function badge(style, state) {
+        const inner =
+          style.mark === "icon" ? ICONS[state.icon] :
+          style.mark === "dot" ? '<i class="d"></i>' : "";
+        return `<span class="st ${state.key} ${style.cls}">${inner}${state.label}</span>`;
+      }
+
+      const grid = document.getElementById("style-grid");
+      grid.innerHTML = STYLES.map((style) => `
+        <div class="style-card">
+          <h3>${style.name}</h3>
+          <p class="st-desc">${style.desc}</p>
+          <div class="style-row">${STATES.map((s) => badge(style, s)).join("")}</div>
+        </div>`).join("");
+
+      // Размещения используют один стиль — «Значок и слово».
+      const S = STYLES.find((x) => x.key === "icon");
+      const done = STATES[0], late = STATES[1];
+      const CLOCK = ICONS.clock;
+      const CLOSE = '<svg class="close" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
+
+      const PLACES = [
+        {
+          n: "A", h: "Бейдж у заголовка справа", rec: false,
+          why: "Статус в углу, как ярлык. Компактно, но конкурирует с крестиком и на длинном заголовке жмётся.",
+          html: (st) => `
+            ${CLOSE}
+            <div class="status-topright">${st}</div>
+            <div class="mtitle">Подготовил презентацию, обсудили с Даниилом</div>
+            <div class="written">${CLOCK} Записано: вчера, 21:45</div>`,
+        },
+        {
+          n: "B", h: "Строкой под заголовком", rec: true,
+          why: "Первое, что видно под названием. Не жмётся, читается сразу, работает на любой длине заголовка.",
+          html: (st) => `
+            ${CLOSE}
+            <div class="mtitle">Подготовил презентацию, обсудили с Даниилом</div>
+            <div class="status-underline">${st}</div>
+            <div class="written">${CLOCK} Записано: вчера, 21:45</div>`,
+        },
+        {
+          n: "C", h: "В строке «Записано»", rec: false,
+          why: "Экономит место, но мешает два разных смысла: «когда записано» и «в каком состоянии».",
+          html: (st) => `
+            ${CLOSE}
+            <div class="mtitle">Подготовил презентацию, обсудили с Даниилом</div>
+            <div class="written">${CLOCK} Записано: вчера, 21:45 &nbsp;·&nbsp; ${st}</div>`,
+        },
+        {
+          n: "D", h: "Первым свойством «Статус»", rec: false,
+          why: "По-нотионовски аккуратно, но статус спрятан в свёрнутых свойствах — ради него их придётся разворачивать.",
+          html: (st) => `
+            ${CLOSE}
+            <div class="mtitle">Подготовил презентацию, обсудили с Даниилом</div>
+            <div class="written">${CLOCK} Записано: вчера, 21:45</div>
+            <div class="bar"><span class="chev"></span><span class="sum">Статус: ${st.replace('class="st', 'class="st inbar st')} &nbsp;·&nbsp; результат · Даниил</span></div>`,
+        },
+        {
+          n: "E", h: "Ведущий чип в свёрнутой строке", rec: true,
+          why: "Статус виден, не разворачивая свойства. Хорошо в паре с B — и в карточке, и в свёрнутом виде.",
+          html: (st) => `
+            ${CLOSE}
+            <div class="mtitle">Подготовил презентацию, обсудили с Даниилом</div>
+            <div class="written">${CLOCK} Записано: вчера, 21:45</div>
+            <div class="bar"><span class="chev"></span>${st}<span class="sum">&nbsp;·&nbsp; результат · Даниил · #презентация</span></div>`,
+        },
+      ];
+
+      const cards = document.getElementById("cards-grid");
+      cards.innerHTML = PLACES.map((p) => {
+        // A/B/C/E показываем на «готово», у D — тоже; отдельная карточка снизу — просрочка на B и E.
+        const st = badge(S, done);
+        return `
+          <div class="place">
+            <div class="cap"><span class="n">${p.n}</span><h3>${p.h}</h3>${p.rec ? '<span class="rec">рекомендую</span>' : ""}</div>
+            <div class="mcard">${p.html(st)}
+              <div class="rule"></div>
+              <p class="nlabel">Заметки · из исходной записи</p>
+              <p class="ntext">Подготовил презентацию, обсудили с Даниилом</p>
+            </div>
+            <p class="why">${p.why}</p>
+          </div>`;
+      }).join("");
+
+      // Доп. пример: как рекомендованное (B) выглядит на просроченной задаче.
+      const overdue = badge(S, late);
+      const extra = document.createElement("div");
+      extra.className = "place";
+      extra.innerHTML = `
+        <div class="cap"><span class="n">B·пример</span><h3>Просроченная задача (рекомендованный вид)</h3></div>
+        <div class="mcard">${CLOSE}
+          <div class="mtitle">Написать Антону Гришину по внедрению</div>
+          <div class="status-underline">${overdue}</div>
+          <div class="written">${CLOCK} Записано: 28 авг., 12:40</div>
+          <div class="bar"><span class="chev"></span>${overdue}<span class="sum">&nbsp;·&nbsp; задача · срок: вчера</span></div>
+          <div class="rule"></div>
+          <p class="nlabel">Заметки · из исходной записи</p>
+          <p class="ntext">Написать Антону Гришину по внедрению</p>
+        </div>
+        <p class="why">То же размещение B + ведущий чип E, но состояние «Просрочено» — красный сразу виден, и цвет назван словом.</p>`;
+      cards.append(extra);
+
+      // тема
+      for (const button of document.querySelectorAll("[data-theme-btn]"))
+        button.addEventListener("click", () => {
+          document.documentElement.dataset.theme = button.dataset.themeBtn;
+          for (const other of document.querySelectorAll("[data-theme-btn]"))
+            other.setAttribute("aria-pressed", String(other === button));
+        });
+      document.documentElement.dataset.theme = "light";
+    </script>
+  </body>
+</html>

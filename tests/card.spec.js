@@ -817,3 +817,26 @@ test("заметка сохраняется при любом закрытии �
   expect(saved.note.body).toContain("правка перед Esc");
   expect(saved.note.body).toContain("и перед крестиком");
 });
+
+test("статус записи — значком и словом: под заголовком и в свёрнутой строке", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  const raw = "Нужно проверить статус на карточке";
+  await page.goto("/");
+  await capture(page, raw);
+  await openCard(page, "#todo", raw);
+
+  // Дело без срока: статус назван словом и стоит первой строкой свойств.
+  await expect(page.locator("#review-dialog .card-status .entry-status")).toHaveText("Без срока");
+  // Тот же статус ведёт свёрнутую строку свойств.
+  await expect(page.locator("#review-dialog .props-summary .entry-status")).toHaveText("Без срока");
+  await page.keyboard.press("Escape");
+
+  // Закрытая чекбоксом задача показывает «Сделано».
+  const entry = page.locator("#todo .entry").filter({ hasText: raw }).first();
+  await entry.locator(".completion-button").click();
+  const journalEntry = page.locator("#history-todo-list .entry").filter({ hasText: raw }).first();
+  await page.goto("/#history-todo");
+  await expect(journalEntry).toBeVisible();
+  await journalEntry.locator(".entry-title").click();
+  await expect(page.locator("#review-dialog .card-status .entry-status")).toHaveText("Сделано");
+});
