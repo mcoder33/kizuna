@@ -245,6 +245,14 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     req.on('close', drop);
     res.on('close', drop);
   });
+  // При выключении потоки закрываются сами: открытый ответ не даёт
+  // server.close завершиться, а EventSource в браузере переподключится.
+  app.closeEventStreams = () => {
+    const count = journalListeners.size;
+    for (const listener of [...journalListeners]) { try { listener.write('event: bye\ndata: {}\n\n'); listener.end(); } catch {} }
+    journalListeners.clear();
+    return count;
+  };
   // ── настройки ──
   app.get('/api/settings',(req,res)=>{
     res.json({ settings: publicSettings(stored, process.env, req.user), editable: editableSettings(req.user), voice: voice.status(), voices: VOICE_CHOICES, timeZone: configuredTimeZone, quota: voiceQuota(req.user), spend: spendState(req.user) });
@@ -494,4 +502,11 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   app.use((error,req,res,next)=>{if(res.headersSent)return next(error);const status=Number(error?.status||error?.statusCode);if(typeof error?.type==='string'&&(error.type.startsWith('entity.')||error.type.startsWith('encoding.'))&&status>=400&&status<500)return res.status(status).json({error:{code:bodyErrorCodes[status]||'invalid_request',message:bodyErrorMessages[status]||'Некорректный запрос.'}});res.status(500).json({error:{code:'internal_error',message:'Не удалось обработать запрос.'}});});
   return app;
 }
-if(process.argv[1]===fileURLToPath(import.meta.url)){const app=createApp();const server=app.listen(Number(process.env.PORT||3000),process.env.HOST||'127.0.0.1',()=>{app.captureJobWorker.start();console.log('Kizuna server started.');});let shuttingDown=false;const shutdown=()=>{if(shuttingDown)return;shuttingDown=true;app.captureJobWorker.stop().finally(()=>server.close(()=>process.exit(0)));};process.once('SIGTERM',shutdown);process.once('SIGINT',shutdown);}
+if(process.argv[1]===fileURLToPath(import.meta.url)){const app=createApp();const server=app.listen(Number(process.env.PORT||3000),process.env.HOST||'127.0.0.1',()=>{app.captureJobWorker.start();console.log('Kizuna server started.');});let shuttingDown=false;const shutdown=()=>{if(shuttingDown)return;shuttingDown=true;
+  // Потоки событий держали ответы открытыми, и server.close ждал их вечно:
+  // systemd убивал процесс по таймауту через 90 с — каждый деплой давал
+  // полторы минуты простоя. Потоки закрываем сами, простаивающие соединения
+  // тоже, а на всё выключение — жёсткий срок.
+  const deadline=setTimeout(()=>process.exit(0),10000);deadline.unref();
+  app.closeEventStreams();
+  app.captureJobWorker.stop().finally(()=>{server.close(()=>process.exit(0));server.closeIdleConnections?.();});};process.once('SIGTERM',shutdown);process.once('SIGINT',shutdown);}

@@ -104,7 +104,12 @@ test('the journal stream announces changes to whoever is listening',async()=>{co
   await api.post(`/api/captures/${created.id}/restore`).expect(200);
   assert.equal(await waitFor(text=>text.includes('"reason":"restore"')),true,'и о возврате');
 
-  stream.destroy();
+  // Выключение закрывает потоки само: открытый ответ иначе не давал бы
+  // server.close завершиться, и systemd убивал бы процесс по таймауту.
+  assert.equal(application.closeEventStreams(),1);
+  assert.equal(await waitFor(text=>text.includes('event: bye')),true,'поток попрощался');
+  assert.equal(await waitFor(()=>stream.destroyed),true,'соединение закрыто сервером');
+  assert.equal(application.closeEventStreams(),0);
   await new Promise(resolve=>server.close(resolve));
 });
 test('correction can change the title, projections follow, and blank titles are rejected',async()=>{const api=signedIn();const created=(await api.post('/api/captures').send({raw:'Нужно проверить Hub'}).expect(201)).body.entry;const fixed=(await api.post(`/api/captures/${created.id}/corrections`).send({patch:{summary:'Проверить Hub после релиза'}}).expect(200)).body;assert.equal(fixed.entry.interpretation.classification.summary,'Проверить Hub после релиза');assert.equal(fixed.entry.raw,'Нужно проверить Hub');assert.equal(fixed.entry.interpretation.version,2);const task=fixed.entry.projections.find(projection=>projection.type==='task');assert.equal(task.payload.title,'Проверить Hub после релиза');await api.post(`/api/captures/${created.id}/corrections`).send({patch:{summary:'   '}}).expect(400);await api.post(`/api/captures/${created.id}/corrections`).send({patch:{summary:'x'.repeat(501)}}).expect(400)});
