@@ -786,11 +786,14 @@ function previewAttachment(attachment) {
 }
 function attachmentsBlock(entry) {
   const wrap = node("section", undefined, "card-files"),
+    head = node("div", undefined, "card-files-head"),
     label = node("p", "Вложения", "prop-section"),
+    emptyMark = node("span", " · Пока пусто", "attach-empty"),
     grid = node("div", undefined, "file-grid"),
-    hint = node("p", "Перетащите файл сюда или выберите — до 10 файлов, каждый до 10 МБ.", "card-body-hint"),
     input = document.createElement("input"),
     add = node("button", "Добавить файл", "secondary");
+  label.append(emptyMark);
+  add.title = "Перетащите файл сюда или выберите — до 10 файлов, каждый до 10 МБ.";
   let files = entry.attachments || [];
   input.type = "file";
   input.multiple = true;
@@ -801,7 +804,8 @@ function attachmentsBlock(entry) {
 
   const paint = () => {
     clear(grid);
-    if (!files.length) grid.append(node("p", "Пока пусто.", "empty"));
+    grid.hidden = !files.length;
+    emptyMark.hidden = files.length > 0;
     for (const attachment of files) {
       const tile = node("div", undefined, "file-tile"),
         open = node("button", undefined, "file-open"),
@@ -894,7 +898,8 @@ function attachmentsBlock(entry) {
   document.addEventListener("paste", onPaste);
 
   paint();
-  wrap.append(label, grid, add, input, hint);
+  head.append(label, add);
+  wrap.append(head, grid, input);
   return wrap;
 }
 // Тело заметки — отдельная пользовательская сущность, а не правка raw:
@@ -1230,12 +1235,19 @@ function showReview(entry, review, undoGroupId, provenance) {
       apply.disabled = false;
     }
   });
-  area.append(form, cardBody(entry), attachmentsBlock(entry));
+  area.append(form, cardBody(entry));
+  // Футер прижат к низу листа и собран в строку: вложения, «когда записано»,
+  // источник и удаление — служебный подвал, а не столбик в теле карточки.
+  const footer = node("div", undefined, "card-footer");
+  footer.append(attachmentsBlock(entry));
+  const footerRow = node("div", undefined, "card-footer-row");
   if (written) {
     const stamp = node("p", `Записано: ${written}`, "card-written card-footer-line");
     stamp.prepend(propIcon("written"));
-    area.append(stamp);
+    footerRow.append(stamp);
   }
+  footer.append(footerRow);
+  area.append(footer);
 
   const source = node("details", undefined, "card-source");
   source.append(node("summary", "Источник и версия"));
@@ -1255,7 +1267,7 @@ function showReview(entry, review, undoGroupId, provenance) {
       "entry-meta",
     ),
   );
-  area.append(source);
+  footerRow.append(source);
 
   // Удаление живёт внизу карточки, отдельно от правок: это не «ещё одно
   // уточнение», а выход из журнала.
@@ -1286,7 +1298,7 @@ function showReview(entry, review, undoGroupId, provenance) {
       remove.disabled = false;
     }
   });
-  area.append(remove);
+  footerRow.append(remove);
   if (!dialog.open) {
     // Прерванное закрытие могло оставить незавершённую анимацию: снимаем её,
     // иначе карточка откроется прозрачной.

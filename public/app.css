@@ -3933,7 +3933,9 @@ dialog form > div {
      столбик у края ломал бы чистый лист. */
   scrollbar-width: none;
   /* Колонка 708px по центру рисуется полями прокручиваемой области. */
-  padding: 54px max(32px, calc((100% - 708px) / 2)) 20vh;
+  /* Нижний воздух в 20vh был нужен пустой странице; теперь низ держит
+     прилипший футер — хватает обычного отступа. */
+  padding: 54px max(32px, calc((100% - 708px) / 2)) 28px;
   font-size: 16px;
   line-height: 1.5;
 }
@@ -3986,15 +3988,19 @@ dialog form > div {
 #review-dialog .props {
   gap: 2px;
 }
-#review-dialog .props-bar {
+/* Селектор перекрывает общее оформление кнопок формы (#review-dialog
+   .review-form > button): строка свойств — тихий текст без рамки, содержимое
+   стоит по левому краю заголовка (отрицательное поле съедает свой отступ). */
+#review-dialog .review-form > button.props-bar {
   display: flex;
   align-items: center;
+  justify-self: stretch;
   gap: 9px;
-  width: 100%;
-  margin: 4px 0;
-  padding: 6px;
+  width: calc(100% + 6px);
+  margin: 2px 0 4px -6px;
+  padding: 5px 6px;
   border: 0;
-  border-radius: 4px;
+  border-radius: 6px;
   background: none;
   font: inherit;
   font-size: 14px;
@@ -4002,7 +4008,8 @@ dialog form > div {
   cursor: pointer;
   color: var(--nt-secondary);
 }
-#review-dialog .props-bar:hover {
+#review-dialog .review-form > button.props-bar:hover {
+  border: 0;
   background: var(--nt-hover);
 }
 #review-dialog .props-chevron {
@@ -5133,4 +5140,49 @@ dialog form > div {
   margin: 14px 0 2px;
   font-size: 12.5px;
   color: var(--nt-tertiary);
+}
+
+/* ── футер карточки: прижат к низу, служебное одной строкой ────────────────── */
+#review-dialog .review {
+  display: flex;
+  flex-direction: column;
+}
+#review-dialog .card-footer {
+  margin-top: auto;
+  padding-top: 16px;
+}
+#review-dialog .card-files-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+#review-dialog .card-files-head .attach-empty {
+  color: var(--nt-tertiary);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+#review-dialog .card-files-head .secondary {
+  margin-left: auto;
+}
+#review-dialog .card-footer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px 22px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--nt-divider);
+}
+#review-dialog .card-footer-row .card-written.card-footer-line {
+  margin: 0;
+}
+#review-dialog .card-footer-row > details {
+  margin: 0;
+  /* своя верхняя черта details не нужна: разделитель уже у всей строки футера */
+  border-top: 0;
+  padding-top: 0;
+}
+#review-dialog .card-footer-row .card-delete {
+  margin-left: auto;
 }
