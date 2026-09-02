@@ -266,56 +266,10 @@
             <p id="board-subtitle">Открытые дела колонками: тяните карточки, добавляйте прямо в колонку. Новое без колонки попадает во «Входящие».</p>
           </div>
           <div class="board-controls">
-            <!-- «Вид», как Display в Todoist: раскладка, выполненные, порядок и фильтры
-                 в одном поповере; бейдж на кнопке — сколько настроек не по умолчанию. -->
-            <details class="board-display" id="board-display">
-              <summary class="board-display-summary">
-                <span class="ic" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M2.5 3.5h11M2.5 8h11M2.5 12.5h7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></span>
-                Вид<span class="board-display-count" id="board-display-count" hidden></span>
-              </summary>
-              <div class="board-display-popover">
-                <p class="board-display-label">Раскладка</p>
-                <div class="board-display-layouts" role="group" aria-label="Раскладка">
-                  <button type="button" data-board-layout="list" aria-pressed="false">Список</button>
-                  <button type="button" data-board-layout="board" aria-pressed="true">Доска</button>
-                </div>
-                <label class="board-display-row toggle"><span>Выполненные дела</span><input type="checkbox" id="board-show-done" /></label>
-                <p class="board-display-label">Порядок</p>
-                <label class="board-display-row"><span>Группировка</span>
-                  <select id="board-grouping">
-                    <option value="none">Нет</option>
-                    <option value="dates">По датам</option>
-                    <option value="projects">По проектам</option>
-                    <option value="priority">По важности</option>
-                  </select></label>
-                <label class="board-display-row"><span>Сортировка</span>
-                  <select id="board-sorting">
-                    <option value="manual">Вручную</option>
-                    <option value="due">По сроку</option>
-                    <option value="priority">По важности</option>
-                    <option value="title">По названию</option>
-                  </select></label>
-                <p class="board-display-label">Фильтр</p>
-                <label class="board-display-row"><span>Срок</span>
-                  <select id="board-filter-date">
-                    <option value="all">Все</option>
-                    <option value="overdue">Просроченные</option>
-                    <option value="today">Сегодня</option>
-                    <option value="week">Ближайшая неделя</option>
-                    <option value="none">Без срока</option>
-                  </select></label>
-                <label class="board-display-row"><span>Важность</span>
-                  <select id="board-filter-priority">
-                    <option value="all">Все</option>
-                    <option value="high">Важные</option>
-                    <option value="normal">Обычные</option>
-                    <option value="low">Не срочные</option>
-                  </select></label>
-                <label class="board-display-row"><span>Тег</span>
-                  <select id="board-filter-tag"><option value="all">Все</option></select></label>
-                <button type="button" class="board-display-reset" id="board-display-reset">Сбросить всё</button>
-              </div>
-            </details>
+            <div class="reports-tabs board-views" role="group" aria-label="Вид доски">
+              <button type="button" data-board-view="columns" aria-pressed="true">Свои колонки</button>
+              <button type="button" data-board-view="dates" aria-pressed="false">По датам</button>
+            </div>
           </div>
           <div id="board-columns" class="board-columns" aria-label="Колонки доски"></div>
         </div>

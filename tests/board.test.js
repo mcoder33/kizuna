@@ -110,21 +110,3 @@ test('full reset clears the board too and is not blocked by placements',async()=
   assert.deepEqual(names(board),['Входящие']);
   assert.equal(board.columns[0].cards.length,0);
 });
-
-test('closed deeds are hidden by default and shown in place with done=1',async()=>{
-  const api=authed(freshApp());
-  const column=(await api.post('/api/board/columns').send({name:'Сделанное'}).expect(201)).body;
-  const task=(await api.post('/api/captures').send({raw:'Нужно проверить показ выполненных'}).expect(201)).body.entry;
-  await api.post('/api/board/move').send({captureId:task.id,columnId:column.id,index:0}).expect(200);
-  await api.post(`/api/projections/${task.projections.find(p=>p.type==='task').id}/complete`).send({}).expect(200);
-  assert.equal(cardsOf((await api.get('/api/board').expect(200)).body,'Сделанное').length,0);
-  const shown=(await api.get('/api/board?done=1').expect(200)).body;
-  const card=shown.columns.find(item=>item.name==='Сделанное').cards[0];
-  assert.equal(card.title,task.interpretation.classification.summary);
-  assert.equal(card.closed,true);
-  assert.ok(card.closedAt);
-  // открытое дело в том же ответе — без пометки
-  const open=(await api.post('/api/captures').send({raw:'Нужно проверить открытое'}).expect(201)).body.entry;
-  const again=(await api.get('/api/board?done=1').expect(200)).body;
-  assert.equal(again.columns[0].cards.find(item=>item.captureId===open.id).closed,false);
-});

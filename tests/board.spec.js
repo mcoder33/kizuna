@@ -47,10 +47,8 @@ test("доска: колонка, быстрое дело, статус, кар�
   await expect(page.locator(".board-column.inbox .board-add input")).toBeFocused();
   await page.keyboard.press("Escape");
 
-  // «Вид»: группировка по датам — колонки считаются из сроков, внутри — группы видов.
-  await page.locator("#board-display summary").click();
-  await page.locator("#board-grouping").selectOption("dates");
-  await page.locator("#board-display summary").click();
+  // Группировка по датам: колонки считаются из сроков, внутри — группы видов.
+  await page.locator('[data-board-view="dates"]').click();
   await expect(page.locator(".board-column.dated .board-col-name")).toHaveText([
     "Просрочено", "Сегодня", "Завтра", "Неделя", "Позже", "Без срока",
   ]);
@@ -59,14 +57,8 @@ test("доска: колонка, быстрое дело, статус, кар�
   const datedCard = noDue.locator(".board-card").filter({ hasText: "Проверить доску" });
   await expect(datedCard).toBeVisible();
 
-  // Раскладка «Список» показывает то же дело строкой; «Сбросить всё» возвращает доску.
-  await page.locator("#board-display summary").click();
-  await page.locator('[data-board-layout="list"]').click();
-  await expect(page.locator(".board-list .board-card").filter({ hasText: "Проверить доску" })).toBeVisible();
-  await page.locator("#board-display-reset").click();
-  await page.locator("#board-display summary").click();
-  await expect(page.locator("#board-display-count")).toBeHidden();
   // Обратно к своим колонкам — дело на месте, и кружок закрывает его.
+  await page.locator('[data-board-view="columns"]').click();
   await expect(card).toBeVisible();
   await card.locator(".board-done").click();
   await expect(column.locator(".board-card")).toHaveCount(0);
