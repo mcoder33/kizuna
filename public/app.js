@@ -731,8 +731,6 @@ const PROP_ICONS = {
   people: '<circle cx="8" cy="5.1" r="2.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2.9 13.6a5.3 5.3 0 0 1 10.2 0" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
   next: '<path d="M2.6 8h10M9.2 4.6 12.6 8l-3.4 3.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>',
   done: '<rect x="2.6" y="2.6" width="10.8" height="10.8" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="m5.3 8.2 1.9 1.9 3.6-4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>',
-  flag: '<path d="M4 14V2.6h7.4l-1.6 2.9 1.6 2.9H4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
-  tag: '<path d="M2.6 8.6V3.2a.6.6 0 0 1 .6-.6h5.4l4.8 4.8-6 6z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><circle cx="5.6" cy="5.6" r="0.9" fill="currentColor"/>',
   written: '<circle cx="8" cy="8" r="5.7" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 4.9V8l2.2 1.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
 };
 function propIcon(name) {
@@ -1033,11 +1031,6 @@ function showReview(entry, review, undoGroupId, provenance) {
     closeCard();
     return;
   }
-  // Дело открывается в две колонки, как карточка задачи в Todoist: слева
-  // заголовок, статус и заметки, справа — свойства, всегда развёрнутые.
-  // Заметки, идеи и результаты остаются нотионовской страницей.
-  const taskLayout = completableProjections(entry).length > 0 || ["task", "meeting_event"].includes(c.primaryType);
-  dialog.classList.toggle("task-layout", taskLayout);
   // Заголовок правится на месте: клик превращает его в поле, Enter сохраняет
   // уточнением (правда человека — факт), Escape возвращает как было.
   const cardTitle = markdownNode("h2", c.summary, "card-title", { inline: true, firstLine: true });
@@ -1086,30 +1079,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   cardTitle.addEventListener("keydown", (event) => {
     if (event.key === "Enter") { event.preventDefault(); startTitleEdit(); }
   });
-  const titleRow = node("div", undefined, "card-title-row");
-  // Кружок у заголовка закрывает дело и возвращает в работу — как в списках.
-  if (taskLayout && completableProjections(entry).length) {
-    const check = node("button", undefined, "card-check");
-    check.type = "button";
-    check.title = isClosed(entry) ? "Вернуть в работу" : "Готово";
-    check.setAttribute("aria-label", check.title);
-    check.setAttribute("aria-pressed", String(isClosed(entry)));
-    check.addEventListener("click", async () => {
-      await updateCompletion(completableProjections(entry), !isClosed(entry), check);
-      openReportEntry(entry.id);
-    });
-    titleRow.append(check);
-  }
-  titleRow.append(cardTitle);
-  area.append(titleRow);
-  if (taskLayout) {
-    const state = entryStatus(entry);
-    if (state) {
-      const stateRow = node("p", undefined, "card-status");
-      stateRow.append(statusBadge(state));
-      area.append(stateRow);
-    }
-  }
+  area.append(cardTitle);
   // «Когда это было» — справочная мета: живёт футером внизу карточки одной
   // строкой, а не блоком в шапке. Шапка — заголовок, статус и заметки.
   const written = entryClock(entry);
@@ -1148,19 +1118,6 @@ function showReview(entry, review, undoGroupId, provenance) {
   followUp.id = "review-follow-up";
   followUp.value = c.entities.followUp || "";
   followUp.placeholder = "Следующее действие";
-  const priority = document.createElement("select");
-  priority.id = "review-priority";
-  priority.setAttribute("aria-label", "Важность");
-  for (const [value, label] of [["", "Обычная"], ["high", "Важно"], ["low", "Не срочно"]]) {
-    const option = node("option", label);
-    option.value = value;
-    option.selected = (c.priority || "") === value;
-    priority.append(option);
-  }
-  const tags = document.createElement("input");
-  tags.id = "review-tags";
-  tags.value = (c.tags || []).join(", ");
-  tags.placeholder = "теги через запятую";
   // Признак «уже сделано» ставила только модель, и исправить её решение было
   // нечем: заметка, принятая за отчёт, навсегда оставалась в «Что делал».
   let done = Boolean(c.completed);
@@ -1179,16 +1136,12 @@ function showReview(entry, review, undoGroupId, provenance) {
   scheduleRow.append(date, time);
   const scheduleWrap = propertyRow("Срок", scheduleRow, "schedule"),
     peopleWrap = propertyRow("Участники", people, "people"),
-    followUpWrap = propertyRow("Далее", followUp, "next"),
-    priorityWrap = propertyRow("Важность", priority, "flag"),
-    tagsWrap = propertyRow("Теги", tags, "tag");
+    followUpWrap = propertyRow("Далее", followUp, "next");
   const props = node("div", undefined, "props");
   props.append(
     propertyRow("Тип", type, "type"),
     scheduleWrap,
     propertyRow("Проект", project, "project"),
-    priorityWrap,
-    tagsWrap,
     peopleWrap,
     followUpWrap,
     propertyRow("Сделано", doneToggle, "done"),
@@ -1201,7 +1154,6 @@ function showReview(entry, review, undoGroupId, provenance) {
     peopleWrap.hidden = type.value === "note" || type.value === "idea_question";
     followUpWrap.hidden =
       type.value === "note" || type.value === "idea_question";
-    priorityWrap.hidden = type.value !== "task";
   };
   const apply = node("button", "Сохранить уточнение", "secondary");
   apply.type = "submit";
@@ -1215,7 +1167,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   propsChevron.setAttribute("aria-hidden", "true");
   const propsSummary = node("span", undefined, "props-summary");
   propsBar.append(propsChevron, propsSummary);
-  let propsOpen = taskLayout || Boolean(review.question || review.field);
+  let propsOpen = Boolean(review.question || review.field);
   const summaryText = () => {
     const parts = [typeNames[type.value] || type.value];
     if (project.value.trim()) parts.push(project.value.trim());
@@ -1223,10 +1175,6 @@ function showReview(entry, review, undoGroupId, provenance) {
     if (!scheduleWrap.hidden && due) parts.push(`срок: ${due}`);
     if (!peopleWrap.hidden && people.value.trim()) parts.push(people.value.trim());
     if (!followUpWrap.hidden && followUp.value.trim()) parts.push(`далее: ${followUp.value.trim()}`);
-    if (!priorityWrap.hidden && priority.value === "high") parts.push("важно");
-    if (!priorityWrap.hidden && priority.value === "low") parts.push("не срочно");
-    const tagList = tags.value.split(",").map((tag) => tag.trim().replace(/^#/, "")).filter(Boolean);
-    if (tagList.length) parts.push(tagList.map((tag) => `#${tag}`).join(" "));
     return parts.join("   ·   ");
   };
   const paintProps = () => {
@@ -1249,9 +1197,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   updateVisibility();
   propsBar.addEventListener("click", () => { propsOpen = !propsOpen; paintProps(); });
   paintProps();
-  // В раскладке дела свойства стоят справа всегда — строка-сводка не нужна.
-  if (taskLayout) form.append(props, apply);
-  else form.append(propsBar, props, apply);
+  form.append(propsBar, props, apply);
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (correctionInFlight) return;
@@ -1265,8 +1211,6 @@ function showReview(entry, review, undoGroupId, provenance) {
         .map((value) => value.trim())
         .filter(Boolean),
       followUp: followUp.value.trim() || null,
-      priority: priorityWrap.hidden ? undefined : (priority.value || null),
-      tags: tags.value.split(",").map((tag) => tag.trim().replace(/^#/, "").toLowerCase()).filter(Boolean),
       completed: done,
       note: "Пользователь исправил классификацию",
     };
@@ -1355,12 +1299,6 @@ function showReview(entry, review, undoGroupId, provenance) {
     }
   });
   footerRow.append(remove);
-  if (taskLayout) {
-    const main = node("div", undefined, "card-main"), aside = node("div", undefined, "card-aside");
-    aside.append(node("p", "Свойства", "prop-section card-aside-title"));
-    for (const child of [...area.children]) (child === form ? aside : main).append(child);
-    area.append(main, aside);
-  }
   if (!dialog.open) {
     // Прерванное закрытие могло оставить незавершённую анимацию: снимаем её,
     // иначе карточка откроется прозрачной.
