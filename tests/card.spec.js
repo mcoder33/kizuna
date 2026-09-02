@@ -825,10 +825,14 @@ test("статус записи — значком и словом: под за�
   await capture(page, raw);
   await openCard(page, "#todo", raw);
 
-  // Дело без срока: статус назван словом и стоит первой строкой свойств.
-  await expect(page.locator("#review-dialog .card-status .entry-status")).toHaveText("Без срока");
-  // Тот же статус ведёт свёрнутую строку свойств.
+  // Дело без срока: статус назван словом и ведёт свёрнутую строку свойств,
+  // которая стоит выше «Записано» — первой строкой карточки.
   await expect(page.locator("#review-dialog .props-summary .entry-status")).toHaveText("Без срока");
+  const barBox = await page.locator("#review-dialog .props-bar").boundingBox();
+  const writtenBox = await page.locator("#review-dialog .card-written").boundingBox();
+  expect(barBox.y).toBeLessThan(writtenBox.y);
+  // Статус на карточке один — дубля под заголовком нет.
+  expect(await page.locator("#review-dialog .entry-status").count()).toBe(1);
   await page.keyboard.press("Escape");
 
   // Закрытая чекбоксом задача показывает «Сделано».
@@ -838,5 +842,30 @@ test("статус записи — значком и словом: под за�
   await page.goto("/#history-todo");
   await expect(journalEntry).toBeVisible();
   await journalEntry.locator(".entry-title").click();
-  await expect(page.locator("#review-dialog .card-status .entry-status")).toHaveText("Сделано");
+  await expect(page.locator("#review-dialog .props-summary .entry-status")).toHaveText("Сделано");
+});
+
+test("заголовок записи правится прямо в карточке", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  const raw = "Нужно проверить правку заголовка";
+  await page.goto("/");
+  await capture(page, raw);
+  await openCard(page, "#todo", raw);
+
+  await page.locator("#review-dialog h2.card-title").click();
+  const editor = page.locator("#review-dialog .card-title-edit");
+  await expect(editor).toBeFocused();
+  await editor.fill("Проверить заголовок после правки");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#review-dialog h2.card-title")).toContainText("Проверить заголовок после правки");
+  // Изменение видно и в списке — заголовок один везде.
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#todo")).toContainText("Проверить заголовок после правки");
+  // Escape в поле не закрывает карточку, а возвращает прежний заголовок.
+  await openCard(page, "#todo", "Проверить заголовок после правки");
+  await page.locator("#review-dialog h2.card-title").click();
+  await page.keyboard.type("хвост");
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#review-dialog")).toBeVisible();
+  await expect(page.locator("#review-dialog h2.card-title")).toContainText("Проверить заголовок после правки");
 });

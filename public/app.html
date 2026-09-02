@@ -31,6 +31,7 @@
       >
       <nav aria-label="Разделы">
         <a class="active" href="#today">Сегодня</a>
+        <a href="#board">Доска</a>
         <details class="history-menu">
           <summary>Журнал</summary>
           <div class="history-menu-popover">
@@ -249,6 +250,21 @@
         <option value="Монетизация"></option>
         <option value="CP"></option>
       </datalist>
+      <section id="board" class="app-page board-page" hidden>
+        <div class="page-heading">
+          <p class="eyebrow">ДЕЛА · ДОСКА</p>
+          <h2>Доска</h2>
+          <p>Открытые дела колонками: тяните карточки, добавляйте прямо в колонку. Новое без колонки попадает во «Входящие».</p>
+        </div>
+        <div class="board-controls">
+          <div class="reports-tabs board-views" role="group" aria-label="Вид доски">
+            <button type="button" data-board-view="columns" aria-pressed="true">Свои колонки</button>
+            <button type="button" data-board-view="dates" aria-pressed="false">По датам</button>
+          </div>
+        </div>
+        <div id="board-columns" class="board-columns" aria-label="Колонки доски"></div>
+      </section>
+
       <section id="reports" class="app-page reports-page" hidden>
         <div class="page-heading">
           <p class="eyebrow">ПАМЯТЬ · ОТЧЁТЫ</p>

@@ -2706,8 +2706,21 @@ dialog form > div {
     min-height: 0;
     padding: 10px 16px;
   }
+  /* Четыре раздела в строку с брендом и хвостом не влезают: первая строка —
+     знак слева и хвост справа, вторая — навигация во всю ширину. Без явного
+     порядка хвост вставал перед брендом. */
   .brand {
     order: 1;
+  }
+  .header-tail {
+    order: 2;
+    margin-left: auto;
+  }
+  header > nav {
+    order: 3;
+    flex-basis: 100%;
+    justify-content: flex-start;
+    gap: 14px;
   }
   .ai-menu {
     order: 3;
@@ -3933,7 +3946,9 @@ dialog form > div {
      столбик у края ломал бы чистый лист. */
   scrollbar-width: none;
   /* Колонка 708px по центру рисуется полями прокручиваемой области. */
-  padding: 54px max(32px, calc((100% - 708px) / 2)) 20vh;
+  /* Нижний воздух в 20vh был нужен пустой странице; теперь низ держит
+     прилипший футер — хватает обычного отступа. */
+  padding: 54px max(32px, calc((100% - 708px) / 2)) 28px;
   font-size: 16px;
   line-height: 1.5;
 }
@@ -3978,21 +3993,27 @@ dialog form > div {
 #review-dialog .review-form {
   display: block;
   margin-top: 0;
-  padding-bottom: 14px;
+  /* Без боковых отступов общего .review-form: строка свойств и форма стоят
+     по одному левому краю с заголовком, «Записано» и заметками. */
+  padding: 0 0 14px;
   border-bottom: 1px solid var(--nt-divider);
 }
 #review-dialog .props {
   gap: 2px;
 }
-#review-dialog .props-bar {
+/* Селектор перекрывает общее оформление кнопок формы (#review-dialog
+   .review-form > button): строка свойств — тихий текст без рамки, содержимое
+   стоит по левому краю заголовка (отрицательное поле съедает свой отступ). */
+#review-dialog .review-form > button.props-bar {
   display: flex;
   align-items: center;
+  justify-self: stretch;
   gap: 9px;
-  width: 100%;
-  margin: 4px 0;
-  padding: 6px;
+  width: calc(100% + 6px);
+  margin: 2px 0 4px -6px;
+  padding: 5px 6px;
   border: 0;
-  border-radius: 4px;
+  border-radius: 6px;
   background: none;
   font: inherit;
   font-size: 14px;
@@ -4000,7 +4021,8 @@ dialog form > div {
   cursor: pointer;
   color: var(--nt-secondary);
 }
-#review-dialog .props-bar:hover {
+#review-dialog .review-form > button.props-bar:hover {
+  border: 0;
   background: var(--nt-hover);
 }
 #review-dialog .props-chevron {
@@ -4278,21 +4300,25 @@ dialog form > div {
   padding-top: 0;
   border-top: 0;
 }
-#review-dialog .card-files > button {
+/* Кнопка вложения живёт в строке-шапке футера и выглядит тихим текстом с
+   плюсом, как соседние «Источник и версия» и «Удалить запись», а не пилюлей. */
+#review-dialog .card-files-head > button {
+  margin-left: auto;
   padding: 4px 8px;
   border: 0;
   border-radius: 4px;
   background: none;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--nt-secondary);
   box-shadow: none;
 }
-#review-dialog .card-files > button::before {
+#review-dialog .card-files-head > button::before {
   content: "+";
   margin-right: 6px;
   color: var(--nt-tertiary);
 }
-#review-dialog .card-files > button:hover {
+#review-dialog .card-files-head > button:hover {
+  border: 0;
   background: var(--nt-hover);
   color: var(--nt-text);
 }
@@ -4876,17 +4902,315 @@ dialog form > div {
 .entry-status.st-today { color: var(--st-today); }
 .entry-status.st-ontime { color: var(--st-ontime); }
 .entry-status.st-none { color: var(--st-none); }
-/* строка статуса в карточке — как строка свойства Notion, под заголовком */
-#review-dialog .card-status {
-  display: flex;
-  align-items: center;
-  min-height: 30px;
-  margin: 4px 0 0;
-  padding: 0;
-}
 /* чип в свёрнутой строке свойств — чуть мельче, по базовой линии текста */
 #review-dialog .props-summary .entry-status {
   font-size: 12.5px;
   position: relative;
   top: 1.5px;
+}
+
+/* ── доска: канбан по открытым делам ─────────────────────────────────────────
+   Колонки едут горизонтально; карточка — тихая, статус словом, тянется мышью. */
+.board-columns {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  overflow-x: auto;
+  /* Лента колонок выходит из контентной колонки до краёв окна: слева
+     первая колонка стоит вровень с заголовком (отступ = поле main), справа
+     колонки едут до самого края, а не режутся рамкой страницы. */
+  margin-left: calc(50% - 50vw);
+  margin-right: calc(50% - 50vw);
+  padding: 4px 24px 26px calc(50vw - 50%);
+  /* Полосу прокрутки не показываем: колесо, трекпад и перетаскивание работают,
+     а серый столбик под колонками читался как чужой элемент интерфейса. */
+  scrollbar-width: none;
+}
+.board-columns::-webkit-scrollbar {
+  display: none;
+}
+/* Полная ширина считается от 100vw, а она включает вертикальную полосу
+   прокрутки там, где та занимает место: страница не должна из-за этого
+   получить горизонтальный скролл. Горизонтально страница не едет нигде. */
+body {
+  overflow-x: hidden;
+}
+/* рука на пустом месте: фон доски и колонок тянется влево-вправо */
+.board-columns { cursor: grab; }
+.board-columns.panning,
+.board-columns.panning * { cursor: grabbing; }
+.board-columns.panning { user-select: none; }
+.board-column {
+  flex: 0 0 280px;
+  background: var(--n-98-4);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  padding: 9px 9px 11px;
+  min-height: 64px;
+}
+.board-column.dragging-column { opacity: 0.55; }
+.board-column.col-drop-left { box-shadow: -3px 0 0 var(--focus); }
+.board-column.col-drop-right { box-shadow: 3px 0 0 var(--focus); }
+.board-column.ghost {
+  background: none;
+  border: 1.5px dashed var(--line);
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+}
+.board-col-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 5px 9px;
+  cursor: grab;
+}
+.board-column.inbox .board-col-head { cursor: default; }
+.board-col-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: -0.1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-col-count { font-size: 11.5px; color: var(--n-72); flex: none; }
+.board-col-input {
+  font: inherit;
+  font-size: 13px;
+  width: 100%;
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--paper);
+  color: var(--ink);
+}
+.board-menu { margin-left: auto; position: relative; flex: none; }
+.board-menu summary {
+  list-style: none;
+  cursor: pointer;
+  color: var(--n-72);
+  border-radius: 6px;
+  padding: 0 7px 3px;
+  font-size: 15px;
+  line-height: 1;
+}
+.board-menu summary::-webkit-details-marker { display: none; }
+.board-menu summary:hover { background: var(--n-25-a8); color: var(--ink); }
+.board-menu-popover {
+  position: absolute;
+  right: 0;
+  top: 22px;
+  z-index: 5;
+  display: grid;
+  min-width: 170px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 5px;
+  box-shadow: 0 12px 30px var(--n-23-a22);
+}
+.board-menu-popover button {
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  border-radius: 7px;
+  padding: 7px 9px;
+  cursor: pointer;
+}
+.board-menu-popover button:hover { background: var(--hairline); }
+.board-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 10px;
+}
+.board-card {
+  display: flex;
+  gap: 9px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 11px 9px 10px;
+  cursor: grab;
+  box-shadow: 0 1px 3px var(--n-25-a8);
+}
+.board-card.dragging { opacity: 0.45; }
+.board-done {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border: 1.4px solid var(--n-76);
+  border-radius: 99px;
+  background: none;
+  flex: none;
+  cursor: pointer;
+  color: transparent;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+}
+.board-done:hover { border-color: var(--green); color: var(--green); }
+.board-done::before { content: "✓"; }
+.board-body { min-width: 0; flex: 1; }
+.board-title {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.35;
+  color: var(--ink);
+  padding: 0;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.board-title:hover { text-decoration: underline; text-decoration-color: var(--n-79); text-underline-offset: 3px; }
+.board-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 9px;
+  align-items: center;
+  margin-top: 5px;
+  font-size: 11.5px;
+}
+.board-meta .entry-status { font-size: 11.5px; gap: 4px; }
+.board-meta .entry-status svg { width: 12px; height: 12px; }
+.btag { color: var(--n-62); white-space: nowrap; }
+.btag.urgent { color: var(--orange-54); font-weight: 600; }
+.board-drop {
+  height: 3px;
+  border-radius: 99px;
+  background: var(--focus);
+  margin: -1px 3px;
+  flex: none;
+}
+.board-add { margin-top: 9px; padding: 0 2px; }
+.board-add-button {
+  font: inherit;
+  font-size: 12.5px;
+  border: 0;
+  background: none;
+  color: var(--n-62);
+  cursor: pointer;
+  padding: 5px 6px;
+  border-radius: 7px;
+}
+.board-add-button:hover { background: var(--n-25-a8); color: var(--ink); }
+.board-add input,
+.board-column.ghost input {
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+}
+.board-column.ghost .board-add-button { margin: 2px; }
+@media (max-width: 760px) {
+  .board-column { flex-basis: 252px; }
+}
+
+/* заголовок карточки правится на месте: поле выглядит тем же заголовком */
+#review-dialog .review h2.card-title {
+  cursor: text;
+  border-radius: 6px;
+}
+#review-dialog .review h2.card-title:hover { background: var(--nt-hover); }
+#review-dialog .card-title-edit {
+  display: block;
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  border-radius: 6px;
+  background: var(--nt-hover);
+  font-family: inherit;
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--nt-text);
+  resize: none;
+  overflow: hidden;
+}
+
+/* переключатель вида и группировка по датам */
+.board-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 0 0 12px;
+}
+.board-group-label {
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--n-72);
+  padding: 5px 5px 1px;
+}
+.board-column.drop-over {
+  box-shadow: inset 0 0 0 2px var(--focus);
+  border-radius: 14px;
+}
+
+/* «Записано» — компактная строка футера карточки, перед источником и версией */
+#review-dialog .card-written.card-footer-line {
+  min-height: 0;
+  margin: 14px 0 2px;
+  font-size: 12.5px;
+  color: var(--nt-tertiary);
+}
+
+/* ── футер карточки: прижат к низу, служебное одной строкой ────────────────── */
+#review-dialog .review {
+  display: flex;
+  flex-direction: column;
+}
+#review-dialog .card-footer {
+  margin-top: auto;
+  padding-top: 16px;
+}
+#review-dialog .card-files-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+#review-dialog .card-files-head .attach-empty {
+  color: var(--nt-tertiary);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+#review-dialog .card-files-head .secondary {
+  margin-left: auto;
+}
+#review-dialog .card-footer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px 22px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--nt-divider);
+}
+#review-dialog .card-footer-row .card-written.card-footer-line {
+  margin: 0;
+}
+#review-dialog .card-footer-row > details {
+  margin: 0;
+  /* своя верхняя черта details не нужна: разделитель уже у всей строки футера */
+  border-top: 0;
+  padding-top: 0;
+}
+#review-dialog .card-footer-row .card-delete {
+  margin-left: auto;
 }
