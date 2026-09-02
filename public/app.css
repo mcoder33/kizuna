@@ -5238,3 +5238,157 @@ body {
 #review-dialog .card-footer-row .card-delete {
   margin-left: auto;
 }
+
+/* ── панель оформления выделенного текста ──────────────────────────────────
+   Как в Notion: появляется над выделением в любом живом поле. Кнопки ставят
+   маркеры Markdown, цвет — pandoc-овский span [текст]{.red}. */
+.fmt-bar {
+  position: fixed;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  box-shadow: 0 10px 28px var(--n-25-a8), 0 2px 6px var(--n-25-a8);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.fmt-bar .fmt-button {
+  position: relative;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.fmt-bar .fmt-button:hover,
+.fmt-bar .fmt-button[aria-expanded="true"] { background: var(--hairline); }
+.fmt-bar .fmt-bold { font-weight: 750; }
+.fmt-bar .fmt-italic { font-style: italic; }
+.fmt-bar .fmt-underline { text-decoration: underline; text-underline-offset: 2px; }
+.fmt-bar .fmt-strike { text-decoration: line-through; }
+.fmt-bar .fmt-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.fmt-bar .fmt-highlight { color: var(--fmt-yellow); }
+.fmt-bar .fmt-trigger::after { content: "▾"; margin-left: 4px; font-size: 10px; color: var(--muted); }
+.fmt-bar .fmt-color { font-weight: 650; text-decoration: underline; text-decoration-thickness: 3px; text-decoration-color: var(--fmt-red); text-underline-offset: 3px; }
+.fmt-sep { width: 1px; height: 18px; background: var(--line); margin: 0 3px; }
+.fmt-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 190px;
+  max-height: min(60vh, 420px);
+  overflow: auto;
+  padding: 6px;
+  border-radius: 10px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  box-shadow: 0 10px 28px var(--n-25-a8), 0 2px 6px var(--n-25-a8);
+  white-space: nowrap;
+}
+.fmt-menu .fmt-head {
+  margin: 4px 0 2px;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.fmt-menu .fmt-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.fmt-menu .fmt-item:hover { background: var(--hairline); }
+.fmt-menu .fmt-item.is-on::after { content: "✓"; margin-left: auto; color: var(--muted); font-size: 12px; }
+.fmt-swatch {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+.fmt-swatch:not([class*="md-color-bg-"])::before { content: "A"; }
+
+/* Палитра Notion: девять цветов текста и девять фонов, свои оттенки для тем. */
+:root {
+  --fmt-gray: #787774; --fmt-brown: #9f6b53; --fmt-orange: #d9730d; --fmt-yellow: #b8860b;
+  --fmt-green: #448361; --fmt-blue: #337ea9; --fmt-purple: #9065b0; --fmt-pink: #c14c8a; --fmt-red: #d44c47;
+  --fmt-bg-gray: #f1f1ef; --fmt-bg-brown: #f4eeee; --fmt-bg-orange: #fbecdd; --fmt-bg-yellow: #fbf3db;
+  --fmt-bg-green: #edf3ec; --fmt-bg-blue: #e7f3f8; --fmt-bg-purple: #f6f3f9; --fmt-bg-pink: #faf1f5; --fmt-bg-red: #fdebec;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --fmt-gray: #9b9b9b; --fmt-brown: #ba856f; --fmt-orange: #c77d48; --fmt-yellow: #ca9849;
+    --fmt-green: #529e72; --fmt-blue: #5e87c9; --fmt-purple: #9d68d3; --fmt-pink: #d15796; --fmt-red: #df5452;
+    --fmt-bg-gray: #2f2f2f; --fmt-bg-brown: #4a3228; --fmt-bg-orange: #5c3b23; --fmt-bg-yellow: #564328;
+    --fmt-bg-green: #243d30; --fmt-bg-blue: #143a4e; --fmt-bg-purple: #3c2d49; --fmt-bg-pink: #4e2c3c; --fmt-bg-red: #522e2a;
+  }
+}
+:root[data-theme="dark"] {
+  --fmt-gray: #9b9b9b; --fmt-brown: #ba856f; --fmt-orange: #c77d48; --fmt-yellow: #ca9849;
+  --fmt-green: #529e72; --fmt-blue: #5e87c9; --fmt-purple: #9d68d3; --fmt-pink: #d15796; --fmt-red: #df5452;
+  --fmt-bg-gray: #2f2f2f; --fmt-bg-brown: #4a3228; --fmt-bg-orange: #5c3b23; --fmt-bg-yellow: #564328;
+  --fmt-bg-green: #243d30; --fmt-bg-blue: #143a4e; --fmt-bg-purple: #3c2d49; --fmt-bg-pink: #4e2c3c; --fmt-bg-red: #522e2a;
+}
+.md-color-gray { color: var(--fmt-gray); }
+.md-color-brown { color: var(--fmt-brown); }
+.md-color-orange { color: var(--fmt-orange); }
+.md-color-yellow { color: var(--fmt-yellow); }
+.md-color-green { color: var(--fmt-green); }
+.md-color-blue { color: var(--fmt-blue); }
+.md-color-purple { color: var(--fmt-purple); }
+.md-color-pink { color: var(--fmt-pink); }
+.md-color-red { color: var(--fmt-red); }
+[class*="md-color-bg-"] { border-radius: 3px; padding: 0 2px; margin: 0 -1px; }
+.md-color-bg-gray { background: var(--fmt-bg-gray); }
+.md-color-bg-brown { background: var(--fmt-bg-brown); }
+.md-color-bg-orange { background: var(--fmt-bg-orange); }
+.md-color-bg-yellow { background: var(--fmt-bg-yellow); }
+.md-color-bg-green { background: var(--fmt-bg-green); }
+.md-color-bg-blue { background: var(--fmt-bg-blue); }
+.md-color-bg-purple { background: var(--fmt-bg-purple); }
+.md-color-bg-pink { background: var(--fmt-bg-pink); }
+.md-color-bg-red { background: var(--fmt-bg-red); }
+.md-field u, .md-block u, .md-inline u { text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; }
+
+/* Шрифт и размер текста записей — выбор страницы, как в Notion. Интерфейс
+   остаётся в Inter: меняется только текст, который человек пишет и читает. */
+:root[data-font="serif"] .md-field,
+:root[data-font="serif"] .md-block,
+:root[data-font="serif"] .md-inline,
+:root[data-font="serif"] .card-title-edit {
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+}
+:root[data-font="mono"] .md-field,
+:root[data-font="mono"] .md-block,
+:root[data-font="mono"] .md-inline,
+:root[data-font="mono"] .card-title-edit {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+:root[data-text="small"] .md-field,
+:root[data-text="small"] .today-page .capture.capture-large .md-field,
+:root[data-text="small"] .md-block { font-size: 13.5px; }

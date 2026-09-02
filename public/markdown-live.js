@@ -28,10 +28,18 @@ const INLINE = [
   { re: /(~~)(?=\S)([^\n]*?\S)(~~)/g, tag: "del" },
   { re: /(?<![-\w])(--)(?=\S)([^-\n]*?\S)(--)(?![-\w])/g, tag: "del" },
   { re: /(==)(?=\S)([^\n]*?\S)(==)/g, tag: "mark" },
+  // Подчёркивание: в Markdown его нет, ++текст++ — принятое расширение.
+  { re: /(\+\+)(?=\S)([^+\n]*?\S)(\+\+)/g, tag: "u" },
   { re: /(?<![*\w])(\*)(?=\S)([^*\n]*?\S)(\*)(?![*\w])/g, tag: "em" },
   { re: /(?<![_\w])(_)(?=\S)([^_\n]*?\S)(_)(?![_\w])/g, tag: "em" },
   { re: /(%%)([^\n]*?)(%%)/g, tag: "span", className: "md-comment" },
 ];
+
+// Цвета текста и фона — палитра Notion. Синтаксис — pandoc-овские span-ы с
+// классом: [текст]{.red}, [текст]{.bg-yellow}. Как и остальная разметка, это
+// обычный текст, который читается и без оформления.
+export const COLOR_NAMES = ["gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"];
+export const COLOR_SPAN = /(\[)([^\[\]\n]+?)(\]\{\.)((?:bg-)?(?:gray|brown|orange|yellow|green|blue|purple|pink|red))(\})/g;
 
 function inlineDecorate(text) {
   let out = escapeHtml(text);
@@ -42,6 +50,9 @@ function inlineDecorate(text) {
       return `${mark(open)}<${tag}${attribute}>${content}</${tag}>${mark(close)}`;
     });
   }
+  // Цвет — после парных маркеров (внутри может быть жирный) и до ссылок.
+  out = out.replace(COLOR_SPAN, (match, open, body, mid, name, close) =>
+    `${mark(open)}<span class="md-color md-color-${name}">${body}</span>${mark(mid + name + close)}`);
   // Внутренние ссылки и встраивания Obsidian.
   out = out.replace(/(!?)(\[\[)([^\]\n]+)(\]\])/g, (match, bang, open, target, close) => {
     const [pathPart, alias] = target.split("|");
@@ -230,31 +241,53 @@ export function createMarkdownField({ id, ariaLabel, placeholder = "", onInput, 
     return caretOf(selection.anchorNode, selection.anchorOffset);
   };
 
-  const placeCaret = (position) => {
-    if (!position) return;
+  // Точка в DOM для позиции «строка и смещение» — общая для каретки и границ
+  // выделения.
+  const pointOf = (position) => {
     const nodes = lineNodes();
     const lineNode = nodes[Math.min(position.line, nodes.length - 1)];
-    if (!lineNode) return;
+    if (!lineNode) return null;
     const walker = document.createTreeWalker(lineNode, NodeFilter.SHOW_TEXT);
     let remaining = position.offset;
-    let target = null;
-    let targetOffset = 0;
     while (walker.nextNode()) {
       const length = walker.currentNode.textContent.length;
-      if (remaining <= length) {
-        target = walker.currentNode;
-        targetOffset = remaining;
-        break;
-      }
+      if (remaining <= length) return { node: walker.currentNode, offset: remaining };
       remaining -= length;
     }
+    return { node: lineNode, offset: lineNode.childNodes.length };
+  };
+  const placeCaret = (position) => {
+    if (!position) return;
+    const point = pointOf(position);
+    if (!point) return;
     const range = document.createRange();
-    if (target) range.setStart(target, targetOffset);
-    else range.selectNodeContents(lineNode), range.collapse(false);
+    range.setStart(point.node, point.offset);
     range.collapse(true);
     const selection = document.getSelection();
     selection.removeAllRanges();
     selection.addRange(range);
+  };
+  const placeSelection = (from, to) => {
+    const start = pointOf(from), end = pointOf(to);
+    if (!start || !end) return;
+    const range = document.createRange();
+    range.setStart(start.node, start.offset);
+    range.setEnd(end.node, end.offset);
+    const selection = document.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  };
+  // Выделение в координатах модели, от меньшей границы к большей; null — если
+  // выделения нет или оно вне поля.
+  const readSelection = () => {
+    const selection = document.getSelection();
+    if (!selection || !selection.rangeCount || selection.isCollapsed) return null;
+    if (!root.contains(selection.anchorNode) || !root.contains(selection.focusNode)) return null;
+    const anchor = caretOf(selection.anchorNode, selection.anchorOffset);
+    const focus = caretOf(selection.focusNode, selection.focusOffset);
+    if (!anchor || !focus) return null;
+    const before = anchor.line < focus.line || (anchor.line === focus.line && anchor.offset <= focus.offset);
+    return before ? { from: anchor, to: focus } : { from: focus, to: anchor };
   };
 
   // Чистовик, как в Notion: маркеры разметки видны только на строке с
@@ -422,6 +455,16 @@ export function createMarkdownField({ id, ariaLabel, placeholder = "", onInput, 
     // каретки, и уметь заменить этот кусок. Больше внутренностей поля наружу не
     // отдаём — иначе меню начнёт лезть в отрисовку и модель строк.
     caret: readCaret,
+    selection: readSelection,
+    lines: () => [...lines],
+    // Замена всех строк разом — для панели оформления, которая переписывает
+    // несколько строк выделения и хочет оставить выделение на тексте.
+    setLines: (next, range = null) => {
+      lines = next.length ? [...next] : [""];
+      render(range ? range.from : null);
+      if (range && (range.from.line !== range.to.line || range.from.offset !== range.to.offset)) placeSelection(range.from, range.to);
+      if (onInput) onInput(getValue());
+    },
     lineAt: (index) => lines[index] ?? "",
     replaceInLine: (index, from, to, text, caretOffset = text.length) => {
       const current = lines[index] ?? "";

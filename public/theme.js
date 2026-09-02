@@ -21,6 +21,34 @@
   }
   apply(stored);
 
+  // Шрифт и размер текста записей — как в Notion: выбор страницы, а не куска
+  // текста. Живут рядом с темой и применяются так же рано, до отрисовки.
+  var TEXT_KEY = "pagent.text";
+  var text = { font: "default", size: "normal" };
+  try {
+    var saved = JSON.parse(localStorage.getItem(TEXT_KEY) || "null");
+    if (saved && typeof saved === "object") text = { font: saved.font || "default", size: saved.size || "normal" };
+  } catch {
+    // Нет сохранённого выбора — обычный шрифт и размер.
+  }
+  function applyText() {
+    if (text.font === "serif" || text.font === "mono") root.setAttribute("data-font", text.font);
+    else root.removeAttribute("data-font");
+    if (text.size === "small") root.setAttribute("data-text", "small");
+    else root.removeAttribute("data-text");
+  }
+  applyText();
+  window.pagentText = {
+    read: function () { return { font: text.font, size: text.size }; },
+    set: function (next) {
+      text = { font: next.font || text.font, size: next.size || text.size };
+      applyText();
+      try { localStorage.setItem(TEXT_KEY, JSON.stringify(text)); } catch {
+        // Не сохранилось — выбор действует до конца сессии.
+      }
+    },
+  };
+
   // Один и тот же переключатель нужен и приложению, и странице входа, поэтому
   // он живёт здесь, а не в каждом из них.
   window.pagentTheme = {
