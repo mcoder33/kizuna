@@ -4287,21 +4287,25 @@ dialog form > div {
   padding-top: 0;
   border-top: 0;
 }
-#review-dialog .card-files > button {
+/* Кнопка вложения живёт в строке-шапке футера и выглядит тихим текстом с
+   плюсом, как соседние «Источник и версия» и «Удалить запись», а не пилюлей. */
+#review-dialog .card-files-head > button {
+  margin-left: auto;
   padding: 4px 8px;
   border: 0;
   border-radius: 4px;
   background: none;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--nt-secondary);
   box-shadow: none;
 }
-#review-dialog .card-files > button::before {
+#review-dialog .card-files-head > button::before {
   content: "+";
   margin-right: 6px;
   color: var(--nt-tertiary);
 }
-#review-dialog .card-files > button:hover {
+#review-dialog .card-files-head > button:hover {
+  border: 0;
   background: var(--nt-hover);
   color: var(--nt-text);
 }
