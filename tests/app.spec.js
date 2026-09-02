@@ -704,7 +704,7 @@ test("correction from an upcoming card after reload is single-flight", async ({
     .first();
   await card.locator(".entry-title").click();
   const propsBar = page.locator(".props-bar");
-  if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
+  if ((await propsBar.count()) && (await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
   await page.locator("#review-project").fill("Свой проект");
   await page
     .getByRole("button", { name: "Сохранить уточнение" })
@@ -734,7 +734,7 @@ test("correction from a plan card after reload is single-flight and creates one 
     .first();
   await card.locator(".entry-title").click();
   const propsBar = page.locator(".props-bar");
-  if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
+  if ((await propsBar.count()) && (await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
   await page.locator("#review-project").fill("Attention проект");
   await page
     .getByRole("button", { name: "Сохранить уточнение" })

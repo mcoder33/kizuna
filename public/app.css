@@ -5441,3 +5441,73 @@ body {
 .board-card.done { opacity: 0.62; }
 .board-card.done .board-title { text-decoration: line-through; color: var(--n-62); }
 .board-card.done .board-done { border-color: var(--green); background: var(--green); color: var(--n-100); }
+
+/* ── карточка дела: две колонки, как задача в Todoist ─────────────────────── */
+#review-dialog.task-layout {
+  width: min(960px, calc(100vw - 48px));
+}
+#review-dialog.task-layout .review {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 264px;
+  gap: 0 28px;
+  align-content: start;
+  padding: 40px 32px 28px;
+}
+#review-dialog.task-layout .card-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 100%;
+}
+#review-dialog.task-layout .card-main .card-footer { margin-top: auto; }
+#review-dialog.task-layout .card-aside {
+  border-left: 1px solid var(--nt-divider);
+  padding-left: 22px;
+}
+#review-dialog.task-layout .card-aside .review-form { border-bottom: 0; padding-bottom: 0; }
+#review-dialog.task-layout .card-aside-title { margin: 0 0 4px; }
+/* свойства справа стопкой: подпись над значением, как в панели Todoist */
+#review-dialog.task-layout .card-aside .prop {
+  grid-template-columns: 1fr;
+  gap: 2px;
+  min-height: 0;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--nt-divider);
+  border-radius: 0;
+}
+#review-dialog.task-layout .card-aside .prop-label { padding: 0; font-size: 12px; }
+#review-dialog.task-layout .card-aside .prop-label:hover { background: none; }
+#review-dialog.task-layout .card-aside .props select,
+#review-dialog.task-layout .card-aside .props input {
+  width: 100%;
+  min-height: 26px;
+  padding: 2px 6px 2px 0;
+}
+#review-dialog.task-layout .card-aside .review-schedule { display: flex; gap: 6px; }
+#review-dialog.task-layout .card-aside .review-schedule input { width: auto; flex: 1; min-width: 0; }
+#review-dialog.task-layout .card-aside .completion-button { margin: 4px 0 0; }
+#review-dialog.task-layout .card-aside .review-form > button.secondary { margin-top: 14px; }
+.card-title-row { display: flex; align-items: flex-start; gap: 12px; }
+.card-title-row h2 { flex: 1; min-width: 0; }
+.card-check {
+  width: 22px;
+  height: 22px;
+  margin-top: 13px;
+  border: 1.6px solid var(--nt-tertiary);
+  border-radius: 99px;
+  background: none;
+  color: transparent;
+  cursor: pointer;
+  flex: none;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+}
+.card-check::before { content: "✓"; }
+.card-check:hover { border-color: var(--green); color: var(--green); }
+.card-check[aria-pressed="true"] { border-color: var(--green); background: var(--green); color: var(--n-100); }
+#review-dialog .card-status { display: flex; align-items: center; min-height: 28px; margin: 2px 0 6px; }
+@media (max-width: 760px) {
+  #review-dialog.task-layout .review { grid-template-columns: 1fr; padding: 24px 16px; }
+  #review-dialog.task-layout .card-aside { border-left: 0; padding-left: 0; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--nt-divider); }
+}

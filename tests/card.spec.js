@@ -24,7 +24,7 @@ test("the card shows properties as rows and hides the ones the type does not use
   await openCard(page, "#todo", raw);
 
   const propsBar = page.locator(".props-bar");
-  if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
+  if ((await propsBar.count()) && (await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
   for (const label of ["Тип", "Срок", "Проект", "Участники", "Далее", "Сделано"]) {
     await expect(page.locator(".prop-label", { hasText: label })).toBeVisible();
   }
@@ -199,7 +199,7 @@ test("the done toggle overrides the model and moves the entry into reported work
   await openCard(page, "#todo", raw);
 
   const propsBar = page.locator(".props-bar");
-  if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
+  if ((await propsBar.count()) && (await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
   await page.locator("#review-completed").click();
   await expect(page.locator("#review-completed")).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "Сохранить уточнение" }).click();
@@ -825,13 +825,12 @@ test("статус записи — значком и словом: под за�
   await capture(page, raw);
   await openCard(page, "#todo", raw);
 
-  // Дело без срока: статус назван словом и ведёт свёрнутую строку свойств,
-  // которая стоит выше «Записано» — первой строкой карточки.
-  await expect(page.locator("#review-dialog .props-summary .entry-status")).toHaveText("Без срока");
-  const barBox = await page.locator("#review-dialog .props-bar").boundingBox();
-  const writtenBox = await page.locator("#review-dialog .card-written").boundingBox();
-  expect(barBox.y).toBeLessThan(writtenBox.y);
-  // Статус на карточке один — дубля под заголовком нет.
+  // Карточка дела — в две колонки: статус строкой под заголовком, свойства
+  // всегда развёрнуты справа, свёрнутой строки-сводки нет.
+  await expect(page.locator("#review-dialog .card-status .entry-status")).toHaveText("Без срока");
+  await expect(page.locator("#review-dialog .card-aside #review-priority")).toBeVisible();
+  expect(await page.locator("#review-dialog .props-bar").count()).toBe(0);
+  // Статус на карточке один.
   expect(await page.locator("#review-dialog .entry-status").count()).toBe(1);
   await page.keyboard.press("Escape");
 
@@ -842,7 +841,16 @@ test("статус записи — значком и словом: под за�
   await page.goto("/#history-todo");
   await expect(journalEntry).toBeVisible();
   await journalEntry.locator(".entry-title").click();
-  await expect(page.locator("#review-dialog .props-summary .entry-status")).toHaveText("Сделано");
+  await expect(page.locator("#review-dialog .card-status .entry-status")).toHaveText("Сделано");
+  await page.keyboard.press("Escape");
+
+  // Заметка остаётся нотионовской: одна колонка и свёрнутая строка свойств.
+  const note = "Просто заметка для проверки раскладки";
+  await page.goto("/");
+  await capture(page, note);
+  await openCard(page, "#notes", note);
+  await expect(page.locator("#review-dialog .props-bar")).toBeVisible();
+  expect(await page.locator("#review-dialog .card-aside").count()).toBe(0);
 });
 
 test("заголовок записи правится прямо в карточке", async ({ page, request }) => {
