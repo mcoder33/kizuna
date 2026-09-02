@@ -4129,20 +4129,6 @@ dialog form > div {
 #review-dialog .completion-button::before {
   font-size: 10px;
 }
-#review-dialog .review-form > button.secondary {
-  margin-top: 10px;
-  padding: 4px 10px;
-  border: 1px solid var(--nt-hr);
-  border-radius: 6px;
-  background: none;
-  font-size: 14px;
-  color: var(--nt-secondary);
-  box-shadow: none;
-}
-#review-dialog .review-form > button.secondary:hover {
-  background: var(--nt-hover);
-  color: var(--nt-text);
-}
 /* Тело страницы: без рамок и подложек, текст сразу на листе. */
 #review-dialog .prop-section {
   margin: 14px 0 0;

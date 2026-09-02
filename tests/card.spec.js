@@ -202,9 +202,55 @@ test("the done toggle overrides the model and moves the entry into reported work
   if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
   await page.locator("#review-completed").click();
   await expect(page.locator("#review-completed")).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: "Сохранить уточнение" }).click();
+  await page.locator("#review-close").click();
   await expect(page.locator("#journal")).toContainText(raw);
   await expect(page.locator("#todo")).not.toContainText(raw);
+});
+
+test("properties changed in the card are saved when Escape closes it", async ({ page }) => {
+  const raw = "Нужно проверить сохранение свойств по Esc";
+  await page.goto("/");
+  await capture(page, raw);
+  await expect(page.locator("#todo")).toContainText(raw);
+  await openCard(page, "#todo", raw);
+
+  const propsBar = page.locator(".props-bar");
+  if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
+  await page.locator("#review-project").fill("Проект по Esc");
+  const saved = page.waitForResponse(
+    (response) => response.url().includes("/corrections") && response.request().method() === "POST",
+  );
+  // Esc закрывает диалог сам, мимо крестика: правки должны уйти и этим путём.
+  await page.locator("#review-project").press("Escape");
+  expect((await saved).status()).toBe(200);
+  await expect(page.locator("#review-dialog")).toBeHidden();
+  await expect(page.locator("#todo .entry").filter({ hasText: raw })).toContainText("Проект по Esc");
+});
+
+test("an untouched card closes without sending a correction", async ({ page }) => {
+  const raw = "Нужно проверить закрытие без правок";
+  await page.goto("/");
+  await capture(page, raw);
+  await expect(page.locator("#todo")).toContainText(raw);
+  let corrections = 0;
+  page.on("request", (request) => {
+    if (request.url().includes("/corrections") && request.method() === "POST") corrections += 1;
+  });
+  await openCard(page, "#todo", raw);
+  const propsBar = page.locator(".props-bar");
+  if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
+  // Поле потрогали, но значение прежнее — уточнения быть не должно.
+  const project = page.locator("#review-project");
+  await project.fill(await project.inputValue());
+  await page.locator("#review-close").click();
+  await expect(page.locator("#review-dialog")).toBeHidden();
+  await openCard(page, "#todo", raw);
+  await page.locator("#review-close").click();
+  await expect(page.locator("#review-dialog")).toBeHidden();
+  expect(corrections).toBe(0);
+  const entries = await (await page.request.get("/api/entries?limit=100")).json(),
+    entry = entries.entries.find((candidate) => candidate.raw === raw);
+  expect(entry.interpretation.version).toBe(1);
 });
 
 test("markdown is decorated inside the capture field as it is typed", async ({ page }) => {

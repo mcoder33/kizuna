@@ -44,7 +44,6 @@ const legacyActiveCaptureStorageKey = "pagent.active-capture";
 const activeCaptures = new Map();
 let bootstrapInFlight = false,
   bootstrapQueued = false,
-  correctionInFlight = false,
   memoryController = null;
 const completionInFlight = new Set();
 const correctionResponses = new Map();
@@ -88,24 +87,6 @@ async function requestResponse(url, options = {}) {
 async function request(url, options = {}) {
   return (await requestResponse(url, options)).data;
 }
-document.addEventListener(
-  "submit",
-  (event) => {
-    const form = event.target;
-    if (
-      form instanceof HTMLFormElement &&
-      form.classList.contains("review-form")
-    ) {
-      if (form.dataset.correctionSubmitted === "true") {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        return;
-      }
-      form.dataset.correctionSubmitted = "true";
-    }
-  },
-  true,
-);
 function node(tag, text, className) {
   const element = document.createElement(tag);
   if (text !== undefined) element.textContent = text;
@@ -686,16 +667,25 @@ function appear(element, { shift = 10, duration = APPEAR_DURATION, base = "" } =
 // Незаписанная правка заметки: карточку закрывают крестиком, фоном и Esc —
 // и во всех трёх случаях набранное должно остаться, а не пропасть.
 let flushCardBody = null;
+// Свойства уходят на сервер так же, как заметка: при закрытии карточки, без
+// отдельной кнопки. Ссылка снимается до вызова — второй раз ничего не улетит.
+let flushCardProps = null;
+function flushCard() {
+  const body = flushCardBody,
+    props = flushCardProps;
+  flushCardBody = null;
+  flushCardProps = null;
+  body?.();
+  props?.();
+}
 // Поле заметки пересоздаётся на каждое открытие карточки, а меню разметки
 // вешает слушатель на документ: без уборки они копились бы с каждым разом.
 let closeCardSlashMenu = null;
 function closeCard() {
   const dialog = $("#review-dialog");
-  // Сохранение уходит своим ходом: карточка закрывается сразу, но значение
-  // поля читается сейчас, пока разметка ещё на месте.
-  const flush = flushCardBody;
-  flushCardBody = null;
-  flush?.();
+  // Сохранение уходит своим ходом: карточка закрывается сразу, но значения
+  // полей читаются сейчас, пока разметка ещё на месте.
+  flushCard();
   closeCardSlashMenu?.();
   if (!dialog.open) {
     clear($("#review"));
@@ -1036,6 +1026,8 @@ function showReview(entry, review, undoGroupId, provenance) {
   const cardTitle = markdownNode("h2", c.summary, "card-title", { inline: true, firstLine: true });
   cardTitle.title = "Изменить заголовок";
   cardTitle.tabIndex = 0;
+  // Правки свойств, ещё не ушедшие на сервер (форма собирается ниже).
+  let pendingProps = () => null;
   const startTitleEdit = () => {
     const editor = document.createElement("textarea");
     editor.className = "card-title-edit";
@@ -1056,9 +1048,11 @@ function showReview(entry, review, undoGroupId, provenance) {
       if (!value || value === c.summary) { editor.replaceWith(cardTitle); return; }
       editor.disabled = true;
       try {
+        // Карточка после ответа перерисуется из сохранённой записи: правки
+        // свойств, которые ещё не уходили, едут одним уточнением с заголовком.
         const result = await request(`/api/captures/${entry.id}/corrections`, {
           method: "POST",
-          body: JSON.stringify({ patch: { summary: value } }),
+          body: JSON.stringify({ patch: { ...(pendingProps() || {}), summary: value } }),
         });
         toast("Заголовок обновлён");
         const review = reviewFromEntry(result.entry);
@@ -1155,8 +1149,6 @@ function showReview(entry, review, undoGroupId, provenance) {
     followUpWrap.hidden =
       type.value === "note" || type.value === "idea_question";
   };
-  const apply = node("button", "Сохранить уточнение", "secondary");
-  apply.type = "submit";
   // Свойства свёрнуты в строку-сводку: карточку открывают ради заметок, а не
   // ради формы. Кнопка-строка разворачивает полный список; когда карточка
   // открыта под уточнение (есть вопрос модели) — свойства сразу развёрнуты.
@@ -1179,7 +1171,6 @@ function showReview(entry, review, undoGroupId, provenance) {
   };
   const paintProps = () => {
     props.hidden = !propsOpen;
-    apply.hidden = !propsOpen;
     propsBar.setAttribute("aria-expanded", String(propsOpen));
     propsBar.classList.toggle("open", propsOpen);
     clear(propsSummary);
@@ -1197,12 +1188,11 @@ function showReview(entry, review, undoGroupId, provenance) {
   updateVisibility();
   propsBar.addEventListener("click", () => { propsOpen = !propsOpen; paintProps(); });
   paintProps();
-  form.append(propsBar, props, apply);
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    if (correctionInFlight) return;
-    correctionInFlight = true;
-    apply.disabled = true;
+  form.append(propsBar, props);
+  // Кнопки «сохранить» нет: свойства уходят на сервер сами, когда карточка
+  // закрывается — крестиком, подложкой или Esc, — как и заметка. Снимок при
+  // открытии нужен, чтобы не слать уточнение, если ничего не трогали.
+  const propsPatch = () => {
     const patch = {
       primaryType: type.value,
       project: project.value.trim() || null,
@@ -1212,29 +1202,41 @@ function showReview(entry, review, undoGroupId, provenance) {
         .filter(Boolean),
       followUp: followUp.value.trim() || null,
       completed: done,
-      note: "Пользователь исправил классификацию",
     };
     if (!scheduleWrap.hidden)
       patch.schedule = { date: date.value || null, time: time.value || null };
+    return patch;
+  };
+  const untouched = JSON.stringify(propsPatch());
+  pendingProps = () =>
+    JSON.stringify(propsPatch()) === untouched ? null : propsPatch();
+  let propsSaving = false;
+  const saveProps = async () => {
+    const patch = pendingProps();
+    if (!patch || propsSaving) return;
+    propsSaving = true;
     try {
       const result = await request(`/api/captures/${entry.id}/corrections`, {
         method: "POST",
-        body: JSON.stringify({ patch }),
+        body: JSON.stringify({
+          patch: { ...patch, note: "Пользователь исправил классификацию" },
+        }),
       });
       toast(
         result.review.level === "high" || result.review.safeNote
           ? "Уточнение сохранено"
           : "Нужно ещё одно уточнение",
       );
-      showReview(result.entry, result.review, result.undoGroupId);
       await load();
     } catch (error) {
       toast(error.message);
     } finally {
-      correctionInFlight = false;
-      apply.disabled = false;
+      propsSaving = false;
     }
-  });
+  };
+  flushCardProps = saveProps;
+  // Enter в поле свойства раньше отправлял форму; отправлять больше нечего.
+  form.addEventListener("submit", (event) => event.preventDefault());
   area.append(form, cardBody(entry));
   // Футер прижат к низу листа и собран в строку: вложения, «когда записано»,
   // источник и удаление — служебный подвал, а не столбик в теле карточки.
@@ -1274,8 +1276,9 @@ function showReview(entry, review, undoGroupId, provenance) {
   const remove = node("button", "Удалить запись", "card-delete");
   remove.type = "button";
   remove.addEventListener("click", async () => {
-    // Записи больше не будет: сохранять в неё заметку незачем.
+    // Записи больше не будет: сохранять в неё заметку и свойства незачем.
     flushCardBody = null;
+    flushCardProps = null;
     remove.disabled = true;
     try {
       await request(`/api/captures/${entry.id}`, { method: "DELETE" });
@@ -2402,10 +2405,12 @@ $("#reset-submit").addEventListener("click", async (event) => {
 $("#ai-provider").addEventListener("change", onProviderChange);
 $("#ai-model").addEventListener("change", onModelChange);
 $("#review-close").addEventListener("click", closeCard);
-// Escape и клик по подложке закрывают карточку без сохранения.
+// Escape и клик по подложке закрывают карточку; что менялось — сохраняется.
 $("#review-dialog").addEventListener("close", () => {
-  // Esc закрывает диалог сам, мимо closeCard: меню разметки убираем и здесь,
-  // иначе оно останется на документе вместе со своим слушателем клавиш.
+  // Esc закрывает диалог сам, мимо closeCard: правки забираем и меню разметки
+  // убираем здесь же, пока поля ещё на месте — иначе меню осталось бы на
+  // документе вместе со своим слушателем клавиш, а правки пропали бы.
+  flushCard();
   closeCardSlashMenu?.();
   clear($("#review"));
 });

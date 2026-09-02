@@ -706,12 +706,12 @@ test("correction from an upcoming card after reload is single-flight", async ({
   const propsBar = page.locator(".props-bar");
   if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
   await page.locator("#review-project").fill("Свой проект");
-  await page
-    .getByRole("button", { name: "Сохранить уточнение" })
-    .evaluate((button) => {
-      button.click();
-      button.click();
-    });
+  // Кнопки «сохранить» нет: свойства уходят при закрытии карточки. Второй
+  // клик по крестику попадает в уже закрывающуюся карточку — уточнение одно.
+  await page.locator("#review-close").evaluate((button) => {
+    button.click();
+    button.click();
+  });
   await expect(page.locator("#todo")).toContainText("Свой проект");
   expect(corrections).toBe(1);
 });
@@ -736,12 +736,10 @@ test("correction from a plan card after reload is single-flight and creates one 
   const propsBar = page.locator(".props-bar");
   if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
   await page.locator("#review-project").fill("Attention проект");
-  await page
-    .getByRole("button", { name: "Сохранить уточнение" })
-    .evaluate((button) => {
-      button.click();
-      button.click();
-    });
+  await page.locator("#review-close").evaluate((button) => {
+    button.click();
+    button.click();
+  });
   await expect(page.locator("#todo")).toContainText("Attention проект");
   const entries = await (await page.request.get("/api/entries")).json(),
     entry = entries.entries.find((candidate) => candidate.raw === raw);
