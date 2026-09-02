@@ -2706,8 +2706,21 @@ dialog form > div {
     min-height: 0;
     padding: 10px 16px;
   }
+  /* Четыре раздела в строку с брендом и хвостом не влезают: первая строка —
+     знак слева и хвост справа, вторая — навигация во всю ширину. Без явного
+     порядка хвост вставал перед брендом. */
   .brand {
     order: 1;
+  }
+  .header-tail {
+    order: 2;
+    margin-left: auto;
+  }
+  header > nav {
+    order: 3;
+    flex-basis: 100%;
+    justify-content: flex-start;
+    gap: 14px;
   }
   .ai-menu {
     order: 3;

@@ -3435,8 +3435,9 @@ function boardAdderEl(column) {
   input.type = "text";
   input.placeholder = "Что сделать?";
   input.hidden = true;
-  const open = () => { button.hidden = true; input.hidden = false; input.focus(); boardState.openAdder = column.id; };
-  const close = () => { input.hidden = true; input.value = ""; button.hidden = false; if (boardState.openAdder === column.id) boardState.openAdder = null; };
+  const adderKey = `column:${column.id ?? "inbox"}`;
+  const open = () => { button.hidden = true; input.hidden = false; input.focus(); boardState.openAdder = adderKey; };
+  const close = () => { input.hidden = true; input.value = ""; button.hidden = false; if (boardState.openAdder === adderKey) boardState.openAdder = null; };
   button.addEventListener("click", open);
   input.addEventListener("keydown", async (event) => {
     if (event.key === "Escape") return close();
@@ -3452,7 +3453,7 @@ function boardAdderEl(column) {
   });
   input.addEventListener("blur", () => { if (!input.value.trim() && !input.disabled) close(); });
   wrap.append(button, input);
-  if (boardState.openAdder === column.id) requestAnimationFrame(open);
+  if (boardState.openAdder === adderKey) requestAnimationFrame(open);
   return wrap;
 }
 function boardGhostColumnEl() {
