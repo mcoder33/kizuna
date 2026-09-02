@@ -5144,7 +5144,7 @@ body {
 .board-page {
   width: 100vw;
   margin-left: calc(50% - 50vw);
-  padding: 0 0 0 clamp(16px, 3vw, 48px);
+  padding: 0 0 0 clamp(24px, 4vw, 64px);
 }
 
 /* переключатель вида и группировка по датам */
