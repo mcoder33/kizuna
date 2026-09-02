@@ -251,28 +251,18 @@
         <option value="CP"></option>
       </datalist>
       <section id="board" class="app-page board-page" hidden>
-        <!-- Разделы дел слева, как в Todoist: «Входящие», «Сегодня»,
-             «Предстоящее», «Все дела» и проекты со счётчиками. -->
-        <aside class="board-rail">
-          <button type="button" class="board-rail-add" id="board-quick-add">
-            <span class="plus" aria-hidden="true">+</span>Дело
-          </button>
-          <nav class="board-rail-nav" id="board-rail" aria-label="Разделы дел"></nav>
-        </aside>
-        <div class="board-main">
-          <div class="page-heading">
-            <p class="eyebrow">ДЕЛА · ДОСКА</p>
-            <h2 id="board-title">Все дела</h2>
-            <p id="board-subtitle">Открытые дела колонками: тяните карточки, добавляйте прямо в колонку. Новое без колонки попадает во «Входящие».</p>
-          </div>
-          <div class="board-controls">
-            <div class="reports-tabs board-views" role="group" aria-label="Вид доски">
-              <button type="button" data-board-view="columns" aria-pressed="true">Свои колонки</button>
-              <button type="button" data-board-view="dates" aria-pressed="false">По датам</button>
-            </div>
-          </div>
-          <div id="board-columns" class="board-columns" aria-label="Колонки доски"></div>
+        <div class="page-heading">
+          <p class="eyebrow">ДЕЛА · ДОСКА</p>
+          <h2>Доска</h2>
+          <p>Открытые дела колонками: тяните карточки, добавляйте прямо в колонку. Новое без колонки попадает во «Входящие».</p>
         </div>
+        <div class="board-controls">
+          <div class="reports-tabs board-views" role="group" aria-label="Вид доски">
+            <button type="button" data-board-view="columns" aria-pressed="true">Свои колонки</button>
+            <button type="button" data-board-view="dates" aria-pressed="false">По датам</button>
+          </div>
+        </div>
+        <div id="board-columns" class="board-columns" aria-label="Колонки доски"></div>
       </section>
 
       <section id="reports" class="app-page reports-page" hidden>

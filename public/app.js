@@ -3228,12 +3228,8 @@ async function uploadPendingShots(captureId) {
 // Колонки — как разделы в Todoist: свои, с переименованием и перетаскиванием.
 // Карточка — открытое дело; клик по названию открывает обычную карточку записи,
 // кружок закрывает дело, перенос между колонками сохраняется на сервере.
-const boardState = { data: null, drag: null, openAdder: null, view: "columns", scope: "all" };
-try {
-  if (localStorage.getItem("kizuna-board-view") === "dates") boardState.view = "dates";
-  const scope = localStorage.getItem("kizuna-board-scope");
-  if (scope) boardState.scope = scope;
-} catch {}
+const boardState = { data: null, drag: null, openAdder: null, view: "columns" };
+try { if (localStorage.getItem("kizuna-board-view") === "dates") boardState.view = "dates"; } catch {}
 const boardDropHint = (() => { const hint = document.createElement("div"); hint.className = "board-drop"; return hint; })();
 
 function boardCardStatus(card) {
@@ -3398,14 +3394,7 @@ function boardColumnEl(column) {
     const { index } = boardDropIndex(list, event.clientY);
     const captureId = boardState.drag.captureId;
     boardDropHint.remove();
-    // Видимый список может быть отфильтрован разделом: позиция для сервера —
-    // перед той же соседней карточкой в полном порядке колонки.
-    const visible = [...list.querySelectorAll(".board-card:not(.dragging)")].map((element) => element.dataset.captureId);
-    const before = visible[index] || null;
-    const full = (boardState.data.columns.find((item) => item.id === column.id)?.cards || [])
-      .map((card) => card.captureId).filter((id) => id !== captureId);
-    const serverIndex = before && full.includes(before) ? full.indexOf(before) : full.length;
-    boardMove({ captureId, columnId: column.id, index: serverIndex });
+    boardMove({ captureId, columnId: column.id, index });
   });
   // Перенос колонок: подсветка стороны, куда встанет колонка.
   element.addEventListener("dragover", (event) => {
@@ -3604,126 +3593,16 @@ function boardDateAdderEl(bucket) {
   if (boardState.openAdder === openAdderKey) requestAnimationFrame(open);
   return wrap;
 }
-// ── разделы дел (рейка слева) ───────────────────────────────────────────────
-// «Входящие» — дела без колонки, «Сегодня» — на сегодня и просроченные,
-// «Предстоящее» — со сроком впереди, проекты — по упоминанию в записи.
-const BOARD_SCOPES = [
-  { key: "all", label: "Все дела", icon: "all" },
-  { key: "inbox", label: "Входящие", icon: "inbox" },
-  { key: "today", label: "Сегодня", icon: "today" },
-  { key: "upcoming", label: "Предстоящее", icon: "upcoming" },
-];
-const RAIL_ICONS = {
-  all: '<path d="M3 4.5h10M3 8h10M3 11.5h6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>',
-  inbox: '<path d="M2.5 9.5V12a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V9.5M2.5 9.5h3l1 1.6h3l1-1.6h3M2.5 9.5 4.2 4h7.6l1.7 5.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>',
-  today: '<rect x="2.5" y="3.5" width="11" height="10" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 6.8h11M5.5 2v2.6M10.5 2v2.6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="10.3" r="1.2" fill="currentColor"/>',
-  upcoming: '<rect x="2.5" y="3.5" width="11" height="10" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 6.8h11M6.2 6.8v6.7M9.8 6.8v6.7M2.5 10h11" fill="none" stroke="currentColor" stroke-width="1.1"/>',
-};
-function boardAllCards(data) {
-  return data.columns.flatMap((column) => column.cards);
-}
-function boardProjects(data) {
-  const projects = new Map();
-  for (const card of boardAllCards(data))
-    for (const name of card.projects) {
-      const key = name.toLowerCase();
-      const known = projects.get(key);
-      if (known) known.count += 1;
-      else projects.set(key, { name, count: 1 });
-    }
-  return [...projects.values()].sort((left, right) => right.count - left.count || left.name.localeCompare(right.name));
-}
-function boardCardInScope(card, scope, data, inboxIds) {
-  if (scope === "all") return true;
-  if (scope === "inbox") return inboxIds.has(card.captureId);
-  if (scope === "today") return Boolean(card.due?.date) && card.due.date <= data.today;
-  if (scope === "upcoming") return Boolean(card.due?.date) && card.due.date > data.today;
-  if (scope.startsWith("project:")) {
-    const wanted = scope.slice("project:".length).toLowerCase();
-    return card.projects.some((name) => name.toLowerCase() === wanted);
-  }
-  return true;
-}
-function boardScoped(data) {
-  const inboxIds = new Set((data.columns.find((column) => column.id === null)?.cards || []).map((card) => card.captureId));
-  return {
-    ...data,
-    columns: data.columns.map((column) => ({
-      ...column,
-      cards: column.cards.filter((card) => boardCardInScope(card, boardState.scope, data, inboxIds)),
-    })),
-  };
-}
-function boardScopeHeading(scope, data) {
-  const total = boardAllCards(boardScoped(data)).length;
-  const count = pluralRu(total, "дело", "дела", "дел");
-  if (scope === "inbox") return { title: "Входящие", subtitle: `Дела без колонки — ${total} ${count}. Разложите их по колонкам или оставьте здесь.` };
-  if (scope === "today") return { title: "Сегодня", subtitle: `На сегодня и просроченные — ${total} ${count}.` };
-  if (scope === "upcoming") return { title: "Предстоящее", subtitle: `Со сроком после сегодня — ${total} ${count}.` };
-  if (scope.startsWith("project:")) return { title: scope.slice("project:".length), subtitle: `Дела проекта — ${total} ${count}.` };
-  return { title: "Все дела", subtitle: "Открытые дела колонками: тяните карточки, добавляйте прямо в колонку. Новое без колонки попадает во «Входящие»." };
-}
-function boardRailItem({ key, label, icon, count }) {
-  const button = node("button", undefined, "board-rail-item");
-  button.type = "button";
-  button.dataset.scope = key;
-  button.setAttribute("aria-current", String(boardState.scope === key));
-  const glyph = node("span", undefined, `glyph${icon === "hash" ? " hash" : ""}`);
-  glyph.setAttribute("aria-hidden", "true");
-  if (icon === "hash") glyph.textContent = "#";
-  else glyph.innerHTML = `<svg viewBox="0 0 16 16">${RAIL_ICONS[icon]}</svg>`;
-  button.append(glyph, node("span", label, "lbl"), node("span", String(count), "n"));
-  button.addEventListener("click", () => {
-    boardState.scope = key;
-    try { localStorage.setItem("kizuna-board-scope", key); } catch {}
-    renderBoard(boardState.data);
-  });
-  return button;
-}
-function renderRail(data) {
-  const rail = $("#board-rail");
-  clear(rail);
-  const cards = boardAllCards(data);
-  const inboxCount = data.columns.find((column) => column.id === null)?.cards.length || 0;
-  const counts = {
-    all: cards.length,
-    inbox: inboxCount,
-    today: cards.filter((card) => card.due?.date && card.due.date <= data.today).length,
-    upcoming: cards.filter((card) => card.due?.date && card.due.date > data.today).length,
-  };
-  for (const scope of BOARD_SCOPES) rail.append(boardRailItem({ ...scope, count: counts[scope.key] }));
-  const projects = boardProjects(data);
-  if (projects.length) {
-    rail.append(node("p", "Проекты", "board-rail-group"));
-    for (const project of projects)
-      rail.append(boardRailItem({ key: `project:${project.name}`, label: project.name, icon: "hash", count: project.count }));
-  }
-}
 function renderBoard(data) {
-  renderRail(data);
-  // Раздел с исчезнувшим проектом ведёт ко всем делам, а не к пустой доске.
-  if (boardState.scope.startsWith("project:") && !boardProjects(data).some((project) => `project:${project.name}` === boardState.scope))
-    boardState.scope = "all";
-  const heading = boardScopeHeading(boardState.scope, data);
-  $("#board-title").textContent = heading.title;
-  $("#board-subtitle").textContent = heading.subtitle;
-  const scoped = boardScoped(data);
   const wrap = $("#board-columns");
   clear(wrap);
   if (boardState.view === "dates") {
-    for (const bucket of boardDateBuckets(scoped)) wrap.append(boardDateColumnEl(bucket));
+    for (const bucket of boardDateBuckets(data)) wrap.append(boardDateColumnEl(bucket));
   } else {
-    for (const column of scoped.columns) wrap.append(boardColumnEl(column));
+    for (const column of data.columns) wrap.append(boardColumnEl(column));
     wrap.append(boardGhostColumnEl());
   }
 }
-// «+ Дело» в рейке открывает быстрый ввод во «Входящих» (или в «Сегодня» на
-// раскладке по датам) — как «Add task» в Todoist, без отдельного окна.
-$("#board-quick-add")?.addEventListener("click", () => {
-  if (!boardState.data) return;
-  boardState.openAdder = boardState.view === "dates" ? "date:today" : "column:inbox";
-  renderBoard(boardState.data);
-});
 for (const button of document.querySelectorAll("[data-board-view]"))
   button.addEventListener("click", () => {
     boardState.view = button.dataset.boardView;
