@@ -4899,6 +4899,12 @@ dialog form > div {
   align-items: flex-start;
   overflow-x: auto;
   padding: 4px 2px 26px;
+  /* Полосу прокрутки не показываем: колесо, трекпад и перетаскивание работают,
+     а серый столбик под колонками читался как чужой элемент интерфейса. */
+  scrollbar-width: none;
+}
+.board-columns::-webkit-scrollbar {
+  display: none;
 }
 .board-column {
   flex: 0 0 280px;
