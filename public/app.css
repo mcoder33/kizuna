@@ -4859,24 +4859,29 @@ dialog form > div {
   background: none;
   cursor: zoom-in;
 }
+/* Крестик лежит на самом снимке, а снимок бывает любым: тёмный кружок со
+   светлой каймой читается и на тёмном скриншоте, и на светлом — тема тут ни
+   при чём. */
 .capture-shot .shot-remove {
   position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 18px;
-  height: 18px;
+  top: 3px;
+  right: 3px;
+  width: 20px;
+  height: 20px;
   border-radius: 99px;
   border: 0;
-  background: var(--n-0-a40);
-  color: var(--n-100);
-  font-size: 12px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.92), 0 1px 3px rgba(0, 0, 0, 0.45);
+  font-size: 14px;
+  font-weight: 600;
   line-height: 1;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
 }
-.capture-shot .shot-remove:hover { background: var(--n-0-a27); }
+.capture-shot .shot-remove:hover { background: rgba(0, 0, 0, 0.88); }
 .report-chart .seg {
   width: auto;
   height: auto;
