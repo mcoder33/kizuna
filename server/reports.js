@@ -273,6 +273,10 @@ export function dayReport(db, { date, now, timeZone, userId }) {
     .filter(entry => entry.classification.primaryType === 'task' && !entry.classification.completed && scheduleOf(entry)?.date === date && date < today && !(entry.closed && entry.closedAt && new Date(entry.closedAt) < endAt))
     .map(entry => ({ captureId: entry.id, title: summaryOf(entry), closedLater: entry.closed }));
   const meetings = entries.filter(entry => entry.classification.primaryType === 'meeting_event' && scheduleOf(entry)?.date === date).length;
-  const hasOlder = entries.some(entry => new Date(entry.createdAt) < startAt);
-  return { date, timeZone, latest: shiftDate(today, -1), hasOlder, meetings, done, missed, feed };
+  // Назад можно, пока за показанным днём есть записи; с сегодняшнего дня —
+  // всегда хотя бы на вчера, иначе у свежего журнала стрелка мертва.
+  const hasOlder = entries.some(entry => new Date(entry.createdAt) < startAt) || date === today;
+  // Крайний день — сегодняшний: он ещё идёт, но «что сделано к этому часу»
+  // спрашивают именно днём. По умолчанию открывается вчера — законченный день.
+  return { date, timeZone, latest: today, hasOlder, meetings, done, missed, feed };
 }

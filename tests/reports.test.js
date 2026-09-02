@@ -68,7 +68,7 @@ test('day report keeps day boundaries: feed, done, missed and defaults',async()=
   assert.equal(todayReport.missed.length,0);
   const yesterdayReport=(await api.get('/api/reports/day').expect(200)).body;
   assert.equal(yesterdayReport.date,yesterday);
-  assert.equal(yesterdayReport.latest,yesterday);
+  assert.equal(yesterdayReport.latest,day);
   assert.equal(yesterdayReport.feed.length,0);
   assert.deepEqual(yesterdayReport.missed.map(row=>({captureId:row.captureId,closedLater:row.closedLater})),[{captureId:missed.id,closedLater:false}]);
   assert.equal(yesterdayReport.hasOlder,false);

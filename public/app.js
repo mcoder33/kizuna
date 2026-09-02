@@ -643,8 +643,6 @@ async function load() {
     request("/api/entries?limit=100"),
   ]);
   render({ ...day, entries: entries.entries });
-}
-// Движение в приложении одно на всё: предмет не летит через экран и не растёт
   // Доска и «Обзор» живут своими запросами: правка в карточке или доразбор
   // записи должны быть видны сразу там, откуда карточку открыли, а не после
   // ухода на другую страницу и обратно. Перечитываются только уже собранные —
@@ -652,6 +650,8 @@ async function load() {
   const page = document.querySelector(".app-page:not([hidden])")?.id;
   if (page === "board" && boardState.data) await loadBoard();
   if (page === "reports" && reportsState.loaded) await loadReports();
+}
+// Движение в приложении одно на всё: предмет не летит через экран и не растёт
 // на глазах — он тихо проявляется там, где его посчитала раскладка. Тот же
 // характер, что у кольца в разговоре: мягко, коротко и без рывка.
 const APPEAR_EASING = "cubic-bezier(0.16, 1, 0.3, 1)";
@@ -3081,7 +3081,8 @@ function renderReportsDay(area, data) {
   reportsState.dayDate = data.date;
   const weekday = reportDateLabel(data.date, { weekday: "short" });
   const label = `${weekday}, ${reportDateLabel(data.date)}`;
-  $("#reports-day-label").textContent = data.date === data.latest ? `вчера — ${label}` : label;
+  $("#reports-day-label").textContent =
+    data.date === data.latest ? `сегодня — ${label}` : data.date === shiftDate(data.latest, -1) ? `вчера — ${label}` : label;
   $("#reports-day-prev").disabled = !data.hasOlder;
   $("#reports-day-next").disabled = data.date >= data.latest;
   const counters = node("div", undefined, "report-counters");
@@ -3134,9 +3135,9 @@ async function loadReports() {
       if (tab === "life") renderReportsLife(area, data);
       else renderReportsService(area, data);
     }
+    reportsState.loaded = true;
   } catch (error) {
     clear(area);
-    reportsState.loaded = true;
     area.append(node("p", error.message, "empty"));
   }
 }
@@ -3493,16 +3494,16 @@ function boardAdderEl(column) {
     try {
       const created = await request("/api/captures", { method: "POST", body: JSON.stringify(withProvider({ raw, primaryType: "todo" })) });
       await request("/api/board/move", { method: "POST", body: JSON.stringify({ captureId: created.entry.id, columnId: column.id, index: 100000 }) });
-    } catch (error) { toast(error.message); }
-    await loadBoard();
       // Дело ушло — текст больше не черновик; при ошибке он остаётся в поле.
       input.value = "";
-  });
+    } catch (error) { toast(error.message); }
     // Отключение поля на время запроса снимает с него фокус; возвращаем до
     // перерисовки, чтобы новое поле открылось под каретку — следующее дело
     // набирается без клика.
     input.disabled = false;
     input.focus();
+    await loadBoard();
+  });
   input.addEventListener("blur", () => { if (!input.value.trim() && !input.disabled) close(); });
   wrap.append(button, input);
   if (boardState.openAdder === adderKey) {
@@ -3651,8 +3652,6 @@ function boardDateAdderEl(bucket) {
 }
 function renderBoard(data) {
   const wrap = $("#board-columns");
-  clear(wrap);
-  if (boardState.view === "dates") {
   // Перерисовка приходит и посреди набора нового дела (доразбор записи после
   // быстрого добавления перечитывает доску). Снятие поля из DOM даёт blur, а
   // тот закрывает пустое поле — открытость, черновик и фокус возвращаем.
@@ -3664,8 +3663,10 @@ function renderBoard(data) {
     boardState.adderDraft = openInput.value;
     boardState.adderFocus = document.activeElement === openInput;
   }
-    for (const bucket of boardDateBuckets(data)) wrap.append(boardDateColumnEl(bucket));
+  clear(wrap);
   boardState.openAdder = openAdder;
+  if (boardState.view === "dates") {
+    for (const bucket of boardDateBuckets(data)) wrap.append(boardDateColumnEl(bucket));
   } else {
     for (const column of data.columns) wrap.append(boardColumnEl(column));
     wrap.append(boardGhostColumnEl());
@@ -3721,11 +3722,11 @@ async function loadBoard() {
   try {
     const data = await request("/api/board");
     boardState.data = data;
-    renderBoard(data);
-  } catch (error) {
     // «Сегодня» могли ещё не открывать: без даты дня сроки на доске выходили
     // бы ISO-строкой вместо «завтра» и «05.09».
     currentDayDate ||= data.today;
+    renderBoard(data);
+  } catch (error) {
     clear(wrap);
     wrap.append(node("p", error.message, "empty"));
   }
