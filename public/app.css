@@ -4890,3 +4890,214 @@ dialog form > div {
   position: relative;
   top: 1.5px;
 }
+
+/* ── доска: канбан по открытым делам ─────────────────────────────────────────
+   Колонки едут горизонтально; карточка — тихая, статус словом, тянется мышью. */
+.board-columns {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  overflow-x: auto;
+  padding: 4px 2px 26px;
+}
+.board-column {
+  flex: 0 0 280px;
+  background: var(--n-98-4);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  padding: 9px 9px 11px;
+  min-height: 64px;
+}
+.board-column.dragging-column { opacity: 0.55; }
+.board-column.col-drop-left { box-shadow: -3px 0 0 var(--focus); }
+.board-column.col-drop-right { box-shadow: 3px 0 0 var(--focus); }
+.board-column.ghost {
+  background: none;
+  border: 1.5px dashed var(--line);
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+}
+.board-col-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 5px 9px;
+  cursor: grab;
+}
+.board-column.inbox .board-col-head { cursor: default; }
+.board-col-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: -0.1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-col-count { font-size: 11.5px; color: var(--n-72); flex: none; }
+.board-col-input {
+  font: inherit;
+  font-size: 13px;
+  width: 100%;
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--paper);
+  color: var(--ink);
+}
+.board-menu { margin-left: auto; position: relative; flex: none; }
+.board-menu summary {
+  list-style: none;
+  cursor: pointer;
+  color: var(--n-72);
+  border-radius: 6px;
+  padding: 0 7px 3px;
+  font-size: 15px;
+  line-height: 1;
+}
+.board-menu summary::-webkit-details-marker { display: none; }
+.board-menu summary:hover { background: var(--n-25-a8); color: var(--ink); }
+.board-menu-popover {
+  position: absolute;
+  right: 0;
+  top: 22px;
+  z-index: 5;
+  display: grid;
+  min-width: 170px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 5px;
+  box-shadow: 0 12px 30px var(--n-23-a22);
+}
+.board-menu-popover button {
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  border-radius: 7px;
+  padding: 7px 9px;
+  cursor: pointer;
+}
+.board-menu-popover button:hover { background: var(--hairline); }
+.board-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 10px;
+}
+.board-card {
+  display: flex;
+  gap: 9px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 11px 9px 10px;
+  cursor: grab;
+  box-shadow: 0 1px 3px var(--n-25-a8);
+}
+.board-card.dragging { opacity: 0.45; }
+.board-done {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border: 1.4px solid var(--n-76);
+  border-radius: 99px;
+  background: none;
+  flex: none;
+  cursor: pointer;
+  color: transparent;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+}
+.board-done:hover { border-color: var(--green); color: var(--green); }
+.board-done::before { content: "✓"; }
+.board-body { min-width: 0; flex: 1; }
+.board-title {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.35;
+  color: var(--ink);
+  padding: 0;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.board-title:hover { text-decoration: underline; text-decoration-color: var(--n-79); text-underline-offset: 3px; }
+.board-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 9px;
+  align-items: center;
+  margin-top: 5px;
+  font-size: 11.5px;
+}
+.board-meta .entry-status { font-size: 11.5px; gap: 4px; }
+.board-meta .entry-status svg { width: 12px; height: 12px; }
+.btag { color: var(--n-62); white-space: nowrap; }
+.btag.urgent { color: var(--orange-54); font-weight: 600; }
+.board-drop {
+  height: 3px;
+  border-radius: 99px;
+  background: var(--focus);
+  margin: -1px 3px;
+  flex: none;
+}
+.board-add { margin-top: 9px; padding: 0 2px; }
+.board-add-button {
+  font: inherit;
+  font-size: 12.5px;
+  border: 0;
+  background: none;
+  color: var(--n-62);
+  cursor: pointer;
+  padding: 5px 6px;
+  border-radius: 7px;
+}
+.board-add-button:hover { background: var(--n-25-a8); color: var(--ink); }
+.board-add input,
+.board-column.ghost input {
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+}
+.board-column.ghost .board-add-button { margin: 2px; }
+@media (max-width: 760px) {
+  .board-column { flex-basis: 252px; }
+}
+
+/* заголовок карточки правится на месте: поле выглядит тем же заголовком */
+#review-dialog .review h2.card-title {
+  cursor: text;
+  border-radius: 6px;
+}
+#review-dialog .review h2.card-title:hover { background: var(--nt-hover); }
+#review-dialog .card-title-edit {
+  display: block;
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  border-radius: 6px;
+  background: var(--nt-hover);
+  font-family: inherit;
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--nt-text);
+  resize: none;
+  overflow: hidden;
+}

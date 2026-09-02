@@ -208,6 +208,7 @@ function updatePageFromHash() {
   // страница может висеть открытой долго.
   if (activePage === "settings") loadUsage();
   if (activePage === "admin") loadAdmin();
+  if (activePage === "board") loadBoard();
   // «Обзор» пересчитывается при каждом открытии: цифры меняются от каждой
   // записи, а страница может быть открыта спустя часы.
   if (activePage === "reports") loadReports();
@@ -1025,7 +1026,55 @@ function showReview(entry, review, undoGroupId, provenance) {
     closeCard();
     return;
   }
-  area.append(markdownNode("h2", c.summary, undefined, { inline: true, firstLine: true }));
+  // Заголовок правится на месте: клик превращает его в поле, Enter сохраняет
+  // уточнением (правда человека — факт), Escape возвращает как было.
+  const cardTitle = markdownNode("h2", c.summary, "card-title", { inline: true, firstLine: true });
+  cardTitle.title = "Изменить заголовок";
+  cardTitle.tabIndex = 0;
+  const startTitleEdit = () => {
+    const editor = document.createElement("textarea");
+    editor.className = "card-title-edit";
+    editor.value = c.summary;
+    editor.rows = 1;
+    cardTitle.replaceWith(editor);
+    const fit = () => { editor.style.height = "auto"; editor.style.height = `${editor.scrollHeight}px`; };
+    editor.addEventListener("input", fit);
+    editor.focus();
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    fit();
+    let settled = false;
+    const cancel = () => { settled = true; editor.replaceWith(cardTitle); };
+    const save = async () => {
+      if (settled) return;
+      settled = true;
+      const value = editor.value.trim();
+      if (!value || value === c.summary) { editor.replaceWith(cardTitle); return; }
+      editor.disabled = true;
+      try {
+        const result = await request(`/api/captures/${entry.id}/corrections`, {
+          method: "POST",
+          body: JSON.stringify({ patch: { summary: value } }),
+        });
+        toast("Заголовок обновлён");
+        const review = reviewFromEntry(result.entry);
+        showCorrection(result.entry, review.level === "high" ? undefined : review);
+        load();
+      } catch (error) {
+        toast(error.message);
+        editor.replaceWith(cardTitle);
+      }
+    };
+    editor.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancel(); return; }
+      if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); save(); }
+    });
+    editor.addEventListener("blur", save);
+  };
+  cardTitle.addEventListener("click", startTitleEdit);
+  cardTitle.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); startTitleEdit(); }
+  });
+  area.append(cardTitle);
   // Статус — первой строкой свойств: это то, что хочется узнать, открыв запись.
   const entryState = entryStatus(entry);
   if (entryState) {
@@ -3167,5 +3216,274 @@ async function uploadPendingShots(captureId) {
     } finally {
       URL.revokeObjectURL(shot.url);
     }
+  }
+}
+
+// ── доска: канбан по открытым делам ──────────────────────────────────────────
+// Колонки — как разделы в Todoist: свои, с переименованием и перетаскиванием.
+// Карточка — открытое дело; клик по названию открывает обычную карточку записи,
+// кружок закрывает дело, перенос между колонками сохраняется на сервере.
+const boardState = { data: null, drag: null, openAdder: null };
+const boardDropHint = (() => { const hint = document.createElement("div"); hint.className = "board-drop"; return hint; })();
+
+function boardCardStatus(card) {
+  const today = boardState.data?.today || currentDayDate;
+  const date = card.due?.date || null;
+  if (!date) return { key: "none", label: "Без срока", icon: "none" };
+  if (today && date < today) return { key: "late", label: "Просрочено", icon: "late" };
+  if (today && date === today) return { key: "today", label: "Сегодня", icon: "clock" };
+  return { key: "ontime", label: "В срок", icon: "clock" };
+}
+async function completeBoardCard(card, element, button) {
+  button.disabled = true;
+  try {
+    for (const projectionId of card.projectionIds)
+      await request(`/api/projections/${projectionId}/complete`, { method: "POST", body: "{}" });
+    toast("Отмечено как готовое");
+    element.remove();
+    loadBoard();
+  } catch (error) {
+    toast(error.message);
+    button.disabled = false;
+  }
+}
+function boardCardEl(card, column) {
+  const element = node("div", undefined, "board-card");
+  element.draggable = true;
+  element.dataset.captureId = card.captureId;
+  const done = node("button", undefined, "board-done");
+  done.type = "button";
+  done.title = "Готово";
+  done.setAttribute("aria-label", `Готово: ${card.title}`);
+  done.addEventListener("click", (event) => { event.stopPropagation(); completeBoardCard(card, element, done); });
+  const body = node("div", undefined, "board-body");
+  const title = node("button", card.title.split("\n")[0], "board-title");
+  title.type = "button";
+  title.addEventListener("click", () => openReportEntry(card.captureId));
+  const meta = node("div", undefined, "board-meta");
+  meta.append(statusBadge(boardCardStatus(card)));
+  const due = card.due ? scheduleLabel({ state: "ok", date: card.due.date, time: card.due.time }) : null;
+  if (due && card.due.date > (boardState.data?.today || "")) meta.append(node("span", `срок: ${due}`, "btag"));
+  if (card.priority === "high") meta.append(node("span", "важно", "btag urgent"));
+  if (card.priority === "low") meta.append(node("span", "не срочно", "btag"));
+  for (const project of card.projects) meta.append(node("span", project, "btag"));
+  for (const tag of card.tags) meta.append(node("span", `#${tag}`, "btag"));
+  body.append(title, meta);
+  element.append(done, body);
+  element.addEventListener("dragstart", (event) => {
+    boardState.drag = { type: "card", captureId: card.captureId, from: column.id };
+    event.dataTransfer.setData("text/plain", card.captureId);
+    event.dataTransfer.effectAllowed = "move";
+    requestAnimationFrame(() => element.classList.add("dragging"));
+  });
+  element.addEventListener("dragend", () => {
+    element.classList.remove("dragging");
+    boardDropHint.remove();
+    boardState.drag = null;
+  });
+  return element;
+}
+// Позиция вставки — по вертикали мыши между серединами карточек.
+function boardDropIndex(list, clientY) {
+  const cards = [...list.querySelectorAll(".board-card:not(.dragging)")];
+  for (const [index, card] of cards.entries()) {
+    const rect = card.getBoundingClientRect();
+    if (clientY < rect.top + rect.height / 2) return { index, before: card };
+  }
+  return { index: cards.length, before: null };
+}
+async function boardMove(body) {
+  try {
+    await request("/api/board/move", { method: "POST", body: JSON.stringify(body) });
+  } catch (error) {
+    toast(error.message);
+  }
+  loadBoard();
+}
+function boardColumnEl(column) {
+  const element = node("section", undefined, `board-column${column.id === null ? " inbox" : ""}`);
+  element.dataset.columnId = column.id ?? "";
+  const head = node("div", undefined, "board-col-head");
+  const name = node("span", column.name, "board-col-name");
+  head.append(name, node("span", String(column.cards.length), "board-col-count"));
+  if (column.id !== null) {
+    head.draggable = true;
+    head.addEventListener("dragstart", (event) => {
+      boardState.drag = { type: "column", columnId: column.id };
+      event.dataTransfer.setData("text/plain", column.id);
+      event.dataTransfer.effectAllowed = "move";
+      element.classList.add("dragging-column");
+      event.stopPropagation();
+    });
+    head.addEventListener("dragend", () => {
+      element.classList.remove("dragging-column");
+      boardState.drag = null;
+      for (const other of document.querySelectorAll(".board-column")) other.classList.remove("col-drop-left", "col-drop-right");
+    });
+    // Меню колонки: переименовать или удалить (дела вернутся во «Входящие»).
+    const menu = node("details", undefined, "board-menu");
+    const summary = node("summary", "⋯");
+    summary.setAttribute("aria-label", `Меню колонки ${column.name}`);
+    const popover = node("div", undefined, "board-menu-popover");
+    const rename = node("button", "Переименовать");
+    rename.type = "button";
+    rename.addEventListener("click", () => {
+      menu.removeAttribute("open");
+      const input = document.createElement("input");
+      input.value = column.name;
+      input.className = "board-col-input";
+      input.maxLength = 40;
+      name.replaceWith(input);
+      input.focus();
+      input.select();
+      const cancel = () => loadBoard();
+      input.addEventListener("keydown", async (event) => {
+        if (event.key === "Escape") return cancel();
+        if (event.key !== "Enter") return;
+        const value = input.value.trim();
+        if (!value || value === column.name) return cancel();
+        try {
+          await request(`/api/board/columns/${column.id}`, { method: "PATCH", body: JSON.stringify({ name: value }) });
+        } catch (error) { toast(error.message); }
+        loadBoard();
+      });
+      input.addEventListener("blur", cancel);
+    });
+    const removeColumn = node("button", "Удалить колонку");
+    removeColumn.type = "button";
+    removeColumn.addEventListener("click", async () => {
+      menu.removeAttribute("open");
+      try {
+        const result = await request(`/api/board/columns/${column.id}`, { method: "DELETE" });
+        toast(result.movedToInbox ? `Колонка удалена, дел во «Входящих»: +${result.movedToInbox}` : "Колонка удалена");
+      } catch (error) { toast(error.message); }
+      loadBoard();
+    });
+    popover.append(rename, removeColumn);
+    menu.append(summary, popover);
+    head.append(menu);
+  }
+  const list = node("div", undefined, "board-cards");
+  for (const card of column.cards) list.append(boardCardEl(card, column));
+  list.addEventListener("dragover", (event) => {
+    if (boardState.drag?.type !== "card") return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const { before } = boardDropIndex(list, event.clientY);
+    if (before) list.insertBefore(boardDropHint, before);
+    else list.append(boardDropHint);
+  });
+  list.addEventListener("dragleave", (event) => {
+    if (event.relatedTarget instanceof Element && list.contains(event.relatedTarget)) return;
+    boardDropHint.remove();
+  });
+  list.addEventListener("drop", (event) => {
+    if (boardState.drag?.type !== "card") return;
+    event.preventDefault();
+    const { index } = boardDropIndex(list, event.clientY);
+    const captureId = boardState.drag.captureId;
+    boardDropHint.remove();
+    boardMove({ captureId, columnId: column.id, index });
+  });
+  // Перенос колонок: подсветка стороны, куда встанет колонка.
+  element.addEventListener("dragover", (event) => {
+    if (boardState.drag?.type !== "column" || column.id === boardState.drag.columnId) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const rect = element.getBoundingClientRect();
+    const left = event.clientX < rect.left + rect.width / 2;
+    element.classList.toggle("col-drop-left", left);
+    element.classList.toggle("col-drop-right", !left);
+  });
+  element.addEventListener("dragleave", () => element.classList.remove("col-drop-left", "col-drop-right"));
+  element.addEventListener("drop", async (event) => {
+    if (boardState.drag?.type !== "column") return;
+    event.preventDefault();
+    const rect = element.getBoundingClientRect();
+    const left = event.clientX < rect.left + rect.width / 2;
+    const real = boardState.data.columns.filter((item) => item.id !== null).map((item) => item.id);
+    const from = real.indexOf(boardState.drag.columnId);
+    let index = column.id === null ? 0 : real.indexOf(column.id) + (left ? 0 : 1);
+    if (from >= 0 && from < index) index -= 1;
+    element.classList.remove("col-drop-left", "col-drop-right");
+    try {
+      await request(`/api/board/columns/${boardState.drag.columnId}`, { method: "PATCH", body: JSON.stringify({ index }) });
+    } catch (error) { toast(error.message); }
+    loadBoard();
+  });
+  element.append(head, list, boardAdderEl(column));
+  return element;
+}
+// Быстрое добавление дела прямо в колонку: Enter сохраняет и оставляет поле
+// открытым для следующего (как в Todoist), Escape закрывает.
+function boardAdderEl(column) {
+  const wrap = node("div", undefined, "board-add");
+  const button = node("button", "+ Дело", "board-add-button");
+  button.type = "button";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = "Что сделать?";
+  input.hidden = true;
+  const open = () => { button.hidden = true; input.hidden = false; input.focus(); boardState.openAdder = column.id; };
+  const close = () => { input.hidden = true; input.value = ""; button.hidden = false; if (boardState.openAdder === column.id) boardState.openAdder = null; };
+  button.addEventListener("click", open);
+  input.addEventListener("keydown", async (event) => {
+    if (event.key === "Escape") return close();
+    if (event.key !== "Enter") return;
+    const raw = input.value.trim();
+    if (!raw) return close();
+    input.disabled = true;
+    try {
+      const created = await request("/api/captures", { method: "POST", body: JSON.stringify(withProvider({ raw, primaryType: "todo" })) });
+      await request("/api/board/move", { method: "POST", body: JSON.stringify({ captureId: created.entry.id, columnId: column.id, index: 100000 }) });
+    } catch (error) { toast(error.message); }
+    await loadBoard();
+  });
+  input.addEventListener("blur", () => { if (!input.value.trim() && !input.disabled) close(); });
+  wrap.append(button, input);
+  if (boardState.openAdder === column.id) requestAnimationFrame(open);
+  return wrap;
+}
+function boardGhostColumnEl() {
+  const element = node("section", undefined, "board-column ghost");
+  const button = node("button", "+ Колонка", "board-add-button");
+  button.type = "button";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = "Название колонки";
+  input.maxLength = 40;
+  input.hidden = true;
+  button.addEventListener("click", () => { button.hidden = true; input.hidden = false; input.focus(); });
+  const close = () => { input.hidden = true; input.value = ""; button.hidden = false; };
+  input.addEventListener("keydown", async (event) => {
+    if (event.key === "Escape") return close();
+    if (event.key !== "Enter") return;
+    const name = input.value.trim();
+    if (!name) return close();
+    try {
+      await request("/api/board/columns", { method: "POST", body: JSON.stringify({ name }) });
+    } catch (error) { toast(error.message); }
+    loadBoard();
+  });
+  input.addEventListener("blur", () => { if (!input.value.trim()) close(); });
+  element.append(button, input);
+  return element;
+}
+function renderBoard(data) {
+  const wrap = $("#board-columns");
+  clear(wrap);
+  for (const column of data.columns) wrap.append(boardColumnEl(column));
+  wrap.append(boardGhostColumnEl());
+}
+async function loadBoard() {
+  const wrap = $("#board-columns");
+  if (!wrap.childNodes.length) wrap.append(node("p", "Собираем доску…", "empty"));
+  try {
+    const data = await request("/api/board");
+    boardState.data = data;
+    renderBoard(data);
+  } catch (error) {
+    clear(wrap);
+    wrap.append(node("p", error.message, "empty"));
   }
 }

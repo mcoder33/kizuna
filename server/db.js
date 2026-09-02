@@ -926,6 +926,8 @@ const ownedRows = {
   daily_briefs: ['user_id IS ?', 1],
   daily_brief_sources: ['daily_brief_id IN (SELECT id FROM daily_briefs WHERE user_id IS ?)', 1],
   usage_events: ['user_id IS ?', 1],
+  board_placements: ['user_id IS ?', 1],
+  board_columns: ['user_id IS ?', 1],
   activity_events: ["json_extract(payload_json,'$.captureId') IN (SELECT id FROM captures WHERE user_id IS ?)", 1],
 };
 const mineWhere = table => 'WHERE ' + ownedRows[table][0];
@@ -956,7 +958,7 @@ export function resetLedger(db, userId = null) {
     db.exec('DROP TRIGGER IF EXISTS ledger_events_no_update; DROP TRIGGER IF EXISTS ledger_events_no_delete;');
     try {
       // Порядок важен: сначала то, что ссылается, потом то, на что ссылаются.
-      for (const table of ['activity_events','daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','interpretations','capture_attachments','capture_notes','usage_events','captures']) db.prepare(`DELETE FROM ${table} ${mineWhere(table)}`).run(userId);
+      for (const table of ['activity_events','daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','interpretations','capture_attachments','capture_notes','usage_events','board_placements','board_columns','captures']) db.prepare(`DELETE FROM ${table} ${mineWhere(table)}`).run(userId);
     } finally { createLedgerEventGuards(db); }
   });
 }
