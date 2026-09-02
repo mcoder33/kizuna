@@ -5076,6 +5076,13 @@ body {
 .board-meta .entry-status svg { width: 12px; height: 12px; }
 .btag { color: var(--n-62); white-space: nowrap; }
 .btag.urgent { color: var(--orange-54); font-weight: 600; }
+/* Цвета состояний как на «Сегодня»: открытое дело — тёплый фон, просроченное —
+   красный; те же тона у срока. Слова на месте — цвет лишь подсказка. */
+.board-card.waiting { background: var(--tint-wait); border-color: var(--tint-wait-line); }
+.board-card.overdue { background: var(--tint-late); border-color: var(--tint-late-line); }
+.board-card.overdue .board-title { color: var(--red-49); }
+.btag.due.soon { color: var(--yellow-51); }
+.btag.due.late { color: var(--red-50); font-weight: 600; }
 .board-drop {
   height: 3px;
   border-radius: 99px;

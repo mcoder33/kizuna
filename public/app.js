@@ -3272,13 +3272,19 @@ function boardCardEl(card, column) {
   title.type = "button";
   title.addEventListener("click", () => openReportEntry(card.captureId));
   const meta = node("div", undefined, "board-meta");
+  const status = boardCardStatus(card);
+  // Цвета состояний как на «Сегодня»: просроченное — красным, открытое —
+  // тёплым. Слова остаются, цвет лишь помогает считывать колонку с ходу.
+  element.classList.add(status.key === "late" ? "overdue" : "waiting");
   const due = card.due ? scheduleLabel({ state: "ok", date: card.due.date, time: card.due.time }) : null;
+  const dueChip = () =>
+    node("span", `срок: ${due}`, `btag due${status.key === "late" ? " late" : status.key === "today" ? " soon" : ""}`);
   if (boardState.view === "dates") {
     // колонка уже говорит статус — на карточке остаётся конкретный срок
-    if (due) meta.append(node("span", `срок: ${due}`, "btag"));
+    if (due) meta.append(dueChip());
   } else {
-    meta.append(statusBadge(boardCardStatus(card)));
-    if (due && card.due.date > (boardState.data?.today || "")) meta.append(node("span", `срок: ${due}`, "btag"));
+    meta.append(statusBadge(status));
+    if (due && card.due.date > (boardState.data?.today || "")) meta.append(dueChip());
   }
   if (card.priority === "high") meta.append(node("span", "важно", "btag urgent"));
   if (card.priority === "low") meta.append(node("span", "не срочно", "btag"));
