@@ -3978,7 +3978,9 @@ dialog form > div {
 #review-dialog .review-form {
   display: block;
   margin-top: 0;
-  padding-bottom: 14px;
+  /* Без боковых отступов общего .review-form: строка свойств и форма стоят
+     по одному левому краю с заголовком, «Записано» и заметками. */
+  padding: 0 0 14px;
   border-bottom: 1px solid var(--nt-divider);
 }
 #review-dialog .props {
@@ -4876,14 +4878,6 @@ dialog form > div {
 .entry-status.st-today { color: var(--st-today); }
 .entry-status.st-ontime { color: var(--st-ontime); }
 .entry-status.st-none { color: var(--st-none); }
-/* строка статуса в карточке — как строка свойства Notion, под заголовком */
-#review-dialog .card-status {
-  display: flex;
-  align-items: center;
-  min-height: 30px;
-  margin: 4px 0 0;
-  padding: 0;
-}
 /* чип в свёрнутой строке свойств — чуть мельче, по базовой линии текста */
 #review-dialog .props-summary .entry-status {
   font-size: 12.5px;
@@ -4906,6 +4900,11 @@ dialog form > div {
 .board-columns::-webkit-scrollbar {
   display: none;
 }
+/* рука на пустом месте: фон доски и колонок тянется влево-вправо */
+.board-columns { cursor: grab; }
+.board-columns.panning,
+.board-columns.panning * { cursor: grabbing; }
+.board-columns.panning { user-select: none; }
 .board-column {
   flex: 0 0 280px;
   background: var(--n-98-4);
@@ -5106,4 +5105,32 @@ dialog form > div {
   color: var(--nt-text);
   resize: none;
   overflow: hidden;
+}
+
+/* переключатель вида и группировка по датам */
+.board-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 0 0 12px;
+}
+.board-group-label {
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--n-72);
+  padding: 5px 5px 1px;
+}
+.board-column.drop-over {
+  box-shadow: inset 0 0 0 2px var(--focus);
+  border-radius: 14px;
+}
+
+/* «Записано» — компактная строка футера карточки, перед источником и версией */
+#review-dialog .card-written.card-footer-line {
+  min-height: 0;
+  margin: 14px 0 2px;
+  font-size: 12.5px;
+  color: var(--nt-tertiary);
 }

@@ -825,10 +825,14 @@ test("статус записи — значком и словом: под за�
   await capture(page, raw);
   await openCard(page, "#todo", raw);
 
-  // Дело без срока: статус назван словом и стоит первой строкой свойств.
-  await expect(page.locator("#review-dialog .card-status .entry-status")).toHaveText("Без срока");
-  // Тот же статус ведёт свёрнутую строку свойств.
+  // Дело без срока: статус назван словом и ведёт свёрнутую строку свойств,
+  // которая стоит выше «Записано» — первой строкой карточки.
   await expect(page.locator("#review-dialog .props-summary .entry-status")).toHaveText("Без срока");
+  const barBox = await page.locator("#review-dialog .props-bar").boundingBox();
+  const writtenBox = await page.locator("#review-dialog .card-written").boundingBox();
+  expect(barBox.y).toBeLessThan(writtenBox.y);
+  // Статус на карточке один — дубля под заголовком нет.
+  expect(await page.locator("#review-dialog .entry-status").count()).toBe(1);
   await page.keyboard.press("Escape");
 
   // Закрытая чекбоксом задача показывает «Сделано».
@@ -838,7 +842,7 @@ test("статус записи — значком и словом: под за�
   await page.goto("/#history-todo");
   await expect(journalEntry).toBeVisible();
   await journalEntry.locator(".entry-title").click();
-  await expect(page.locator("#review-dialog .card-status .entry-status")).toHaveText("Сделано");
+  await expect(page.locator("#review-dialog .props-summary .entry-status")).toHaveText("Сделано");
 });
 
 test("заголовок записи правится прямо в карточке", async ({ page, request }) => {

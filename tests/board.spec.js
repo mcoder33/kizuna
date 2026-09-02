@@ -32,7 +32,19 @@ test("доска: колонка, быстрое дело, статус, кар�
   await page.keyboard.press("Escape");
   await expect(page.locator("#review-dialog")).toBeHidden();
 
-  // Кружок закрывает дело — карточка уходит с доски.
+  // Группировка по датам: колонки считаются из сроков, внутри — группы видов.
+  await page.locator('[data-board-view="dates"]').click();
+  await expect(page.locator(".board-column.dated .board-col-name")).toHaveText([
+    "Просрочено", "Сегодня", "Завтра", "Неделя", "Позже", "Без срока",
+  ]);
+  const noDue = page.locator(".board-column.dated").filter({ has: page.locator(".board-col-name", { hasText: "Без срока" }) });
+  await expect(noDue.locator(".board-group-label")).toHaveText("Задачи");
+  const datedCard = noDue.locator(".board-card").filter({ hasText: "Проверить доску" });
+  await expect(datedCard).toBeVisible();
+
+  // Обратно к своим колонкам — дело на месте, и кружок закрывает его.
+  await page.locator('[data-board-view="columns"]').click();
+  await expect(card).toBeVisible();
   await card.locator(".board-done").click();
   await expect(column.locator(".board-card")).toHaveCount(0);
 

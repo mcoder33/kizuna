@@ -1075,21 +1075,9 @@ function showReview(entry, review, undoGroupId, provenance) {
     if (event.key === "Enter") { event.preventDefault(); startTitleEdit(); }
   });
   area.append(cardTitle);
-  // Статус — первой строкой свойств: это то, что хочется узнать, открыв запись.
-  const entryState = entryStatus(entry);
-  if (entryState) {
-    const stateRow = node("p", undefined, "card-status");
-    stateRow.append(statusBadge(entryState));
-    area.append(stateRow);
-  }
-  // Когда запись сделана — в самой карточке: «Срок» ниже это про будущее, а
-  // здесь ответ на вопрос «когда это было».
+  // «Когда это было» — справочная мета: живёт футером внизу карточки одной
+  // строкой, а не блоком в шапке. Шапка — заголовок, статус и заметки.
   const written = entryClock(entry);
-  if (written) {
-    const stamp = node("p", `Записано: ${written}`, "card-written");
-    stamp.prepend(propIcon("written"));
-    area.append(stamp);
-  }
   if (review.question)
     area.append(node("p", review.question, "review-question"));
 
@@ -1243,6 +1231,11 @@ function showReview(entry, review, undoGroupId, provenance) {
     }
   });
   area.append(form, cardBody(entry), attachmentsBlock(entry));
+  if (written) {
+    const stamp = node("p", `Записано: ${written}`, "card-written card-footer-line");
+    stamp.prepend(propIcon("written"));
+    area.append(stamp);
+  }
 
   const source = node("details", undefined, "card-source");
   source.append(node("summary", "Источник и версия"));
@@ -3223,7 +3216,8 @@ async function uploadPendingShots(captureId) {
 // Колонки — как разделы в Todoist: свои, с переименованием и перетаскиванием.
 // Карточка — открытое дело; клик по названию открывает обычную карточку записи,
 // кружок закрывает дело, перенос между колонками сохраняется на сервере.
-const boardState = { data: null, drag: null, openAdder: null };
+const boardState = { data: null, drag: null, openAdder: null, view: "columns" };
+try { if (localStorage.getItem("kizuna-board-view") === "dates") boardState.view = "dates"; } catch {}
 const boardDropHint = (() => { const hint = document.createElement("div"); hint.className = "board-drop"; return hint; })();
 
 function boardCardStatus(card) {
@@ -3261,9 +3255,14 @@ function boardCardEl(card, column) {
   title.type = "button";
   title.addEventListener("click", () => openReportEntry(card.captureId));
   const meta = node("div", undefined, "board-meta");
-  meta.append(statusBadge(boardCardStatus(card)));
   const due = card.due ? scheduleLabel({ state: "ok", date: card.due.date, time: card.due.time }) : null;
-  if (due && card.due.date > (boardState.data?.today || "")) meta.append(node("span", `срок: ${due}`, "btag"));
+  if (boardState.view === "dates") {
+    // колонка уже говорит статус — на карточке остаётся конкретный срок
+    if (due) meta.append(node("span", `срок: ${due}`, "btag"));
+  } else {
+    meta.append(statusBadge(boardCardStatus(card)));
+    if (due && card.due.date > (boardState.data?.today || "")) meta.append(node("span", `срок: ${due}`, "btag"));
+  }
   if (card.priority === "high") meta.append(node("span", "важно", "btag urgent"));
   if (card.priority === "low") meta.append(node("span", "не срочно", "btag"));
   for (const project of card.projects) meta.append(node("span", project, "btag"));
@@ -3469,11 +3468,171 @@ function boardGhostColumnEl() {
   element.append(button, input);
   return element;
 }
+// Группировка по датам: колонки считаются из сроков, внутри — группы по видам
+// (встречи, потом задачи). Перенос карточки в колонку даты меняет срок дела,
+// как в Todoist; «Просрочено» и «Без срока» переносом не назначить.
+function boardDateBuckets(data) {
+  const today = data.today, tomorrow = shiftDate(today, 1), weekEnd = shiftDate(today, 7);
+  const buckets = [
+    { key: "late", name: "Просрочено", drop: null, cards: [] },
+    { key: "today", name: "Сегодня", drop: today, cards: [] },
+    { key: "tomorrow", name: "Завтра", drop: tomorrow, cards: [] },
+    { key: "week", name: "Неделя", drop: weekEnd, cards: [] },
+    { key: "later", name: "Позже", drop: shiftDate(today, 14), cards: [] },
+    { key: "none", name: "Без срока", drop: null, adderWithoutDue: true, cards: [] },
+  ];
+  const bucketOf = (card) => {
+    const date = card.due?.date || null;
+    if (!date) return "none";
+    if (date < today) return "late";
+    if (date === today) return "today";
+    if (date === tomorrow) return "tomorrow";
+    if (date <= weekEnd) return "week";
+    return "later";
+  };
+  for (const card of data.columns.flatMap((column) => column.cards))
+    buckets.find((bucket) => bucket.key === bucketOf(card)).cards.push(card);
+  const order = (left, right) =>
+    (left.due?.date || "9999").localeCompare(right.due?.date || "9999") ||
+    (left.due?.time || "99").localeCompare(right.due?.time || "99") ||
+    (left.priority === "high" ? -1 : 0) - (right.priority === "high" ? -1 : 0) ||
+    left.createdAt.localeCompare(right.createdAt);
+  for (const bucket of buckets) bucket.cards.sort(order);
+  return buckets;
+}
+async function boardChangeDue(captureId, bucket) {
+  const card = boardState.data.columns.flatMap((column) => column.cards).find((item) => item.captureId === captureId);
+  try {
+    await request(`/api/captures/${captureId}/corrections`, {
+      method: "POST",
+      // метка времени в теле обходит клиентский кэш уточнений: перенос туда и
+      // обратно — два разных действия, а не повтор одного
+      body: JSON.stringify({ at: Date.now(), patch: { schedule: { date: bucket.drop, time: card?.due?.time || null } } }),
+    });
+    toast(`Срок: ${scheduleLabel({ state: "ok", date: bucket.drop, time: null })}`);
+  } catch (error) {
+    toast(error.message);
+  }
+  loadBoard();
+}
+function boardDateColumnEl(bucket) {
+  const element = node("section", undefined, "board-column dated");
+  const head = node("div", undefined, "board-col-head");
+  head.style.cursor = "default";
+  head.append(node("span", bucket.name, "board-col-name"), node("span", String(bucket.cards.length), "board-col-count"));
+  const list = node("div", undefined, "board-cards");
+  const groups = [
+    ["Встречи", bucket.cards.filter((card) => card.type === "meeting_event")],
+    ["Задачи", bucket.cards.filter((card) => card.type !== "meeting_event")],
+  ];
+  for (const [label, cards] of groups) {
+    if (!cards.length) continue;
+    list.append(node("p", label, "board-group-label"));
+    for (const card of cards) list.append(boardCardEl(card, { id: null }));
+  }
+  element.addEventListener("dragover", (event) => {
+    if (boardState.drag?.type !== "card" || !bucket.drop) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    element.classList.add("drop-over");
+  });
+  element.addEventListener("dragleave", (event) => {
+    if (event.relatedTarget instanceof Element && element.contains(event.relatedTarget)) return;
+    element.classList.remove("drop-over");
+  });
+  element.addEventListener("drop", (event) => {
+    if (boardState.drag?.type !== "card" || !bucket.drop) return;
+    event.preventDefault();
+    element.classList.remove("drop-over");
+    boardChangeDue(boardState.drag.captureId, bucket);
+  });
+  element.append(head, list);
+  if (bucket.drop || bucket.adderWithoutDue) element.append(boardDateAdderEl(bucket));
+  return element;
+}
+// Быстрое дело в колонке даты: срок ставится сразу по колонке.
+function boardDateAdderEl(bucket) {
+  const wrap = node("div", undefined, "board-add");
+  const button = node("button", "+ Дело", "board-add-button");
+  button.type = "button";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = bucket.drop ? `Что сделать — ${bucket.name.toLowerCase()}?` : "Что сделать?";
+  input.hidden = true;
+  const openAdderKey = `date:${bucket.key}`;
+  const open = () => { button.hidden = true; input.hidden = false; input.focus(); boardState.openAdder = openAdderKey; };
+  const close = () => { input.hidden = true; input.value = ""; button.hidden = false; if (boardState.openAdder === openAdderKey) boardState.openAdder = null; };
+  button.addEventListener("click", open);
+  input.addEventListener("keydown", async (event) => {
+    if (event.key === "Escape") return close();
+    if (event.key !== "Enter") return;
+    const raw = input.value.trim();
+    if (!raw) return close();
+    input.disabled = true;
+    try {
+      const body = { raw, primaryType: "todo", ...(bucket.drop ? { due: { date: bucket.drop } } : {}) };
+      await request("/api/captures", { method: "POST", body: JSON.stringify(withProvider(body)) });
+    } catch (error) { toast(error.message); }
+    await loadBoard();
+  });
+  input.addEventListener("blur", () => { if (!input.value.trim() && !input.disabled) close(); });
+  wrap.append(button, input);
+  if (boardState.openAdder === openAdderKey) requestAnimationFrame(open);
+  return wrap;
+}
 function renderBoard(data) {
   const wrap = $("#board-columns");
   clear(wrap);
-  for (const column of data.columns) wrap.append(boardColumnEl(column));
-  wrap.append(boardGhostColumnEl());
+  if (boardState.view === "dates") {
+    for (const bucket of boardDateBuckets(data)) wrap.append(boardDateColumnEl(bucket));
+  } else {
+    for (const column of data.columns) wrap.append(boardColumnEl(column));
+    wrap.append(boardGhostColumnEl());
+  }
+}
+for (const button of document.querySelectorAll("[data-board-view]"))
+  button.addEventListener("click", () => {
+    boardState.view = button.dataset.boardView;
+    try { localStorage.setItem("kizuna-board-view", boardState.view); } catch {}
+    for (const other of document.querySelectorAll("[data-board-view]"))
+      other.setAttribute("aria-pressed", String(other === button));
+    loadBoard();
+  });
+for (const button of document.querySelectorAll("[data-board-view]"))
+  button.setAttribute("aria-pressed", String(button.dataset.boardView === boardState.view));
+// Пустое место доски — рука: зажал и повёз влево-вправо, как холст. Карточки,
+// шапки колонок и кнопки не задеты — у них свои жесты, рука берёт только фон.
+const boardPan = { active: false, pointerId: null, startX: 0, startLeft: 0 };
+function boardPanTarget(target) {
+  return target instanceof Element && (
+    target.id === "board-columns" ||
+    target.classList.contains("board-column") ||
+    target.classList.contains("board-cards")
+  );
+}
+{
+  const wrap = $("#board-columns");
+  wrap.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || !boardPanTarget(event.target)) return;
+    event.preventDefault();
+    boardPan.active = true;
+    boardPan.pointerId = event.pointerId;
+    boardPan.startX = event.clientX;
+    boardPan.startLeft = wrap.scrollLeft;
+    wrap.classList.add("panning");
+    try { wrap.setPointerCapture(event.pointerId); } catch {}
+  });
+  wrap.addEventListener("pointermove", (event) => {
+    if (!boardPan.active || event.pointerId !== boardPan.pointerId) return;
+    wrap.scrollLeft = boardPan.startLeft - (event.clientX - boardPan.startX);
+  });
+  const endPan = (event) => {
+    if (!boardPan.active || event.pointerId !== boardPan.pointerId) return;
+    boardPan.active = false;
+    wrap.classList.remove("panning");
+  };
+  wrap.addEventListener("pointerup", endPan);
+  wrap.addEventListener("pointercancel", endPan);
 }
 async function loadBoard() {
   const wrap = $("#board-columns");
