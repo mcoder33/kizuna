@@ -687,7 +687,9 @@ main {
   overflow-wrap: anywhere;
   cursor: text;
 }
-.md-field[data-empty="true"]::before {
+/* Подсказка видна, пока поле пустое и не в фокусе: клик в поле убирает её
+   сразу, а не с первым символом; ушёл из пустого поля — вернулась. */
+.md-field[data-empty="true"]:not(:focus-within)::before {
   content: attr(data-placeholder);
   color: var(--n-76);
   pointer-events: none;
