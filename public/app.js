@@ -3805,8 +3805,9 @@ function boardRailItem({ key, label, icon, count }) {
 function renderRail(data) {
   const rail = $("#board-rail");
   clear(rail);
-  const cards = boardAllCards(data);
-  const inboxCount = data.columns.find((column) => column.id === null)?.cards.length || 0;
+  // Счётчики — по открытым делам: показанные выполненные их не раздувают.
+  const cards = boardAllCards(data).filter((card) => !card.closed);
+  const inboxCount = (data.columns.find((column) => column.id === null)?.cards || []).filter((card) => !card.closed).length;
   const counts = {
     all: cards.length,
     inbox: inboxCount,
