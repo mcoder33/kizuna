@@ -23,6 +23,8 @@ function openCards(db, userId) {
   const rows = db.prepare(`SELECT c.id, c.created_at, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND c.user_id IS ? ORDER BY c.created_at`).all(userId);
   const projections = db.prepare(`SELECT p.id, p.capture_id, p.projection_type FROM projections p JOIN captures c ON c.id=p.capture_id WHERE p.status='active' AND c.deleted_at IS NULL AND c.user_id IS ? AND p.projection_type IN ('task','meeting_event')`).all(userId);
   const completion = completionEvents(db);
+  // Скрепка на карточке: сколько живых вложений у записи.
+  const attachments = new Map(db.prepare(`SELECT a.capture_id, COUNT(*) n FROM capture_attachments a JOIN captures c ON c.id=a.capture_id WHERE a.deleted_at IS NULL AND c.user_id IS ? GROUP BY a.capture_id`).all(userId).map(row => [row.capture_id, row.n]));
   const byCapture = new Map();
   for (const projection of projections) {
     if (!byCapture.has(projection.capture_id)) byCapture.set(projection.capture_id, []);
@@ -45,6 +47,7 @@ function openCards(db, userId) {
       priority: classification.priority || null,
       tags: classification.tags || [],
       projects: classification.entities?.projects || [],
+      attachments: attachments.get(row.id) || 0,
       projectionIds: completable.map(projection => projection.id),
     });
   }

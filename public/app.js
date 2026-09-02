@@ -3279,6 +3279,8 @@ function boardCardEl(card, column) {
   if (card.priority === "low") meta.append(node("span", "не срочно", "btag"));
   for (const project of card.projects) meta.append(node("span", project, "btag"));
   for (const tag of card.tags) meta.append(node("span", `#${tag}`, "btag"));
+  // Скрепка с числом — как в списках: видно, что к делу что-то приложено.
+  if (card.attachments) meta.append(node("span", `📎 ${card.attachments}`, "btag files"));
   body.append(title, meta);
   element.append(done, body);
   element.addEventListener("dragstart", (event) => {

@@ -110,3 +110,16 @@ test('full reset clears the board too and is not blocked by placements',async()=
   assert.deepEqual(names(board),['Входящие']);
   assert.equal(board.columns[0].cards.length,0);
 });
+
+test('board cards carry the number of live attachments',async()=>{
+  const api=authed(freshApp());
+  const task=(await api.post('/api/captures').send({raw:'Нужно проверить скрепку'}).expect(201)).body.entry;
+  const before=(await api.get('/api/board').expect(200)).body.columns[0].cards.find(card=>card.captureId===task.id);
+  assert.equal(before.attachments,0);
+  const saved=(await api.post(`/api/captures/${task.id}/attachments`).set('Content-Type','text/plain').set('X-Attachment-Name',encodeURIComponent('план.txt')).send(Buffer.from('план')).expect(201)).body;
+  await api.post(`/api/captures/${task.id}/attachments`).set('Content-Type','text/plain').set('X-Attachment-Name',encodeURIComponent('ещё.txt')).send(Buffer.from('ещё')).expect(201);
+  assert.equal((await api.get('/api/board').expect(200)).body.columns[0].cards.find(card=>card.captureId===task.id).attachments,2);
+  // убранное вложение не считается
+  await api.delete(`/api/attachments/${saved.attachment.id}`).expect(200);
+  assert.equal((await api.get('/api/board').expect(200)).body.columns[0].cards.find(card=>card.captureId===task.id).attachments,1);
+});
