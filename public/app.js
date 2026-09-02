@@ -263,9 +263,11 @@ function isActiveMeeting(entry) {
 function needsClarification(entry) {
   const c = entry.interpretation.classification;
   if (isReportedWork(entry) || isClosed(entry)) return false;
-  // Неразобранная запись не имеет проекций вообще, поэтому без этого признака
-  // она была бы недоступна на всех экранах.
-  if (c.unclassified) return true;
+  // Неразобранная запись сохраняется заметкой без проекций и уже видна в
+  // «Заметках» — в TODO она лишь дублировалась. В дела она попадает только
+  // если её тип — задача или встреча: проекций у такой нет, и иначе она
+  // не была бы видна нигде.
+  if (c.unclassified) return ["task", "meeting_event"].includes(c.primaryType);
   return Boolean(
     (c.conflicts?.schedule || c.conflicts?.projects) &&
       ["task", "meeting_event"].includes(c.primaryType),

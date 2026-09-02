@@ -942,3 +942,19 @@ test("a screenshot pasted into the capture field opens a preview on click", asyn
   // Просмотр ничего не отправляет и не убирает: снимок остаётся в полосе.
   await expect(shot).toHaveCount(1);
 });
+
+test("an unclassified capture lives in notes, not in the todo buffer, until it is typed as a deed", async ({ page }) => {
+  const raw = "Созвон с Женей был по доработкам [[сбой модели]]";
+  await page.goto("/");
+  await capture(page, raw);
+  // Модель упала — запись сохранена заметкой без разбора: место ей в «Заметках».
+  await expect(page.locator("#notes")).toContainText("Созвон с Женей");
+  await expect(page.locator("#todo")).not.toContainText("Созвон с Женей");
+  await openCard(page, "#notes", "Созвон с Женей");
+  await expect(page.locator(".review-question")).toContainText("без разбора");
+  // Человек назвал её задачей — теперь это дело, и оно в TODO.
+  await page.locator("#review-primary-type").selectOption("task");
+  await page.locator("#review-close").click();
+  await expect(page.locator("#todo")).toContainText("Созвон с Женей");
+  await expect(page.locator("#notes")).not.toContainText("Созвон с Женей");
+});

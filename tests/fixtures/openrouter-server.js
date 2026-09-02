@@ -24,6 +24,9 @@ function readBody(request) {
 
 function classificationFor(userMessage) {
   const raw = (userMessage.match(/<untrusted-capture>\n([\s\S]*?)\n<\/untrusted-capture>/) || [])[1] || '';
+  // Метка в тексте роняет заглушку: так e2e получает запись «без разбора»,
+  // как при настоящем сбое модели.
+  if (raw.includes('[[сбой модели]]')) throw new Error('fake outage');
   return fakeModelCandidate(raw, new Date());
 }
 
