@@ -643,6 +643,13 @@ async function load() {
   render({ ...day, entries: entries.entries });
 }
 // Движение в приложении одно на всё: предмет не летит через экран и не растёт
+  // Доска и «Обзор» живут своими запросами: правка в карточке или доразбор
+  // записи должны быть видны сразу там, откуда карточку открыли, а не после
+  // ухода на другую страницу и обратно. Перечитываются только уже собранные —
+  // при старте их собирает переход по хэшу.
+  const page = document.querySelector(".app-page:not([hidden])")?.id;
+  if (page === "board" && boardState.data) await loadBoard();
+  if (page === "reports" && reportsState.loaded) await loadReports();
 // на глазах — он тихо проявляется там, где его посчитала раскладка. Тот же
 // характер, что у кольца в разговоре: мягко, коротко и без рывка.
 const APPEAR_EASING = "cubic-bezier(0.16, 1, 0.3, 1)";
@@ -3127,6 +3134,7 @@ async function loadReports() {
     }
   } catch (error) {
     clear(area);
+    reportsState.loaded = true;
     area.append(node("p", error.message, "empty"));
   }
 }
@@ -3464,7 +3472,14 @@ function boardAdderEl(column) {
   input.placeholder = "Что сделать?";
   input.hidden = true;
   const adderKey = `column:${column.id ?? "inbox"}`;
-  const open = () => { button.hidden = true; input.hidden = false; input.focus(); boardState.openAdder = adderKey; };
+  const open = ({ focus = true } = {}) => {
+    button.hidden = true;
+    input.hidden = false;
+    // Черновик пережил перерисовку доски — возвращаем его в новое поле.
+    if (boardState.adderDraft != null) { input.value = boardState.adderDraft; boardState.adderDraft = null; }
+    if (focus) input.focus();
+    boardState.openAdder = adderKey;
+  };
   const close = () => { input.hidden = true; input.value = ""; button.hidden = false; if (boardState.openAdder === adderKey) boardState.openAdder = null; };
   button.addEventListener("click", open);
   input.addEventListener("keydown", async (event) => {
@@ -3478,10 +3493,21 @@ function boardAdderEl(column) {
       await request("/api/board/move", { method: "POST", body: JSON.stringify({ captureId: created.entry.id, columnId: column.id, index: 100000 }) });
     } catch (error) { toast(error.message); }
     await loadBoard();
+      // Дело ушло — текст больше не черновик; при ошибке он остаётся в поле.
+      input.value = "";
   });
+    // Отключение поля на время запроса снимает с него фокус; возвращаем до
+    // перерисовки, чтобы новое поле открылось под каретку — следующее дело
+    // набирается без клика.
+    input.disabled = false;
+    input.focus();
   input.addEventListener("blur", () => { if (!input.value.trim() && !input.disabled) close(); });
   wrap.append(button, input);
-  if (boardState.openAdder === adderKey) requestAnimationFrame(open);
+  if (boardState.openAdder === adderKey) {
+    const focus = boardState.adderFocus !== false;
+    boardState.adderFocus = null;
+    requestAnimationFrame(() => open({ focus }));
+  }
   return wrap;
 }
 function boardGhostColumnEl() {
@@ -3625,7 +3651,19 @@ function renderBoard(data) {
   const wrap = $("#board-columns");
   clear(wrap);
   if (boardState.view === "dates") {
+  // Перерисовка приходит и посреди набора нового дела (доразбор записи после
+  // быстрого добавления перечитывает доску). Снятие поля из DOM даёт blur, а
+  // тот закрывает пустое поле — открытость, черновик и фокус возвращаем.
+  // Отключённое поле — уже отправляется: его текст не черновик, а снятый с
+  // него фокус не выбор человека.
+  const openInput = wrap.querySelector(".board-add input:not([hidden]):not(:disabled)");
+  const openAdder = boardState.openAdder;
+  if (openInput) {
+    boardState.adderDraft = openInput.value;
+    boardState.adderFocus = document.activeElement === openInput;
+  }
     for (const bucket of boardDateBuckets(data)) wrap.append(boardDateColumnEl(bucket));
+  boardState.openAdder = openAdder;
   } else {
     for (const column of data.columns) wrap.append(boardColumnEl(column));
     wrap.append(boardGhostColumnEl());
@@ -3683,6 +3721,9 @@ async function loadBoard() {
     boardState.data = data;
     renderBoard(data);
   } catch (error) {
+    // «Сегодня» могли ещё не открывать: без даты дня сроки на доске выходили
+    // бы ISO-строкой вместо «завтра» и «05.09».
+    currentDayDate ||= data.today;
     clear(wrap);
     wrap.append(node("p", error.message, "empty"));
   }

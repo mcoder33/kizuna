@@ -29,8 +29,18 @@ test("доска: колонка, быстрое дело, статус, кар�
   // Название открывает обычную карточку записи.
   await card.locator(".board-title").click();
   await expect(page.locator("#review-dialog")).toBeVisible();
+  // Правка в раскрытой карточке видна на маленькой сразу, без ухода со страницы:
+  // заголовок — после Enter, свойства — после закрытия.
+  await page.locator("#review-dialog .card-title").click();
+  await page.locator(".card-title-edit").fill("Проверить доску целиком и карточку");
+  await page.keyboard.press("Enter");
+  await expect(card.locator(".board-title")).toHaveText("Проверить доску целиком и карточку");
+  const propsBar = page.locator(".props-bar");
+  if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
+  await page.locator("#review-project").fill("Доска-проект");
   await page.keyboard.press("Escape");
   await expect(page.locator("#review-dialog")).toBeHidden();
+  await expect(card.locator(".btag", { hasText: "Доска-проект" })).toBeVisible();
 
   // Группировка по датам: колонки считаются из сроков, внутри — группы видов.
   await page.locator('[data-board-view="dates"]').click();
