@@ -3361,6 +3361,9 @@ function boardCardEl(card, column, { closed = false } = {}) {
   title.addEventListener("click", () => openReportEntry(card.captureId));
   titleRow.append(title);
   const status = boardCardStatus(card);
+  // Как на «Сегодня»: просроченное — розовая плашка и красный заголовок,
+  // открытое — песочная.
+  if (!closed) element.classList.add(status.key === "late" ? "overdue" : "waiting");
   const due = card.due ? scheduleLabel({ state: "ok", date: card.due.date, time: card.due.time }) : null;
   // Срок — обычным текстом, как дата в Notion; цвет подсказывает состояние.
   const dueChip = () =>
@@ -3374,6 +3377,7 @@ function boardCardEl(card, column, { closed = false } = {}) {
     for (const person of card.people) line.append(boardPersonEl(person, { avatarOnly: props.compact }));
   }
   const typeLine = row("type");
+  if (props.type) typeLine.append(node("span", card.type === "meeting_event" ? "встреча" : "задача", `btag kind ${card.type === "meeting_event" ? "meeting" : "task"}`));
   if (props.priority && card.priority === "high") typeLine.append(node("span", "важно", "btag urgent c-red"));
   if (props.priority && card.priority === "low") typeLine.append(node("span", "не срочно", "btag c-gray"));
   if (props.type) for (const tag of card.tags) typeLine.append(node("span", `#${tag}`, "btag tag c-gray"));

@@ -4950,35 +4950,31 @@ body {
 .board-columns.panning,
 .board-columns.panning * { cursor: grabbing; }
 .board-columns.panning { user-select: none; }
-/* Колонка — лёгкий оттенок своего цвета, шапка — полоса чуть плотнее; в
-   светлой теме это едва заметная подложка, как в Notion, в тёмной —
-   тёплый след цвета. Тон приходит от пилюли в шапке. */
+/* Колонка — такая же панель, как карточки колонок на «Сегодня» и в «Обзоре»:
+   тонкая рамка, скругление 14px, тихий фон. Цвет колонки — точкой перед
+   названием, как точки типов в поле ввода. */
 .board-column {
-  flex: 0 0 272px;
+  flex: 0 0 280px;
   min-width: 0;
   min-height: 64px;
   --tone: var(--fmt-gray);
   --tone-bg: var(--fmt-bg-gray);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--tone-bg) 42%, transparent);
-  padding: 0 6px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--n-98-4);
+  padding: 9px 9px 11px;
 }
-.board-column:has(> .board-col-head > .board-pill.c-brown) { --tone: var(--fmt-brown); --tone-bg: var(--fmt-bg-brown); }
-.board-column:has(> .board-col-head > .board-pill.c-orange) { --tone: var(--fmt-orange); --tone-bg: var(--fmt-bg-orange); }
-.board-column:has(> .board-col-head > .board-pill.c-yellow) { --tone: var(--fmt-yellow); --tone-bg: var(--fmt-bg-yellow); }
-.board-column:has(> .board-col-head > .board-pill.c-green) { --tone: var(--fmt-green); --tone-bg: var(--fmt-bg-green); }
-.board-column:has(> .board-col-head > .board-pill.c-blue) { --tone: var(--fmt-blue); --tone-bg: var(--fmt-bg-blue); }
-.board-column:has(> .board-col-head > .board-pill.c-purple) { --tone: var(--fmt-purple); --tone-bg: var(--fmt-bg-purple); }
-.board-column:has(> .board-col-head > .board-pill.c-pink) { --tone: var(--fmt-pink); --tone-bg: var(--fmt-bg-pink); }
-.board-column:has(> .board-col-head > .board-pill.c-red) { --tone: var(--fmt-red); --tone-bg: var(--fmt-bg-red); }
 .board-column.dragging-column { opacity: 0.55; }
 .board-column.col-drop-left { box-shadow: -3px 0 0 var(--focus); }
 .board-column.col-drop-right { box-shadow: 3px 0 0 var(--focus); }
 .board-column.ghost {
   flex-basis: 200px;
-  min-height: 0;
-  padding: 0;
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  padding: 2px;
   background: none;
+  border: 1.5px dashed var(--line);
 }
 .board-column.ghost .board-add-button { margin: 0; }
 /* Шапка: пилюля, счётчик и по наведению «⋯» и «+». */
@@ -4986,11 +4982,8 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 36px;
-  margin: 0 -6px 8px;
-  padding: 6px 10px;
-  border-radius: 8px 8px 0 0;
-  background: color-mix(in srgb, var(--tone-bg) 80%, transparent);
+  min-height: 28px;
+  padding: 2px 5px 9px;
   cursor: grab;
 }
 .board-column.inbox .board-col-head { cursor: default; }
@@ -4999,17 +4992,17 @@ body {
   align-items: center;
   gap: 7px;
   max-width: 100%;
-  padding: 2px 9px 2px 7px;
-  border-radius: 4px;
   font-size: 13.5px;
-  font-weight: 500;
+  font-weight: 700;
+  letter-spacing: -0.1px;
   line-height: 1.4;
   white-space: nowrap;
+  color: var(--ink);
 }
-/* Точка цвета перед названием, сам текст — чернилами, как статус в Notion. */
+/* В шапке пилюля без заливки: имя чернилами, цвет — точкой перед ним. */
 .board-col-head .board-pill,
 .board-hidden-toggle .board-pill,
-.board-segment .board-pill { color: var(--ink); }
+.board-segment .board-pill { background: none; padding: 0; color: var(--ink); }
 .board-pill::before {
   content: "";
   width: 8px;
@@ -5138,46 +5131,51 @@ body {
   gap: 8px;
   min-height: 10px;
 }
+/* Карточка — та же плашка, что запись в колонке «Сегодня»: скругление 12px,
+   без рамки и тени, фон по состоянию (песочный — ожидает, розовый —
+   просрочено), у просроченного заголовок красный. */
 .board-card {
   display: flex;
-  gap: 9px;
+  gap: 11px;
   background: var(--paper);
   border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 12px 14px 12px 12px;
+  border-radius: 12px;
+  padding: 11px 12px;
   cursor: grab;
-  /* Небольшая тень даёт карточке объём над подложкой колонки; при наведении
-     она приподнимается чуть выше. */
-  box-shadow: 0 1px 2px var(--n-25-a8), 0 3px 8px var(--n-25-a8);
-  transition: background 0.12s, box-shadow 0.12s, transform 0.12s;
+  transition: background 0.12s;
 }
-.board-card:hover { box-shadow: 0 2px 4px var(--n-25-a8), 0 6px 14px var(--n-23-a22); transform: translateY(-1px); }
+.board-card.waiting { background: var(--tint-wait); border-color: var(--tint-wait-line); }
+.board-card.overdue { background: var(--tint-late); border-color: var(--tint-late-line); }
+.board-card.overdue .board-title,
+.board-card.overdue .board-meta { color: var(--red-49); }
 .board-card.dragging { opacity: 0.45; }
 .board-done {
-  width: 17px;
-  height: 17px;
-  margin-top: 2px;
-  border: 1.5px solid var(--n-76);
-  border-radius: 99px;
-  background: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border: 1.5px solid var(--n-87-2);
+  border-radius: 50%;
+  background: var(--n-100);
   flex: none;
   cursor: pointer;
   color: transparent;
-  font-size: 10px;
+  font-size: 11px;
+  font-weight: 700;
   line-height: 1;
   padding: 0;
 }
+.board-card.overdue .board-done { border-color: var(--red-74); }
 .board-done:hover { border-color: var(--green); color: var(--green); }
 .board-done::before { content: "✓"; }
 /* Встреча: в кружке часовые стрелки; наведение обещает то же «готово». */
 .board-done.meeting { color: var(--n-66); border-color: var(--n-66); }
 .board-done.meeting::before { content: none; }
-.board-done.meeting svg { width: 14px; height: 14px; display: block; margin: 0 auto; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.board-done.meeting svg { width: 16px; height: 16px; display: block; margin: 0 auto; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .board-done.meeting:hover { color: var(--green); border-color: var(--green); }
 /* Закрытое дело: залитый кружок, наведение намекает, что закрытие снимается. */
 .board-done.is-done { border-color: var(--green); background: var(--green); color: var(--paper); }
 .board-done.is-done:hover { background: transparent; color: var(--green); }
-.board-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 9px; }
+.board-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 5px; }
 .board-title-row { display: flex; align-items: flex-start; gap: 6px; }
 .board-title {
   display: block;
@@ -5186,9 +5184,9 @@ body {
   border: 0;
   background: none;
   font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.4;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
   color: var(--ink);
   padding: 0;
   cursor: pointer;
@@ -5198,25 +5196,46 @@ body {
 .board-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 6px;
+  gap: 5px 6px;
   align-items: center;
-  font-size: 12.5px;
+  font-size: 11px;
+  color: var(--n-63);
 }
-/* Теги и проекты — чипы серые, как «Design» в Notion; цвет проекта — только
-   точкой, чтобы карточка не пестрела. */
-.btag.tag, .btag.project { background: var(--fmt-bg-gray); color: var(--n-45); padding: 2px 7px; border-radius: 4px; line-height: 1.45; font-size: 12.5px; }
-.btag.project { display: inline-flex; align-items: center; gap: 6px; }
-.btag.project::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--tone); flex: none; }
-.board-meta.people { gap: 4px 12px; font-size: 13px; color: var(--ink); }
-/* Состояние и срок — обычным текстом, как дата в Notion; цвет — подсказка,
-   заголовок при этом остаётся чёрным. */
-.board-meta .entry-status { font-size: 13px; gap: 5px; font-weight: 500; }
-.board-meta .entry-status svg { width: 13px; height: 13px; }
-.board-meta .entry-status.st-late { color: var(--fmt-red); }
-.board-meta .entry-status.st-today { color: var(--fmt-orange); }
-.board-meta .entry-status.st-ontime { color: var(--n-52); }
-.board-meta .entry-status.st-none { color: var(--n-62); font-weight: 400; }
-.board-meta .entry-status.st-done { color: var(--fmt-green); }
+/* Метки — те же пилюли, что в колонках «Сегодня»: мелкие, круглые, цветом по
+   смыслу: тип — бирюзовым или розовым, проект — синим, срок — серым или по
+   состоянию, «важно» — оранжевым. */
+.btag[class*=" c-"], .btag.kind, .btag.project, .btag.tag, .btag.due, .btag.files {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 99px;
+  font-size: 10px;
+  line-height: 1.4;
+  background: var(--hairline);
+  color: var(--n-52);
+}
+.btag.kind.task { background: var(--n-97-3); color: var(--teal-49); }
+.btag.kind.meeting { background: var(--pink); color: var(--red-49-2); }
+.btag.project { background: var(--n-97); color: var(--blue-46); font-weight: 600; }
+.btag.project::before { content: none; }
+.btag.urgent.c-red { background: var(--red-97-2); color: var(--orange-54); font-weight: 400; }
+.btag.c-gray { background: var(--n-97); color: var(--blue-54-2); }
+.board-meta.people { gap: 4px 10px; font-size: 12px; color: var(--ink); }
+/* Состояние — пилюлей, как «просрочено» и «в срок» на «Сегодня». */
+.board-meta .entry-status {
+  font-size: 10px;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 99px;
+  line-height: 1.4;
+  background: var(--hairline);
+}
+.board-meta .entry-status svg { width: 11px; height: 11px; }
+.board-meta .entry-status.st-late { background: var(--tint-late); color: var(--red-50); font-weight: 600; }
+.board-meta .entry-status.st-today { background: var(--tint-wait); color: var(--yellow-51); }
+.board-meta .entry-status.st-ontime { background: var(--n-97-2); color: var(--teal-54); }
+.board-meta .entry-status.st-none { background: var(--hairline); color: var(--n-62); }
+.board-meta .entry-status.st-done { background: var(--n-97-2); color: var(--green); font-weight: 600; }
+.board-card.overdue .board-meta .entry-status.st-late { background: var(--n-100-2); }
 .board-who { display: inline-flex; align-items: center; gap: 6px; }
 .board-ava {
   width: 18px;
@@ -5236,9 +5255,9 @@ body {
 .btag { color: var(--n-62); white-space: nowrap; }
 .btag[class*=" c-"] { padding: 1px 6px; border-radius: 3px; line-height: 1.5; }
 .btag.urgent { font-weight: 600; }
-.btag.due { font-size: 13px; color: var(--n-52); }
-.btag.due.soon { color: var(--fmt-orange); font-weight: 500; }
-.btag.due.late { color: var(--fmt-red); font-weight: 500; }
+.btag.due.soon { background: var(--tint-wait); color: var(--yellow-51); }
+.btag.due.late { background: var(--tint-late); color: var(--red-50); font-weight: 600; }
+.board-card.overdue .btag.due.late { background: var(--n-100-2); }
 .board-drop {
   height: 3px;
   border-radius: 99px;
@@ -5512,15 +5531,15 @@ body {
   width: 100%;
   min-height: 0;
   padding: 0;
+  border: 0;
   background: none;
 }
 .board-columns.list .board-col-head {
   margin: 0 0 8px;
   padding: 0 2px 8px;
-  border-radius: 0;
-  background: none;
   border-bottom: 1px solid var(--line);
 }
+.board-columns.list .board-pill { font-size: 15px; }
 .board-columns.list .board-group-label { padding-top: 8px; }
 .board-columns.list .board-card {
   align-items: center;
