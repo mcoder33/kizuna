@@ -3362,8 +3362,9 @@ function boardCardEl(card, column, { closed = false } = {}) {
   titleRow.append(title);
   const status = boardCardStatus(card);
   const due = card.due ? scheduleLabel({ state: "ok", date: card.due.date, time: card.due.time }) : null;
+  // Срок — обычным текстом, как дата в Notion; цвет подсказывает состояние.
   const dueChip = () =>
-    node("span", `срок: ${due}`, `btag due${status.key === "late" ? " late" : status.key === "today" ? " soon" : ""}`);
+    node("span", due, `btag due${status.key === "late" ? " late" : status.key === "today" ? " soon" : ""}`);
   const projectChip = (project) => node("span", project, `btag project c-${boardProjectColor(project)}`);
   // Строки свойств, как в Notion; в компактном виде — всё в одну строку.
   const rows = [];
@@ -3378,15 +3379,14 @@ function boardCardEl(card, column, { closed = false } = {}) {
   if (props.type) for (const tag of card.tags) typeLine.append(node("span", `#${tag}`, "btag tag c-gray"));
   const dueLine = row("when");
   if (closed) {
-    dueLine.append(node("span", `закрыто: ${scheduleLabel({ state: "ok", date: card.closedDate, time: null })}`, "btag c-gray"));
-    if (props.due && due) dueLine.append(node("span", `срок: ${due}`, "btag"));
+    dueLine.append(node("span", `закрыто ${scheduleLabel({ state: "ok", date: card.closedDate, time: null })}`, "btag due"));
   } else if (props.due) {
     if (boardState.view !== "columns") {
       // колонка или группа уже говорит статус — на карточке остаётся конкретный срок
       if (due) dueLine.append(dueChip());
     } else {
       dueLine.append(statusBadge(status));
-      if (due && card.due.date > (boardState.data?.today || "")) dueLine.append(dueChip());
+      if (due && card.due.date > (boardState.data?.today || "")) dueLine.append(node("span", due, "btag due"));
     }
   }
   const projectLine = row("where");

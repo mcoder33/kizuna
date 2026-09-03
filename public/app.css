@@ -4947,18 +4947,35 @@ body {
 .board-columns.panning,
 .board-columns.panning * { cursor: grabbing; }
 .board-columns.panning { user-select: none; }
+/* Колонка — лёгкий оттенок своего цвета, шапка — полоса чуть плотнее; в
+   светлой теме это едва заметная подложка, как в Notion, в тёмной —
+   тёплый след цвета. Тон приходит от пилюли в шапке. */
 .board-column {
   flex: 0 0 272px;
   min-width: 0;
   min-height: 64px;
+  --tone: var(--fmt-gray);
+  --tone-bg: var(--fmt-bg-gray);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--tone-bg) 42%, transparent);
+  padding: 0 6px 8px;
 }
+.board-column:has(> .board-col-head > .board-pill.c-brown) { --tone: var(--fmt-brown); --tone-bg: var(--fmt-bg-brown); }
+.board-column:has(> .board-col-head > .board-pill.c-orange) { --tone: var(--fmt-orange); --tone-bg: var(--fmt-bg-orange); }
+.board-column:has(> .board-col-head > .board-pill.c-yellow) { --tone: var(--fmt-yellow); --tone-bg: var(--fmt-bg-yellow); }
+.board-column:has(> .board-col-head > .board-pill.c-green) { --tone: var(--fmt-green); --tone-bg: var(--fmt-bg-green); }
+.board-column:has(> .board-col-head > .board-pill.c-blue) { --tone: var(--fmt-blue); --tone-bg: var(--fmt-bg-blue); }
+.board-column:has(> .board-col-head > .board-pill.c-purple) { --tone: var(--fmt-purple); --tone-bg: var(--fmt-bg-purple); }
+.board-column:has(> .board-col-head > .board-pill.c-pink) { --tone: var(--fmt-pink); --tone-bg: var(--fmt-bg-pink); }
+.board-column:has(> .board-col-head > .board-pill.c-red) { --tone: var(--fmt-red); --tone-bg: var(--fmt-bg-red); }
 .board-column.dragging-column { opacity: 0.55; }
 .board-column.col-drop-left { box-shadow: -3px 0 0 var(--focus); }
 .board-column.col-drop-right { box-shadow: 3px 0 0 var(--focus); }
 .board-column.ghost {
   flex-basis: 200px;
   min-height: 0;
-  padding-top: 0;
+  padding: 0;
+  background: none;
 }
 .board-column.ghost .board-add-button { margin: 0; }
 /* Шапка: пилюля, счётчик и по наведению «⋯» и «+». */
@@ -4966,21 +4983,37 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 30px;
-  padding: 0 2px 8px;
+  min-height: 36px;
+  margin: 0 -6px 8px;
+  padding: 6px 10px;
+  border-radius: 8px 8px 0 0;
+  background: color-mix(in srgb, var(--tone-bg) 80%, transparent);
   cursor: grab;
 }
 .board-column.inbox .board-col-head { cursor: default; }
 .board-pill {
   display: inline-flex;
   align-items: center;
+  gap: 7px;
   max-width: 100%;
-  padding: 2px 8px;
+  padding: 2px 9px 2px 7px;
   border-radius: 4px;
   font-size: 13.5px;
   font-weight: 500;
   line-height: 1.4;
   white-space: nowrap;
+}
+/* Точка цвета перед названием, сам текст — чернилами, как статус в Notion. */
+.board-col-head .board-pill,
+.board-hidden-toggle .board-pill,
+.board-segment .board-pill { color: var(--ink); }
+.board-pill::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tone);
+  flex: none;
 }
 .board-col-name {
   overflow: hidden;
@@ -5076,15 +5109,16 @@ body {
 .board-swatch.is-current { box-shadow: inset 0 0 0 2px var(--ink); }
 
 /* Цвета: пилюли колонок, чипы проектов и типов, аватары. */
-.c-gray { background: var(--fmt-bg-gray); color: var(--fmt-gray); }
-.c-brown { background: var(--fmt-bg-brown); color: var(--fmt-brown); }
-.c-orange { background: var(--fmt-bg-orange); color: var(--fmt-orange); }
-.c-yellow { background: var(--fmt-bg-yellow); color: var(--fmt-yellow); }
-.c-green { background: var(--fmt-bg-green); color: var(--fmt-green); }
-.c-blue { background: var(--fmt-bg-blue); color: var(--fmt-blue); }
-.c-purple { background: var(--fmt-bg-purple); color: var(--fmt-purple); }
-.c-pink { background: var(--fmt-bg-pink); color: var(--fmt-pink); }
-.c-red { background: var(--fmt-bg-red); color: var(--fmt-red); }
+.c-gray { --tone: var(--fmt-gray); --tone-bg: var(--fmt-bg-gray); }
+.c-brown { --tone: var(--fmt-brown); --tone-bg: var(--fmt-bg-brown); }
+.c-orange { --tone: var(--fmt-orange); --tone-bg: var(--fmt-bg-orange); }
+.c-yellow { --tone: var(--fmt-yellow); --tone-bg: var(--fmt-bg-yellow); }
+.c-green { --tone: var(--fmt-green); --tone-bg: var(--fmt-bg-green); }
+.c-blue { --tone: var(--fmt-blue); --tone-bg: var(--fmt-bg-blue); }
+.c-purple { --tone: var(--fmt-purple); --tone-bg: var(--fmt-bg-purple); }
+.c-pink { --tone: var(--fmt-pink); --tone-bg: var(--fmt-bg-pink); }
+.c-red { --tone: var(--fmt-red); --tone-bg: var(--fmt-bg-red); }
+[class*="c-"] { background: var(--tone-bg); color: var(--tone); }
 .board-swatch.c-gray { background: var(--fmt-gray); }
 .board-swatch.c-brown { background: var(--fmt-brown); }
 .board-swatch.c-orange { background: var(--fmt-orange); }
@@ -5107,12 +5141,12 @@ body {
   background: var(--paper);
   border: 1px solid var(--line);
   border-radius: 6px;
-  padding: 10px 12px 11px 10px;
+  padding: 12px 14px 12px 12px;
   cursor: grab;
   box-shadow: 0 1px 2px var(--n-25-a8);
-  transition: background 0.12s;
+  transition: background 0.12s, box-shadow 0.12s;
 }
-.board-card:hover { background: var(--n-98-4); }
+.board-card:hover { box-shadow: 0 2px 6px var(--n-23-a22); }
 .board-card.dragging { opacity: 0.45; }
 .board-done {
   width: 17px;
@@ -5138,7 +5172,7 @@ body {
 /* Закрытое дело: залитый кружок, наведение намекает, что закрытие снимается. */
 .board-done.is-done { border-color: var(--green); background: var(--green); color: var(--paper); }
 .board-done.is-done:hover { background: transparent; color: var(--green); }
-.board-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.board-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 9px; }
 .board-title-row { display: flex; align-items: flex-start; gap: 6px; }
 .board-title {
   display: block;
@@ -5148,8 +5182,8 @@ body {
   background: none;
   font: inherit;
   font-size: 14px;
-  font-weight: 600;
-  line-height: 1.35;
+  font-weight: 500;
+  line-height: 1.4;
   color: var(--ink);
   padding: 0;
   cursor: pointer;
@@ -5163,23 +5197,21 @@ body {
   align-items: center;
   font-size: 12.5px;
 }
+/* Теги и проекты — чипы серые, как «Design» в Notion; цвет проекта — только
+   точкой, чтобы карточка не пестрела. */
+.btag.tag, .btag.project { background: var(--fmt-bg-gray); color: var(--n-45); padding: 2px 7px; border-radius: 4px; line-height: 1.45; font-size: 12.5px; }
+.btag.project { display: inline-flex; align-items: center; gap: 6px; }
+.btag.project::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--tone); flex: none; }
 .board-meta.people { gap: 4px 12px; font-size: 13px; color: var(--ink); }
-/* Состояние — такой же чип, как остальные свойства: заливка по состоянию,
+/* Состояние и срок — обычным текстом, как дата в Notion; цвет — подсказка,
    заголовок при этом остаётся чёрным. */
-.board-meta .entry-status {
-  font-size: 12.5px;
-  gap: 4px;
-  padding: 1px 6px;
-  border-radius: 3px;
-  line-height: 1.5;
-  font-weight: 500;
-}
-.board-meta .entry-status svg { width: 12px; height: 12px; }
-.board-meta .entry-status.st-late { background: var(--fmt-bg-red); color: var(--fmt-red); }
-.board-meta .entry-status.st-today { background: var(--fmt-bg-orange); color: var(--fmt-orange); }
-.board-meta .entry-status.st-ontime { background: var(--fmt-bg-blue); color: var(--fmt-blue); }
-.board-meta .entry-status.st-none { background: var(--fmt-bg-gray); color: var(--fmt-gray); }
-.board-meta .entry-status.st-done { background: var(--fmt-bg-green); color: var(--fmt-green); }
+.board-meta .entry-status { font-size: 13px; gap: 5px; font-weight: 500; }
+.board-meta .entry-status svg { width: 13px; height: 13px; }
+.board-meta .entry-status.st-late { color: var(--fmt-red); }
+.board-meta .entry-status.st-today { color: var(--fmt-orange); }
+.board-meta .entry-status.st-ontime { color: var(--n-52); }
+.board-meta .entry-status.st-none { color: var(--n-62); font-weight: 400; }
+.board-meta .entry-status.st-done { color: var(--fmt-green); }
 .board-who { display: inline-flex; align-items: center; gap: 6px; }
 .board-ava {
   width: 18px;
@@ -5199,9 +5231,9 @@ body {
 .btag { color: var(--n-62); white-space: nowrap; }
 .btag[class*=" c-"] { padding: 1px 6px; border-radius: 3px; line-height: 1.5; }
 .btag.urgent { font-weight: 600; }
-.btag.due { background: var(--fmt-bg-gray); color: var(--fmt-gray); padding: 1px 6px; border-radius: 3px; line-height: 1.5; }
-.btag.due.soon { background: var(--fmt-bg-orange); color: var(--fmt-orange); }
-.btag.due.late { background: var(--fmt-bg-red); color: var(--fmt-red); font-weight: 600; }
+.btag.due { font-size: 13px; color: var(--n-52); }
+.btag.due.soon { color: var(--fmt-orange); font-weight: 500; }
+.btag.due.late { color: var(--fmt-red); font-weight: 500; }
 .board-drop {
   height: 3px;
   border-radius: 99px;
@@ -5209,7 +5241,7 @@ body {
   margin: -1px 3px;
   flex: none;
 }
-.board-add { margin-top: 6px; padding: 0; }
+.board-add { margin-top: 6px; padding: 0 2px; }
 .board-add-button {
   font: inherit;
   font-size: 13px;
@@ -5474,11 +5506,14 @@ body {
   flex: none;
   width: 100%;
   min-height: 0;
-  border-radius: 12px;
+  padding: 0;
+  background: none;
 }
 .board-columns.list .board-col-head {
-  margin-bottom: 8px;
+  margin: 0 0 8px;
   padding: 0 2px 8px;
+  border-radius: 0;
+  background: none;
   border-bottom: 1px solid var(--line);
 }
 .board-columns.list .board-group-label { padding-top: 8px; }
