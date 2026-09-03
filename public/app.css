@@ -4942,6 +4942,7 @@ dialog form > div {
 /* Полная ширина считается от 100vw, а она включает вертикальную полосу
    прокрутки там, где та занимает место: страница не должна из-за этого
    получить горизонтальный скролл. Горизонтально страница не едет нигде. */
+html,
 body {
   overflow-x: hidden;
 }
@@ -5561,10 +5562,17 @@ body {
 /* Телефон: одна колонка на экран, сверху сегмент подписей колонок. */
 .board-segments { display: none; }
 @media (max-width: 760px) {
-  .board-controls { flex-wrap: wrap; margin-right: 12px; }
+  /* Ряд видов и инструментов не должен распирать страницу: на телефоне
+     Safari иначе расширяет окно, и всё — от карточки записи до экрана
+     разговора — оказывается уже экрана. Подписи неактивных видов спрятаны,
+     сам ряд при нужде едет вбок внутри себя. */
+  .board-controls { flex-wrap: wrap; margin-right: 12px; min-width: 0; }
+  .board-views { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .board-views::-webkit-scrollbar { display: none; }
   .board-views button { padding: 5px 6px; font-size: 13px; }
-  .board-views button svg + * { display: none; }
-  .board-views button[aria-pressed="true"] svg + * { display: inline; }
+  .board-views button svg + span { display: none; }
+  .board-views button[aria-pressed="true"] svg + span { display: inline; }
+  .board-tools { flex-wrap: wrap; max-width: 100%; }
   .board-props { margin-right: 12px; }
   .board-segments {
     display: flex;

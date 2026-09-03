@@ -178,8 +178,12 @@ test("на телефоне список не растягивает карто�
   const box = await card.boundingBox();
   expect(box.height).toBeLessThan(120);
   await expect(page.locator("#board-segments")).toBeHidden();
+  // Страница не шире экрана: иначе Safari на телефоне расширяет окно, и
+  // карточка записи с экраном разговора оказываются уже экрана.
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   // На доске сегмент есть, и показана одна колонка.
   await page.locator('[data-board-view="columns"]').click();
   await expect(page.locator("#board-segments .board-segment").first()).toBeVisible();
   await expect(page.locator("#board-columns .board-column.is-active")).toHaveCount(1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
