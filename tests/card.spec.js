@@ -698,9 +698,9 @@ test("the entry card opens as a notion page: wide peek with a 708px column", asy
   await entry.locator(".entry-title").click();
   await page.waitForTimeout(760);
 
-  // Геометрия peek: ширина min(820, окно − 48), высота — окно без 72px.
+  // Геометрия peek: ширина min(720, окно − 48), высота — окно без 72px.
   const card = await page.locator("#review-dialog").boundingBox();
-  expect(Math.round(card.width)).toBe(820);
+  expect(Math.round(card.width)).toBe(720);
   expect(Math.round(card.height)).toBe(900 - 72);
 
   // Контент собран в колонку страницы, как в Notion: сам #review — прокрутка
@@ -710,6 +710,71 @@ test("the entry card opens as a notion page: wide peek with a 708px column", asy
   // Колонка стоит по центру peek, а не прижата к краю.
   const offCenter = Math.abs(column.x + column.width / 2 - (card.x + card.width / 2));
   expect(offCenter).toBeLessThan(16);
+});
+
+// Размер карточки меняется мышкой за край и угол: тянется симметрично, чтобы
+// остаться по центру, запоминается между открытиями, двойной клик по краю
+// возвращает исходный.
+test("the card is resized by dragging its edge, the size survives reopening", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/");
+
+  await page.getByLabel("Новая запись").click();
+  await page.keyboard.type("запись для растягивания");
+  await page.getByRole("button", { name: "Сохранить запись" }).click();
+  const entry = page.locator("#today .entry").filter({ hasText: "растягивания" }).first();
+  await expect(entry).toBeVisible({ timeout: 15000 });
+  await entry.locator(".entry-title").click();
+  await page.waitForTimeout(760);
+
+  const dialog = page.locator("#review-dialog");
+  const before = await dialog.boundingBox();
+  expect(Math.round(before.width)).toBe(720);
+
+  // Правый край на 60px правее: карточка шире на 120 и по-прежнему по центру.
+  const edge = await dialog.locator('.card-resize[data-dir="e"]').boundingBox();
+  const x = edge.x + edge.width / 2,
+    y = edge.y + edge.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 30, y);
+  await page.mouse.move(x + 60, y);
+  await page.mouse.up();
+  const wider = await dialog.boundingBox();
+  expect(Math.round(wider.width)).toBe(840);
+  expect(Math.abs(wider.x + wider.width / 2 - (before.x + before.width / 2))).toBeLessThan(2);
+  expect(Math.round(wider.height)).toBe(Math.round(before.height));
+
+  // Нижний угол вверх: ниже не стало, а высота уменьшилась на 80.
+  const corner = await dialog.locator('.card-resize[data-dir="se"]').boundingBox();
+  const cx = corner.x + 6,
+    cy = corner.y + 6;
+  await page.mouse.move(cx, cy);
+  await page.mouse.down();
+  await page.mouse.move(cx, cy - 20);
+  await page.mouse.move(cx, cy - 40);
+  await page.mouse.up();
+  const shorter = await dialog.boundingBox();
+  expect(Math.round(shorter.width)).toBe(840);
+  expect(Math.round(shorter.height)).toBe(Math.round(before.height) - 80);
+
+  // Закрыли, открыли заново — размер тот же.
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await entry.locator(".entry-title").click();
+  await page.waitForTimeout(760);
+  const reopened = await dialog.boundingBox();
+  expect(Math.round(reopened.width)).toBe(840);
+  expect(Math.round(reopened.height)).toBe(Math.round(before.height) - 80);
+
+  // Двойной клик по краю возвращает исходный размер.
+  await dialog.locator('.card-resize[data-dir="e"]').dblclick();
+  const reset = await dialog.boundingBox();
+  expect(Math.round(reset.width)).toBe(720);
+  expect(Math.round(reset.height)).toBe(Math.round(before.height));
+  // Карточка при этом не закрылась: клики по ручкам — не клик по подложке.
+  await expect(dialog).toBeVisible();
 });
 
 test("a capture can be deleted from its card and brought back from the toast", async ({ page, request }) => {

@@ -2432,6 +2432,80 @@ $("#review-dialog").addEventListener("close", () => {
 $("#review-dialog").addEventListener("click", (event) => {
   if (event.target === $("#review-dialog")) closeCard();
 });
+// Карточку можно растянуть или сжать мышкой за край или угол. Тянется
+// симметрично — она остаётся по центру, как и была, а край идёт за курсором.
+// Размер запоминается и возвращается при следующем открытии; двойной клик по
+// краю возвращает исходный.
+const cardSizeStorageKey = "pagent.card-size";
+const CARD_MIN_WIDTH = 480;
+const CARD_MIN_HEIGHT = 360;
+function applyCardSize(size) {
+  const dialog = $("#review-dialog");
+  if (!size) {
+    dialog.style.removeProperty("--card-w");
+    dialog.style.removeProperty("--card-h");
+    return;
+  }
+  dialog.style.setProperty("--card-w", `${Math.round(size.width)}px`);
+  dialog.style.setProperty("--card-h", `${Math.round(size.height)}px`);
+}
+function restoreCardSize() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(cardSizeStorageKey));
+    if (stored && Number.isFinite(stored.width) && Number.isFinite(stored.height)) applyCardSize(stored);
+  } catch {
+    localStorage.removeItem(cardSizeStorageKey);
+  }
+}
+restoreCardSize();
+for (const handle of document.querySelectorAll("#review-dialog .card-resize")) {
+  const dir = handle.dataset.dir;
+  handle.addEventListener("dblclick", () => {
+    applyCardSize(null);
+    localStorage.removeItem(cardSizeStorageKey);
+  });
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    const dialog = $("#review-dialog");
+    const start = dialog.getBoundingClientRect();
+    const startX = event.clientX,
+      startY = event.clientY;
+    // Знак: правый и нижний края растут вслед за курсором, левый и верхний —
+    // навстречу. Карточка центрирована, поэтому сдвиг края удваивается.
+    const sx = dir.includes("e") ? 2 : dir.includes("w") ? -2 : 0;
+    const sy = dir.includes("s") ? 2 : dir.includes("n") ? -2 : 0;
+    let size = { width: start.width, height: start.height };
+    handle.setPointerCapture(event.pointerId);
+    dialog.classList.add("resizing");
+    event.preventDefault();
+    const move = (e) => {
+      size = {
+        width: Math.min(
+          window.innerWidth - 24,
+          Math.max(CARD_MIN_WIDTH, start.width + sx * (e.clientX - startX)),
+        ),
+        height: Math.min(
+          window.innerHeight - 24,
+          Math.max(CARD_MIN_HEIGHT, start.height + sy * (e.clientY - startY)),
+        ),
+      };
+      applyCardSize(size);
+    };
+    const stop = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", stop);
+      handle.removeEventListener("pointercancel", stop);
+      dialog.classList.remove("resizing");
+      localStorage.setItem(
+        cardSizeStorageKey,
+        JSON.stringify({ width: Math.round(size.width), height: Math.round(size.height) }),
+      );
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", stop);
+    handle.addEventListener("pointercancel", stop);
+  });
+}
 window.addEventListener("pagehide", () => {
   for (const record of activeCaptures.values())
     if (record.timer) clearTimeout(record.timer);

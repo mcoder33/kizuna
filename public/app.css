@@ -3858,11 +3858,18 @@ dialog form > div {
   --nt-callout-red: rgb(253, 235, 236);
   --nt-callout-green: rgb(237, 243, 236);
   --nt-callout-blue: rgb(231, 243, 248);
-  width: min(820px, calc(100vw - 48px));
-  height: calc(100vh - 72px);
+  /* Размер задают переменные: их правит перетаскивание за край карточки, а
+     запомненное значение возвращается при следующем открытии. Окно всё равно
+     ограничивает: карточка не выходит за 24px от края экрана. */
+  --card-w: 720px;
+  --card-h: calc(100vh - 72px);
+  width: min(var(--card-w), calc(100vw - 48px));
+  height: min(var(--card-h), calc(100vh - 24px));
   max-width: none;
   max-height: none;
-  margin: 36px auto;
+  /* auto по обеим осям: карточка любого размера остаётся по центру, а в
+     исходном виде это те же 36px сверху и снизу. */
+  margin: auto;
   padding: 0;
   border: 0;
   border-radius: 10px;
@@ -3937,9 +3944,59 @@ dialog form > div {
     margin: 0;
     border-radius: 0;
   }
+  /* На телефоне карточка во весь экран — тянуть нечего. */
+  #review-dialog .card-resize {
+    display: none;
+  }
 }
 #review-dialog::backdrop {
   background: rgba(15, 15, 15, 0.6);
+}
+/* Ручки изменения размера: невидимые полосы вдоль краёв и квадраты в углах.
+   Лежат внутри карточки (overflow: hidden срезал бы всё снаружи), поверх
+   содержимого, но не перекрывают крестик — тот выше по z-index. */
+#review-dialog .card-resize {
+  position: absolute;
+  z-index: 1;
+  touch-action: none;
+  user-select: none;
+}
+#review-dialog .card-resize[data-dir="n"],
+#review-dialog .card-resize[data-dir="s"] {
+  left: 10px;
+  right: 10px;
+  height: 6px;
+  cursor: ns-resize;
+}
+#review-dialog .card-resize[data-dir="e"],
+#review-dialog .card-resize[data-dir="w"] {
+  top: 10px;
+  bottom: 10px;
+  width: 6px;
+  cursor: ew-resize;
+}
+#review-dialog .card-resize[data-dir="n"] { top: 0; }
+#review-dialog .card-resize[data-dir="s"] { bottom: 0; }
+#review-dialog .card-resize[data-dir="e"] { right: 0; }
+#review-dialog .card-resize[data-dir="w"] { left: 0; }
+#review-dialog .card-resize[data-dir="ne"],
+#review-dialog .card-resize[data-dir="nw"],
+#review-dialog .card-resize[data-dir="se"],
+#review-dialog .card-resize[data-dir="sw"] {
+  width: 12px;
+  height: 12px;
+}
+#review-dialog .card-resize[data-dir="ne"] { top: 0; right: 0; cursor: nesw-resize; }
+#review-dialog .card-resize[data-dir="sw"] { bottom: 0; left: 0; cursor: nesw-resize; }
+#review-dialog .card-resize[data-dir="nw"] { top: 0; left: 0; cursor: nwse-resize; }
+#review-dialog .card-resize[data-dir="se"] { bottom: 0; right: 0; cursor: nwse-resize; }
+/* Пока тянут — текст под курсором не выделяется, а курсор не меняется. */
+#review-dialog.resizing,
+#review-dialog.resizing * {
+  user-select: none;
+}
+#review-dialog.resizing .review {
+  pointer-events: none;
 }
 /* Колонка страницы: 708px по центру, снизу — воздух, как на пустой странице. */
 #review-dialog .review {
