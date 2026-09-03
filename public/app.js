@@ -166,6 +166,12 @@ function showProvenance(provenance) {
   element.textContent = `Использован: ${providerNames[provider] || "локальные правила"}${fallbackSuffix(provenance)}`;
   element.className = `status ${provider !== "fallback" ? "ai" : fallbackSuffix(provenance) ? "fallback" : ""}`.trim();
 }
+// Состояние «Обзора» объявлено до первого разбора адреса: прямая ссылка на
+// #reports зовёт loadReports сразу, и объявление ниже по файлу ещё не
+// существовало бы — обзор оставался пустым до щелчка по вкладке.
+// «День» — первая вкладка и вкладка по умолчанию: обзор открывают спросить
+// «что было вчера», а сводные «Записи» нужны реже и стоят в конце.
+const reportsState = { tab: "day", period: "week", dayDate: null };
 function updatePageFromHash() {
   // Внутренние ссылки Obsidian ведут в память с запросом: «#memory?query=Hub».
   // Хэш поэтому разбирается на страницу и параметры — иначе такой страницы не
@@ -2818,7 +2824,6 @@ loadAccount();
 // Правила из концепта reports-concept.html: списки важнее графиков, каждая
 // строка открывает карточку записи, всё названо словом. Данные считает сервер
 // одним запросом; здесь только отрисовка.
-const reportsState = { tab: "life", period: "week", dayDate: null };
 const REPORT_TYPES = ["task", "meeting_event", "note", "outcome_decision", "idea_question"];
 const reportLegendNames = { task: "Задачи", meeting_event: "Встречи", note: "Заметки", outcome_decision: "Решения", idea_question: "Вопросы" };
 const correctionFieldNames = { schedule: "срок", primaryType: "тип", project: "проект", projects: "проекты", people: "люди", followUp: "следующий шаг", tags: "теги", priority: "важность", summary: "формулировка" };

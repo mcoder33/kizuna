@@ -2,7 +2,9 @@ import { test, expect } from "@playwright/test";
 
 test("«День» в обзоре листается назад и вперёд до сегодняшнего дня", async ({ page }) => {
   await page.goto("/#reports");
-  await page.locator('[data-reports-tab="day"]').click();
+  // «День» — вкладка по умолчанию: «Записи» стоят в конце.
+  await expect(page.locator('[data-reports-tab="day"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("[data-reports-tab]")).toHaveText(["День", "Служебное", "Записи"]);
   const label = page.locator("#reports-day-label"),
     prev = page.locator("#reports-day-prev"),
     next = page.locator("#reports-day-next");

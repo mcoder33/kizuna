@@ -278,23 +278,23 @@
         </div>
         <div class="reports-controls">
           <div class="reports-tabs" role="tablist" aria-label="Вкладки обзора">
-            <button type="button" data-reports-tab="life" aria-pressed="true">Записи</button>
-            <button type="button" data-reports-tab="day" aria-pressed="false">День</button>
+            <button type="button" data-reports-tab="day" aria-pressed="true">День</button>
             <button type="button" data-reports-tab="service" aria-pressed="false">Служебное</button>
+            <button type="button" data-reports-tab="life" aria-pressed="false">Записи</button>
           </div>
-          <div class="reports-period" id="reports-period" role="group" aria-label="Период">
+          <div class="reports-period" id="reports-period" role="group" aria-label="Период" hidden>
             <button type="button" data-reports-period="week" aria-pressed="true">Неделя</button>
             <button type="button" data-reports-period="month" aria-pressed="false">Месяц</button>
             <button type="button" data-reports-period="all" aria-pressed="false">Всё время</button>
           </div>
-          <div class="reports-daynav" id="reports-daynav" hidden>
+          <div class="reports-daynav" id="reports-daynav">
             <button type="button" id="reports-day-prev" aria-label="Предыдущий день">‹</button>
             <span id="reports-day-label"></span>
             <button type="button" id="reports-day-next" aria-label="Следующий день">›</button>
           </div>
         </div>
-        <div id="reports-life" class="reports-view"></div>
-        <div id="reports-day" class="reports-view" hidden></div>
+        <div id="reports-life" class="reports-view" hidden></div>
+        <div id="reports-day" class="reports-view"></div>
         <div id="reports-service" class="reports-view" hidden></div>
       </section>
 
