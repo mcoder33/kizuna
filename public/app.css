@@ -5594,8 +5594,12 @@ body {
   .board-columns:not(.list) .board-column.is-active { display: block; }
   .board-columns:not(.list) .board-hidden { display: none; }
   .board-columns:not(.list) .board-col-tools { opacity: 1; }
+  /* Список на телефоне: строка заголовка не растягивается — её flex-basis
+     в 260px задуман для ширины, а в столбике он превращался в высоту, и
+     карточка вырастала на весь экран. */
   .board-columns.list .board-body { flex-direction: column; align-items: stretch; gap: 5px; }
-  .board-columns.list .board-segments { display: none; }
+  .board-columns.list .board-title-row { flex: none; }
+  .board-columns.list .board-card { align-items: flex-start; }
 }
 
 /* «Записано» — компактная строка футера карточки, перед источником и версией */

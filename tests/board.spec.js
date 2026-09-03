@@ -164,3 +164,22 @@ test("доска как в Notion: цвет колонки, свойства, ф
   await hidden.click();
   await expect(page.locator(".board-column.closed")).toHaveCount(0);
 });
+
+// На телефоне список — столбиком целиком, без сегмента колонок, и карточка
+// не выше своего содержимого: flex-basis строки заголовка не должен
+// превращаться в высоту.
+test("на телефоне список не растягивает карточки и не показывает сегмент колонок", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await request.post("/api/captures", { data: { raw: "Проверить список на телефоне", primaryType: "todo" } });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/#board?view=list");
+  const card = page.locator("#board-columns .board-card").filter({ hasText: "на телефоне" });
+  await expect(card).toBeVisible();
+  const box = await card.boundingBox();
+  expect(box.height).toBeLessThan(120);
+  await expect(page.locator("#board-segments")).toBeHidden();
+  // На доске сегмент есть, и показана одна колонка.
+  await page.locator('[data-board-view="columns"]').click();
+  await expect(page.locator("#board-segments .board-segment").first()).toBeVisible();
+  await expect(page.locator("#board-columns .board-column.is-active")).toHaveCount(1);
+});

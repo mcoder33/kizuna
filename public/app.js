@@ -3924,6 +3924,9 @@ function renderBoard(source) {
     if (boardState.showClosed && data.closed?.length) wrap.append(boardClosedGroupEl(data.closed));
     wrap.append(boardHiddenEl(data));
   }
+  // Сегмент колонок нужен, когда на телефоне показана одна колонка; список
+  // и так столбиком целиком.
+  $("#board-segments").hidden = boardState.view === "list";
   paintBoardSegments([...wrap.querySelectorAll(".board-column")]);
 }
 function setBoardView(view) {
