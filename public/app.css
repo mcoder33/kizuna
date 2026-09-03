@@ -1937,79 +1937,15 @@ body.capture-large-open::before {
   background: var(--green);
   color: var(--n-100);
 }
-/* ── «Сегодня» в одном стиле с доской ────────────────────────────────────────
-   Запись в колонке — тот же белый лист с тенью, что и карточка на доске:
-   чёрный заголовок, кружок «готово», свойства серыми чипами, состояние и
-   срок — текстом с цветом-подсказкой. Цветных подложек и красных
-   заголовков нет: два раздела с одними и теми же делами должны выглядеть
-   одинаково. */
-.preview-card .stack { gap: 8px; }
-.preview-card .entry,
-.preview-card .entry:first-child,
-#todo .entry.waiting,
+/* Фон состояния — только в TODO: там просроченное, ожидающее и требующее
+   уточнения лежат рядом. В «Что делал» все записи в одном состоянии,
+   различать нечего, и фон был бы лишним весом. */
+#todo .entry.waiting {
+  background: var(--tint-wait);
+}
 #todo .entry.overdue {
-  padding: 12px 14px 12px 12px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--paper);
-  box-shadow: 0 1px 2px var(--n-25-a8), 0 3px 8px var(--n-25-a8);
-  font-size: 13px;
+  background: var(--tint-late);
 }
-.preview-card .entry.completable { column-gap: 9px; }
-.preview-card .entry.overdue .entry-title,
-.preview-card .entry.overdue .entry-meta { color: inherit; }
-.preview-card .entry-title {
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.4;
-  color: var(--ink);
-}
-.preview-card .entry-meta {
-  margin-top: 8px;
-  gap: 6px 8px;
-  font-size: 12.5px;
-  color: var(--n-52);
-}
-.preview-card .entry-meta .tag {
-  margin-right: 0;
-  padding: 2px 7px;
-  border-radius: 4px;
-  font-size: 12.5px;
-  font-weight: 400;
-  line-height: 1.45;
-  background: var(--fmt-bg-gray);
-  color: var(--n-45);
-}
-.preview-card .entry-meta .tag.project { color: var(--n-45); font-weight: 400; }
-.preview-card .entry-meta .tag.urgent { background: var(--fmt-bg-red); color: var(--fmt-red); }
-/* Состояние и срок — текстом, как на доске. Срок при просрочке не
-   дублируется: «просрочено» уже сказано. */
-.preview-card .entry-meta .tag.due,
-.preview-card .entry-meta .tag.late,
-.preview-card .entry-meta .tag.ontime,
-.preview-card .entry-meta .tag.undated,
-.preview-card .entry-meta .tag.done {
-  padding: 0;
-  background: none;
-  font-size: 13px;
-}
-.preview-card .entry-meta .tag.due { color: var(--n-52); }
-.preview-card .entry-meta .tag.due.soon { color: var(--fmt-orange); font-weight: 500; }
-.preview-card .entry-meta .tag.due.late { display: none; }
-.preview-card .entry-meta .tag.late { color: var(--fmt-red); font-weight: 500; }
-.preview-card .entry-meta .tag.ontime { color: var(--n-52); }
-.preview-card .entry-meta .tag.undated { color: var(--n-62); }
-.preview-card .entry-meta .tag.done { color: var(--fmt-green); font-weight: 500; }
-.preview-card .completion-button {
-  width: 17px;
-  height: 17px;
-  margin-top: 2px;
-  border: 1.5px solid var(--n-76);
-  background: none;
-}
-.preview-card .entry.overdue > .completion-button { border-color: var(--n-76); }
-.preview-card .completion-button:hover { border-color: var(--green); color: var(--green); }
-.preview-card .entry.completed > .completion-button { border-color: var(--green); background: var(--green); color: var(--n-100); }
 #review-dialog:focus,
 #review-dialog:focus-visible {
   outline: none;
