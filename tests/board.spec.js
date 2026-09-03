@@ -111,19 +111,19 @@ test("доска как в Notion: цвет колонки, свойства, ф
   await page.reload();
   await expect(column.locator(".board-pill")).toHaveClass(/c-purple/);
 
-  // Карточка: тип строкой, проект чипом с цветом, статус — словом.
+  // Карточка: статус чипом, проект чипом с цветом; кружок — без часов, это задача.
   const inbox = page.locator(".board-column.inbox");
   await expect(inbox.locator(".board-card")).toHaveCount(2);
   const smeta = inbox.locator(".board-card").filter({ hasText: "смету" });
-  await expect(smeta.locator(".btag.kind")).toHaveText("Задача");
   await expect(smeta.locator(".entry-status")).toHaveText("Без срока");
+  await expect(smeta.locator(".board-done")).not.toHaveClass(/meeting/);
   await expect(smeta.locator(".btag.project", { hasText: "CP" })).toHaveClass(/c-/);
 
-  // Панель свойств: без типа — строки нет; компактно — одна строка.
+  // Панель свойств: без проекта — чипа нет; компактно — одна строка.
   await page.locator("#board-props-toggle").click();
-  await page.locator('[data-board-prop="type"]').uncheck();
-  await expect(smeta.locator(".btag.kind")).toHaveCount(0);
-  await page.locator('[data-board-prop="type"]').check();
+  await page.locator('[data-board-prop="project"]').uncheck();
+  await expect(smeta.locator(".btag.project")).toHaveCount(0);
+  await page.locator('[data-board-prop="project"]').check();
   await page.locator('[data-board-prop="compact"]').check();
   await expect(page.locator("#board-columns")).toHaveClass(/compact/);
   await expect(smeta.locator(".board-meta")).toHaveCount(1);

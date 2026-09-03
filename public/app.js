@@ -3317,7 +3317,7 @@ async function reopenBoardCard(card, button) {
 // Цвет проекта — из названия, чтобы один проект был одного цвета на всех
 // карточках и на всех устройствах без настройки.
 function boardProjectColor(name) {
-  const palette = ["blue", "green", "orange", "purple", "pink", "brown", "yellow", "red"];
+  const palette = ["blue", "green", "orange", "purple", "pink", "yellow", "red"];
   let hash = 0;
   for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
   return palette[hash % palette.length];
@@ -3336,19 +3336,17 @@ function boardPersonEl(name, { avatarOnly = false } = {}) {
   else who.append(document.createTextNode(name));
   return who;
 }
-const boardClockIcon = () => {
-  const wrap = node("span", undefined, "board-type-icon");
-  wrap.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.5V8l2.4 1.6"/></svg>';
-  wrap.title = "Встреча";
-  return wrap;
-};
+// Значок типа — сам кружок «готово»: у задачи пустой, у встречи с часовыми
+// стрелками. Один знак перед названием, а не три.
+const BOARD_CLOCK = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 4.5V8l2.4 1.6"/></svg>';
 function boardCardEl(card, column, { closed = false } = {}) {
   const props = boardState.props;
   const element = node("div", undefined, `board-card${closed ? " closed" : ""}`);
   element.draggable = !closed;
   element.dataset.captureId = card.captureId;
-  const done = node("button", undefined, `board-done${closed ? " is-done" : ""}`);
+  const done = node("button", undefined, `board-done${closed ? " is-done" : ""}${card.type === "meeting_event" ? " meeting" : ""}`);
   done.type = "button";
+  if (card.type === "meeting_event" && !closed) done.innerHTML = BOARD_CLOCK;
   done.title = closed ? "Вернуть в работу" : "Готово";
   done.setAttribute("aria-label", `${done.title}: ${card.title}`);
   done.addEventListener("click", (event) => {
@@ -3358,13 +3356,11 @@ function boardCardEl(card, column, { closed = false } = {}) {
   });
   const body = node("div", undefined, "board-body");
   const titleRow = node("div", undefined, "board-title-row");
-  if (card.type === "meeting_event") titleRow.append(boardClockIcon());
   const title = node("button", card.title.split("\n")[0], "board-title");
   title.type = "button";
   title.addEventListener("click", () => openReportEntry(card.captureId));
   titleRow.append(title);
   const status = boardCardStatus(card);
-  if (!closed && status.key === "late") element.classList.add("overdue");
   const due = card.due ? scheduleLabel({ state: "ok", date: card.due.date, time: card.due.time }) : null;
   const dueChip = () =>
     node("span", `срок: ${due}`, `btag due${status.key === "late" ? " late" : status.key === "today" ? " soon" : ""}`);
@@ -3377,9 +3373,6 @@ function boardCardEl(card, column, { closed = false } = {}) {
     for (const person of card.people) line.append(boardPersonEl(person, { avatarOnly: props.compact }));
   }
   const typeLine = row("type");
-  if (props.type) {
-    if (!props.compact) typeLine.append(node("span", card.type === "meeting_event" ? "Встреча" : "Задача", `btag kind ${card.type === "meeting_event" ? "c-purple" : "c-yellow"}`));
-  }
   if (props.priority && card.priority === "high") typeLine.append(node("span", "важно", "btag urgent c-red"));
   if (props.priority && card.priority === "low") typeLine.append(node("span", "не срочно", "btag c-gray"));
   if (props.type) for (const tag of card.tags) typeLine.append(node("span", `#${tag}`, "btag tag c-gray"));

@@ -5107,7 +5107,7 @@ body {
   background: var(--paper);
   border: 1px solid var(--line);
   border-radius: 6px;
-  padding: 10px 12px 10px 10px;
+  padding: 10px 12px 11px 10px;
   cursor: grab;
   box-shadow: 0 1px 2px var(--n-25-a8);
   transition: background 0.12s;
@@ -5130,21 +5130,16 @@ body {
 }
 .board-done:hover { border-color: var(--green); color: var(--green); }
 .board-done::before { content: "✓"; }
+/* Встреча: в кружке часовые стрелки; наведение обещает то же «готово». */
+.board-done.meeting { color: var(--n-66); border-color: var(--n-66); }
+.board-done.meeting::before { content: none; }
+.board-done.meeting svg { width: 14px; height: 14px; display: block; margin: 0 auto; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.board-done.meeting:hover { color: var(--green); border-color: var(--green); }
 /* Закрытое дело: залитый кружок, наведение намекает, что закрытие снимается. */
 .board-done.is-done { border-color: var(--green); background: var(--green); color: var(--paper); }
 .board-done.is-done:hover { background: transparent; color: var(--green); }
-.board-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 5px; }
+.board-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 6px; }
 .board-title-row { display: flex; align-items: flex-start; gap: 6px; }
-.board-type-icon {
-  flex: none;
-  width: 17px;
-  height: 17px;
-  margin-top: 1px;
-  color: var(--n-66);
-  display: inline-grid;
-  place-items: center;
-}
-.board-type-icon svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .board-title {
   display: block;
   width: 100%;
@@ -5152,9 +5147,9 @@ body {
   border: 0;
   background: none;
   font: inherit;
-  font-size: 14.5px;
+  font-size: 14px;
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 1.35;
   color: var(--ink);
   padding: 0;
   cursor: pointer;
@@ -5169,8 +5164,22 @@ body {
   font-size: 12.5px;
 }
 .board-meta.people { gap: 4px 12px; font-size: 13px; color: var(--ink); }
-.board-meta .entry-status { font-size: 12.5px; gap: 4px; }
+/* Состояние — такой же чип, как остальные свойства: заливка по состоянию,
+   заголовок при этом остаётся чёрным. */
+.board-meta .entry-status {
+  font-size: 12.5px;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  line-height: 1.5;
+  font-weight: 500;
+}
 .board-meta .entry-status svg { width: 12px; height: 12px; }
+.board-meta .entry-status.st-late { background: var(--fmt-bg-red); color: var(--fmt-red); }
+.board-meta .entry-status.st-today { background: var(--fmt-bg-orange); color: var(--fmt-orange); }
+.board-meta .entry-status.st-ontime { background: var(--fmt-bg-blue); color: var(--fmt-blue); }
+.board-meta .entry-status.st-none { background: var(--fmt-bg-gray); color: var(--fmt-gray); }
+.board-meta .entry-status.st-done { background: var(--fmt-bg-green); color: var(--fmt-green); }
 .board-who { display: inline-flex; align-items: center; gap: 6px; }
 .board-ava {
   width: 18px;
@@ -5190,10 +5199,6 @@ body {
 .btag { color: var(--n-62); white-space: nowrap; }
 .btag[class*=" c-"] { padding: 1px 6px; border-radius: 3px; line-height: 1.5; }
 .btag.urgent { font-weight: 600; }
-/* Просроченное: красный заголовок и рамка; срок — тем же тоном. Слова на
-   месте — цвет лишь подсказка. */
-.board-card.overdue { border-color: var(--tint-late-line); }
-.board-card.overdue .board-title { color: var(--red-49); }
 .btag.due { background: var(--fmt-bg-gray); color: var(--fmt-gray); padding: 1px 6px; border-radius: 3px; line-height: 1.5; }
 .btag.due.soon { background: var(--fmt-bg-orange); color: var(--fmt-orange); }
 .btag.due.late { background: var(--fmt-bg-red); color: var(--fmt-red); font-weight: 600; }
