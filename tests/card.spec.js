@@ -698,10 +698,10 @@ test("the entry card opens as a notion page: wide peek with a 708px column", asy
   await entry.locator(".entry-title").click();
   await page.waitForTimeout(760);
 
-  // Геометрия peek: ширина min(720, окно − 48), высота — окно без 72px.
+  // Геометрия peek: ширина min(940, окно − 48), высота min(1024, окно − 24).
   const card = await page.locator("#review-dialog").boundingBox();
-  expect(Math.round(card.width)).toBe(720);
-  expect(Math.round(card.height)).toBe(900 - 72);
+  expect(Math.round(card.width)).toBe(940);
+  expect(Math.round(card.height)).toBe(900 - 24);
 
   // Контент собран в колонку страницы, как в Notion: сам #review — прокрутка
   // во всю ширину, колонку задают его поля, поэтому меряем заголовок.
@@ -730,7 +730,7 @@ test("the card is resized by dragging its edge, the size survives reopening", as
 
   const dialog = page.locator("#review-dialog");
   const before = await dialog.boundingBox();
-  expect(Math.round(before.width)).toBe(720);
+  expect(Math.round(before.width)).toBe(940);
 
   // Правый край на 60px правее: карточка шире на 120 и по-прежнему по центру.
   const edge = await dialog.locator('.card-resize[data-dir="e"]').boundingBox();
@@ -742,7 +742,7 @@ test("the card is resized by dragging its edge, the size survives reopening", as
   await page.mouse.move(x + 60, y);
   await page.mouse.up();
   const wider = await dialog.boundingBox();
-  expect(Math.round(wider.width)).toBe(840);
+  expect(Math.round(wider.width)).toBe(1060);
   expect(Math.abs(wider.x + wider.width / 2 - (before.x + before.width / 2))).toBeLessThan(2);
   expect(Math.round(wider.height)).toBe(Math.round(before.height));
 
@@ -756,7 +756,7 @@ test("the card is resized by dragging its edge, the size survives reopening", as
   await page.mouse.move(cx, cy - 40);
   await page.mouse.up();
   const shorter = await dialog.boundingBox();
-  expect(Math.round(shorter.width)).toBe(840);
+  expect(Math.round(shorter.width)).toBe(1060);
   expect(Math.round(shorter.height)).toBe(Math.round(before.height) - 80);
 
   // Закрыли, открыли заново — размер тот же.
@@ -765,13 +765,13 @@ test("the card is resized by dragging its edge, the size survives reopening", as
   await entry.locator(".entry-title").click();
   await page.waitForTimeout(760);
   const reopened = await dialog.boundingBox();
-  expect(Math.round(reopened.width)).toBe(840);
+  expect(Math.round(reopened.width)).toBe(1060);
   expect(Math.round(reopened.height)).toBe(Math.round(before.height) - 80);
 
   // Двойной клик по краю возвращает исходный размер.
   await dialog.locator('.card-resize[data-dir="e"]').dblclick();
   const reset = await dialog.boundingBox();
-  expect(Math.round(reset.width)).toBe(720);
+  expect(Math.round(reset.width)).toBe(940);
   expect(Math.round(reset.height)).toBe(Math.round(before.height));
   // Карточка при этом не закрылась: клики по ручкам — не клик по подложке.
   await expect(dialog).toBeVisible();
