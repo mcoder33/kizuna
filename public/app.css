@@ -1599,11 +1599,14 @@ body.capture-large-open::before {
 .preview-card .stack {
   gap: 6px;
 }
+/* Запись в колонке — плашка от края до края, как в TODO: без неё текст
+   «Что делал» и «Заметок» висел с отступом, а рядом TODO стоял в рамках. */
 .preview-card .entry,
 .preview-card .entry:first-child {
   padding: 11px 12px;
   border-top: 0;
   border-radius: 12px;
+  background: var(--n-98-4);
   font-size: 12px;
 }
 .preview-card .entry-title {
