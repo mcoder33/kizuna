@@ -232,35 +232,31 @@ test("user completion survives reload, is single-flight, and undo returns a meet
   await page.screenshot({
     path: "tmp/screenshots/completion-ledger-fixture.png",
   });
-  await page.evaluate(() => { location.hash = "#history-todo"; });
-  const completedCard = page
-    .locator("#history-todo-list .closed-group .entry")
+  // Закрытая встреча лежит хвостом списка дел в «Закрытых» и переживает
+  // перезагрузку — закрытие записано в данных, а не в состоянии страницы.
+  await page.goto("/#board?view=list");
+  const closedCard = page
+    .locator("#board-columns .board-column.closed .board-card")
     .filter({ hasText: raw })
     .first();
-  await expect(completedCard).toHaveClass(/completed/);
-  await expect(
-    completedCard.getByRole("button", { name: "Вернуть в работу" }),
-  ).toBeVisible();
+  await expect(closedCard).toBeVisible();
   await page.reload();
-  await page.evaluate(() => { location.hash = "#history-todo"; });
-  const reloaded = page
-    .locator("#history-todo-list .closed-group .entry")
-    .filter({ hasText: raw })
-    .first();
-  await expect(reloaded).toHaveClass(/completed/);
+  await expect(closedCard).toBeVisible();
   const entries = await (await page.request.get("/api/entries")).json(),
     entry = entries.entries.find((candidate) => candidate.raw === raw),
     projection = entry.projections.find(
       (candidate) => candidate.type === "meeting_event",
     );
   expect(projection.completion.completed).toBe(true);
-  await reloaded
-    .getByRole("button", { name: "Вернуть в работу" })
+  // Двойной щелчок по «Вернуть в работу» — один запрос: кнопка гаснет сразу.
+  await closedCard
+    .getByRole("button", { name: /Вернуть в работу/ })
     .evaluate((button) => {
       button.click();
       button.click();
     });
-  await page.evaluate(() => { location.hash = "#today"; });
+  await expect(page.locator("#board-columns .board-column.closed")).toHaveCount(0);
+  await page.goto("/#today");
   await expect(
     page
       .locator("#todo .entry")
@@ -1081,12 +1077,13 @@ test("колонка честно говорит, сколько записей 
   await expect(todo.locator(".entry")).toHaveCount(3, { timeout: 15000 });
   const more = todo.locator(".preview-more");
   await expect(more).toHaveText("Ещё 1 — весь список →");
-  await expect(more).toHaveAttribute("href", "#history-todo");
+  await expect(more).toHaveAttribute("href", "#board?view=list");
 
-  // Полный список открывается по этой же ссылке — и там все четыре.
+  // Полный список — доска списком, открывается по этой же ссылке, и там все четыре.
   await more.click();
-  await expect(page.locator("#history-todo")).toBeVisible();
-  await expect(page.locator("#history-todo-list .entry")).toHaveCount(4);
+  await expect(page.locator("#board")).toBeVisible();
+  await expect(page.locator("#board-columns")).toHaveClass(/list/);
+  await expect(page.locator("#board-columns .board-card")).toHaveCount(4);
 
   for (const response of created)
     await request.delete(`/api/captures/${(await response.json()).entry.id}`);

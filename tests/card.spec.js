@@ -35,12 +35,13 @@ test("the card shows properties as rows and hides the ones the type does not use
   await expect(page.locator("#review-date")).toBeVisible();
 });
 
-test("the card opens from the journal, where the panel used to build on a hidden page", async ({ page }) => {
-  const raw = "Нужно проверить журнальную карточку";
+test("the card opens from the board list, where the panel used to build on a hidden page", async ({ page }) => {
+  const raw = "Нужно проверить карточку из списка";
   await page.goto("/");
   await capture(page, raw);
-  await page.evaluate(() => { location.hash = "#history-todo"; });
-  await openCard(page, "#history-todo-list", raw);
+  await page.evaluate(() => { location.hash = "#board?view=list"; });
+  await page.locator("#board-columns .board-card").filter({ hasText: raw }).first().locator(".board-title").click();
+  await expect(page.locator("#review-dialog")).toBeVisible();
   await expect(page.locator("#review-dialog h2")).toContainText(raw);
 });
 
@@ -159,14 +160,16 @@ test("closing a task removes it from today without filing it as reported work", 
   await expect(page.locator("#journal")).not.toContainText(raw);
   await expect(page.locator("#notes")).not.toContainText(raw);
 
-  await page.evaluate(() => { location.hash = "#history-work"; });
-  await expect(page.locator("#history-work-list")).not.toContainText(raw);
-
-  await page.evaluate(() => { location.hash = "#history-todo"; });
-  const closed = page.locator("#history-todo-list .closed-group .entry").filter({ hasText: raw }).first();
+  // С открытых дел доски оно тоже ушло, но лежит хвостом списка в «Закрытых» —
+  // там же его возвращают в работу.
+  await page.evaluate(() => { location.hash = "#board?view=list"; });
+  const openCards = page.locator("#board-columns .board-column.dated:not(.closed) .board-card");
+  await expect(openCards.filter({ hasText: raw })).toHaveCount(0);
+  const closed = page.locator("#board-columns .board-column.closed .board-card").filter({ hasText: raw }).first();
   await expect(closed).toBeVisible();
-  await closed.getByRole("button", { name: "Вернуть в работу" }).click();
-  await expect(page.locator("#history-todo-list .closed-group")).toHaveCount(0);
+  await closed.getByRole("button", { name: /Вернуть в работу/ }).click();
+  await expect(page.locator("#board-columns .board-column.closed")).toHaveCount(0);
+  await expect(openCards.filter({ hasText: raw })).toHaveCount(1);
 
   await page.evaluate(() => { location.hash = "#today"; });
   await expect(page.locator("#todo")).toContainText(raw);
@@ -185,10 +188,12 @@ test("a closed entry never shows up among notes", async ({ page }) => {
 
   await expect(page.locator("#notes")).not.toContainText(raw);
   await expect(page.locator("#journal")).not.toContainText(raw);
-  await page.evaluate(() => { location.hash = "#history-notes"; });
-  await expect(page.locator("#history-notes-list")).not.toContainText(raw);
-  await page.evaluate(() => { location.hash = "#history-todo"; });
-  await expect(page.locator("#history-todo-list .closed-group")).toContainText(raw);
+  // После перезагрузки закрытая запись в заметки не возвращается: закрыта по данным.
+  await page.reload();
+  await expect(page.locator("#notes .entry")).toHaveCount(0);
+  const entries = await (await page.request.get("/api/entries")).json();
+  const entry = entries.entries.find((candidate) => candidate.raw === raw);
+  expect(entry.projections.filter((p) => p.type === "task").every((p) => p.completion?.completed)).toBe(true);
 });
 
 test("the done toggle overrides the model and moves the entry into reported work", async ({ page }) => {
@@ -946,13 +951,15 @@ test("статус записи — значком и словом: под за�
   expect(await page.locator("#review-dialog .entry-status").count()).toBe(1);
   await page.keyboard.press("Escape");
 
-  // Закрытая чекбоксом задача показывает «Сделано».
+  // Закрытая чекбоксом задача показывает «Сделано» — карточка открывается
+  // из «Обзора» за сегодня, где закрытые дела перечислены строками.
   const entry = page.locator("#todo .entry").filter({ hasText: raw }).first();
   await entry.locator(".completion-button").click();
-  const journalEntry = page.locator("#history-todo-list .entry").filter({ hasText: raw }).first();
-  await page.goto("/#history-todo");
-  await expect(journalEntry).toBeVisible();
-  await journalEntry.locator(".entry-title").click();
+  await expect(page.locator("#todo .entry").filter({ hasText: raw })).toHaveCount(0);
+  await page.goto("/#reports");
+  await page.locator('[data-reports-tab="day"]').click();
+  await page.locator("#reports-day-next").click();
+  await page.locator("#reports-day .report-items li").filter({ hasText: raw }).first().click();
   await expect(page.locator("#review-dialog .props-summary .entry-status")).toHaveText("Сделано");
 });
 

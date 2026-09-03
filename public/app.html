@@ -32,14 +32,6 @@
       <nav aria-label="Разделы">
         <a class="active" href="#today">Сегодня</a>
         <a href="#board">Доска</a>
-        <details class="history-menu">
-          <summary>Журнал</summary>
-          <div class="history-menu-popover">
-            <a href="#history-work">Что делал</a>
-            <a href="#history-todo">TODO</a>
-            <a href="#history-notes">Заметки</a>
-          </div>
-        </details>
         <a href="#reports">Обзор</a>
       </nav>
       <div class="header-tail">
@@ -201,48 +193,24 @@
         </section>
         <section class="dashboard" aria-label="Дневная сводка">
           <article class="preview-card">
-            <h2><a class="preview-title" href="#history-work">Что делал</a></h2>
+            <h2><a class="preview-title" href="#reports">Что делал</a></h2>
             <div id="journal" class="stack">
               <p class="empty">Пока нет зафиксированной работы за сегодня.</p>
             </div>
           </article>
           <article class="preview-card">
-            <h2><a class="preview-title" href="#history-todo">TODO буфер</a></h2>
+            <h2><a class="preview-title" href="#board?view=list">TODO буфер</a></h2>
             <div id="todo" class="stack">
               <p class="empty">Открытых дел нет.</p>
             </div>
           </article>
           <article class="preview-card">
-            <h2><a class="preview-title" href="#history-notes">Заметки</a></h2>
+            <h2><span class="preview-title plain">Заметки</span></h2>
             <div id="notes" class="stack">
               <p class="empty">Заметки появятся здесь.</p>
             </div>
           </article>
         </section>
-      </section>
-      <section id="history-work" class="app-page history-page" hidden>
-        <div class="page-heading">
-          <p class="eyebrow">ЖУРНАЛ · ИСТОРИЯ</p>
-          <h2>Что делал</h2>
-          <p>Зафиксированная работа, сгруппированная по дням.</p>
-        </div>
-        <div id="history-work-list" class="history-groups"></div>
-      </section>
-      <section id="history-todo" class="app-page history-page" hidden>
-        <div class="page-heading">
-          <p class="eyebrow">ЖУРНАЛ · ИСТОРИЯ</p>
-          <h2>TODO</h2>
-          <p>Открытые дела по сроку, закрытые — в конце.</p>
-        </div>
-        <div id="history-todo-list" class="history-groups"></div>
-      </section>
-      <section id="history-notes" class="app-page history-page" hidden>
-        <div class="page-heading">
-          <p class="eyebrow">ЖУРНАЛ · ИСТОРИЯ</p>
-          <h2>Заметки</h2>
-          <p>Наблюдения и контекст, сгруппированные по дням.</p>
-        </div>
-        <div id="history-notes-list" class="history-groups"></div>
       </section>
       <datalist id="known-projects">
         <option value="Hub"></option>

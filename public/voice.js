@@ -52,7 +52,7 @@ export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () =
   close.setAttribute("aria-label", "Закрыть диалог");
   const tail = element("div", "voice-head-tail");
   tail.append(roundLink("#settings", "Настройки", GEAR_ICON), close);
-  head.append(roundLink("#history-work", "История", CLOCK_ICON), brand, tail, status);
+  head.append(roundLink("#reports", "Обзор", CLOCK_ICON), brand, tail, status);
 
   // Сцена разговора: светящееся кольцо, внутри которого голос виден волнами.
   // Кольцо — кнопка: щелчком разговор усыпляют и будят.

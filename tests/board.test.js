@@ -95,9 +95,14 @@ test('closed deed leaves the board and returns to its place when reopened',async
   await api.post(`/api/projections/${projection.id}/complete`).send({}).expect(200);
   let board=(await api.get('/api/board').expect(200)).body;
   assert.equal(cardsOf(board,'В работе').length,0);
+  // Закрытое не пропадает: лежит хвостом с датой закрытия, чтобы вернуть в работу.
+  assert.deepEqual(board.closed.map(card=>card.title),[task.interpretation.classification.summary]);
+  assert.equal(board.closed[0].closedDate,today());
+  assert.deepEqual(board.closed[0].projectionIds,[projection.id]);
   await api.post(`/api/projections/${projection.id}/undo-complete`).send({}).expect(200);
   board=(await api.get('/api/board').expect(200)).body;
   assert.deepEqual(cardsOf(board,'В работе'),[task.interpretation.classification.summary]);
+  assert.deepEqual(board.closed,[]);
 });
 
 test('full reset clears the board too and is not blocked by placements',async()=>{

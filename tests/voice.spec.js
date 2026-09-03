@@ -729,7 +729,7 @@ test("экран разговора собран по макету: шапка, 
 
   const panel = page.locator("#voice-panel");
   await expect(panel).toHaveClass(/voice-live/);
-  await expect(panel.getByRole("link", { name: "История" })).toBeVisible();
+  await expect(panel.getByRole("link", { name: "Обзор" })).toBeVisible();
   await expect(panel.getByRole("link", { name: "Настройки" })).toBeVisible();
   await expect(panel.locator(".voice-brand-word")).toHaveText("Кизуна");
 
@@ -745,8 +745,8 @@ test("экран разговора собран по макету: шапка, 
   );
   expect(captionInsideStage).toBe(true);
 
-  // Ссылки шапки ведут в журнал и настройки — из разговора есть выход.
-  await expect(panel.getByRole("link", { name: "История" })).toHaveAttribute("href", "#history-work");
+  // Ссылки шапки ведут в обзор и настройки — из разговора есть выход.
+  await expect(panel.getByRole("link", { name: "Обзор" })).toHaveAttribute("href", "#reports");
   await expect(panel.getByRole("link", { name: "Настройки" })).toHaveAttribute("href", "#settings");
 
   // После закрытия панель снова обычная, а реплики возвращаются на своё место.

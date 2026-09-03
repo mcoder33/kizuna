@@ -183,8 +183,6 @@ function updatePageFromHash() {
       "active",
       link.getAttribute("href") === `#${activePage}`,
     );
-  const historyMenu = document.querySelector(".history-menu");
-  historyMenu?.classList.toggle("active", activePage.startsWith("history-"));
   if (activePage !== pageId) history.replaceState(null, "", "#today");
   // Открыли настройки — перечитываем расход: он меняется от каждой записи, а
   // страница может висеть открытой долго.
@@ -205,13 +203,8 @@ function updatePageFromHash() {
     }
   }
 }
-const historyMenu = document.querySelector(".history-menu");
-// Поповеры шапки: «Журнал» и настройки ИИ закрываются по клику вне и Escape.
+// Поповеры шапки (настройки ИИ) закрываются по клику вне и Escape.
 const headerMenus = () => [...document.querySelectorAll("header details")];
-historyMenu?.addEventListener("click", (event) => {
-  if (event.target instanceof HTMLAnchorElement)
-    event.currentTarget.removeAttribute("open");
-});
 document.addEventListener("pointerdown", (event) => {
   for (const menu of headerMenus())
     if (menu.open && !menu.contains(event.target)) menu.removeAttribute("open");
@@ -495,53 +488,15 @@ function appendPreview(container, entries, emptyText, options) {
   });
   const hidden = entries.length - previewLimit;
   if (hidden <= 0) return;
-  const more = node("a", `Ещё ${hidden} — весь список →`, "preview-more");
-  more.href = options?.href || "#today";
-  container.append(more);
-}
-function historyLabel(date) {
-  if (!date) return "Без срока";
-  return new Intl.DateTimeFormat("ru-RU", {
-    timeZone: "Europe/Samara",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  }).format(new Date(`${date}T12:00:00+04:00`));
-}
-function appendHistoryByDay(container, entries, emptyText, dateOf, options) {
-  clear(container);
-  if (!entries.length) {
-    container.append(node("p", emptyText, "empty"));
+  // Полной страницы у колонки может и не быть (заметки): тогда под превью
+  // только счётчик, чтобы записи за границей трёх не выглядели пропавшими.
+  if (!options?.href) {
+    container.append(node("span", `Ещё ${hidden}`, "preview-more"));
     return;
   }
-  const groups = new Map();
-  for (const entry of entries) {
-    const date = dateOf(entry) || null;
-    if (!groups.has(date)) groups.set(date, []);
-    groups.get(date).push(entry);
-  }
-  const dated = [...groups.keys()].filter(Boolean).sort();
-  if (options?.order !== "due") dated.reverse();
-  const undated = groups.has(null) ? [null] : [];
-  for (const date of [...dated, ...undated]) {
-    const groupEntries = groups.get(date);
-    const group = node("section", undefined, "history-group");
-    group.append(node("h3", historyLabel(date)));
-    const stack = node("div", undefined, "stack");
-    for (const entry of groupEntries)
-      stack.append(entryCard(entry, options?.entryOptions?.(entry)));
-    group.append(stack);
-    container.append(group);
-  }
-}
-function appendClosedGroup(container, entries) {
-  if (!entries.length) return;
-  const group = node("section", undefined, "history-group closed-group");
-  group.append(node("h3", "Закрытые"));
-  const stack = node("div", undefined, "stack");
-  for (const entry of entries) stack.append(entryCard(entry));
-  group.append(stack);
-  container.append(group);
+  const more = node("a", `Ещё ${hidden} — весь список →`, "preview-more");
+  more.href = options.href;
+  container.append(more);
 }
 function render(data) {
   currentDayDate = data.date;
@@ -576,55 +531,17 @@ function render(data) {
         !isClosed(entry) &&
         ["note", "outcome_decision", "idea_question"].includes(type)
       );
-    }),
-    workHistory = all.filter(isReportedWork),
-    // Закрытая задача не попадает в дневник, но и не исчезает бесследно:
-    // она остаётся в журнале TODO отдельной группой, чтобы её можно было найти
-    // и вернуть в работу.
-    closedHistory = all.filter(
-      (entry) => isClosed(entry) && !isReportedWork(entry),
-    ),
-    // Закрытая задача не заметка, даже если модель когда-то отнесла её к
-    // заметкам: она живёт в группе «Закрытые» журнала TODO.
-    notesHistory = all.filter((entry) => {
-      const type = entry.interpretation.classification.primaryType;
-      return (
-        !isReportedWork(entry) &&
-        !isClosed(entry) &&
-        ["note", "outcome_decision", "idea_question"].includes(type)
-      );
     });
+  // Полные списки живут не в отдельном журнале: сделанное за день — в «Обзоре»,
+  // открытые дела — на доске списком. У заметок полной страницы нет.
   appendPreview($("#journal"), done, "Пока нет зафиксированной работы за сегодня.", {
-    href: "#history-work",
+    href: "#reports",
   });
   appendPreview($("#todo"), todo, "Открытых дел нет.", {
-    href: "#history-todo",
+    href: "#board?view=list",
     entryOptions: (entry) => ({ overdue: isOverdue(entry, data.date) }),
   });
-  appendPreview($("#notes"), notes, "Заметки появятся здесь.", { href: "#history-notes" });
-  appendHistoryByDay(
-    $("#history-work-list"),
-    workHistory,
-    "Пока нет зафиксированной работы.",
-    entryDate,
-  );
-  appendHistoryByDay(
-    $("#history-todo-list"),
-    todo,
-    "Открытых дел нет.",
-    (entry) => entry.interpretation.classification.entities.schedule?.date,
-    {
-      order: "due",
-      entryOptions: (entry) => ({ overdue: isOverdue(entry, data.date) }),
-    },
-  );
-  appendClosedGroup($("#history-todo-list"), closedHistory);
-  appendHistoryByDay(
-    $("#history-notes-list"),
-    notesHistory,
-    "Заметок пока нет.",
-    entryDate,
-  );
+  appendPreview($("#notes"), notes, "Заметки появятся здесь.");
 }
 function isOverdue(entry, today) {
   const date = entry.interpretation.classification.entities.schedule?.date;
@@ -3366,15 +3283,33 @@ async function completeBoardCard(card, element, button) {
     button.disabled = false;
   }
 }
-function boardCardEl(card, column) {
-  const element = node("div", undefined, "board-card");
-  element.draggable = true;
+// Закрытое дело возвращается в работу тем же кружком: с доски оно ушло, но в
+// списке лежит хвостом — иначе закрытое случайно было бы не найти.
+async function reopenBoardCard(card, button) {
+  button.disabled = true;
+  try {
+    for (const projectionId of card.projectionIds)
+      await request(`/api/projections/${projectionId}/undo-complete`, { method: "POST", body: "{}" });
+    toast("Возвращено в работу");
+    loadBoard();
+  } catch (error) {
+    toast(error.message);
+    button.disabled = false;
+  }
+}
+function boardCardEl(card, column, { closed = false } = {}) {
+  const element = node("div", undefined, `board-card${closed ? " closed" : ""}`);
+  element.draggable = !closed;
   element.dataset.captureId = card.captureId;
-  const done = node("button", undefined, "board-done");
+  const done = node("button", undefined, `board-done${closed ? " is-done" : ""}`);
   done.type = "button";
-  done.title = "Готово";
-  done.setAttribute("aria-label", `Готово: ${card.title}`);
-  done.addEventListener("click", (event) => { event.stopPropagation(); completeBoardCard(card, element, done); });
+  done.title = closed ? "Вернуть в работу" : "Готово";
+  done.setAttribute("aria-label", `${done.title}: ${card.title}`);
+  done.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (closed) reopenBoardCard(card, done);
+    else completeBoardCard(card, element, done);
+  });
   const body = node("div", undefined, "board-body");
   const title = node("button", card.title.split("\n")[0], "board-title");
   title.type = "button";
@@ -3383,11 +3318,14 @@ function boardCardEl(card, column) {
   const status = boardCardStatus(card);
   // Цвета состояний как на «Сегодня»: просроченное — красным, открытое —
   // тёплым. Слова остаются, цвет лишь помогает считывать колонку с ходу.
-  element.classList.add(status.key === "late" ? "overdue" : "waiting");
+  if (!closed) element.classList.add(status.key === "late" ? "overdue" : "waiting");
   const due = card.due ? scheduleLabel({ state: "ok", date: card.due.date, time: card.due.time }) : null;
   const dueChip = () =>
     node("span", `срок: ${due}`, `btag due${status.key === "late" ? " late" : status.key === "today" ? " soon" : ""}`);
-  if (boardState.view !== "columns") {
+  if (closed) {
+    meta.append(node("span", `закрыто: ${scheduleLabel({ state: "ok", date: card.closedDate, time: null })}`, "btag"));
+    if (due) meta.append(node("span", `срок: ${due}`, "btag"));
+  } else if (boardState.view !== "columns") {
     // колонка или группа уже говорит статус — на карточке остаётся конкретный срок
     if (due) meta.append(dueChip());
   } else {
@@ -3402,6 +3340,7 @@ function boardCardEl(card, column) {
   if (card.attachments) meta.append(node("span", `📎 ${card.attachments}`, "btag files"));
   body.append(title, meta);
   element.append(done, body);
+  if (closed) return element;
   element.addEventListener("dragstart", (event) => {
     boardState.drag = { type: "card", captureId: card.captureId, from: column.id };
     event.dataTransfer.setData("text/plain", card.captureId);
@@ -3732,6 +3671,18 @@ function boardDateAdderEl(bucket) {
   if (boardState.openAdder === openAdderKey) requestAnimationFrame(open);
   return wrap;
 }
+// Хвост списка: закрытые дела, свежие сверху. Только в списке — на колонках
+// и по датам закрытому места нет.
+function boardClosedGroupEl(cards) {
+  const element = node("section", undefined, "board-column dated closed");
+  const head = node("div", undefined, "board-col-head");
+  head.style.cursor = "default";
+  head.append(node("span", "Закрытые", "board-col-name"), node("span", String(cards.length), "board-col-count"));
+  const list = node("div", undefined, "board-cards");
+  for (const card of cards) list.append(boardCardEl(card, { id: null }, { closed: true }));
+  element.append(head, list);
+  return element;
+}
 function renderBoard(data) {
   const wrap = $("#board-columns");
   // Перерисовка приходит и посреди набора нового дела (доразбор записи после
@@ -3757,6 +3708,7 @@ function renderBoard(data) {
     for (const bucket of boardDateBuckets(data))
       if (bucket.cards.length || bucket.key === "today" || bucket.key === "none")
         wrap.append(boardDateColumnEl(bucket));
+    if (data.closed?.length) wrap.append(boardClosedGroupEl(data.closed));
   } else {
     for (const column of data.columns) wrap.append(boardColumnEl(column));
     wrap.append(boardGhostColumnEl());
