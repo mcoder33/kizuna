@@ -86,3 +86,81 @@ test("доска: колонка, быстрое дело, статус, кар�
   // на журнал без чужих закрытых дел.
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
 });
+
+// Лицо как в Notion: цветная подпись колонки из меню, свойства строками,
+// компактный вид, фильтр по проекту и типу, поиск, вид по проектам и скрытая
+// группа закрытых на доске.
+test("доска как в Notion: цвет колонки, свойства, фильтр, поиск, проекты и скрытые группы", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await request.post("/api/captures", { data: { raw: "Согласовать смету по CP с Антоном Гришиным", primaryType: "todo" } });
+  await request.post("/api/captures", { data: { raw: "Разобрать отчёт по Hub", primaryType: "todo" } });
+  await page.goto("/#board");
+
+  // Колонка: пилюля серая, из меню красится в фиолетовый.
+  await page.locator(".board-column.ghost .board-add-button").click();
+  await page.locator(".board-column.ghost input").fill("Ожидание");
+  await page.keyboard.press("Enter");
+  const column = page.locator(".board-column").filter({ has: page.locator(".board-col-name", { hasText: "Ожидание" }) });
+  await expect(column.locator(".board-pill")).toHaveClass(/c-gray/);
+  // Новая запись дозревает в фоне и перерисовывает доску: меню открываем на
+  // спокойной странице, после перезагрузки.
+  await page.reload();
+  await column.locator(".board-menu summary").click();
+  await column.locator('.board-swatch[aria-label="Цвет: Фиолетовый"]').click();
+  await expect(column.locator(".board-pill")).toHaveClass(/c-purple/);
+  await page.reload();
+  await expect(column.locator(".board-pill")).toHaveClass(/c-purple/);
+
+  // Карточка: тип строкой, проект чипом с цветом, статус — словом.
+  const inbox = page.locator(".board-column.inbox");
+  await expect(inbox.locator(".board-card")).toHaveCount(2);
+  const smeta = inbox.locator(".board-card").filter({ hasText: "смету" });
+  await expect(smeta.locator(".btag.kind")).toHaveText("Задача");
+  await expect(smeta.locator(".entry-status")).toHaveText("Без срока");
+  await expect(smeta.locator(".btag.project", { hasText: "CP" })).toHaveClass(/c-/);
+
+  // Панель свойств: без типа — строки нет; компактно — одна строка.
+  await page.locator("#board-props-toggle").click();
+  await page.locator('[data-board-prop="type"]').uncheck();
+  await expect(smeta.locator(".btag.kind")).toHaveCount(0);
+  await page.locator('[data-board-prop="type"]').check();
+  await page.locator('[data-board-prop="compact"]').check();
+  await expect(page.locator("#board-columns")).toHaveClass(/compact/);
+  await expect(smeta.locator(".board-meta")).toHaveCount(1);
+  await page.reload();
+  await expect(page.locator("#board-columns")).toHaveClass(/compact/);
+  await page.locator("#board-props-toggle").click();
+  await page.locator('[data-board-prop="compact"]').uncheck();
+
+  // Фильтр по проекту прячет чужие карточки и считает себя в кнопке.
+  await page.locator("#board-filter summary").click();
+  await page.locator('#board-filter-projects button', { hasText: "Hub" }).click();
+  await expect(page.locator("#board-filter-summary")).toHaveText("Фильтр · 1");
+  await expect(inbox.locator(".board-card")).toHaveCount(1);
+  await expect(inbox.locator(".board-card")).toContainText("Hub");
+  await page.locator("#board-filter-reset").click();
+  await expect(inbox.locator(".board-card")).toHaveCount(2);
+
+  // Поиск — по названию, на лету.
+  await page.locator("#board-search").fill("смету");
+  await expect(inbox.locator(".board-card")).toHaveCount(1);
+  await page.locator("#board-search").fill("");
+  await expect(inbox.locator(".board-card")).toHaveCount(2);
+
+  // По проектам: группа на проект, «Без проекта» — хвостом при необходимости.
+  await page.locator('[data-board-view="projects"]').click();
+  await expect(page.locator(".board-column.dated .board-col-name")).toHaveText(["CP", "Hub"]);
+
+  // Закрытое дело — в скрытой группе; кнопка разворачивает её колонкой.
+  await page.locator('[data-board-view="columns"]').click();
+  await smeta.locator(".board-done").click();
+  const hidden = page.locator(".board-hidden-toggle");
+  await expect(hidden).toContainText("1");
+  await expect(page.locator(".board-column.closed")).toHaveCount(0);
+  await hidden.click();
+  await expect(page.locator(".board-column.closed .board-card")).toContainText("смету");
+  await page.locator(".board-column.closed .board-done").click();
+  await expect(inbox.locator(".board-card")).toHaveCount(2);
+  await hidden.click();
+  await expect(page.locator(".board-column.closed")).toHaveCount(0);
+});

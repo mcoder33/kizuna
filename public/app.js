@@ -3250,15 +3250,32 @@ async function uploadPendingShots(captureId) {
   }
 }
 
-// ── доска: канбан по открытым делам ──────────────────────────────────────────
-// Колонки — как разделы в Todoist: свои, с переименованием и перетаскиванием.
-// Карточка — открытое дело; клик по названию открывает обычную карточку записи,
-// кружок закрывает дело, перенос между колонками сохраняется на сервере.
-const BOARD_VIEWS = ["columns", "dates", "list"];
-const boardState = { data: null, drag: null, openAdder: null, view: "columns" };
+// ── доска: дела как база в Notion ────────────────────────────────────────────
+// Колонки заводит человек (как разделы в Todoist), подпись колонки — цветная
+// пилюля со счётчиком, как статус в Notion. Карточка — открытое дело со
+// свойствами строками: люди, тип и теги, срок, проект. Над доской — виды
+// (колонки, даты, проекты, список), панель свойств, фильтр и поиск. Клик по
+// названию открывает карточку записи, кружок закрывает дело, перенос между
+// колонками сохраняется на сервере.
+const BOARD_VIEWS = ["columns", "dates", "projects", "list"];
+const BOARD_COLORS = ["gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"];
+const BOARD_COLOR_NAMES = { gray: "Серый", brown: "Коричневый", orange: "Оранжевый", yellow: "Жёлтый", green: "Зелёный", blue: "Синий", purple: "Фиолетовый", pink: "Розовый", red: "Красный" };
+const BOARD_PROPS_DEFAULT = { people: true, type: true, due: true, project: true, priority: true, files: true, compact: false };
+const boardState = {
+  data: null, drag: null, openAdder: null, view: "columns",
+  props: { ...BOARD_PROPS_DEFAULT },
+  filter: { type: "all", projects: [] },
+  search: "",
+  // Закрытые дела: в списке они всегда хвостом, на доске — по желанию.
+  showClosed: false,
+  mobileColumn: 0,
+};
 try {
   const storedView = localStorage.getItem("kizuna-board-view");
   if (BOARD_VIEWS.includes(storedView)) boardState.view = storedView;
+  const storedProps = JSON.parse(localStorage.getItem("kizuna-board-props") || "null");
+  if (storedProps && typeof storedProps === "object") boardState.props = { ...BOARD_PROPS_DEFAULT, ...storedProps };
+  boardState.showClosed = localStorage.getItem("kizuna-board-closed") === "1";
 } catch {}
 const boardDropHint = (() => { const hint = document.createElement("div"); hint.className = "board-drop"; return hint; })();
 
@@ -3284,7 +3301,7 @@ async function completeBoardCard(card, element, button) {
   }
 }
 // Закрытое дело возвращается в работу тем же кружком: с доски оно ушло, но в
-// списке лежит хвостом — иначе закрытое случайно было бы не найти.
+// группе «Закрытые» лежит — иначе закрытое случайно было бы не найти.
 async function reopenBoardCard(card, button) {
   button.disabled = true;
   try {
@@ -3297,7 +3314,36 @@ async function reopenBoardCard(card, button) {
     button.disabled = false;
   }
 }
+// Цвет проекта — из названия, чтобы один проект был одного цвета на всех
+// карточках и на всех устройствах без настройки.
+function boardProjectColor(name) {
+  const palette = ["blue", "green", "orange", "purple", "pink", "brown", "yellow", "red"];
+  let hash = 0;
+  for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return palette[hash % palette.length];
+}
+function boardInitials(name) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const letters = parts.length > 1 ? parts[0][0] + parts[1][0] : parts[0].slice(0, 2);
+  return letters.toUpperCase();
+}
+function boardPersonEl(name, { avatarOnly = false } = {}) {
+  const who = node("span", undefined, "board-who");
+  const avatar = node("i", boardInitials(name), `board-ava c-${boardProjectColor(name)}`);
+  avatar.setAttribute("aria-hidden", "true");
+  who.append(avatar);
+  if (avatarOnly) who.title = name;
+  else who.append(document.createTextNode(name));
+  return who;
+}
+const boardClockIcon = () => {
+  const wrap = node("span", undefined, "board-type-icon");
+  wrap.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.5V8l2.4 1.6"/></svg>';
+  wrap.title = "Встреча";
+  return wrap;
+};
 function boardCardEl(card, column, { closed = false } = {}) {
+  const props = boardState.props;
   const element = node("div", undefined, `board-card${closed ? " closed" : ""}`);
   element.draggable = !closed;
   element.dataset.captureId = card.captureId;
@@ -3311,34 +3357,57 @@ function boardCardEl(card, column, { closed = false } = {}) {
     else completeBoardCard(card, element, done);
   });
   const body = node("div", undefined, "board-body");
+  const titleRow = node("div", undefined, "board-title-row");
+  if (card.type === "meeting_event") titleRow.append(boardClockIcon());
   const title = node("button", card.title.split("\n")[0], "board-title");
   title.type = "button";
   title.addEventListener("click", () => openReportEntry(card.captureId));
-  const meta = node("div", undefined, "board-meta");
+  titleRow.append(title);
   const status = boardCardStatus(card);
-  // Цвета состояний как на «Сегодня»: просроченное — красным, открытое —
-  // тёплым. Слова остаются, цвет лишь помогает считывать колонку с ходу.
-  if (!closed) element.classList.add(status.key === "late" ? "overdue" : "waiting");
+  if (!closed && status.key === "late") element.classList.add("overdue");
   const due = card.due ? scheduleLabel({ state: "ok", date: card.due.date, time: card.due.time }) : null;
   const dueChip = () =>
     node("span", `срок: ${due}`, `btag due${status.key === "late" ? " late" : status.key === "today" ? " soon" : ""}`);
-  if (closed) {
-    meta.append(node("span", `закрыто: ${scheduleLabel({ state: "ok", date: card.closedDate, time: null })}`, "btag"));
-    if (due) meta.append(node("span", `срок: ${due}`, "btag"));
-  } else if (boardState.view !== "columns") {
-    // колонка или группа уже говорит статус — на карточке остаётся конкретный срок
-    if (due) meta.append(dueChip());
-  } else {
-    meta.append(statusBadge(status));
-    if (due && card.due.date > (boardState.data?.today || "")) meta.append(dueChip());
+  const projectChip = (project) => node("span", project, `btag project c-${boardProjectColor(project)}`);
+  // Строки свойств, как в Notion; в компактном виде — всё в одну строку.
+  const rows = [];
+  const row = (cls) => { const line = node("div", undefined, `board-meta ${cls}`); rows.push(line); return line; };
+  if (props.people && card.people?.length) {
+    const line = row("people");
+    for (const person of card.people) line.append(boardPersonEl(person, { avatarOnly: props.compact }));
   }
-  if (card.priority === "high") meta.append(node("span", "важно", "btag urgent"));
-  if (card.priority === "low") meta.append(node("span", "не срочно", "btag"));
-  for (const project of card.projects) meta.append(node("span", project, "btag"));
-  for (const tag of card.tags) meta.append(node("span", `#${tag}`, "btag"));
+  const typeLine = row("type");
+  if (props.type) {
+    if (!props.compact) typeLine.append(node("span", card.type === "meeting_event" ? "Встреча" : "Задача", `btag kind ${card.type === "meeting_event" ? "c-purple" : "c-yellow"}`));
+  }
+  if (props.priority && card.priority === "high") typeLine.append(node("span", "важно", "btag urgent c-red"));
+  if (props.priority && card.priority === "low") typeLine.append(node("span", "не срочно", "btag c-gray"));
+  if (props.type) for (const tag of card.tags) typeLine.append(node("span", `#${tag}`, "btag tag c-gray"));
+  const dueLine = row("when");
+  if (closed) {
+    dueLine.append(node("span", `закрыто: ${scheduleLabel({ state: "ok", date: card.closedDate, time: null })}`, "btag c-gray"));
+    if (props.due && due) dueLine.append(node("span", `срок: ${due}`, "btag"));
+  } else if (props.due) {
+    if (boardState.view !== "columns") {
+      // колонка или группа уже говорит статус — на карточке остаётся конкретный срок
+      if (due) dueLine.append(dueChip());
+    } else {
+      dueLine.append(statusBadge(status));
+      if (due && card.due.date > (boardState.data?.today || "")) dueLine.append(dueChip());
+    }
+  }
+  const projectLine = row("where");
+  if (props.project) for (const project of card.projects) projectLine.append(projectChip(project));
   // Скрепка с числом — как в списках: видно, что к делу что-то приложено.
-  if (card.attachments) meta.append(node("span", `📎 ${card.attachments}`, "btag files"));
-  body.append(title, meta);
+  if (props.files && card.attachments) projectLine.append(node("span", `📎 ${card.attachments}`, "btag files c-gray"));
+  body.append(titleRow);
+  if (props.compact) {
+    const line = node("div", undefined, "board-meta compact");
+    for (const filled of rows) while (filled.firstChild) line.append(filled.firstChild);
+    if (line.childNodes.length) body.append(line);
+  } else {
+    for (const filled of rows) if (filled.childNodes.length) body.append(filled);
+  }
   element.append(done, body);
   if (closed) return element;
   element.addEventListener("dragstart", (event) => {
@@ -3371,12 +3440,31 @@ async function boardMove(body) {
   }
   loadBoard();
 }
+// Шапка колонки: цветная пилюля с названием, счётчик, по наведению — меню и «+».
+function boardHeadEl(name, color, count) {
+  const head = node("div", undefined, "board-col-head");
+  const pill = node("span", undefined, `board-pill c-${color || "gray"}`);
+  pill.append(node("span", name, "board-col-name"));
+  head.append(pill, node("span", String(count), "board-col-count"));
+  return head;
+}
+function boardHeadTools(element, { menu = null } = {}) {
+  const tools = node("div", undefined, "board-col-tools");
+  if (menu) tools.append(menu);
+  const plus = node("button", "+", "board-col-plus");
+  plus.type = "button";
+  plus.title = "Добавить дело";
+  plus.setAttribute("aria-label", "Добавить дело в колонку");
+  plus.addEventListener("click", () => element.querySelector(".board-add-button")?.click());
+  tools.append(plus);
+  return tools;
+}
 function boardColumnEl(column) {
   const element = node("section", undefined, `board-column${column.id === null ? " inbox" : ""}`);
   element.dataset.columnId = column.id ?? "";
-  const head = node("div", undefined, "board-col-head");
-  const name = node("span", column.name, "board-col-name");
-  head.append(name, node("span", String(column.cards.length), "board-col-count"));
+  const head = boardHeadEl(column.name, column.id === null ? "gray" : column.color, column.cards.length);
+  const name = head.querySelector(".board-col-name");
+  let menu = null;
   if (column.id !== null) {
     head.draggable = true;
     head.addEventListener("dragstart", (event) => {
@@ -3391,8 +3479,8 @@ function boardColumnEl(column) {
       boardState.drag = null;
       for (const other of document.querySelectorAll(".board-column")) other.classList.remove("col-drop-left", "col-drop-right");
     });
-    // Меню колонки: переименовать или удалить (дела вернутся во «Входящие»).
-    const menu = node("details", undefined, "board-menu");
+    // Меню колонки: переименовать, покрасить или удалить (дела вернутся во «Входящие»).
+    menu = node("details", undefined, "board-menu");
     const summary = node("summary", "⋯");
     summary.setAttribute("aria-label", `Меню колонки ${column.name}`);
     const popover = node("div", undefined, "board-menu-popover");
@@ -3404,7 +3492,7 @@ function boardColumnEl(column) {
       input.value = column.name;
       input.className = "board-col-input";
       input.maxLength = 40;
-      name.replaceWith(input);
+      head.querySelector(".board-pill").replaceWith(input);
       input.focus();
       input.select();
       const cancel = () => loadBoard();
@@ -3420,6 +3508,23 @@ function boardColumnEl(column) {
       });
       input.addEventListener("blur", cancel);
     });
+    const colors = node("div", undefined, "board-colors");
+    colors.setAttribute("role", "group");
+    colors.setAttribute("aria-label", "Цвет колонки");
+    for (const color of BOARD_COLORS) {
+      const swatch = node("button", undefined, `board-swatch c-${color}${(column.color || "gray") === color ? " is-current" : ""}`);
+      swatch.type = "button";
+      swatch.title = BOARD_COLOR_NAMES[color];
+      swatch.setAttribute("aria-label", `Цвет: ${BOARD_COLOR_NAMES[color]}`);
+      swatch.addEventListener("click", async () => {
+        menu.removeAttribute("open");
+        try {
+          await request(`/api/board/columns/${column.id}`, { method: "PATCH", body: JSON.stringify({ color }) });
+        } catch (error) { toast(error.message); }
+        loadBoard();
+      });
+      colors.append(swatch);
+    }
     const removeColumn = node("button", "Удалить колонку");
     removeColumn.type = "button";
     removeColumn.addEventListener("click", async () => {
@@ -3430,10 +3535,10 @@ function boardColumnEl(column) {
       } catch (error) { toast(error.message); }
       loadBoard();
     });
-    popover.append(rename, removeColumn);
+    popover.append(rename, node("p", "Цвет", "board-menu-label"), colors, removeColumn);
     menu.append(summary, popover);
-    head.append(menu);
   }
+  head.append(boardHeadTools(element, { menu }));
   const list = node("div", undefined, "board-cards");
   for (const card of column.cards) list.append(boardCardEl(card, column));
   list.addEventListener("dragover", (event) => {
@@ -3483,6 +3588,7 @@ function boardColumnEl(column) {
     loadBoard();
   });
   element.append(head, list, boardAdderEl(column));
+  void name;
   return element;
 }
 // Быстрое добавление дела прямо в колонку: Enter сохраняет и оставляет поле
@@ -3606,11 +3712,26 @@ async function boardChangeDue(captureId, bucket) {
   }
   loadBoard();
 }
+const BOARD_BUCKET_COLORS = { late: "red", today: "orange", tomorrow: "yellow", week: "green", later: "blue", none: "gray" };
+// Группировка по проектам: дело с несколькими проектами лежит в первом,
+// без проекта — в «Без проекта». Переносом проект не меняется.
+function boardProjectGroups(data) {
+  const groups = new Map();
+  for (const card of data.columns.flatMap((column) => column.cards)) {
+    const key = card.projects[0] || null;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(card);
+  }
+  const named = [...groups.keys()].filter(Boolean).sort((left, right) => left.localeCompare(right, "ru"));
+  const result = named.map((name) => ({ key: `project:${name}`, name, color: boardProjectColor(name), drop: null, cards: groups.get(name) }));
+  if (groups.has(null)) result.push({ key: "project:none", name: "Без проекта", color: "gray", drop: null, adderWithoutDue: true, cards: groups.get(null) });
+  return result;
+}
 function boardDateColumnEl(bucket) {
   const element = node("section", undefined, "board-column dated");
-  const head = node("div", undefined, "board-col-head");
+  const head = boardHeadEl(bucket.name, bucket.color || BOARD_BUCKET_COLORS[bucket.key] || "gray", bucket.cards.length);
   head.style.cursor = "default";
-  head.append(node("span", bucket.name, "board-col-name"), node("span", String(bucket.cards.length), "board-col-count"));
+  if (bucket.drop || bucket.adderWithoutDue) head.append(boardHeadTools(element));
   const list = node("div", undefined, "board-cards");
   const groups = [
     ["Встречи", bucket.cards.filter((card) => card.type === "meeting_event")],
@@ -3671,19 +3792,102 @@ function boardDateAdderEl(bucket) {
   if (boardState.openAdder === openAdderKey) requestAnimationFrame(open);
   return wrap;
 }
-// Хвост списка: закрытые дела, свежие сверху. Только в списке — на колонках
-// и по датам закрытому места нет.
+// Группа закрытых дел, свежие сверху. В списке — всегда хвостом; на доске —
+// колонкой по кнопке из «Скрытых групп».
 function boardClosedGroupEl(cards) {
   const element = node("section", undefined, "board-column dated closed");
-  const head = node("div", undefined, "board-col-head");
+  const head = boardHeadEl("Закрытые", "green", cards.length);
   head.style.cursor = "default";
-  head.append(node("span", "Закрытые", "board-col-name"), node("span", String(cards.length), "board-col-count"));
   const list = node("div", undefined, "board-cards");
   for (const card of cards) list.append(boardCardEl(card, { id: null }, { closed: true }));
   element.append(head, list);
   return element;
 }
-function renderBoard(data) {
+// «Скрытые группы» справа от доски, как в Notion: закрытые дела не мозолят
+// глаза, но в одном щелчке.
+function boardHiddenEl(data) {
+  const aside = node("aside", undefined, "board-hidden");
+  aside.append(node("h6", boardState.showClosed ? "Показано" : "Скрытые группы"));
+  const toggle = node("button", undefined, "board-hidden-toggle");
+  toggle.type = "button";
+  toggle.setAttribute("aria-pressed", String(boardState.showClosed));
+  toggle.append(node("span", "Закрытые", "board-pill c-green"), node("span", String(data.closed?.length || 0), "board-col-count"));
+  toggle.title = boardState.showClosed ? "Скрыть закрытые" : "Показать колонкой";
+  toggle.addEventListener("click", () => {
+    boardState.showClosed = !boardState.showClosed;
+    try { localStorage.setItem("kizuna-board-closed", boardState.showClosed ? "1" : "0"); } catch {}
+    renderBoard(boardState.data);
+  });
+  aside.append(toggle);
+  return aside;
+}
+// Фильтр и поиск действуют на любой вид: сравниваются проект, тип и текст
+// названия. Доска не перезапрашивается — всё уже загружено.
+function boardCardVisible(card) {
+  const { type, projects } = boardState.filter;
+  if (type === "task" && card.type === "meeting_event") return false;
+  if (type === "meeting_event" && card.type !== "meeting_event") return false;
+  if (projects.length && !card.projects.some((project) => projects.includes(project))) return false;
+  const query = boardState.search.trim().toLowerCase();
+  if (query && !card.title.toLowerCase().includes(query) && !card.tags.some((tag) => tag.toLowerCase().includes(query))) return false;
+  return true;
+}
+function boardFilteredData(data) {
+  return {
+    ...data,
+    columns: data.columns.map((column) => ({ ...column, cards: column.cards.filter(boardCardVisible) })),
+    closed: (data.closed || []).filter(boardCardVisible),
+  };
+}
+function paintBoardFilter(data) {
+  const active = (boardState.filter.type !== "all" ? 1 : 0) + boardState.filter.projects.length;
+  $("#board-filter-summary").textContent = active ? `Фильтр · ${active}` : "Фильтр";
+  $("#board-filter").classList.toggle("is-active", active > 0);
+  for (const button of document.querySelectorAll("[data-board-type]"))
+    button.setAttribute("aria-pressed", String(button.dataset.boardType === boardState.filter.type));
+  const wrap = $("#board-filter-projects");
+  clear(wrap);
+  const names = [...new Set((data.columns.flatMap((column) => column.cards).concat(data.closed || [])).flatMap((card) => card.projects))]
+    .sort((left, right) => left.localeCompare(right, "ru"));
+  if (!names.length) wrap.append(node("span", "Проектов пока нет", "board-filter-empty"));
+  for (const name of names) {
+    const chip = node("button", name, `btag project c-${boardProjectColor(name)}`);
+    chip.type = "button";
+    chip.setAttribute("aria-pressed", String(boardState.filter.projects.includes(name)));
+    chip.addEventListener("click", () => {
+      const set = new Set(boardState.filter.projects);
+      if (set.has(name)) set.delete(name); else set.add(name);
+      boardState.filter.projects = [...set];
+      renderBoard(boardState.data);
+    });
+    wrap.append(chip);
+  }
+}
+// На телефоне колонки — по одной на экран: сверху сегмент подписей, точка
+// показывает, где вы. На широком экране сегмент спрятан стилями.
+function paintBoardSegments(columns) {
+  const wrap = $("#board-segments");
+  clear(wrap);
+  if (boardState.mobileColumn >= columns.length) boardState.mobileColumn = 0;
+  columns.forEach((column, index) => {
+    const pill = column.querySelector(".board-pill");
+    const button = node("button", undefined, "board-segment");
+    button.type = "button";
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-selected", String(index === boardState.mobileColumn));
+    button.append(pill ? pill.cloneNode(true) : node("span", column.classList.contains("ghost") ? "+ Колонка" : "…", "board-pill c-gray"));
+    const count = column.querySelector(".board-col-count");
+    if (count) button.append(node("span", count.textContent, "board-col-count"));
+    button.addEventListener("click", () => {
+      boardState.mobileColumn = index;
+      for (const other of columns) other.classList.toggle("is-active", other === column);
+      for (const tab of wrap.children) tab.setAttribute("aria-selected", String(tab === button));
+    });
+    column.classList.toggle("is-active", index === boardState.mobileColumn);
+    wrap.append(button);
+  });
+}
+function renderBoard(source) {
   const wrap = $("#board-columns");
   // Перерисовка приходит и посреди набора нового дела (доразбор записи после
   // быстрого добавления перечитывает доску). Снятие поля из DOM даёт blur, а
@@ -3698,9 +3902,15 @@ function renderBoard(data) {
   }
   clear(wrap);
   boardState.openAdder = openAdder;
+  paintBoardFilter(source);
+  const data = boardFilteredData(source);
   wrap.classList.toggle("list", boardState.view === "list");
+  wrap.classList.toggle("compact", Boolean(boardState.props.compact));
   if (boardState.view === "dates") {
     for (const bucket of boardDateBuckets(data)) wrap.append(boardDateColumnEl(bucket));
+  } else if (boardState.view === "projects") {
+    for (const group of boardProjectGroups(data)) wrap.append(boardDateColumnEl(group));
+    if (!wrap.childNodes.length) wrap.append(node("p", "Открытых дел нет.", "empty"));
   } else if (boardState.view === "list") {
     // Список — те же группы по срокам, столбиком. Пустые группы не занимают
     // место, кроме «Сегодня» и «Без срока»: туда чаще всего добавляют, и
@@ -3713,6 +3923,11 @@ function renderBoard(data) {
     for (const column of data.columns) wrap.append(boardColumnEl(column));
     wrap.append(boardGhostColumnEl());
   }
+  if (boardState.view !== "list") {
+    if (boardState.showClosed && data.closed?.length) wrap.append(boardClosedGroupEl(data.closed));
+    wrap.append(boardHiddenEl(data));
+  }
+  paintBoardSegments([...wrap.querySelectorAll(".board-column")]);
 }
 function setBoardView(view) {
   boardState.view = view;
@@ -3726,6 +3941,43 @@ for (const button of document.querySelectorAll("[data-board-view]"))
     loadBoard();
   });
 setBoardView(boardState.view);
+// Панель свойств: что показывать на карточке и компактно ли. Запоминается в
+// браузере вместе с видом.
+{
+  const toggle = $("#board-props-toggle"), panel = $("#board-props");
+  toggle.addEventListener("click", () => {
+    panel.hidden = !panel.hidden;
+    toggle.setAttribute("aria-pressed", String(!panel.hidden));
+  });
+  for (const box of document.querySelectorAll("[data-board-prop]")) {
+    box.checked = Boolean(boardState.props[box.dataset.boardProp]);
+    box.addEventListener("change", () => {
+      boardState.props[box.dataset.boardProp] = box.checked;
+      try { localStorage.setItem("kizuna-board-props", JSON.stringify(boardState.props)); } catch {}
+      if (boardState.data) renderBoard(boardState.data);
+    });
+  }
+  for (const button of document.querySelectorAll("[data-board-type]"))
+    button.addEventListener("click", () => {
+      boardState.filter.type = button.dataset.boardType;
+      if (boardState.data) renderBoard(boardState.data);
+    });
+  $("#board-filter-reset").addEventListener("click", () => {
+    boardState.filter = { type: "all", projects: [] };
+    $("#board-filter").removeAttribute("open");
+    if (boardState.data) renderBoard(boardState.data);
+  });
+  $("#board-search").addEventListener("input", (event) => {
+    boardState.search = event.target.value;
+    if (boardState.data) renderBoard(boardState.data);
+  });
+  // «+ Дело» в панели — в первую колонку с полем: во «Входящие» на доске,
+  // в «Сегодня» в списке и по датам.
+  $("#board-new").addEventListener("click", () => {
+    const button = $("#board-columns").querySelector(".board-column:not(.ghost) .board-add-button");
+    if (button) { button.click(); button.closest(".board-column")?.scrollIntoView({ block: "nearest", inline: "nearest" }); }
+  });
+}
 // Пустое место доски — рука: зажал и повёз влево-вправо, как холст. Карточки,
 // шапки колонок и кнопки не задеты — у них свои жесты, рука берёт только фон.
 const boardPan = { active: false, pointerId: null, startX: 0, startLeft: 0 };
@@ -3762,6 +4014,9 @@ function boardPanTarget(target) {
   wrap.addEventListener("pointerup", endPan);
   wrap.addEventListener("pointercancel", endPan);
 }
+// view — из адреса («#board?view=list»): ссылка с «Сегодня» ведёт сразу в
+// нужный вид. Применяется после ответа сервера: первый переход по хэшу
+// случается до того, как модуль дошёл до состояния доски.
 // view — из адреса («#board?view=list»): ссылка с «Сегодня» ведёт сразу в
 // нужный вид. Применяется после ответа сервера: первый переход по хэшу
 // случается до того, как модуль дошёл до состояния доски.

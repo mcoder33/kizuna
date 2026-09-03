@@ -9,6 +9,9 @@ import { dateInZone } from './reports.js';
 const now = () => new Date().toISOString();
 export const COLUMN_NAME_LIMIT = 40;
 export const COLUMNS_LIMIT = 12;
+// Цвета подписи колонки — палитра оформления текста, та же, что у маркера
+// и цвета в заметках: одна гамма на всё приложение.
+export const COLUMN_COLORS = ['gray', 'brown', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'red'];
 
 function completionEvents(db) {
   const map = new Map();
@@ -55,6 +58,8 @@ function deedCards(db, userId, timeZone) {
       priority: classification.priority || null,
       tags: classification.tags || [],
       projects: classification.entities?.projects || [],
+      // Люди из разбора: на карточке — строкой с инициалами, как в Notion.
+      people: classification.entities?.people || [],
       attachments: attachments.get(row.id) || 0,
       projectionIds: completable.map(projection => projection.id),
     });
@@ -87,7 +92,7 @@ function sortBucket(bucket, today) {
 
 export function boardView(db, { userId, timeZone = 'Europe/Samara', now: at = new Date() } = {}) {
   const today = dateInZone(at, timeZone);
-  const columns = db.prepare('SELECT id, name, position FROM board_columns WHERE user_id IS ? ORDER BY position, created_at').all(userId);
+  const columns = db.prepare('SELECT id, name, position, color FROM board_columns WHERE user_id IS ? ORDER BY position, created_at').all(userId);
   const placements = new Map(db.prepare('SELECT capture_id, column_id, position FROM board_placements WHERE user_id IS ?').all(userId).map(row => [row.capture_id, row]));
   const known = new Set(columns.map(column => column.id));
   const buckets = new Map([[null, []], ...columns.map(column => [column.id, []])]);
@@ -102,7 +107,7 @@ export function boardView(db, { userId, timeZone = 'Europe/Samara', now: at = ne
     today,
     columns: [
       { id: null, name: 'Входящие', cards: sortBucket(buckets.get(null), today) },
-      ...columns.map(column => ({ id: column.id, name: column.name, cards: sortBucket(buckets.get(column.id), today) })),
+      ...columns.map(column => ({ id: column.id, name: column.name, color: column.color || null, cards: sortBucket(buckets.get(column.id), today) })),
     ],
     closed,
   };
@@ -117,9 +122,16 @@ export function createColumn(db, { userId, name }) {
   const count = db.prepare('SELECT COUNT(*) n FROM board_columns WHERE user_id IS ?').get(userId).n;
   if (count >= COLUMNS_LIMIT) return { error: 'columns_limit' };
   const position = (db.prepare('SELECT COALESCE(MAX(position), -1) p FROM board_columns WHERE user_id IS ?').get(userId).p) + 1;
-  const column = { id: crypto.randomUUID(), name: trimmed, position };
+  const column = { id: crypto.randomUUID(), name: trimmed, position, color: null };
   db.prepare('INSERT INTO board_columns(id, user_id, name, position, created_at) VALUES(?,?,?,?,?)').run(column.id, userId, trimmed, position, now());
   return { column };
+}
+
+export function colorColumn(db, { userId, id, color }) {
+  if (color !== null && !COLUMN_COLORS.includes(color)) return { error: 'invalid_color' };
+  if (!ownColumn(db, userId, id)) return { error: 'column_not_found' };
+  db.prepare('UPDATE board_columns SET color=? WHERE id=?').run(color, id);
+  return { column: db.prepare('SELECT id, name, position, color FROM board_columns WHERE id=?').get(id) };
 }
 
 export function renameColumn(db, { userId, id, name }) {
@@ -127,7 +139,7 @@ export function renameColumn(db, { userId, id, name }) {
   if (!trimmed) return { error: 'invalid_name' };
   if (!ownColumn(db, userId, id)) return { error: 'column_not_found' };
   db.prepare('UPDATE board_columns SET name=? WHERE id=?').run(trimmed, id);
-  return { column: db.prepare('SELECT id, name, position FROM board_columns WHERE id=?').get(id) };
+  return { column: db.prepare('SELECT id, name, position, color FROM board_columns WHERE id=?').get(id) };
 }
 
 export function moveColumn(db, { userId, id, index }) {

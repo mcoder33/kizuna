@@ -204,6 +204,11 @@ function migrate(db) {
     )`);
     db.exec('CREATE INDEX IF NOT EXISTS board_placements_column ON board_placements(user_id, column_id, position)');
     db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(10, now());
+    // Миграция 11: цвет колонки доски — подпись колонки красится, как статус в
+    // Notion. NULL — серый по умолчанию.
+    if (!db.prepare('PRAGMA table_info(board_columns)').all().some(column => column.name === 'color'))
+      db.exec('ALTER TABLE board_columns ADD COLUMN color TEXT');
+    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(11, now());
 }
 // Ограничение переписывается из собственного определения таблицы, а не из
 // зашитой здесь копии: копия разошлась бы с настоящей схемой на первой же новой

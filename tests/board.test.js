@@ -128,3 +128,24 @@ test('board cards carry the number of live attachments',async()=>{
   await api.delete(`/api/attachments/${saved.attachment.id}`).expect(200);
   assert.equal((await api.get('/api/board').expect(200)).body.columns[0].cards.find(card=>card.captureId===task.id).attachments,1);
 });
+
+test('column colour is stored, validated and returned with the board',async()=>{
+  const api=authed(freshApp());
+  const column=(await api.post('/api/board/columns').send({name:'В работе'}).expect(201)).body;
+  assert.equal(column.color,null);
+  const painted=(await api.patch(`/api/board/columns/${column.id}`).send({color:'purple'}).expect(200)).body;
+  assert.equal(painted.color,'purple');
+  await api.patch(`/api/board/columns/${column.id}`).send({color:'neon'}).expect(400);
+  const board=(await api.get('/api/board').expect(200)).body;
+  assert.equal(board.columns.find(item=>item.name==='В работе').color,'purple');
+  // Снять цвет — null; серый по умолчанию рисует клиент.
+  assert.equal((await api.patch(`/api/board/columns/${column.id}`).send({color:null}).expect(200)).body.color,null);
+});
+
+test('cards carry the people the model found in the note',async()=>{
+  const api=authed(freshApp());
+  await api.post('/api/captures').send({raw:'Обсудить с Настей задачу по рототору',primaryType:'todo'}).expect(201);
+  const board=(await api.get('/api/board').expect(200)).body;
+  const card=board.columns[0].cards[0];
+  assert.ok(Array.isArray(card.people));
+});
