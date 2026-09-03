@@ -144,7 +144,11 @@
   .card { background: var(--paper); border-radius: 6px; box-shadow: var(--card-shadow); padding: 10px 12px 10px; cursor: grab; transition: background .12s; }
   .card:hover { background: var(--sunk); }
   .card-title { display: flex; align-items: flex-start; gap: 8px; font-weight: 600; font-size: 14.5px; line-height: 1.3; margin: 0 0 6px; }
-  .card-title .t { color: var(--faint); font-size: 13px; margin-top: 2px; flex: none; width: 14px; text-align: center; }
+  /* Значок типа: кружок «готово» у задачи, часы у встречи. Рисуются SVG,
+     чтобы размер и толщина линии не зависели от шрифта. */
+  .card-title .t { color: var(--faint); flex: none; width: 18px; height: 18px; margin-top: 1px; display: inline-grid; place-items: center; }
+  .card-title .t svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .card:hover .t.task { color: var(--p-green); }
   .card.compact .card-title { margin: 0; }
   .prop { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; margin: 4px 0 0; font-size: 12.5px; }
   .prop.people { gap: 6px 10px; color: var(--ink); font-size: 13px; }
@@ -180,6 +184,7 @@
   .cards-compare .card + .card { margin-top: 8px; }
   .row-card { display: flex; align-items: center; gap: 10px; }
   .row-card .card-title { margin: 0; flex: 1; }
+  .row-card > .t { display: none; }
   .row-card .prop { margin: 0; }
 
   /* ── Телефон ────────────────────────────────────────────────── */
@@ -300,14 +305,14 @@
         <h3>Как в Notion: свойства строками</h3>
         <p>Каждое свойство — своя строка. Читается как страница, видно всё сразу.</p>
         <div class="card">
-          <p class="card-title"><span class="t">☐</span>Написать Антону Гришину по внедрению</p>
+          <p class="card-title"><span class="t task"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/></svg></span>Написать Антону Гришину по внедрению</p>
           <div class="prop people"><span class="who"><i class="ava o">АГ</i>Антон Гришин</span></div>
           <div class="prop"><span class="chip yellow">Задача ⚒</span><span class="chip red">важно</span></div>
           <div class="prop"><span class="chip red">срок: вчера</span></div>
           <div class="prop"><span class="chip blue">Hub</span><span class="chip gray">#внедрение</span></div>
         </div>
         <div class="card">
-          <p class="card-title"><span class="t">◷</span>Созвон с BE по Hub</p>
+          <p class="card-title"><span class="t meeting"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.5V8l2.4 1.6"/></svg></span>Созвон с BE по Hub</p>
           <div class="prop people"><span class="who"><i class="ava b">БЕ</i>BE</span><span class="who"><i class="ava g">Н</i>Настя</span></div>
           <div class="prop"><span class="chip purple">Встреча ⚑</span></div>
           <div class="prop"><span class="chip orange">срок: сегодня, 11:00</span></div>
@@ -318,19 +323,19 @@
         <h3>Плотная: свойства в одну строку</h3>
         <p>Люди — аватарами, остальное чипами. В колонку помещается вдвое больше.</p>
         <div class="card compact">
-          <p class="card-title"><span class="t">☐</span>Написать Антону Гришину по внедрению</p>
+          <p class="card-title"><span class="t task"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/></svg></span>Написать Антону Гришину по внедрению</p>
           <div class="prop"><span class="who"><i class="ava o">АГ</i></span><span class="chip red">вчера</span><span class="chip red">важно</span><span class="chip blue">Hub</span><span class="chip gray">#внедрение</span></div>
         </div>
         <div class="card compact">
-          <p class="card-title"><span class="t">◷</span>Созвон с BE по Hub</p>
+          <p class="card-title"><span class="t meeting"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.5V8l2.4 1.6"/></svg></span>Созвон с BE по Hub</p>
           <div class="prop"><span class="who"><i class="ava b">БЕ</i><i class="ava g" style="margin-left:-6px">Н</i></span><span class="chip orange">сегодня, 11:00</span><span class="chip blue">Hub</span></div>
         </div>
         <div class="card compact">
-          <p class="card-title"><span class="t">☐</span>позвонить в салон</p>
+          <p class="card-title"><span class="t task"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/></svg></span>позвонить в салон</p>
           <div class="prop"><span class="chip red">31.08</span></div>
         </div>
         <div class="card compact">
-          <p class="card-title"><span class="t">☐</span>Подготовить отчёт по монетизации</p>
+          <p class="card-title"><span class="t task"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/></svg></span>Подготовить отчёт по монетизации</p>
           <div class="prop"><span class="chip orange">завтра</span><span class="chip blue">Монетизация</span><span class="chip gray">📎 2</span></div>
         </div>
       </div>
@@ -338,17 +343,17 @@
         <h3>Список: та же карточка строкой</h3>
         <p>В виде «Список» карточка ложится в строку: название слева, свойства справа. Ничего не теряется, только раскладка.</p>
         <div class="card row-card">
-          <span class="t" style="color:var(--faint)">☐</span>
+          <span class="t task"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/></svg></span>
           <p class="card-title">Написать Антону Гришину по внедрению</p>
           <div class="prop"><span class="who"><i class="ava o">АГ</i></span><span class="chip red">вчера</span><span class="chip red">важно</span><span class="chip blue">Hub</span></div>
         </div>
         <div class="card row-card">
-          <span class="t" style="color:var(--faint)">◷</span>
+          <span class="t meeting"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.5V8l2.4 1.6"/></svg></span>
           <p class="card-title">Созвон с BE по Hub</p>
           <div class="prop"><span class="who"><i class="ava b">БЕ</i></span><span class="chip orange">сегодня, 11:00</span><span class="chip blue">Hub</span></div>
         </div>
         <div class="card row-card">
-          <span class="t" style="color:var(--faint)">☐</span>
+          <span class="t task"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/></svg></span>
           <p class="card-title">Подготовить отчёт по монетизации</p>
           <div class="prop"><span class="chip orange">завтра</span><span class="chip blue">Монетизация</span><span class="chip gray">📎 2</span></div>
         </div>
@@ -483,7 +488,11 @@
   function cardEl(deed, { compact = false, row = false } = {}) {
     const card = el("div", `card${compact ? " compact" : ""}${row ? " row-card" : ""}`);
     const title = el("p", "card-title");
-    title.append(el("span", "t", deed.type === "meeting" ? "◷" : "☐"), document.createTextNode(deed.title));
+    const icon = el("span", `t ${deed.type}`);
+    icon.innerHTML = deed.type === "meeting"
+      ? '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.5V8l2.4 1.6"/></svg>'
+      : '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/></svg>';
+    title.append(icon, document.createTextNode(deed.title));
     card.append(title);
     if (compact || row) {
       const line = el("div", "prop");
