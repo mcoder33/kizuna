@@ -52,6 +52,30 @@ test("доска: колонка, быстрое дело, статус, кар�
   const datedCard = noDue.locator(".board-card").filter({ hasText: "Проверить доску" });
   await expect(datedCard).toBeVisible();
 
+  // Список: те же группы по срокам столбиком. Пустые группы спрятаны, кроме
+  // «Сегодня» и «Без срока» — там «+ Дело» ставит срок сразу по группе.
+  await page.locator('[data-board-view="list"]').click();
+  await expect(page.locator("#board-columns")).toHaveClass(/list/);
+  await expect(page.locator(".board-column.dated .board-col-name")).toHaveText(["Сегодня", "Без срока"]);
+  await expect(page.locator(".board-column.dated .board-card").filter({ hasText: "Проверить доску" })).toBeVisible();
+  const todayGroup = page.locator(".board-column.dated").filter({ has: page.locator(".board-col-name", { hasText: "Сегодня" }) });
+  await todayGroup.locator(".board-add-button").click();
+  await todayGroup.locator(".board-add input").fill("Дело на сегодня из списка");
+  await page.keyboard.press("Enter");
+  const listed = todayGroup.locator(".board-card").filter({ hasText: "Дело на сегодня из списка" });
+  await expect(listed).toBeVisible();
+  await expect(listed.locator(".btag.due")).toContainText("сегодня");
+  // Вид запоминается: после перезагрузки доска снова списком.
+  await page.reload();
+  await expect(page.locator("#board-columns")).toHaveClass(/list/);
+  await expect(page.locator('[data-board-view="list"]')).toHaveAttribute("aria-pressed", "true");
+  // Адрес с видом открывает доску сразу в нём.
+  await page.goto("/#board?view=dates");
+  await expect(page.locator('[data-board-view="dates"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".board-column.dated .board-col-name")).toHaveCount(6);
+  await listed.locator(".board-done").click();
+  await expect(listed).toHaveCount(0);
+
   // Обратно к своим колонкам — дело на месте, и кружок закрывает его.
   await page.locator('[data-board-view="columns"]').click();
   await expect(card).toBeVisible();

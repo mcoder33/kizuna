@@ -190,7 +190,7 @@ function updatePageFromHash() {
   // страница может висеть открытой долго.
   if (activePage === "settings") loadUsage();
   if (activePage === "admin") loadAdmin();
-  if (activePage === "board") loadBoard();
+  if (activePage === "board") loadBoard(params.get("view"));
   // «Обзор» пересчитывается при каждом открытии: цифры меняются от каждой
   // записи, а страница может быть открыта спустя часы.
   if (activePage === "reports") loadReports();
@@ -3337,8 +3337,12 @@ async function uploadPendingShots(captureId) {
 // Колонки — как разделы в Todoist: свои, с переименованием и перетаскиванием.
 // Карточка — открытое дело; клик по названию открывает обычную карточку записи,
 // кружок закрывает дело, перенос между колонками сохраняется на сервере.
+const BOARD_VIEWS = ["columns", "dates", "list"];
 const boardState = { data: null, drag: null, openAdder: null, view: "columns" };
-try { if (localStorage.getItem("kizuna-board-view") === "dates") boardState.view = "dates"; } catch {}
+try {
+  const storedView = localStorage.getItem("kizuna-board-view");
+  if (BOARD_VIEWS.includes(storedView)) boardState.view = storedView;
+} catch {}
 const boardDropHint = (() => { const hint = document.createElement("div"); hint.className = "board-drop"; return hint; })();
 
 function boardCardStatus(card) {
@@ -3383,8 +3387,8 @@ function boardCardEl(card, column) {
   const due = card.due ? scheduleLabel({ state: "ok", date: card.due.date, time: card.due.time }) : null;
   const dueChip = () =>
     node("span", `срок: ${due}`, `btag due${status.key === "late" ? " late" : status.key === "today" ? " soon" : ""}`);
-  if (boardState.view === "dates") {
-    // колонка уже говорит статус — на карточке остаётся конкретный срок
+  if (boardState.view !== "columns") {
+    // колонка или группа уже говорит статус — на карточке остаётся конкретный срок
     if (due) meta.append(dueChip());
   } else {
     meta.append(statusBadge(status));
@@ -3743,27 +3747,39 @@ function renderBoard(data) {
   }
   clear(wrap);
   boardState.openAdder = openAdder;
+  wrap.classList.toggle("list", boardState.view === "list");
   if (boardState.view === "dates") {
     for (const bucket of boardDateBuckets(data)) wrap.append(boardDateColumnEl(bucket));
+  } else if (boardState.view === "list") {
+    // Список — те же группы по срокам, столбиком. Пустые группы не занимают
+    // место, кроме «Сегодня» и «Без срока»: туда чаще всего добавляют, и
+    // «+ Дело» должно быть под рукой даже на пустой доске.
+    for (const bucket of boardDateBuckets(data))
+      if (bucket.cards.length || bucket.key === "today" || bucket.key === "none")
+        wrap.append(boardDateColumnEl(bucket));
   } else {
     for (const column of data.columns) wrap.append(boardColumnEl(column));
     wrap.append(boardGhostColumnEl());
   }
 }
+function setBoardView(view) {
+  boardState.view = view;
+  try { localStorage.setItem("kizuna-board-view", view); } catch {}
+  for (const button of document.querySelectorAll("[data-board-view]"))
+    button.setAttribute("aria-pressed", String(button.dataset.boardView === view));
+}
 for (const button of document.querySelectorAll("[data-board-view]"))
   button.addEventListener("click", () => {
-    boardState.view = button.dataset.boardView;
-    try { localStorage.setItem("kizuna-board-view", boardState.view); } catch {}
-    for (const other of document.querySelectorAll("[data-board-view]"))
-      other.setAttribute("aria-pressed", String(other === button));
+    setBoardView(button.dataset.boardView);
     loadBoard();
   });
-for (const button of document.querySelectorAll("[data-board-view]"))
-  button.setAttribute("aria-pressed", String(button.dataset.boardView === boardState.view));
+setBoardView(boardState.view);
 // Пустое место доски — рука: зажал и повёз влево-вправо, как холст. Карточки,
 // шапки колонок и кнопки не задеты — у них свои жесты, рука берёт только фон.
 const boardPan = { active: false, pointerId: null, startX: 0, startLeft: 0 };
 function boardPanTarget(target) {
+  // Список стоит столбиком и вбок не едет — тянуть нечего.
+  if ($("#board-columns").classList.contains("list")) return false;
   return target instanceof Element && (
     target.id === "board-columns" ||
     target.classList.contains("board-column") ||
@@ -3794,11 +3810,15 @@ function boardPanTarget(target) {
   wrap.addEventListener("pointerup", endPan);
   wrap.addEventListener("pointercancel", endPan);
 }
-async function loadBoard() {
+// view — из адреса («#board?view=list»): ссылка с «Сегодня» ведёт сразу в
+// нужный вид. Применяется после ответа сервера: первый переход по хэшу
+// случается до того, как модуль дошёл до состояния доски.
+async function loadBoard(view) {
   const wrap = $("#board-columns");
   if (!wrap.childNodes.length) wrap.append(node("p", "Собираем доску…", "empty"));
   try {
     const data = await request("/api/board");
+    if (BOARD_VIEWS.includes(view) && view !== boardState.view) setBoardView(view);
     boardState.data = data;
     // «Сегодня» могли ещё не открывать: без даты дня сроки на доске выходили
     // бы ISO-строкой вместо «завтра» и «05.09».

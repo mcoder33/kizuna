@@ -5243,6 +5243,55 @@ body {
   border-radius: 14px;
 }
 
+/* Вид «Список»: те же группы по срокам, но столбиком в колонке страницы —
+   дела читаются сверху вниз, без прокрутки вбок и без фона колонок. Каждое
+   дело — строка: название и мета в одну линию, на узком экране — в две. */
+.board-columns.list {
+  flex-direction: column;
+  gap: 26px;
+  max-width: 820px;
+  overflow-x: visible;
+  padding-right: 24px;
+  cursor: default;
+}
+.board-columns.list .board-column {
+  flex: none;
+  width: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+}
+.board-columns.list .board-col-head {
+  margin-bottom: 8px;
+  padding: 0 2px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.board-columns.list .board-col-name { font-size: 15px; }
+.board-columns.list .board-group-label { padding-top: 8px; }
+.board-columns.list .board-card {
+  align-items: center;
+  padding: 10px 14px 10px 12px;
+  border-radius: 12px;
+}
+.board-columns.list .board-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+}
+.board-columns.list .board-title {
+  flex: 1 1 260px;
+  width: auto;
+  font-size: 14px;
+}
+.board-columns.list .board-meta { margin-top: 0; }
+@media (max-width: 760px) {
+  .board-columns.list .board-body { display: block; }
+  .board-columns.list .board-meta { margin-top: 5px; }
+}
+
 /* «Записано» — компактная строка футера карточки, перед источником и версией */
 #review-dialog .card-written.card-footer-line {
   min-height: 0;
