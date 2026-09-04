@@ -69,6 +69,9 @@ test("доска: колонка, быстрое дело, статус, кар�
   const listBox = await page.locator("#board-columns").boundingBox();
   const viewport = page.viewportSize();
   expect(Math.abs(listBox.x + listBox.width / 2 - viewport.width / 2)).toBeLessThan(24);
+  // Заголовок и панель видов при этом остаются слева, как на доске.
+  const headBox = await page.locator(".board-page .page-heading").boundingBox();
+  expect(headBox.x).toBeLessThan(listBox.x - 100);
   // Вид запоминается: после перезагрузки доска снова списком.
   await page.reload();
   await expect(page.locator("#board-columns")).toHaveClass(/list/);
@@ -154,6 +157,10 @@ test("доска как в Notion: цвет колонки, свойства, ф
   // По проектам: группа на проект, «Без проекта» — хвостом при необходимости.
   await page.locator('[data-board-view="projects"]').click();
   await expect(page.locator(".board-column.dated .board-col-name")).toHaveText(["CP", "Hub"]);
+  // По тегам: у этих дел тегов нет — одна группа «Без тегов» с обоими.
+  await page.locator('[data-board-view="tags"]').click();
+  await expect(page.locator(".board-column.dated .board-col-name")).toHaveText(["Без тегов"]);
+  await expect(page.locator(".board-column.dated .board-card")).toHaveCount(2);
 
   // Закрытое дело — в скрытой группе; кнопка разворачивает её колонкой.
   await page.locator('[data-board-view="columns"]').click();

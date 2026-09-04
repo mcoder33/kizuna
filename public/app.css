@@ -5355,13 +5355,10 @@ body {
   padding: 0 0 0 clamp(24px, 4vw, 64px);
 }
 .board-page .page-heading { margin-bottom: 8px; }
-/* Список — не лента вбок, а колонка чтения: страница возвращается в
-   центральную колонку, как «Сегодня», и список стоит по центру. */
-.board-page:has(#board-columns.list) {
-  width: auto;
-  margin-left: 0;
-  padding-left: 0;
-}
+/* Список — не лента вбок, а колонка чтения: заголовок и панель видов
+   остаются слева, как на доске, а сам список стоит по центру экрана. Правое
+   поле страницы уравнивается с левым, чтобы центр совпал с центром окна. */
+.board-page:has(#board-columns.list) { padding-right: clamp(24px, 4vw, 64px); }
 .board-page:has(#board-columns.list) .board-controls,
 .board-page:has(#board-columns.list) .board-props { margin-right: 0; }
 

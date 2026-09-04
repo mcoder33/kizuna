@@ -3262,7 +3262,7 @@ async function uploadPendingShots(captureId) {
 // (колонки, даты, проекты, список), панель свойств, фильтр и поиск. Клик по
 // названию открывает карточку записи, кружок закрывает дело, перенос между
 // колонками сохраняется на сервере.
-const BOARD_VIEWS = ["columns", "dates", "projects", "list"];
+const BOARD_VIEWS = ["columns", "dates", "projects", "tags", "list"];
 const BOARD_COLORS = ["gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"];
 const BOARD_COLOR_NAMES = { gray: "Серый", brown: "Коричневый", orange: "Оранжевый", yellow: "Жёлтый", green: "Зелёный", blue: "Синий", purple: "Фиолетовый", pink: "Розовый", red: "Красный" };
 const BOARD_PROPS_DEFAULT = { people: true, type: true, due: true, project: true, priority: true, files: true, compact: false };
@@ -3699,6 +3699,22 @@ function boardDateBuckets(data) {
   for (const bucket of buckets) bucket.cards.sort(order);
   return buckets;
 }
+// Группировка по тегам: дело с несколькими тегами лежит в каждой группе,
+// без тегов — в «Без тегов». Переносом тег не меняется.
+function boardTagGroups(data) {
+  const groups = new Map();
+  for (const card of data.columns.flatMap((column) => column.cards)) {
+    const keys = card.tags.length ? card.tags : [null];
+    for (const key of keys) {
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(card);
+    }
+  }
+  const named = [...groups.keys()].filter(Boolean).sort((left, right) => left.localeCompare(right, "ru"));
+  const result = named.map((name) => ({ key: `tag:${name}`, name: `#${name}`, color: boardProjectColor(name), drop: null, cards: groups.get(name) }));
+  if (groups.has(null)) result.push({ key: "tag:none", name: "Без тегов", color: "gray", drop: null, adderWithoutDue: true, cards: groups.get(null) });
+  return result;
+}
 async function boardChangeDue(captureId, bucket) {
   const card = boardState.data.columns.flatMap((column) => column.cards).find((item) => item.captureId === captureId);
   try {
@@ -3910,8 +3926,9 @@ function renderBoard(source) {
   wrap.classList.toggle("compact", Boolean(boardState.props.compact));
   if (boardState.view === "dates") {
     for (const bucket of boardDateBuckets(data)) wrap.append(boardDateColumnEl(bucket));
-  } else if (boardState.view === "projects") {
-    for (const group of boardProjectGroups(data)) wrap.append(boardDateColumnEl(group));
+  } else if (boardState.view === "projects" || boardState.view === "tags") {
+    const groups = boardState.view === "projects" ? boardProjectGroups(data) : boardTagGroups(data);
+    for (const group of groups) wrap.append(boardDateColumnEl(group));
     if (!wrap.childNodes.length) wrap.append(node("p", "Открытых дел нет.", "empty"));
   } else if (boardState.view === "list") {
     // Список — те же группы по срокам, столбиком. Пустые группы не занимают
