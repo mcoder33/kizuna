@@ -159,6 +159,10 @@ export function applyUserOverrides(classification,overrides,now=new Date(),timeZ
     out.additionalTypes=(out.additionalTypes||[]).filter(type=>type!==overrides.primaryType);
     setClaim('type',overrides.primaryType,true);
     clearAmbiguity('type');
+    // Тип выбран человеком: «результат» — это уже сделанное и идёт в «Что
+    // делал», остальные типы — нет. Без этого запись с ручным «результатом»
+    // оседала в заметках: признак «сделано» ставит только модель.
+    out.completed=overrides.primaryType==='outcome_decision';
   }
   const scheduleAllowed=['task','meeting_event'].includes(out.primaryType)&&!out.completed;
   if(overrides.due&&scheduleAllowed){
