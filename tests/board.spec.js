@@ -65,6 +65,10 @@ test("доска: колонка, быстрое дело, статус, кар�
   const listed = todayGroup.locator(".board-card").filter({ hasText: "Дело на сегодня из списка" });
   await expect(listed).toBeVisible();
   await expect(listed.locator(".btag.due")).toContainText("сегодня");
+  // Список стоит по центру страницы, а не у левого края, как лента колонок.
+  const listBox = await page.locator("#board-columns").boundingBox();
+  const viewport = page.viewportSize();
+  expect(Math.abs(listBox.x + listBox.width / 2 - viewport.width / 2)).toBeLessThan(24);
   // Вид запоминается: после перезагрузки доска снова списком.
   await page.reload();
   await expect(page.locator("#board-columns")).toHaveClass(/list/);

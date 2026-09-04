@@ -5355,6 +5355,15 @@ body {
   padding: 0 0 0 clamp(24px, 4vw, 64px);
 }
 .board-page .page-heading { margin-bottom: 8px; }
+/* Список — не лента вбок, а колонка чтения: страница возвращается в
+   центральную колонку, как «Сегодня», и список стоит по центру. */
+.board-page:has(#board-columns.list) {
+  width: auto;
+  margin-left: 0;
+  padding-left: 0;
+}
+.board-page:has(#board-columns.list) .board-controls,
+.board-page:has(#board-columns.list) .board-props { margin-right: 0; }
 
 /* Панель над доской: виды слева с подчёркиванием активного, инструменты
    справа — как строка над базой в Notion. */
@@ -5523,8 +5532,9 @@ body {
   flex-direction: column;
   gap: 26px;
   max-width: 820px;
+  margin: 0 auto;
   overflow-x: visible;
-  padding-right: 24px;
+  padding-right: 0;
   cursor: default;
 }
 .board-columns.list .board-column {
