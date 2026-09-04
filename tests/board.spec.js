@@ -65,13 +65,13 @@ test("доска: колонка, быстрое дело, статус, кар�
   const listed = todayGroup.locator(".board-card").filter({ hasText: "Дело на сегодня из списка" });
   await expect(listed).toBeVisible();
   await expect(listed.locator(".btag.due")).toContainText("сегодня");
-  // Список стоит по центру страницы, а не у левого края, как лента колонок.
+  // Список — одна центральная колонка: заголовок, панель видов и список по
+  // одному левому краю, колонка стоит по центру окна.
   const listBox = await page.locator("#board-columns").boundingBox();
   const viewport = page.viewportSize();
   expect(Math.abs(listBox.x + listBox.width / 2 - viewport.width / 2)).toBeLessThan(24);
-  // Заголовок и панель видов при этом остаются слева, как на доске.
   const headBox = await page.locator(".board-page .page-heading").boundingBox();
-  expect(headBox.x).toBeLessThan(listBox.x - 100);
+  expect(Math.abs(headBox.x - listBox.x)).toBeLessThan(8);
   // Вид запоминается: после перезагрузки доска снова списком.
   await page.reload();
   await expect(page.locator("#board-columns")).toHaveClass(/list/);
