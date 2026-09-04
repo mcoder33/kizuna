@@ -177,14 +177,17 @@
       .wk .nt.today { background: var(--today-col); }
       .chip {
         min-width: 0; display: flex; align-items: center; gap: 5px; font-size: 11px; line-height: 1.2; padding: 3px 6px; border-radius: 6px;
-        background: var(--todo-bg); color: var(--ink); cursor: grab; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-        border-left: 3px solid var(--todo);
+        background: var(--c-bg); color: var(--ink); cursor: grab; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+        --c: var(--todo); --c-bg: var(--todo-bg);
       }
-      .chip .box { width: 11px; height: 11px; border: 1.5px solid var(--todo); border-radius: 4px; flex: none; cursor: pointer; }
-      .chip.late { background: var(--late-bg); border-left-color: var(--late); color: var(--late); }
-      .chip.late .box { border-color: var(--late); }
-      .chip.done { text-decoration: line-through; color: var(--faint); background: var(--done-bg); border-left-color: var(--done); }
-      .chip.done .box { background: var(--done); border-color: var(--done); }
+      .chip.meeting { --c: var(--meeting); --c-bg: var(--meeting-bg); }
+      .chip.ext { --c: var(--ext); --c-bg: var(--ext-bg); color: var(--muted); }
+      .chip.ext2 { --c: var(--ext2); --c-bg: var(--ext2-bg); }
+      .chip .dt { width: 6px; height: 6px; border-radius: 50%; background: var(--c); flex: none; }
+      .chip .box { width: 11px; height: 11px; border: 1.5px solid var(--c); border-radius: 4px; flex: none; cursor: pointer; }
+      .chip.late { --c: var(--late); --c-bg: var(--late-bg); color: var(--late); }
+      .chip.done { text-decoration: line-through; color: var(--faint); --c: var(--done); --c-bg: var(--done-bg); }
+      .chip.done .box { background: var(--done); }
       .chip span { overflow: hidden; text-overflow: ellipsis; }
       .chip.dragging { opacity: 0.4; }
       /* часы */
@@ -198,7 +201,7 @@
       .col.over { outline: 2px dashed var(--coral); outline-offset: -2px; }
       .ev {
         position: absolute; left: 3px; right: 3px; border-radius: 7px; padding: 4px 7px; font-size: 11.5px; line-height: 1.25;
-        overflow: hidden; cursor: grab; border-left: 3px solid var(--c); background: var(--c-bg); color: var(--ink);
+        overflow: hidden; cursor: grab; background: var(--c-bg); color: var(--ink);
       }
       .ev b { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .ev small { display: block; color: var(--muted); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -286,10 +289,8 @@
       .month .mc.today { background: var(--today-col); }
       .month .mc.today .d { display: inline-block; background: var(--coral); color: #fff; border-radius: 99px; padding: 0 6px; }
       .month .mc .chip { margin-bottom: 2px; padding: 2px 5px; font-size: 10.5px; }
-      .month .mc .chip.mt { background: var(--meeting-bg); border-left-color: var(--meeting); }
-      .month .mc .chip.ex { background: var(--ext-bg); border-left-color: var(--ext); color: var(--muted); }
       .month .mc .more { color: var(--faint); font-size: 10.5px; margin: 2px 4px 0; }
-      .month .mc .chip .tm { color: var(--muted); font-weight: 500; flex: none; }
+      .month .mc .chip .tm { color: var(--c); font-weight: 600; flex: none; font-variant-numeric: tabular-nums; }
 
       /* ── варианты размещения ───────────────────────────────── */
       .places { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
@@ -311,9 +312,9 @@
       .thumb .body .cols { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(7, 1fr); }
       .thumb .body .cols div { border-left: 1px solid var(--hairline); position: relative; }
       .thumb .body .cols div.tod { background: var(--today-col); }
-      .thumb .bl { position: absolute; left: 2px; right: 2px; border-radius: 3px; background: var(--meeting-bg); border-left: 2px solid var(--meeting); }
-      .thumb .bl.t { background: var(--todo-bg); border-left-color: var(--todo); }
-      .thumb .bl.e { background: var(--ext-bg); border-left-color: var(--ext); }
+      .thumb .bl { position: absolute; left: 2px; right: 2px; border-radius: 3px; background: var(--meeting-bg); }
+      .thumb .bl.t { background: var(--todo-bg); }
+      .thumb .bl.e { background: var(--ext-bg); }
       .thumb .body.list { padding: 10px 12px; background-image: none; }
       .thumb .body.list .cap { height: 34px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; }
       .thumb .body.list .tl { display: grid; grid-template-columns: 1fr 120px; gap: 8px; height: 60px; }
@@ -673,7 +674,7 @@ calendar_events(id, account_id, external_id, title,
           const evs = byDate(s).sort((x, y) => (x.start ?? -1) - (y.start ?? -1));
           const shown = evs.slice(0, 3);
           cells += `<div class="mc ${d.getMonth() !== a.getMonth() ? "off" : ""} ${s === iso(TODAY) ? "today" : ""}" data-date="${s}"><div class="d">${d.getDate()}</div>
-            ${shown.map((e) => `<div class="chip ${e.kind === "meeting" ? "mt" : ""} ${isExt(e) ? "ex" : ""} ${e.done ? "done" : ""} ${e.late && !e.done ? "late" : ""}" data-id="${e.id}" draggable="${isExt(e) ? "false" : "true"}">${e.start !== null ? `<span class="tm">${hm(e.start)}</span>` : ""}<span>${e.title}</span></div>`).join("")}
+            ${shown.map((e) => `<div class="chip ${e.kind} ${e.done ? "done" : ""} ${e.late && !e.done ? "late" : ""}" data-id="${e.id}" draggable="${isExt(e) ? "false" : "true"}">${e.start !== null ? `<span class="tm">${hm(e.start)}</span>` : '<span class="dt"></span>'}<span>${e.title}</span></div>`).join("")}
             ${evs.length > 3 ? `<div class="more">ещё ${evs.length - 3}</div>` : ""}</div>`;
         }
         return `<div class="month">${cells}</div>`;
