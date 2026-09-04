@@ -500,6 +500,38 @@ test("tab nests a list item and shift+tab pulls it back, outside a list tab stil
   expect(JSON.parse((await posted).postData() || "{}").raw).toContain("  - вложенный");
 });
 
+// Нумерованный список: Tab делает пункт подпунктом со своим счётом с 1,
+// Shift+Tab возвращает его в счёт родителя, соседи ниже подтягиваются.
+test("tab turns a numbered item into a sub-item with its own numbering", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  const field = page.getByLabel("Новая запись");
+  await field.click();
+  await page.keyboard.type("1. первый");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("второй");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("третий");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("подпункт");
+  await expect(field.locator(".md-line").nth(3)).toHaveText("  1. подпункт");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("ещё подпункт");
+  await expect(field.locator(".md-line").nth(4)).toHaveText("  2. ещё подпункт");
+  // Возврат влево — следующий пункт родителя, а не «2.» подсписка.
+  await page.keyboard.press("Shift+Tab");
+  await expect(field.locator(".md-line").nth(4)).toHaveText("4. ещё подпункт");
+  // Пункт из середины ушёл вглубь — тот, что ниже, подтянул номер.
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("Tab");
+  await expect(field.locator(".md-line").nth(1)).toHaveText("  1. второй");
+  await expect(field.locator(".md-line").nth(2)).toHaveText("2. третий");
+  await expect(field.locator(".md-line").nth(4)).toHaveText("3. ещё подпункт");
+});
+
 test("enter continues a callout body and the body keeps the callout colour", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   await page.goto("/");

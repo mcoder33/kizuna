@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { decorateLine, listContinuation, toggleTask, indentLine } from '../public/markdown-live.js';
+import { decorateLine, listContinuation, toggleTask, indentLine, renumberOrdered } from '../public/markdown-live.js';
 
 // Главный инвариант поля: оформление ничего не удаляет из текста. Иначе
 // каретку невозможно восстановить по смещению, а разметку — отредактировать.
@@ -184,4 +184,31 @@ test('inline footnotes are decorated in the field', () => {
   const html = decorateLine('пояснение^[прямо здесь] дальше');
   assert.match(html, /md-footnote-ref/);
   assert.equal(textOf(html), 'пояснение^[прямо здесь] дальше');
+});
+
+test('renumberOrdered: подпункт начинает с 1, возврат продолжает родителя, соседи подтягиваются', () => {
+  // Сдвинутый вправо четвёртый пункт — первый подпункт третьего.
+  const nested = ['1. один', '2. два', '3. три', '  4. четыре'];
+  assert.equal(renumberOrdered(nested, 3), true);
+  assert.deepEqual(nested, ['1. один', '2. два', '3. три', '  1. четыре']);
+  // Второй подпункт продолжает счёт подсписка, а следующий за ним пункт
+  // верхнего уровня — счёт родителя.
+  const deeper = ['1. один', '  1. под', '  2. ещё', '5. верх'];
+  renumberOrdered(deeper, 3);
+  assert.deepEqual(deeper, ['1. один', '  1. под', '  2. ещё', '2. верх']);
+  // Сдвинутый влево подпункт становится следующим пунктом родителя.
+  const back = ['1. один', '  1. под', '2. вернулся'];
+  assert.equal(renumberOrdered(back, 2), false);
+  // Пункт из середины ушёл вглубь — соседи ниже подтянулись.
+  const middle = ['1. один', '  2. два', '3. три', '4. четыре'];
+  renumberOrdered(middle, 1);
+  assert.deepEqual(middle, ['1. один', '  1. два', '2. три', '3. четыре']);
+  // Маркер другого вида обрывает счёт, строка не из списка — границу блока.
+  const mixed = ['1. один', '- точка', '3. снова', '', '7. отдельный список'];
+  renumberOrdered(mixed, 2);
+  assert.deepEqual(mixed, ['1. один', '- точка', '1. снова', '', '7. отдельный список']);
+  // Скобка как разделитель тоже нумеруется.
+  const paren = ['1) а', '  3) б'];
+  renumberOrdered(paren, 1);
+  assert.deepEqual(paren, ['1) а', '  1) б']);
 });

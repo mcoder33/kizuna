@@ -190,6 +190,35 @@ export function indentLine(line, direction) {
   return { line: line.slice(leading[0].length), shift: -leading[0].length };
 }
 
+// Пересчёт номеров в блоке нумерованного списка вокруг строк from..to: после
+// сдвига вправо пункт становится подпунктом и начинает счёт с 1, после сдвига
+// влево — продолжает счёт родителя, а соседи ниже подтягиваются. Номер
+// считается по глубине отступа; маркер другого вида или строка не из списка
+// обрывают счёт на своей глубине и глубже. Возвращает true, если что-то
+// изменилось.
+export function renumberOrdered(lines, from, to = from) {
+  const isItem = (line) => listContinuation(line) !== null;
+  let start = from, end = to;
+  while (start > 0 && isItem(lines[start - 1])) start -= 1;
+  while (end < lines.length - 1 && isItem(lines[end + 1])) end += 1;
+  const counters = new Map();
+  let changed = false;
+  for (let index = start; index <= end; index += 1) {
+    const line = lines[index];
+    const ordered = line.match(/^(\s*)(\d{1,3})([.)])(\s+)(.*)$/);
+    const other = ordered ? null : line.match(/^(\s*)\S/);
+    const depth = (ordered ? ordered[1] : other ? other[1] : "").length;
+    for (const key of [...counters.keys()]) if (key > depth || (!ordered && key === depth)) counters.delete(key);
+    if (!ordered) continue;
+    const number = (counters.get(depth) ?? 0) + 1;
+    counters.set(depth, number);
+    if (Number(ordered[2]) === number) continue;
+    lines[index] = `${ordered[1]}${number}${ordered[3]}${ordered[4]}${ordered[5]}`;
+    changed = true;
+  }
+  return changed;
+}
+
 // Переключение состояния задачи в строке: `[ ]` ⇄ `[x]`.
 export function toggleTask(line) {
   const task = line.match(/^(\s*[-*+]\s+\[)([ xX/-])(\].*)$/);
@@ -415,6 +444,12 @@ export function createMarkdownField({ id, ariaLabel, placeholder = "", onInput, 
         lines[index] = result.line;
         if (index === caret.line) caretShift = result.shift;
       }
+      // Сдвинутый пункт нумерованного списка меняет номер: подпункт начинает
+      // с 1, вернувшийся продолжает счёт родителя. Каретка едет вместе с
+      // маркером, если тот стал короче или длиннее.
+      const beforeRenumber = lines[caret.line].length;
+      renumberOrdered(lines, from, to);
+      caretShift += lines[caret.line].length - beforeRenumber;
       render({ line: caret.line, offset: Math.max(0, caret.offset + caretShift) });
       if (onInput) onInput(getValue());
       return;
