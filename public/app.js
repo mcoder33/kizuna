@@ -485,13 +485,21 @@ let previewLimit = 3;
 // Колонка показывает первые записи, а не все. Раньше об этом было сказано
 // только заголовком-ссылкой, и запись, ушедшая за границу превью (например,
 // дело, которому передвинули срок вперёд), выглядела пропавшей.
+// Сколько записей колонка держит в запасе сверх трёх: ряд колонок тянется по
+// самой высокой, и колонка с местом добирает записи из запаса, пока влезает.
+const previewReserve = 12;
 function appendPreview(container, entries, emptyText, options) {
-  appendEntries(container, entries.slice(0, previewLimit), emptyText, {
+  appendEntries(container, entries.slice(0, previewLimit + previewReserve), emptyText, {
     entryOptions: (entry) => ({
       ...options?.entryOptions?.(entry),
       compact: true,
     }),
   });
+  // Запас спрятан: первые три задают высоту ряда, остальное покажет
+  // fitPreviews, когда раскладка посчитана.
+  for (const [index, card] of [...container.querySelectorAll(":scope > .entry")].entries())
+    card.hidden = index >= previewLimit;
+  container.dataset.total = String(entries.length);
   const hidden = entries.length - previewLimit;
   if (hidden <= 0) return;
   // Полной страницы у колонки может и не быть (заметки): тогда под превью
@@ -503,6 +511,44 @@ function appendPreview(container, entries, emptyText, options) {
   const more = node("a", `Ещё ${hidden} — весь список →`, "preview-more");
   more.href = options.href;
   container.append(more);
+}
+// Колонки «Сегодня» — один ряд, и ряд тянется по самой высокой колонке. Три
+// записи в каждой задают эту высоту, а колонка, у которой остаётся место,
+// добирает записи из запаса, пока ряд не начинает расти. Счётчик «Ещё N»
+// пересчитывается по тому, что осталось спрятанным.
+function fitPreviews() {
+  const containers = [$("#journal"), $("#todo"), $("#notes")];
+  for (const container of containers)
+    for (const [index, card] of [...container.querySelectorAll(":scope > .entry")].entries())
+      card.hidden = index >= previewLimit;
+  for (const container of containers) {
+    const panel = container.closest(".preview-card");
+    if (!panel) continue;
+    const cards = [...container.querySelectorAll(":scope > .entry")];
+    const total = Number(container.dataset.total || cards.length);
+    let shown = Math.min(previewLimit, cards.length);
+    for (const card of cards.slice(previewLimit)) {
+      const height = panel.clientHeight;
+      card.hidden = false;
+      if (panel.clientHeight > height + 1) { card.hidden = true; break; }
+      shown += 1;
+    }
+    const more = container.querySelector(":scope > .preview-more");
+    const hidden = total - shown;
+    if (!more) continue;
+    if (hidden <= 0) more.hidden = true;
+    else {
+      more.hidden = false;
+      more.textContent = more.matches("a") ? `Ещё ${hidden} — весь список →` : `Ещё ${hidden}`;
+    }
+  }
+}
+{
+  let fitTimer = 0;
+  window.addEventListener("resize", () => {
+    clearTimeout(fitTimer);
+    fitTimer = setTimeout(fitPreviews, 150);
+  });
 }
 function render(data) {
   currentDayDate = data.date;
@@ -548,6 +594,7 @@ function render(data) {
     entryOptions: (entry) => ({ overdue: isOverdue(entry, data.date) }),
   });
   appendPreview($("#notes"), notes, "Заметки появятся здесь.");
+  requestAnimationFrame(fitPreviews);
 }
 function isOverdue(entry, today) {
   const date = entry.interpretation.classification.entities.schedule?.date;

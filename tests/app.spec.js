@@ -1089,6 +1089,32 @@ test("колонка честно говорит, сколько записей 
     await request.delete(`/api/captures/${(await response.json()).entry.id}`);
 });
 
+// Ряд колонок тянется по самой высокой; колонка с запасом места добирает
+// записи сверх трёх, пока они влезают, и «Ещё N» считает только спрятанное.
+test("a shorter column fills the row height with more than three entries", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  // Три дела со сроком, важностью и тегами — высокие карточки в три строки
+  // меты, они и задают высоту ряда.
+  for (const name of ["первое дело", "второе дело", "третье дело"])
+    await request.post("/api/captures", {
+      data: { raw: name, primaryType: "todo", due: { date: "2026-12-31" }, priority: "high", tags: ["первый", "второй", "третий"] },
+    });
+  // Семь коротких отчётов — «Что делал» может показать больше трёх.
+  for (const name of ["раз", "два", "три", "четыре", "пять", "шесть", "семь"])
+    await request.post("/api/captures", { data: { raw: `Обсудили ${name}`, primaryType: "outcome" } });
+  await expect(page.locator("#todo .entry")).toHaveCount(3, { timeout: 15000 });
+  await expect(page.locator("#journal .entry:visible").nth(3)).toBeVisible({ timeout: 15000 });
+  const shown = await page.locator("#journal .entry:visible").count();
+  expect(shown).toBeGreaterThan(3);
+  expect(shown).toBeLessThan(7);
+  await expect(page.locator("#journal .preview-more")).toHaveText(`Ещё ${7 - shown} — весь список →`);
+  // Ряд при этом не вырос: колонки одной высоты.
+  const journal = await page.locator("#journal").locator("xpath=ancestor::article[1]").boundingBox();
+  const todo = await page.locator("#todo").locator("xpath=ancestor::article[1]").boundingBox();
+  expect(Math.abs(journal.height - todo.height)).toBeLessThan(2);
+});
+
 // Настройки в приложении: раньше это правилось только в .env с перезапуском.
 test("настройки меняются в приложении и применяются сразу", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
