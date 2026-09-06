@@ -65,13 +65,15 @@ test("доска: колонка, быстрое дело, статус, кар�
   const listed = todayGroup.locator(".board-card").filter({ hasText: "Дело на сегодня из списка" });
   await expect(listed).toBeVisible();
   await expect(listed.locator(".btag.due")).toContainText("сегодня");
-  // Список — одна центральная колонка: заголовок, панель видов и список по
-  // одному левому краю, колонка стоит по центру окна.
+  // Список стоит по центру окна вместе с заголовком группы, а заголовок
+  // страницы и панель видов остаются слева, как в остальных видах.
   const listBox = await page.locator("#board-columns").boundingBox();
   const viewport = page.viewportSize();
   expect(Math.abs(listBox.x + listBox.width / 2 - viewport.width / 2)).toBeLessThan(24);
+  const groupBox = await page.locator("#board-columns .board-column").first().boundingBox();
+  expect(Math.abs(groupBox.x + groupBox.width / 2 - viewport.width / 2)).toBeLessThan(24);
   const headBox = await page.locator(".board-page .page-heading").boundingBox();
-  expect(Math.abs(headBox.x - listBox.x)).toBeLessThan(8);
+  expect(headBox.x).toBeLessThan(listBox.x - 100);
   // Вид запоминается: после перезагрузки доска снова списком.
   await page.reload();
   await expect(page.locator("#board-columns")).toHaveClass(/list/);

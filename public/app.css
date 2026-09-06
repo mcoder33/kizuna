@@ -5367,15 +5367,13 @@ body {
   padding: 0 0 0 clamp(24px, 4vw, 64px);
 }
 .board-page .page-heading { margin-bottom: 8px; }
-/* Список — не лента вбок, а колонка чтения, как страница в Notion: вся
-   страница становится одной центральной колонкой, и заголовок, панель видов
-   и список стоят по одному левому краю. Шапка во всю ширину при узкой
-   колонке посередине смотрелась нелепо. */
-.board-page:has(#board-columns.list) {
-  width: min(100%, 860px);
-  margin: 0 auto;
-  padding: 0;
-}
+/* Список — не лента вбок, а колонка чтения: заголовок и панель видов
+   остаются слева во всю ширину, как на доске и в остальных видах, а сам
+   список — с заголовком группы и делами — стоит по центру окна. Правое поле
+   страницы уравнивается с левым, чтобы центр совпал с центром окна. Вариант
+   «вся страница одной узкой колонкой» пробовали: шапка в разных видах прыгала
+   с места на место. */
+.board-page:has(#board-columns.list) { padding-right: clamp(24px, 4vw, 64px); }
 .board-page:has(#board-columns.list) .board-controls,
 .board-page:has(#board-columns.list) .board-props { margin-right: 0; }
 
@@ -5545,8 +5543,8 @@ body {
 .board-columns.list {
   flex-direction: column;
   gap: 26px;
-  max-width: none;
-  margin: 0;
+  max-width: 820px;
+  margin: 0 auto;
   overflow-x: visible;
   padding-right: 0;
   cursor: default;
