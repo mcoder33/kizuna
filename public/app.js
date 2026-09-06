@@ -1291,6 +1291,7 @@ function showReview(entry, review, undoGroupId, provenance) {
     // иначе карточка откроется прозрачной.
     for (const animation of dialog.getAnimations()) animation.cancel();
     dialog.showModal();
+    syncCardViewport();
     // Только при открытии: после сохранения уточнения карточка
     // перерисовывается на месте, и проявлять её заново незачем.
     appear(dialog);
@@ -2398,7 +2399,30 @@ $("#review-dialog").addEventListener("close", () => {
   flushCard();
   closeCardSlashMenu?.();
   clear($("#review"));
+  syncCardViewport();
 });
+// На телефоне клавиатура сжимает видимую область, а не окно: Safari тогда
+// прокручивает документ, чтобы показать каретку, и уводит карточку за экран,
+// а вставка попадает в никуда. Пока карточка открыта, её верх и высота идут
+// за visualViewport — поле заметки остаётся над клавиатурой, и прокручивается
+// сама карточка, а не страница. На широком экране размер задаёт CSS.
+const CARD_PHONE = window.matchMedia("(max-width: 760px)");
+function syncCardViewport() {
+  const dialog = $("#review-dialog"),
+    viewport = window.visualViewport;
+  if (!dialog.open || !viewport || !CARD_PHONE.matches) {
+    dialog.style.removeProperty("top");
+    dialog.style.removeProperty("bottom");
+    dialog.style.removeProperty("height");
+    return;
+  }
+  dialog.style.top = `${Math.round(viewport.offsetTop)}px`;
+  dialog.style.bottom = "auto";
+  dialog.style.height = `${Math.round(viewport.height)}px`;
+}
+window.visualViewport?.addEventListener("resize", syncCardViewport);
+window.visualViewport?.addEventListener("scroll", syncCardViewport);
+CARD_PHONE.addEventListener("change", syncCardViewport);
 $("#review-dialog").addEventListener("click", (event) => {
   if (event.target === $("#review-dialog")) closeCard();
 });

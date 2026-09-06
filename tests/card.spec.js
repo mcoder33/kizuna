@@ -1062,3 +1062,47 @@ test("an unclassified capture lives in notes, not in the todo buffer, until it i
   await expect(page.locator("#todo")).toContainText("Созвон с Женей");
   await expect(page.locator("#notes")).not.toContainText("Созвон с Женей");
 });
+
+test("on a phone the card stays pinned to the screen while the page behind is scrolled, and paste lands in the note", async ({ page }) => {
+  const raw = "Нужно проверить карточку на телефоне";
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await capture(page, raw);
+  // Список прокручен вниз — в верхнем слое relative-диалог открывался бы
+  // выше экрана, у начала документа.
+  await page.evaluate(() => { location.hash = "#board?view=list"; });
+  const card = page.locator("#board-columns .board-card").filter({ hasText: raw }).first();
+  await expect(card).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await card.locator(".board-title").click();
+  const dialog = page.locator("#review-dialog");
+  await expect(dialog).toBeVisible();
+  await page.waitForTimeout(350);
+  await expect(dialog).toHaveCSS("position", "fixed");
+  expect(Math.abs((await dialog.boundingBox()).y)).toBeLessThan(2);
+
+  // Прокрутка страницы карточку не двигает: страница под ней заперта.
+  await page.evaluate(() => window.scrollBy(0, 300));
+  expect(Math.abs((await dialog.boundingBox()).y)).toBeLessThan(2);
+  await expect(page.locator("body")).toHaveCSS("overflow", "hidden");
+
+  // Каретка в заметке — и вставка из буфера попадает именно туда.
+  const editor = page.locator("#card-body-editor");
+  await editor.click();
+  await expect(editor).toBeFocused();
+  const box = await editor.boundingBox();
+  expect(box.y).toBeGreaterThan(0);
+  expect(box.y).toBeLessThan(844);
+  await page.evaluate(() => {
+    const data = new DataTransfer();
+    data.setData("text/plain", "SIP/RTP → ASR → LLM");
+    document
+      .querySelector("#card-body-editor")
+      .dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+  });
+  await expect(editor).toContainText("SIP/RTP → ASR → LLM");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  // Карточка закрыта — страница снова прокручивается.
+  await expect(page.locator("body")).not.toHaveCSS("overflow", "hidden");
+});
