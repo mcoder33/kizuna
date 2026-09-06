@@ -188,8 +188,9 @@ test("на телефоне список не растягивает карто�
   await page.goto("/#board?view=list");
   const card = page.locator("#board-columns .board-card").filter({ hasText: "на телефоне" });
   await expect(card).toBeVisible();
-  const box = await card.boundingBox();
-  expect(box.height).toBeLessThan(120);
+  // Доска перерисовывается по «поток жив» сразу после загрузки: карточка
+  // могла смениться между проверкой и замером — ждём устойчивого размера.
+  await expect.poll(async () => (await card.boundingBox())?.height ?? Infinity).toBeLessThan(120);
   await expect(page.locator("#board-segments")).toBeHidden();
   // Страница не шире экрана: иначе Safari на телефоне расширяет окно, и
   // карточка записи с экраном разговора оказываются уже экрана.
