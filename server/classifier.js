@@ -6,7 +6,7 @@ export const classificationSchema=z.object({
   entities:z.object({
     projects:z.array(z.string()).max(6),
     people:z.array(z.string()).max(8),
-    when:z.union([z.string().max(120),z.object({date:z.string().max(10).nullable(),time:z.string().max(5).nullable()}).passthrough()]).nullable(),
+    when:z.union([z.string().max(120),z.object({date:z.string().max(10).nullable(),time:z.string().max(5).nullable(),end:z.string().max(5).nullable().optional()}).passthrough()]).nullable(),
     followUp:z.string().max(500).nullable(),
   }),
   additionalTypes:z.array(z.enum(primaryTypes)).max(3),
@@ -35,7 +35,12 @@ export function scheduleFromModel(when,now=new Date(),timeZone='Europe/Samara'){
   const time=timeMatch&&Number(timeMatch[1])<=23&&Number(timeMatch[2])<=59?`${timeMatch[1].padStart(2,'0')}:${timeMatch[2]}`:null;
   if(!date&&!time)return null;
   if(date){const base=today(now,timeZone);if(date<plainDate(addDays(base,-366))||date>plainDate(addDays(base,731)))return null}
-  return {state:'ok',date,time,sortAt:date?`${date}T${time||'23:59'}:00`:null,display:[date,time].filter(Boolean).join(', ')};
+  // Конец — только при известном начале и строго после него: «с 11 до 12»
+  // даёт блок в календаре, а конец без начала или раньше него — мусор.
+  const endMatch=time&&typeof when.end==='string'?when.end.match(isoTime):null;
+  const end=endMatch&&Number(endMatch[1])<=23&&Number(endMatch[2])<=59?`${endMatch[1].padStart(2,'0')}:${endMatch[2]}`:null;
+  const endValid=end&&(Number(end.slice(0,2))*60+Number(end.slice(3)))>(Number(time.slice(0,2))*60+Number(time.slice(3)));
+  return {state:'ok',date,time,...(endValid?{end}:{}),sortAt:date?`${date}T${time||'23:59'}:00`:null,display:[date,time].filter(Boolean).join(', ')+(endValid?`–${end}`:'')};
 }
 
 // Заземление: сущность принимается, только если её начало встречается в записи.

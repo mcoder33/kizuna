@@ -209,6 +209,57 @@ function migrate(db) {
     if (!db.prepare('PRAGMA table_info(board_columns)').all().some(column => column.name === 'color'))
       db.exec('ALTER TABLE board_columns ADD COLUMN color TEXT');
     db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(11, now());
+    // Миграция 12: внешние календари. Учётная запись — Яндекс/Apple по CalDAV
+    // или Google по API — с шифрованными учётными данными и списком выбранных
+    // календарей; события — кэш окна синхронизации, не записи журнала; ссылки —
+    // какие встречи Кизуна сама отправила наружу, чтобы узнавать их и убирать.
+    db.exec(`CREATE TABLE IF NOT EXISTS calendar_accounts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT REFERENCES users(id),
+      provider TEXT NOT NULL CHECK(provider IN ('caldav','google')),
+      preset TEXT,
+      label TEXT NOT NULL,
+      color TEXT,
+      mode TEXT NOT NULL DEFAULT 'full' CHECK(mode IN ('full','busy')),
+      server_url TEXT,
+      username TEXT,
+      credentials_enc TEXT NOT NULL,
+      calendars_json TEXT NOT NULL DEFAULT '[]',
+      synced_at TEXT,
+      sync_error TEXT,
+      created_at TEXT NOT NULL,
+      disabled_at TEXT
+    )`);
+    db.exec(`CREATE TABLE IF NOT EXISTS calendar_events (
+      id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL REFERENCES calendar_accounts(id) ON DELETE CASCADE,
+      calendar_id TEXT NOT NULL,
+      uid TEXT NOT NULL,
+      instance_key TEXT,
+      title TEXT NOT NULL,
+      description TEXT,
+      location TEXT,
+      start_at TEXT NOT NULL,
+      end_at TEXT NOT NULL,
+      all_day INTEGER NOT NULL DEFAULT 0,
+      busy INTEGER NOT NULL DEFAULT 1,
+      join_url TEXT,
+      etag TEXT,
+      href TEXT,
+      updated_at TEXT NOT NULL
+    )`);
+    db.exec('CREATE INDEX IF NOT EXISTS calendar_events_range ON calendar_events(account_id, start_at, end_at)');
+    db.exec(`CREATE TABLE IF NOT EXISTS calendar_links (
+      capture_id TEXT NOT NULL REFERENCES captures(id),
+      account_id TEXT NOT NULL REFERENCES calendar_accounts(id) ON DELETE CASCADE,
+      calendar_id TEXT NOT NULL,
+      uid TEXT NOT NULL,
+      href TEXT,
+      etag TEXT,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY(capture_id, account_id)
+    )`);
+    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(12, now());
 }
 // Ограничение переписывается из собственного определения таблицы, а не из
 // зашитой здесь копии: копия разошлась бы с настоящей схемой на первой же новой
@@ -935,6 +986,11 @@ const ownedRows = {
   usage_events: ['user_id IS ?', 1],
   board_placements: ['user_id IS ?', 1],
   board_columns: ['user_id IS ?', 1],
+  // Внешние календари стираются вместе с журналом: чужие события в чистой
+  // Кизуне были бы чужими вдвойне. В экспорт они при этом не попадают.
+  calendar_links: ['account_id IN (SELECT id FROM calendar_accounts WHERE user_id IS ?)', 1],
+  calendar_events: ['account_id IN (SELECT id FROM calendar_accounts WHERE user_id IS ?)', 1],
+  calendar_accounts: ['user_id IS ?', 1],
   activity_events: ["json_extract(payload_json,'$.captureId') IN (SELECT id FROM captures WHERE user_id IS ?)", 1],
 };
 const mineWhere = table => 'WHERE ' + ownedRows[table][0];
@@ -965,7 +1021,7 @@ export function resetLedger(db, userId = null) {
     db.exec('DROP TRIGGER IF EXISTS ledger_events_no_update; DROP TRIGGER IF EXISTS ledger_events_no_delete;');
     try {
       // Порядок важен: сначала то, что ссылается, потом то, на что ссылаются.
-      for (const table of ['activity_events','daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','interpretations','capture_attachments','capture_notes','usage_events','board_placements','board_columns','captures']) db.prepare(`DELETE FROM ${table} ${mineWhere(table)}`).run(userId);
+      for (const table of ['activity_events','daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','interpretations','capture_attachments','capture_notes','usage_events','board_placements','board_columns','calendar_links','calendar_events','calendar_accounts','captures']) db.prepare(`DELETE FROM ${table} ${mineWhere(table)}`).run(userId);
     } finally { createLedgerEventGuards(db); }
   });
 }
