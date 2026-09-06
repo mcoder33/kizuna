@@ -192,7 +192,18 @@ function updatePageFromHash() {
   if (activePage !== pageId) history.replaceState(null, "", "#today");
   // Открыли настройки — перечитываем расход: он меняется от каждой записи, а
   // страница может висеть открытой долго.
-  if (activePage === "settings") loadUsage();
+  if (activePage === "settings") {
+    loadUsage();
+    loadCalendarAccounts();
+    // Google возвращает сюда после согласия с итогом в адресе: без слова
+    // человек не понял бы, подключилось или нет.
+    const calendarOutcome = params.get("calendar");
+    if (calendarOutcome) {
+      const messages = { connected: "Google Calendar подключён", denied: "Google: доступ не дан", invalid_state: "Подключение Google устарело — попробуйте снова", no_refresh_token: "Google не выдал токен обновления: отзовите доступ Кизуны в аккаунте Google и подключите заново" };
+      toast(messages[calendarOutcome] || `Google: не удалось подключить (${calendarOutcome})`);
+      history.replaceState(null, "", "#settings");
+    }
+  }
   if (activePage === "admin") loadAdmin();
   if (activePage === "board") loadBoard(params.get("view"));
   // «Обзор» пересчитывается при каждом открытии: цифры меняются от каждой
@@ -1068,6 +1079,7 @@ function showReview(entry, review, undoGroupId, provenance) {
     type = document.createElement("select"),
     date = document.createElement("input"),
     time = document.createElement("input"),
+    end = document.createElement("input"),
     project = document.createElement("input"),
     people = document.createElement("input"),
     followUp = document.createElement("input"),
@@ -1086,6 +1098,16 @@ function showReview(entry, review, undoGroupId, provenance) {
   time.type = "time";
   time.id = "review-time";
   time.value = c.entities.schedule?.time || "";
+  // Конец — для блока в календаре: без него встрече рисуется час, делу —
+  // полчаса. Поле появляется, когда есть время начала.
+  end.type = "time";
+  end.id = "review-end";
+  end.value = c.entities.schedule?.end || "";
+  end.title = "Окончание";
+  end.setAttribute("aria-label", "Окончание");
+  const paintEnd = () => { end.hidden = !time.value; if (!time.value) end.value = ""; };
+  time.addEventListener("input", paintEnd);
+  paintEnd();
   project.id = "review-project";
   project.setAttribute("list", "known-projects");
   project.value = c.entities.projects[0] || "";
@@ -1111,7 +1133,9 @@ function showReview(entry, review, undoGroupId, provenance) {
   paintDone();
 
   const scheduleRow = node("div", undefined, "review-schedule");
-  scheduleRow.append(date, time);
+  const endWrap = node("span", undefined, "review-end");
+  endWrap.append(node("span", "до", "review-end-label"), end);
+  scheduleRow.append(date, time, endWrap);
   const scheduleWrap = propertyRow("Срок", scheduleRow, "schedule"),
     peopleWrap = propertyRow("Участники", people, "people"),
     followUpWrap = propertyRow("Далее", followUp, "next");
@@ -1148,7 +1172,7 @@ function showReview(entry, review, undoGroupId, provenance) {
     const parts = [typeNames[type.value] || type.value];
     if (project.value.trim()) parts.push(project.value.trim());
     const due = scheduleLabel({ state: "ok", date: date.value || null, time: time.value || null });
-    if (!scheduleWrap.hidden && due) parts.push(`срок: ${due}`);
+    if (!scheduleWrap.hidden && due) parts.push(`срок: ${due}${time.value && end.value ? `–${end.value}` : ""}`);
     if (!peopleWrap.hidden && people.value.trim()) parts.push(people.value.trim());
     if (!followUpWrap.hidden && followUp.value.trim()) parts.push(`далее: ${followUp.value.trim()}`);
     return parts.join("   ·   ");
@@ -1188,7 +1212,7 @@ function showReview(entry, review, undoGroupId, provenance) {
       completed: done,
     };
     if (!scheduleWrap.hidden)
-      patch.schedule = { date: date.value || null, time: time.value || null };
+      patch.schedule = { date: date.value || null, time: time.value || null, ...(time.value && end.value && end.value > time.value ? { end: end.value } : {}) };
     return patch;
   };
   const untouched = JSON.stringify(propsPatch());
@@ -1286,6 +1310,9 @@ function showReview(entry, review, undoGroupId, provenance) {
     }
   });
   footerRow.append(remove);
+  // Отправить встречу во внешний календарь можно только отсюда, кнопкой:
+  // по контракту памяти действие наружу всегда ждёт отдельного подтверждения.
+  if (["task", "meeting_event"].includes(c.primaryType) && c.entities.schedule?.date) footerRow.prepend(calendarExportEl(entry));
   if (!dialog.open) {
     // Прерванное закрытие могло оставить незавершённую анимацию: снимаем её,
     // иначе карточка откроется прозрачной.
@@ -2109,6 +2136,8 @@ const SETTING_FIELDS = [
   "openaiKey",
   "geminiKey",
   "openrouterKey",
+  "googleClientId",
+  "googleClientSecret",
   "voiceProvider",
   "voiceModel",
   "geminiVoiceModel",
@@ -2129,7 +2158,7 @@ const SETTING_FIELDS = [
   "voiceGeminiRateUsdPerMinute",
   "monthlyLimitUsd",
 ];
-const SECRET_FIELDS = ["openaiKey", "geminiKey", "openrouterKey"];
+const SECRET_FIELDS = ["openaiKey", "geminiKey", "openrouterKey", "googleClientSecret"];
 let appSettings = {};
 function settingInput(name) {
   return document.getElementById(`setting-${name}`);
@@ -3333,7 +3362,7 @@ async function uploadPendingShots(captureId) {
 // (колонки, даты, проекты, список), панель свойств, фильтр и поиск. Клик по
 // названию открывает карточку записи, кружок закрывает дело, перенос между
 // колонками сохраняется на сервере.
-const BOARD_VIEWS = ["columns", "dates", "projects", "tags", "list"];
+const BOARD_VIEWS = ["columns", "dates", "projects", "tags", "list", "calendar"];
 const BOARD_COLORS = ["gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"];
 const BOARD_COLOR_NAMES = { gray: "Серый", brown: "Коричневый", orange: "Оранжевый", yellow: "Жёлтый", green: "Зелёный", blue: "Синий", purple: "Фиолетовый", pink: "Розовый", red: "Красный" };
 const BOARD_PROPS_DEFAULT = { people: true, type: true, due: true, project: true, priority: true, files: true, compact: false };
@@ -3992,6 +4021,16 @@ function renderBoard(source) {
   clear(wrap);
   boardState.openAdder = openAdder;
   paintBoardFilter(source);
+  // Календарь — свой запрос и своя раскладка: лента колонок прячется, а
+  // фильтр и поиск действуют и на него.
+  const calendarView = boardState.view === "calendar";
+  $("#board-calendar").hidden = !calendarView;
+  wrap.hidden = calendarView;
+  if (calendarView) {
+    $("#board-segments").hidden = true;
+    if (calState.data) renderCalendar(); else loadCalendar();
+    return;
+  }
   const data = boardFilteredData(source);
   wrap.classList.toggle("list", boardState.view === "list");
   wrap.classList.toggle("compact", Boolean(boardState.props.compact));
@@ -4124,8 +4163,690 @@ async function loadBoard(view) {
     // бы ISO-строкой вместо «завтра» и «05.09».
     currentDayDate ||= data.today;
     renderBoard(data);
+    if (boardState.view === "calendar") await loadCalendar();
   } catch (error) {
     clear(wrap);
     wrap.append(node("p", error.message, "empty"));
   }
+}
+
+// ── Календарь ───────────────────────────────────────────────────────────────
+// Календарь — вид «Доски», а не отдельный раздел: те же дела, тот же фильтр и
+// поиск, та же карточка по клику. Свои дела и встречи лежат в сетке по сроку,
+// чужие календари — серым и только для чтения. Перенос мышкой — уточнение
+// записи (patch.schedule) с «Вернуть», а не правка календаря.
+const CAL_HOUR_PX = 48;
+const CAL_H0 = 6;
+const CAL_H1 = 23;
+const CAL_STEP = 15;
+const CAL_DOW = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"];
+const CAL_MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+const CAL_MONTHS_G = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
+const CAL_PHONE = window.matchMedia("(max-width: 760px)");
+const calState = { mode: "week", anchor: null, days: 7, data: null, hidden: new Set(), seq: 0, drag: null, pop: null };
+try {
+  const storedMode = localStorage.getItem("kizuna-calendar-mode");
+  if (["day", "week", "month"].includes(storedMode)) calState.mode = storedMode;
+  else if (CAL_PHONE.matches) calState.mode = "day";
+  const storedHidden = JSON.parse(localStorage.getItem("kizuna-calendar-hidden") || "[]");
+  if (Array.isArray(storedHidden)) calState.hidden = new Set(storedHidden);
+} catch {}
+const calPad = (value) => String(value).padStart(2, "0");
+const calMinutes = (time) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+const calTime = (minutes) => `${calPad(Math.floor(minutes / 60))}:${calPad(minutes % 60)}`;
+const calParse = (date) => new Date(`${date}T12:00:00Z`);
+const calDow = (date) => (calParse(date).getUTCDay() + 6) % 7;
+const calMonday = (date) => shiftDate(date, -calDow(date));
+function calHuman(date) {
+  const d = calParse(date);
+  return `${CAL_DOW[calDow(date)]}, ${d.getUTCDate()} ${CAL_MONTHS_G[d.getUTCMonth()]}`;
+}
+function calToday() { return calState.data?.today || currentDayDate || new Date().toISOString().slice(0, 10); }
+function calRange() {
+  const anchor = calState.anchor || calToday();
+  if (calState.mode === "day") return { from: anchor, to: anchor };
+  if (calState.mode === "month") {
+    const d = calParse(anchor);
+    const first = `${d.getUTCFullYear()}-${calPad(d.getUTCMonth() + 1)}-01`;
+    const start = calMonday(first);
+    return { from: start, to: shiftDate(start, 41) };
+  }
+  const start = calState.days === 7 ? calMonday(anchor) : anchor;
+  return { from: start, to: shiftDate(start, calState.days - 1) };
+}
+function calTitle() {
+  const { from, to } = calRange();
+  const a = calParse(from), b = calParse(to);
+  if (calState.mode === "day") return calHuman(from) + (from === calToday() ? " · сегодня" : "");
+  if (calState.mode === "month") { const d = calParse(calState.anchor || calToday()); return `${CAL_MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`; }
+  if (a.getUTCMonth() === b.getUTCMonth()) return `${a.getUTCDate()}–${b.getUTCDate()} ${CAL_MONTHS_G[a.getUTCMonth()]} ${a.getUTCFullYear()}`;
+  return `${a.getUTCDate()} ${CAL_MONTHS_G[a.getUTCMonth()]} – ${b.getUTCDate()} ${CAL_MONTHS_G[b.getUTCMonth()]}`;
+}
+function setCalendarMode(mode) {
+  calState.mode = mode;
+  try { localStorage.setItem("kizuna-calendar-mode", mode); } catch {}
+}
+function calStep(direction) {
+  const anchor = calState.anchor || calToday();
+  if (calState.mode === "month") { const d = calParse(anchor); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() + direction); calState.anchor = d.toISOString().slice(0, 10); }
+  else calState.anchor = shiftDate(anchor, direction * (calState.mode === "day" ? 1 : calState.days));
+  loadCalendar();
+}
+// Длительность блока: конец из записи, иначе час встрече и полчаса делу.
+function calEndOf(item) {
+  if (item.time === null) return null;
+  if (item.end) return item.end;
+  const minutes = calMinutes(item.time) + (item.kind === "meeting" ? calState.data?.defaults?.meetingMinutes || 60 : calState.data?.defaults?.taskMinutes || 30);
+  return calTime(Math.min(minutes, 23 * 60 + 59));
+}
+// Фильтр доски действует и на календарь: тип, проект и поиск.
+function calOwnVisible(item) {
+  if (calState.hidden.has(`kind:${item.kind}`)) return false;
+  const { type, projects } = boardState.filter;
+  if (type === "task" && item.kind === "meeting") return false;
+  if (type === "meeting_event" && item.kind !== "meeting") return false;
+  if (projects.length && !item.projects.some((project) => projects.includes(project))) return false;
+  const query = boardState.search.trim().toLowerCase();
+  if (query && !item.title.toLowerCase().includes(query) && !item.tags.some((tag) => tag.toLowerCase().includes(query))) return false;
+  return true;
+}
+function calItemsOf(date) {
+  const data = calState.data;
+  if (!data) return { own: [], external: [] };
+  const own = data.items.filter((item) => item.date === date && calOwnVisible(item));
+  const external = data.external.filter((item) => item.date === date && !calState.hidden.has(`account:${item.accountId}`));
+  return { own, external };
+}
+async function loadCalendar() {
+  const wrap = $("#board-calendar");
+  const { from, to } = calRange();
+  const seq = ++calState.seq;
+  if (!wrap.childNodes.length) wrap.append(node("p", "Собираем календарь…", "empty"));
+  try {
+    const data = await request(`/api/calendar?from=${from}&to=${to}`);
+    if (seq !== calState.seq) return;
+    calState.data = data;
+    currentDayDate ||= data.today;
+    renderCalendar();
+  } catch (error) {
+    clear(wrap);
+    wrap.append(node("p", error.message, "empty"));
+  }
+}
+function calButton(text, className, onClick) {
+  const button = node("button", text, className);
+  button.type = "button";
+  if (onClick) button.addEventListener("click", onClick);
+  return button;
+}
+function calSourcesEl() {
+  const data = calState.data;
+  const wrap = node("div", undefined, "cal-sources");
+  const chip = (key, label, color, extra) => {
+    const button = calButton(undefined, "cal-source", () => {
+      if (calState.hidden.has(key)) calState.hidden.delete(key); else calState.hidden.add(key);
+      try { localStorage.setItem("kizuna-calendar-hidden", JSON.stringify([...calState.hidden])); } catch {}
+      renderCalendar();
+    });
+    button.setAttribute("aria-pressed", String(!calState.hidden.has(key)));
+    const dot = node("i", undefined, "cal-dot");
+    if (color) dot.style.background = color;
+    button.append(dot, node("span", label));
+    if (extra) button.append(node("small", extra));
+    return button;
+  };
+  wrap.append(chip("kind:task", "Дела", "var(--type-todo)"), chip("kind:meeting", "Встречи", "var(--type-meeting)"));
+  for (const account of data.accounts) {
+    if (account.disabled) continue;
+    wrap.append(chip(`account:${account.id}`, account.label, account.color || "var(--n-72)", account.syncError ? "ошибка" : account.mode === "busy" ? "занято" : null));
+  }
+  const manage = node("a", data.accounts.length ? "Календари…" : "+ Подключить календарь", "cal-manage");
+  manage.href = "#settings";
+  wrap.append(manage);
+  return wrap;
+}
+function calToolbarEl() {
+  const top = node("div", undefined, "cal-top");
+  const nav = node("span", undefined, "cal-nav");
+  nav.append(calButton("‹", "cal-nav-btn", () => calStep(-1)), calButton("Сегодня", "cal-nav-today", () => { calState.anchor = calToday(); loadCalendar(); }), calButton("›", "cal-nav-btn", () => calStep(1)));
+  const title = node("h3", calTitle(), "cal-title");
+  const seg = node("div", undefined, "cal-seg");
+  seg.setAttribute("role", "group");
+  for (const [mode, label, key] of [["day", "День", "D"], ["week", "Неделя", "W"], ["month", "Месяц", "M"]]) {
+    const button = calButton(undefined, undefined, () => { setCalendarMode(mode); if (mode === "week") calState.days = CAL_PHONE.matches ? 3 : 7; loadCalendar(); });
+    button.append(node("span", label), node("kbd", key));
+    button.setAttribute("aria-pressed", String(calState.mode === mode));
+    seg.append(button);
+  }
+  top.append(nav, title, seg);
+  return top;
+}
+function calChipEl(item, { overdue = false } = {}) {
+  const chip = node("div", undefined, `cal-chip ${item.kind}${item.done ? " done" : ""}${overdue || item.overdue ? " late" : ""}`);
+  chip.dataset.id = item.id;
+  if (item.kind !== "external") {
+    chip.draggable = !item.done;
+    chip.dataset.own = "1";
+    const box = calButton(undefined, `cal-box${item.kind === "meeting" ? " meeting" : ""}${item.done ? " is-done" : ""}`, (event) => { event.stopPropagation(); toggleCalendarDone(item); });
+    box.title = item.done ? "Вернуть в работу" : "Готово";
+    if (item.kind === "meeting" && !item.done) box.innerHTML = BOARD_CLOCK;
+    chip.append(box);
+  } else {
+    const dot = node("i", undefined, "cal-dot");
+    if (item.color) dot.style.background = item.color;
+    chip.append(dot);
+  }
+  chip.append(node("span", item.title, "cal-chip-title"));
+  chip.title = item.title;
+  chip.addEventListener("click", () => openCalendarItem(item));
+  return chip;
+}
+function calEventEl(item) {
+  const start = calMinutes(item.time), end = calMinutes(calEndOf(item));
+  const top = ((start - CAL_H0 * 60) / 60) * CAL_HOUR_PX;
+  const height = Math.max(((end - start) / 60) * CAL_HOUR_PX - 2, 18);
+  const element = node("div", undefined, `cal-ev ${item.kind}${item.done ? " done" : ""}${item.overdue ? " late" : ""}${height < 34 ? " short" : ""}`);
+  element.style.top = `${top}px`;
+  element.style.height = `${height}px`;
+  element.dataset.id = item.id;
+  if (item.kind !== "external") { element.draggable = !item.done; element.dataset.own = "1"; }
+  else if (item.color) element.style.setProperty("--cal-c", item.color);
+  const title = node("b", undefined);
+  title.append(node("span", `${item.time} `, "cal-ev-time"), document.createTextNode(item.title));
+  element.append(title);
+  const sub = item.kind === "external" ? item.source : [item.project, ...(item.people || [])].filter(Boolean).join(" · ");
+  if (sub) element.append(node("small", sub));
+  if (item.joinUrl && height >= 34) {
+    const join = node("a", "Войти", "cal-join");
+    join.href = item.joinUrl; join.target = "_blank"; join.rel = "noopener";
+    join.addEventListener("click", (event) => event.stopPropagation());
+    element.append(join);
+  }
+  element.title = `${item.time}–${calEndOf(item)} ${item.title}`;
+  element.addEventListener("click", () => openCalendarItem(item));
+  return element;
+}
+function calGridEl(dates) {
+  const today = calToday();
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const head = node("div", undefined, "cal-wk");
+  head.style.setProperty("--days", String(dates.length));
+  head.append(node("div", undefined, "cal-corner"));
+  const lane = node("div", undefined, "cal-wk");
+  lane.style.setProperty("--days", String(dates.length));
+  lane.append(node("div", "без времени", "cal-nt-label"));
+  const scroll = node("div", undefined, "cal-scroll");
+  const grid = node("div", undefined, "cal-grid");
+  grid.style.setProperty("--days", String(dates.length));
+  grid.style.setProperty("--h", `${CAL_HOUR_PX}px`);
+  const hours = node("div", undefined, "cal-hours");
+  for (let hour = CAL_H0; hour < CAL_H1; hour += 1) hours.append(node("div", hour === CAL_H0 ? "" : calTime(hour * 60)));
+  grid.append(hours);
+  for (const date of dates) {
+    const isToday = date === today, weekend = calDow(date) >= 5;
+    const dh = node("div", undefined, `cal-dh${isToday ? " today" : ""}${weekend ? " wknd" : ""}`);
+    dh.append(document.createTextNode(CAL_DOW[calDow(date)]), node("b", String(calParse(date).getUTCDate())));
+    dh.addEventListener("click", () => { calState.anchor = date; setCalendarMode("day"); loadCalendar(); });
+    head.append(dh);
+    const { own, external } = calItemsOf(date);
+    const nt = node("div", undefined, `cal-nt${isToday ? " today" : ""}`);
+    nt.dataset.date = date;
+    nt.dataset.notime = "1";
+    for (const item of own.filter((entry) => entry.time === null)) nt.append(calChipEl(item));
+    if (isToday) for (const item of (calState.data.overdue || []).filter(calOwnVisible)) nt.append(calChipEl(item, { overdue: true }));
+    for (const item of external.filter((entry) => entry.allDay)) nt.append(calChipEl(item));
+    lane.append(nt);
+    const col = node("div", undefined, `cal-col${isToday ? " today" : ""}${weekend ? " wknd" : ""}`);
+    col.dataset.date = date;
+    col.style.setProperty("--n", String(CAL_H1 - CAL_H0));
+    for (const item of external.filter((entry) => !entry.allDay)) col.append(calEventEl(item));
+    for (const item of own.filter((entry) => entry.time !== null)) col.append(calEventEl(item));
+    if (isToday) { const line = node("div", undefined, "cal-now"); line.style.top = `${((nowMinutes - CAL_H0 * 60) / 60) * CAL_HOUR_PX}px`; col.append(line); }
+    grid.append(col);
+  }
+  scroll.append(grid);
+  const wrap = node("div", undefined, "cal-week");
+  wrap.append(head, lane, scroll);
+  requestAnimationFrame(() => { scroll.scrollTop = (Math.max(CAL_H0, 8) - CAL_H0) * CAL_HOUR_PX - 10; });
+  return wrap;
+}
+function calAgendaEl(date) {
+  const { own, external } = calItemsOf(date);
+  const aside = node("aside", undefined, "cal-agenda");
+  const overdue = date === calToday() ? (calState.data.overdue || []).filter(calOwnVisible).map((item) => ({ ...item, overdue: true })) : [];
+  const noTime = own.filter((item) => item.time === null).concat(overdue, external.filter((item) => item.allDay));
+  aside.append(node("h4", `Без времени · ${noTime.length}`));
+  if (!noTime.length) aside.append(node("p", "пусто", "cal-free"));
+  for (const item of noTime) aside.append(calChipEl(item));
+  aside.append(node("h4", "По часам"));
+  const timed = own.filter((item) => item.time !== null).concat(external.filter((item) => !item.allDay)).sort((a, b) => calMinutes(a.time) - calMinutes(b.time));
+  if (!timed.length) aside.append(node("p", "свободный день", "cal-free"));
+  let cursor = 9 * 60;
+  for (const item of timed) {
+    const start = calMinutes(item.time);
+    if (start - cursor >= 60) aside.append(node("p", `свободно ${Math.floor((start - cursor) / 60)} ч${(start - cursor) % 60 ? ` ${(start - cursor) % 60} мин` : ""}`, "cal-free"));
+    const row = node("div", undefined, `cal-row ${item.kind}${item.done ? " done" : ""}`);
+    row.append(node("time", item.time));
+    const text = node("span", item.title, "cal-row-title");
+    const meta = node("small", item.kind === "external" ? item.source : `до ${calEndOf(item)}${item.project ? ` · ${item.project}` : ""}`);
+    const body = node("span", undefined, "cal-row-body");
+    body.append(text, meta);
+    row.append(body);
+    if (item.joinUrl) { const join = node("a", "Войти", "cal-join"); join.href = item.joinUrl; join.target = "_blank"; join.rel = "noopener"; join.addEventListener("click", (event) => event.stopPropagation()); row.append(join); }
+    row.addEventListener("click", () => openCalendarItem(item));
+    aside.append(row);
+    cursor = Math.max(cursor, calMinutes(calEndOf(item)));
+  }
+  return aside;
+}
+function calMonthEl() {
+  const { from } = calRange();
+  const today = calToday();
+  const month = calParse(calState.anchor || today).getUTCMonth();
+  const wrap = node("div", undefined, "cal-month");
+  for (const day of CAL_DOW) wrap.append(node("div", day, "cal-mdh"));
+  for (let index = 0; index < 42; index += 1) {
+    const date = shiftDate(from, index);
+    const d = calParse(date);
+    const cell = node("div", undefined, `cal-mc${d.getUTCMonth() !== month ? " off" : ""}${date === today ? " today" : ""}`);
+    cell.dataset.date = date;
+    cell.dataset.notime = "1";
+    const number = calButton(String(d.getUTCDate()), "cal-md", () => { calState.anchor = date; setCalendarMode("day"); loadCalendar(); });
+    cell.append(number);
+    const { own, external } = calItemsOf(date);
+    const items = own.concat(external).sort((a, b) => (a.time === null ? -1 : calMinutes(a.time)) - (b.time === null ? -1 : calMinutes(b.time)));
+    const shown = items.slice(0, 3);
+    for (const item of shown) {
+      const chip = calChipEl(item);
+      if (item.time !== null) chip.prepend(node("span", item.time, "cal-chip-time"));
+      cell.append(chip);
+    }
+    if (items.length > 3) cell.append(node("div", `ещё ${items.length - 3}`, "cal-more"));
+    wrap.append(cell);
+  }
+  return wrap;
+}
+function renderCalendar() {
+  const wrap = $("#board-calendar");
+  if (!calState.data) return;
+  closeCalendarPop();
+  clear(wrap);
+  wrap.append(calToolbarEl(), calSourcesEl());
+  const body = node("div", undefined, "cal-body");
+  if (calState.mode === "month") body.append(calMonthEl());
+  else if (calState.mode === "day") { const day = node("div", undefined, "cal-day"); const { from } = calRange(); day.append(calGridEl([from]), calAgendaEl(from)); body.append(day); }
+  else { const { from } = calRange(); body.append(calGridEl(Array.from({ length: calState.days }, (_, index) => shiftDate(from, index)))); }
+  wrap.append(body);
+  const hint = node("p", undefined, "cal-hint");
+  hint.append(node("kbd", "D"), node("kbd", "W"), node("kbd", "M"), document.createTextNode(" виды · "), node("kbd", "T"), document.createTextNode(" сегодня · "), node("kbd", "←"), node("kbd", "→"), document.createTextNode(" листать · "), node("kbd", "1"), document.createTextNode("–"), node("kbd", "7"), document.createTextNode(" дней · тяните дела и встречи, клик по пустому месту — новая запись"));
+  wrap.append(hint);
+}
+// Клик по своему делу — карточка записи; по чужому событию — плашка с тем,
+// что известно, и «Взять в память».
+function openCalendarItem(item) {
+  if (item.kind !== "external") { openReportEntry(item.id); return; }
+  showExternalEvent(item);
+}
+function closeCalendarPop() { calState.pop?.remove(); calState.pop = null; }
+function calPopAt(anchorElement) {
+  closeCalendarPop();
+  const pop = node("div", undefined, "cal-pop");
+  const wrap = $("#board-calendar");
+  const box = anchorElement.getBoundingClientRect(), base = wrap.getBoundingClientRect();
+  pop.style.left = `${Math.max(8, Math.min(box.left - base.left, base.width - 320))}px`;
+  pop.style.top = `${box.bottom - base.top + 6}px`;
+  wrap.append(pop);
+  calState.pop = pop;
+  setTimeout(() => {
+    const away = (event) => { if (!pop.contains(event.target)) { closeCalendarPop(); document.removeEventListener("pointerdown", away); } };
+    document.addEventListener("pointerdown", away);
+  }, 0);
+  return pop;
+}
+function showExternalEvent(item) {
+  const anchorElement = $("#board-calendar").querySelector(`[data-id="${CSS.escape(item.id)}"]`);
+  if (!anchorElement) return;
+  const pop = calPopAt(anchorElement);
+  pop.append(node("b", item.title, "cal-pop-title"));
+  const when = item.allDay ? `${calHuman(item.date)} · весь день${item.days > 1 ? ` · ${item.days} дн.` : ""}` : `${calHuman(item.date)}, ${item.time}–${item.end}`;
+  pop.append(node("p", when, "cal-pop-when"));
+  pop.append(node("p", `${item.source}${item.calendarName && item.calendarName !== item.source ? ` · ${item.calendarName}` : ""} · только чтение`, "cal-pop-src"));
+  if (item.location) pop.append(node("p", item.location, "cal-pop-src"));
+  const actions = node("div", undefined, "cal-pop-actions");
+  if (item.joinUrl) { const join = node("a", "Присоединиться", "cal-pop-btn primary"); join.href = item.joinUrl; join.target = "_blank"; join.rel = "noopener"; actions.append(join); }
+  const take = calButton("Взять в память", `cal-pop-btn${item.joinUrl ? "" : " primary"}`, async () => {
+    take.disabled = true;
+    try {
+      const d = calParse(item.date);
+      const numeric = `${calPad(d.getUTCDate())}.${calPad(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}`;
+      const raw = item.allDay ? `${item.title} — ${numeric}, весь день (из календаря ${item.source})` : `${item.title} — ${numeric} в ${item.time}${item.end ? `–${item.end}` : ""}${item.location ? `, ${item.location}` : ""} (из календаря ${item.source})`;
+      await request("/api/captures", { method: "POST", body: JSON.stringify({ raw }) });
+      toast("Событие записано в память");
+      closeCalendarPop();
+      await load();
+      await loadCalendar();
+    } catch (error) { toast(error.message); take.disabled = false; }
+  });
+  actions.append(take);
+  if (item.href) { const open = node("a", "Открыть", "cal-pop-btn"); open.href = item.href; open.target = "_blank"; open.rel = "noopener"; actions.append(open); }
+  pop.append(actions);
+  pop.append(node("p", "Чужое событие не запись: его нет в поиске и отчётах, пока вы не возьмёте его в память.", "cal-pop-note"));
+}
+// Клик по пустому месту сетки — новая запись с уже подставленным временем.
+function openCalendarQuickAdd(target, event) {
+  const date = target.dataset.date;
+  let time = null;
+  if (target.classList.contains("cal-col")) {
+    const rect = target.getBoundingClientRect();
+    time = calTime(calSnap(CAL_H0 * 60 + ((event.clientY - rect.top) / CAL_HOUR_PX) * 60));
+  }
+  const pop = calPopAt(target);
+  const wrap = $("#board-calendar").getBoundingClientRect();
+  pop.style.left = `${Math.max(8, Math.min(event.clientX - wrap.left + 8, wrap.width - 320))}px`;
+  pop.style.top = `${event.clientY - wrap.top + 8}px`;
+  pop.classList.add("quick");
+  pop.append(node("p", `${calHuman(date)}${time ? `, ${time}` : ""}`, "cal-pop-when"));
+  const input = node("input");
+  input.type = "text";
+  input.placeholder = "Что записать? — «созвон с Сашей на полчаса»";
+  input.setAttribute("aria-label", "Новая запись");
+  pop.append(input);
+  pop.append(node("p", "Enter — записать · Esc — закрыть. Дело получит этот срок; встречу разберёт модель.", "cal-pop-note"));
+  input.focus();
+  input.addEventListener("keydown", async (keyEvent) => {
+    if (keyEvent.key === "Escape") { closeCalendarPop(); return; }
+    if (keyEvent.key !== "Enter" || !input.value.trim()) return;
+    keyEvent.preventDefault();
+    const text = input.value.trim();
+    input.disabled = true;
+    try {
+      const d = calParse(date);
+      const numeric = `${calPad(d.getUTCDate())}.${calPad(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}`;
+      // Встречу распознаёт модель — ей отдаём текст с датой словами; всё
+      // остальное — дело с точным сроком, без гаданий.
+      const looksMeeting = /созвон|встреч|обед|звон|митинг|интервью|демо|презентац|собеседован/i.test(text);
+      const body = looksMeeting
+        ? { raw: `${text} — ${numeric}${time ? ` в ${time}` : ""}` }
+        : { raw: text, primaryType: "todo", due: { date, ...(time ? { time } : {}) } };
+      await request("/api/captures", { method: "POST", body: JSON.stringify(body) });
+      toast("Записано");
+      closeCalendarPop();
+      await load();
+      await loadCalendar();
+    } catch (error) { toast(error.message); input.disabled = false; }
+  });
+}
+function calSnap(minutes) { return Math.max(CAL_H0 * 60, Math.min(CAL_H1 * 60 - CAL_STEP, Math.round(minutes / CAL_STEP) * CAL_STEP)); }
+async function toggleCalendarDone(item) {
+  const projectionId = item.projectionIds?.[0];
+  if (!projectionId) return;
+  try {
+    await request(`/api/projections/${projectionId}/${item.done ? "undo-complete" : "complete"}`, { method: "POST", body: "{}" });
+    await loadCalendar();
+    toast(item.done ? "Снова в работе" : "Сделано");
+  } catch (error) { toast(error.message); }
+}
+// Перенос — уточнение записи: сервер пересобирает проекции. «Вернуть» — не
+// откат, а ещё одно уточнение с прежним сроком: история записи append-only,
+// и снятие проекций через /api/undo оставило бы дело вовсе без срока.
+async function moveCalendarItem(item, schedule, { announce = true } = {}) {
+  if (item.date === schedule.date && (item.time || null) === (schedule.time || null) && (item.end || null) === (schedule.end || null)) return;
+  const before = { date: item.date, time: item.time, ...(item.end ? { end: item.end } : {}) };
+  try {
+    await request(`/api/captures/${item.id}/corrections`, { method: "POST", body: JSON.stringify({ patch: { schedule } }) });
+    await loadCalendar();
+    const label = schedule.time ? `${calHuman(schedule.date)}, ${schedule.time}` : `${calHuman(schedule.date)}, без времени`;
+    if (announce) toast(`Перенесено: ${label}`, { label: "Вернуть", run: () => moveCalendarItem({ ...item, ...schedule }, before, { announce: false }) });
+    await load();
+  } catch (error) { toast(error.message); }
+}
+{
+  const wrap = $("#board-calendar");
+  const findItem = (id) => calState.data?.items.find((item) => item.id === id) || calState.data?.overdue?.find((item) => item.id === id);
+  wrap.addEventListener("dragstart", (event) => {
+    const element = event.target.closest?.("[data-own][draggable='true']");
+    if (!element) return;
+    calState.drag = findItem(element.dataset.id);
+    element.classList.add("dragging");
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", element.dataset.id);
+  });
+  wrap.addEventListener("dragend", () => { calState.drag = null; for (const el of wrap.querySelectorAll(".dragging, .over")) el.classList.remove("dragging", "over"); wrap.querySelector(".cal-ghost")?.remove(); });
+  wrap.addEventListener("dragover", (event) => {
+    const target = event.target.closest?.("[data-date]");
+    if (!calState.drag || !target) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    for (const el of wrap.querySelectorAll(".over")) el.classList.remove("over");
+    if (target.classList.contains("cal-col")) {
+      const rect = target.getBoundingClientRect();
+      const minutes = calSnap(CAL_H0 * 60 + ((event.clientY - rect.top) / CAL_HOUR_PX) * 60);
+      const item = calState.drag;
+      const duration = item.time !== null ? calMinutes(calEndOf(item)) - calMinutes(item.time) : item.kind === "meeting" ? 60 : 30;
+      let ghost = wrap.querySelector(".cal-ghost");
+      if (!ghost || ghost.parentElement !== target) { ghost?.remove(); ghost = node("div", undefined, "cal-ghost"); target.append(ghost); }
+      ghost.style.top = `${((minutes - CAL_H0 * 60) / 60) * CAL_HOUR_PX}px`;
+      ghost.style.height = `${(duration / 60) * CAL_HOUR_PX - 2}px`;
+      ghost.textContent = `${calTime(minutes)}–${calTime(minutes + duration)}`;
+    } else { target.classList.add("over"); wrap.querySelector(".cal-ghost")?.remove(); }
+  });
+  wrap.addEventListener("drop", (event) => {
+    const target = event.target.closest?.("[data-date]");
+    const item = calState.drag;
+    if (!item || !target) return;
+    event.preventDefault();
+    const date = target.dataset.date;
+    let schedule;
+    if (target.classList.contains("cal-col")) {
+      const rect = target.getBoundingClientRect();
+      const start = calSnap(CAL_H0 * 60 + ((event.clientY - rect.top) / CAL_HOUR_PX) * 60);
+      const duration = item.time !== null ? calMinutes(calEndOf(item)) - calMinutes(item.time) : item.kind === "meeting" ? 60 : 30;
+      const end = Math.min(start + duration, 23 * 60 + 59);
+      schedule = { date, time: calTime(start), ...(item.end || item.time === null ? { end: calTime(end) } : {}) };
+    } else if (target.dataset.notime && !target.classList.contains("cal-mc")) schedule = { date, time: null };
+    else schedule = { date, time: item.time, ...(item.end ? { end: item.end } : {}) };
+    moveCalendarItem(item, schedule);
+  });
+  wrap.addEventListener("click", (event) => {
+    if (event.target.closest("[data-id], .cal-pop, button, a, input")) return;
+    const target = event.target.closest(".cal-col, .cal-nt, .cal-mc");
+    if (target) openCalendarQuickAdd(target, event);
+  });
+  document.addEventListener("keydown", (event) => {
+    if ($("#board").hidden || boardState.view !== "calendar") return;
+    if (event.target.closest?.("input, textarea, select, [contenteditable='true'], dialog")) return;
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    const key = event.key.toLowerCase();
+    if (key === "d" || key === "в") setCalendarMode("day");
+    else if (key === "w" || key === "ц") { setCalendarMode("week"); calState.days = CAL_PHONE.matches ? 3 : 7; }
+    else if (key === "m" || key === "ь") setCalendarMode("month");
+    else if (key === "t" || key === "е") calState.anchor = calToday();
+    else if (event.key === "ArrowLeft") { calStep(-1); event.preventDefault(); return; }
+    else if (event.key === "ArrowRight") { calStep(1); event.preventDefault(); return; }
+    else if (event.key === "Escape") { closeCalendarPop(); return; }
+    else if (/^[1-7]$/.test(event.key)) { calState.days = Number(event.key); setCalendarMode(calState.days === 1 ? "day" : "week"); if (calState.days === 1) calState.days = 7; }
+    else return;
+    event.preventDefault();
+    loadCalendar();
+  });
+}
+
+// ── Календари в настройках ──────────────────────────────────────────────────
+const CAL_PRESET_HINTS = {
+  yandex: { title: "Яндекс Календарь", hint: "Логин — адрес почты Яндекса. Пароль — пароль приложения из Яндекс ID: «Безопасность → Пароли приложений → Календарь». Обычный пароль не подойдёт.", placeholder: "name@yandex.ru" },
+  icloud: { title: "Apple iCloud", hint: "Логин — Apple ID. Пароль — пароль для приложения с appleid.apple.com: «Вход и безопасность → Пароли приложений».", placeholder: "name@icloud.com" },
+  custom: { title: "Другой CalDAV", hint: "Адрес сервера, логин и пароль — как в любом CalDAV-клиенте. Подойдёт Fastmail, Nextcloud, Radicale.", placeholder: "логин" },
+};
+let calendarAccountsState = { accounts: [], googleReady: false };
+async function loadCalendarAccounts() {
+  const wrap = $("#calendar-accounts");
+  if (!wrap) return;
+  try {
+    calendarAccountsState = await request("/api/calendar/accounts");
+    paintCalendarAccounts();
+  } catch (error) { clear(wrap); wrap.append(node("p", error.message, "setting-hint")); }
+}
+function calendarSyncLabel(account) {
+  if (account.syncError) return `ошибка: ${account.syncError}`;
+  if (!account.syncedAt) return "ещё не синхронизирован";
+  const minutes = Math.round((Date.now() - Date.parse(account.syncedAt)) / 60000);
+  return minutes < 1 ? "обновлён только что" : minutes < 60 ? `обновлён ${minutes} мин назад` : `обновлён ${Math.round(minutes / 60)} ч назад`;
+}
+function paintCalendarAccounts() {
+  const wrap = $("#calendar-accounts");
+  clear(wrap);
+  const google = $("#calendar-google");
+  if (google) { google.classList.toggle("is-disabled", !calendarAccountsState.googleReady); google.title = calendarAccountsState.googleReady ? "" : "Сначала укажите ID и секрет клиента Google в «Ключах»"; }
+  if (!calendarAccountsState.accounts.length) { wrap.append(node("p", "Пока ни одного внешнего календаря.", "setting-hint")); return; }
+  for (const account of calendarAccountsState.accounts) {
+    const card = node("div", undefined, `calendar-account${account.disabled ? " is-disabled" : ""}`);
+    const head = node("div", undefined, "calendar-account-head");
+    const dot = node("i", undefined, "cal-dot");
+    dot.style.background = account.color || "var(--n-72)";
+    const name = node("b", account.label);
+    name.title = "Переименовать";
+    name.tabIndex = 0;
+    name.addEventListener("click", async () => {
+      const next = prompt("Название календаря", account.label);
+      if (next === null || !next.trim() || next.trim() === account.label) return;
+      await patchCalendarAccount(account.id, { label: next.trim() });
+    });
+    const meta = node("span", `${account.provider === "google" ? "Google" : account.preset === "yandex" ? "Яндекс · CalDAV" : account.preset === "icloud" ? "Apple · CalDAV" : "CalDAV"} · ${account.disabled ? "отключён" : calendarSyncLabel(account)}`, `calendar-account-meta${account.syncError ? " is-error" : ""}`);
+    head.append(dot, name, meta);
+    card.append(head);
+    const list = node("div", undefined, "calendar-account-calendars");
+    for (const calendar of account.calendars) {
+      const label = node("label", undefined, "calendar-account-calendar");
+      const box = node("input");
+      box.type = "checkbox";
+      box.checked = calendar.selected;
+      box.addEventListener("change", () => patchCalendarAccount(account.id, { calendars: account.calendars.filter((item) => (item.id === calendar.id ? box.checked : item.selected)).map((item) => item.id) }));
+      const swatch = node("i", undefined, "cal-dot");
+      swatch.style.background = calendar.color || account.color || "var(--n-72)";
+      label.append(box, swatch, node("span", calendar.name));
+      if (!calendar.writable) label.append(node("small", "только чтение"));
+      list.append(label);
+    }
+    card.append(list);
+    const controls = node("div", undefined, "calendar-account-controls");
+    const mode = node("select");
+    for (const [value, text] of [["full", "Показывать названия"], ["busy", "Только «занято»"]]) { const option = node("option", text); option.value = value; option.selected = account.mode === value; mode.append(option); }
+    mode.addEventListener("change", () => patchCalendarAccount(account.id, { mode: mode.value }));
+    const color = node("input");
+    color.type = "color";
+    color.value = account.color || "#8a8681";
+    color.title = "Цвет в календаре";
+    color.addEventListener("change", () => patchCalendarAccount(account.id, { color: color.value }));
+    const sync = calButton("Обновить", "secondary", async () => {
+      sync.disabled = true;
+      try { const result = await request(`/api/calendar/accounts/${account.id}/sync`, { method: "POST", body: "{}" }); toast(`Синхронизировано: ${result.events ?? 0} соб.`); }
+      catch (error) { toast(error.message); }
+      await loadCalendarAccounts();
+    });
+    const toggle = calButton(account.disabled ? "Включить" : "Отключить", "secondary", () => patchCalendarAccount(account.id, { disabled: !account.disabled }));
+    const remove = calButton("Удалить", "secondary calendar-remove", async () => {
+      if (!confirm(`Удалить «${account.label}»? Учётные данные и кэш событий сотрутся; сам календарь не пострадает.`)) return;
+      try { await request(`/api/calendar/accounts/${account.id}`, { method: "DELETE" }); toast("Календарь отключён"); }
+      catch (error) { toast(error.message); }
+      await loadCalendarAccounts();
+    });
+    controls.append(mode, color, sync, toggle, remove);
+    card.append(controls);
+    wrap.append(card);
+  }
+}
+async function patchCalendarAccount(id, patch) {
+  try { await request(`/api/calendar/accounts/${id}`, { method: "PATCH", body: JSON.stringify(patch) }); }
+  catch (error) { toast(error.message); }
+  await loadCalendarAccounts();
+}
+{
+  const form = $("#calendar-connect");
+  if (form) {
+    let preset = "yandex";
+    const open = (next) => {
+      preset = next;
+      const info = CAL_PRESET_HINTS[preset];
+      $("#calendar-connect-title").textContent = info.title;
+      $("#calendar-connect-hint").textContent = info.hint;
+      $("#calendar-server-row").hidden = preset !== "custom";
+      $("#calendar-username").placeholder = info.placeholder;
+      $("#calendar-connect-state").textContent = "";
+      form.hidden = false;
+      $("#calendar-username").focus();
+    };
+    for (const button of document.querySelectorAll("[data-calendar-preset]")) button.addEventListener("click", () => open(button.dataset.calendarPreset));
+    $("#calendar-connect-cancel").addEventListener("click", () => { form.hidden = true; form.reset(); });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const state = $("#calendar-connect-state"), submit = $("#calendar-connect-submit");
+      state.textContent = "Проверяем…";
+      submit.disabled = true;
+      try {
+        const result = await request("/api/calendar/accounts", { method: "POST", body: JSON.stringify({ preset, serverUrl: $("#calendar-server").value.trim() || null, username: $("#calendar-username").value.trim(), password: $("#calendar-password").value }) });
+        toast(result.syncError ? `Подключено, но синхронизация не удалась: ${result.syncError}` : `Подключено: ${result.account.calendars.length} кал., ${result.events ?? 0} соб.`);
+        form.hidden = true;
+        form.reset();
+        await loadCalendarAccounts();
+      } catch (error) { state.textContent = error.message; }
+      finally { submit.disabled = false; }
+    });
+    $("#calendar-google")?.addEventListener("click", (event) => { if (!calendarAccountsState.googleReady) { event.preventDefault(); toast("Сначала укажите ID и секрет клиента Google в «Ключах»"); } });
+  }
+}
+
+// «В календарь» в карточке: список календарей, куда можно писать, и что уже
+// отправлено. Собирается после открытия карточки — двумя короткими запросами,
+// чтобы карточка не ждала календарь.
+function calendarExportEl(entry) {
+  const wrap = node("div", undefined, "card-calendar");
+  const c = entry.interpretation.classification;
+  const date = c.entities.schedule?.date;
+  (async () => {
+    try {
+      const [{ accounts }, view] = await Promise.all([request("/api/calendar/accounts"), request(`/api/calendar?from=${date}&to=${date}`)]);
+      const writable = accounts.filter((account) => !account.disabled).flatMap((account) => account.calendars.filter((calendar) => calendar.selected && calendar.writable).map((calendar) => ({ account, calendar })));
+      const item = view.items.find((candidate) => candidate.id === entry.id);
+      const exports = item?.exports || [];
+      clear(wrap);
+      if (!accounts.length) return;
+      for (const link of exports) {
+        const account = accounts.find((candidate) => candidate.id === link.accountId);
+        const row = node("span", undefined, "card-calendar-link");
+        row.append(node("span", `В календаре: ${account?.label || "внешний"}`));
+        if (link.href && link.href.startsWith("http")) { const open = node("a", "открыть"); open.href = link.href; open.target = "_blank"; open.rel = "noopener"; row.append(open); }
+        const remove = node("button", "убрать", "card-calendar-remove");
+        remove.type = "button";
+        remove.addEventListener("click", async () => {
+          remove.disabled = true;
+          try { await request("/api/calendar/export/remove", { method: "POST", body: JSON.stringify({ captureId: entry.id, accountId: link.accountId }) }); toast("Событие убрано из календаря"); wrap.replaceWith(calendarExportEl(entry)); }
+          catch (error) { toast(error.message); remove.disabled = false; }
+        });
+        row.append(remove);
+        wrap.append(row);
+      }
+      const targets = writable.filter(({ account }) => !exports.some((link) => link.accountId === account.id));
+      if (!targets.length) return;
+      const menu = node("details", undefined, "card-calendar-menu");
+      menu.append(node("summary", "В календарь"));
+      const list = node("div", undefined, "card-calendar-list");
+      for (const { account, calendar } of targets) {
+        const button = node("button", `${account.label} · ${calendar.name}`, "card-calendar-target");
+        button.type = "button";
+        const dot = node("i", undefined, "cal-dot");
+        dot.style.background = calendar.color || account.color || "var(--n-72)";
+        button.prepend(dot);
+        button.addEventListener("click", async () => {
+          button.disabled = true;
+          try { await request("/api/calendar/export", { method: "POST", body: JSON.stringify({ captureId: entry.id, accountId: account.id, calendarId: calendar.id }) }); toast(`Отправлено в ${account.label}`); wrap.replaceWith(calendarExportEl(entry)); }
+          catch (error) { toast(error.message); button.disabled = false; }
+        });
+        list.append(button);
+      }
+      menu.append(list);
+      wrap.append(menu);
+    } catch { clear(wrap); }
+  })();
+  return wrap;
 }
