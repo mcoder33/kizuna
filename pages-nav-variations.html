@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='2' y='2' width='60' height='60' rx='14' fill='%23c73e3a'/%3E%3Cg fill='none' stroke='white' stroke-linecap='round' stroke-width='6'%3E%3Cpath d='M8 17q24 -6 48 0'/%3E%3Cline x1='14' y1='27' x2='50' y2='27'/%3E%3Cline x1='19' y1='22' x2='21' y2='54'/%3E%3Cline x1='45' y1='22' x2='43' y2='54'/%3E%3C/g%3E%3C/svg%3E"
+    />
+<title>Кизуна: страница без панели</title>
+<style>
+  :root {
+    --ink: #222; --muted: #6a6a6a; --faint: #96918e; --line: #e9e9e7; --hairline: #f2f0ee;
+    --wash: #fbfaf9; --paper: #fff; --sunk: #f6f4f2; --accent: #c73e3a; --accent-bg: #fbecea;
+    --shadow: 0 18px 42px rgba(34, 34, 34, 0.08); --soft: 0 6px 20px rgba(34, 34, 34, 0.05);
+    --hover: rgba(55, 53, 47, 0.06); --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --k-project: #1f68d4; --k-project-bg: #e9f1fd; --k-person: #0f7a5f; --k-person-bg: #e9f5ef;
+    --k-decision: #b45309; --k-decision-bg: #fbf1e6; --k-task: #0e7490; --k-task-bg: #e7f4f7;
+    --k-meeting: #7c3aed; --k-meeting-bg: #f1eafd; --k-capture: #7a756f; --k-capture-bg: #f1efec;
+    --late: #c0392b; --today: #b45309; --ontime: #0e7490; --none: #7a756f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: rgba(255,255,255,0.86); --muted: rgba(255,255,255,0.5); --faint: rgba(255,255,255,0.38);
+      --line: #34322f; --hairline: #2a2825; --wash: #1a1917; --paper: #252525; --sunk: #1f1e1c;
+      --accent: #ff8a80; --accent-bg: rgba(255,138,128,0.14);
+      --shadow: 0 18px 42px rgba(0,0,0,0.4); --soft: 0 6px 20px rgba(0,0,0,0.25); --hover: rgba(255,255,255,0.055);
+      --k-project: #7fb0ff; --k-project-bg: rgba(127,176,255,0.14); --k-person: #4dc79f; --k-person-bg: rgba(77,199,159,0.14);
+      --k-decision: #f0a860; --k-decision-bg: rgba(240,168,96,0.14); --k-task: #56c4d8; --k-task-bg: rgba(86,196,216,0.14);
+      --k-meeting: #c4a5ff; --k-meeting-bg: rgba(196,165,255,0.14); --k-capture: #a8a5a2; --k-capture-bg: rgba(255,255,255,0.06);
+      --late: #ff8a80; --today: #f0a860; --ontime: #56c4d8; --none: #a8a5a2;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: rgba(255,255,255,0.86); --muted: rgba(255,255,255,0.5); --faint: rgba(255,255,255,0.38);
+    --line: #34322f; --hairline: #2a2825; --wash: #1a1917; --paper: #252525; --sunk: #1f1e1c;
+    --accent: #ff8a80; --accent-bg: rgba(255,138,128,0.14);
+    --shadow: 0 18px 42px rgba(0,0,0,0.4); --soft: 0 6px 20px rgba(0,0,0,0.25); --hover: rgba(255,255,255,0.055);
+    --k-project: #7fb0ff; --k-project-bg: rgba(127,176,255,0.14); --k-person: #4dc79f; --k-person-bg: rgba(77,199,159,0.14);
+    --k-decision: #f0a860; --k-decision-bg: rgba(240,168,96,0.14); --k-task: #56c4d8; --k-task-bg: rgba(86,196,216,0.14);
+    --k-meeting: #c4a5ff; --k-meeting-bg: rgba(196,165,255,0.14); --k-capture: #a8a5a2; --k-capture-bg: rgba(255,255,255,0.06);
+    --late: #ff8a80; --today: #f0a860; --ontime: #56c4d8; --none: #a8a5a2;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--wash); color: var(--ink); line-height: 1.45; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 14px; }
+  button { font: inherit; color: inherit; }
+  button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  main { max-width: 1120px; margin: auto; padding: 52px 24px 120px; }
+  .page-head { max-width: 780px; }
+  .eyebrow { font-size: 10px; font-weight: 800; letter-spacing: 1.3px; color: var(--faint); margin: 0 0 11px; text-transform: uppercase; }
+  h1 { font-size: 33px; line-height: 1.15; margin: 0 0 14px; letter-spacing: -0.5px; text-wrap: balance; }
+  .page-head p { color: var(--muted); font-size: 15px; margin: 0 0 10px; }
+  .page-head strong { color: var(--ink); }
+  .toolbar { display: flex; justify-content: flex-end; margin: -30px 0 22px; }
+  .theme-switch { display: flex; gap: 3px; border: 1px solid var(--line); background: var(--paper); border-radius: 99px; padding: 3px; }
+  .theme-switch button { font-size: 12px; cursor: pointer; border: 0; background: none; color: var(--muted); border-radius: 99px; padding: 4px 13px; }
+  .theme-switch button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+
+  .variant { margin-top: 52px; }
+  .variant > header { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 14px; margin-bottom: 16px; max-width: 860px; }
+  .variant .letter { width: 44px; height: 44px; border-radius: 12px; background: var(--ink); color: var(--paper); font-weight: 800; font-size: 18px; display: grid; place-items: center; }
+  .variant h2 { font-size: 20px; letter-spacing: -0.3px; margin: 4px 0 4px; }
+  .variant header p { color: var(--muted); margin: 0 0 6px; font-size: 14px; }
+  .variant header p b { color: var(--ink); font-weight: 600; }
+  .pros { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); }
+  .pros span::before { content: "+ "; color: var(--ontime); font-weight: 700; }
+  .pros span.con::before { content: "− "; color: var(--late); }
+
+  /* ── рамка ─────────────────────────────────────────────────── */
+  .frame { background: var(--paper); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); overflow: hidden; position: relative; }
+  .frame .top { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--hairline); min-height: 48px; }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; }
+  .brand i { width: 20px; height: 20px; border-radius: 6px; background: var(--accent); display: inline-block; }
+  .gear { margin-left: auto; width: 26px; height: 26px; border-radius: 99px; border: 1px solid var(--line); background: none; color: var(--faint); font-size: 13px; display: grid; place-items: center; }
+  .model { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 3px 10px; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 236px; }
+  .layout.solo { grid-template-columns: minmax(0, 1fr); }
+  .layout > * { min-width: 0; }
+
+  /* документ и правая панель: общий шаблон */
+  .doc { padding: 22px 30px 28px; display: flex; flex-direction: column; gap: 16px; max-width: 760px; }
+  .crumbs { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .crumbs .sep { color: var(--faint); }
+  .kind { --c: var(--k-capture); --c-bg: var(--k-capture-bg); display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; color: var(--c); background: var(--c-bg); border-radius: 99px; padding: 2px 9px 2px 7px; line-height: 1.4; white-space: nowrap; }
+  .kind::before { content: ""; width: 7px; height: 7px; border-radius: 99px; background: var(--c); }
+  .kind.project { --c: var(--k-project); --c-bg: var(--k-project-bg); } .kind.person { --c: var(--k-person); --c-bg: var(--k-person-bg); }
+  .kind.decision { --c: var(--k-decision); --c-bg: var(--k-decision-bg); } .kind.task { --c: var(--k-task); --c-bg: var(--k-task-bg); }
+  .kind.meeting { --c: var(--k-meeting); --c-bg: var(--k-meeting-bg); } .kind.capture { --c: var(--k-capture); --c-bg: var(--k-capture-bg); }
+  .doc h3 { font-size: 26px; line-height: 1.15; letter-spacing: -0.4px; margin: 0; display: flex; align-items: flex-start; gap: 12px; }
+  .doc h3 .kind { margin-top: 8px; }
+  .props { display: grid; grid-template-columns: 116px minmax(0, 1fr); row-gap: 6px; column-gap: 12px; font-size: 13px; }
+  .props .pl { color: var(--muted); padding: 3px 0; }
+  .props .pv { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+  .prov { width: 8px; height: 8px; border-radius: 99px; flex: none; border: 1.5px solid var(--faint); }
+  .prov.fact { background: var(--faint); }
+  .wl { color: var(--k-project); background: none; border: 0; padding: 0; font: inherit; cursor: pointer; }
+  .wl.person { color: var(--k-person); } .wl.meeting { color: var(--k-meeting); } .wl.decision { color: var(--k-decision); }
+  .wl::before { content: "[["; color: var(--faint); } .wl::after { content: "]]"; color: var(--faint); }
+  .body { font-size: 14.5px; line-height: 1.6; display: flex; flex-direction: column; gap: 8px; }
+  .body p, .body h4 { margin: 0; }
+  .body h4 { font-size: 15px; margin-top: 6px; } .body h4 .mark { color: var(--faint); font-weight: 400; margin-right: 6px; }
+  .callout { border-left: 3px solid var(--k-decision); background: var(--k-decision-bg); border-radius: 0 10px 10px 0; padding: 8px 12px; font-size: 13.5px; }
+  .callout .ct { font-weight: 600; color: var(--k-decision); font-size: 12.5px; margin-bottom: 2px; }
+  .ev { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .ev-head { display: flex; align-items: center; gap: 10px; padding: 7px 12px; border-bottom: 1px solid var(--hairline); background: var(--sunk); font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+  .ev-head span:last-child { margin-left: auto; font-family: inherit; }
+  .row { display: flex; align-items: center; gap: 10px; padding: 7px 12px; border-bottom: 1px solid var(--hairline); }
+  .row:last-child { border-bottom: 0; }
+  .row .circle { width: 16px; height: 16px; border-radius: 99px; border: 1.5px solid var(--faint); flex: none; }
+  .row .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .st { --c: var(--none); display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; color: var(--c); white-space: nowrap; }
+  .st::before { content: ""; width: 6px; height: 6px; border-radius: 99px; background: var(--c); }
+  .st.late { --c: var(--late); } .st.today { --c: var(--today); } .st.ontime { --c: var(--ontime); }
+
+  .aside { border-left: 1px solid var(--hairline); padding: 20px 16px; display: flex; flex-direction: column; gap: 18px; font-size: 12.5px; }
+  .aside h6 { margin: 0 0 8px; font-size: 10px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; color: var(--faint); display: flex; justify-content: space-between; }
+  .aside ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .aside li { display: flex; flex-direction: column; gap: 1px; }
+  .aside li .via { color: var(--faint); font-size: 11px; }
+  .aside .wl { text-align: left; align-self: flex-start; }
+  .aside .wl::before, .aside .wl::after { content: none; }
+  .aside .wl.capture { color: var(--muted); }
+
+  /* ── A: сегмент видов в шапке ───────────────────────────────── */
+  .segnav { display: flex; gap: 2px; border: 1px solid var(--line); border-radius: 99px; padding: 3px; background: var(--sunk); }
+  .segnav button { border: 0; background: none; border-radius: 99px; padding: 4px 11px; font-size: 12.5px; color: var(--muted); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .segnav button i { width: 6px; height: 6px; border-radius: 99px; background: var(--c); display: inline-block; }
+  .segnav button[aria-pressed="true"] { background: var(--paper); color: var(--ink); font-weight: 600; box-shadow: var(--soft); }
+
+  /* ── B: командная строка ───────────────────────────────────── */
+  .cmd { flex: 1; max-width: 520px; margin: 0 auto; position: relative; }
+  .cmd .box { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; background: var(--sunk); color: var(--faint); font-size: 13px; cursor: text; }
+  .cmd .box kbd { margin-left: auto; font-family: var(--mono); font-size: 11px; border: 1px solid var(--line); border-radius: 5px; padding: 0 5px; color: var(--faint); }
+  .cmd .pal { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 4; background: var(--paper); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 8px; display: flex; flex-direction: column; gap: 2px; }
+  .cmd .pal .q { padding: 6px 10px 8px; font-size: 14px; border-bottom: 1px solid var(--hairline); margin-bottom: 4px; display: flex; gap: 6px; }
+  .cmd .pal .q .caret { width: 1.5px; height: 17px; background: var(--accent); }
+  .cmd .pal .mh { font-size: 10.5px; color: var(--faint); padding: 6px 10px 2px; text-transform: uppercase; letter-spacing: 0.6px; font-weight: 700; }
+  .cmd .pal button { border: 0; background: none; text-align: left; padding: 6px 10px; border-radius: 8px; display: flex; align-items: center; gap: 10px; font-size: 13px; cursor: pointer; }
+  .cmd .pal button:hover, .cmd .pal button[aria-selected="true"] { background: var(--hover); }
+  .cmd .pal button .k { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  .cmd .pal .kind { font-size: 10.5px; padding: 1px 7px 1px 6px; }
+
+  /* ── C: рейка точек ────────────────────────────────────────── */
+  .layout.rail { grid-template-columns: 44px minmax(0, 1fr) 236px; }
+  .railbar { border-right: 1px solid var(--hairline); background: var(--sunk); padding: 14px 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .railbar button { position: relative; width: 28px; height: 28px; border-radius: 8px; border: 0; background: none; cursor: pointer; display: grid; place-items: center; }
+  .railbar button i { width: 9px; height: 9px; border-radius: 99px; background: var(--c); display: block; transition: transform .12s; }
+  .railbar button:hover i, .railbar button[aria-current="true"] i { transform: scale(1.35); }
+  .railbar button[aria-current="true"] { background: var(--paper); box-shadow: var(--soft); }
+  .railbar button .lbl { position: absolute; left: 36px; top: 50%; transform: translateY(-50%); white-space: nowrap; background: var(--ink); color: var(--paper); font-size: 11.5px; padding: 4px 9px; border-radius: 7px; display: none; z-index: 3; }
+  .railbar button:hover .lbl, .railbar button:focus-visible .lbl { display: block; }
+  .railbar .gap { flex: 1; }
+
+  /* ── D: только страницы ─────────────────────────────────────── */
+  .home { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .home .tile { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+  .home .tile h5 { margin: 0; font-size: 12.5px; display: flex; justify-content: space-between; color: var(--muted); font-weight: 600; }
+  .home .tile .row { padding: 3px 0; border: 0; font-size: 12.5px; }
+  .tilelist { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tilelist .wl::before, .tilelist .wl::after { content: none; }
+  .tilelist .wl { font-size: 12.5px; padding: 2px 8px; border-radius: 99px; background: var(--sunk); }
+
+  /* ── E: контекст в раскрывашке ─────────────────────────────── */
+  .ctx-btn { border: 1px solid var(--line); background: var(--paper); border-radius: 99px; padding: 3px 10px; font-size: 12px; color: var(--muted); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .ctx-btn b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .ctx-btn[aria-expanded="true"] { border-color: var(--ink); color: var(--ink); }
+  .ctx { border: 1px solid var(--line); border-radius: 12px; background: var(--sunk); padding: 12px 14px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; font-size: 12.5px; }
+  .ctx h6 { margin: 0 0 8px; font-size: 10px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; color: var(--faint); }
+  .ctx ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+  .ctx li { display: flex; flex-direction: column; }
+  .ctx .via { color: var(--faint); font-size: 11px; }
+  .ctx .wl::before, .ctx .wl::after { content: none; }
+  .ctx .wl { text-align: left; align-self: flex-start; }
+  .ctx .wl.capture { color: var(--muted); }
+
+  /* ── F: таббар на 390 ──────────────────────────────────────── */
+  .phone { width: 390px; max-width: 100%; margin: 0 auto; border: 1px solid var(--line); border-radius: 28px; overflow: hidden; background: var(--paper); box-shadow: var(--shadow); display: flex; flex-direction: column; height: 640px; }
+  .phone .top { display: flex; align-items: center; gap: 12px; padding: 12px 16px 8px; min-height: 0; }
+  .phone .doc { padding: 12px 16px 16px; gap: 12px; overflow: hidden; flex: 1; max-width: none; }
+  .phone .doc h3 { font-size: 22px; }
+  .phone .props { grid-template-columns: 96px minmax(0, 1fr); font-size: 12.5px; }
+  .phone .body { font-size: 14px; }
+  .tabbar { border-top: 1px solid var(--hairline); display: grid; grid-template-columns: repeat(4, 1fr); padding: 6px 8px 10px; background: var(--paper); }
+  .tabbar button { border: 0; background: none; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 10.5px; color: var(--faint); padding: 4px 0; cursor: pointer; border-radius: 10px; }
+  .tabbar button[aria-current="true"] { color: var(--ink); }
+  .tabbar button i { width: 22px; height: 22px; border-radius: 7px; border: 1.5px solid currentColor; display: block; }
+  .tabbar button.plus i { background: var(--accent); border-color: var(--accent); position: relative; }
+  .tabbar button.plus i::before, .tabbar button.plus i::after { content: ""; position: absolute; left: 50%; top: 50%; width: 10px; height: 2px; background: var(--paper); transform: translate(-50%, -50%); }
+  .tabbar button.plus i::after { transform: translate(-50%, -50%) rotate(90deg); }
+  .phone-wrap { display: grid; grid-template-columns: 390px minmax(0, 1fr); gap: 24px; align-items: start; }
+  .phone-note { color: var(--muted); font-size: 13.5px; max-width: 420px; padding-top: 8px; }
+  .phone-note p { margin: 0 0 8px; }
+
+  .verdict { margin-top: 56px; border-top: 1px solid var(--line); padding-top: 22px; color: var(--muted); font-size: 14px; max-width: 720px; }
+  .verdict strong { color: var(--ink); }
+
+  @media (max-width: 900px) {
+    .layout, .layout.rail { grid-template-columns: 1fr; }
+    .railbar { flex-direction: row; border-right: 0; border-bottom: 1px solid var(--hairline); padding: 8px 12px; }
+    .railbar .gap { display: none; }
+    .aside { border-left: 0; border-top: 1px solid var(--hairline); }
+    .home { grid-template-columns: 1fr; }
+    .ctx { grid-template-columns: 1fr; }
+    .phone-wrap { grid-template-columns: 1fr; }
+    .doc { padding: 18px 16px 24px; }
+    .frame .top { flex-wrap: wrap; }
+    .segnav { order: 3; width: 100%; overflow-x: auto; }
+  }
+</style>
+  </head>
+  <body>
+<main>
+  <header class="page-head">
+    <p class="eyebrow">Кизуна · концепт · страницы · навигация</p>
+    <h1>Страница без боковой панели: шесть замен</h1>
+    <p>В <strong>pages-concept.html</strong> слева стоит панель с видами страниц и сохранёнными видами. Здесь тот же документ «Hub» без неё. Панель делала три вещи: <strong>переход по виду страниц</strong>, <strong>переход к сохранённым видам</strong> и <strong>ощущение места</strong>. Каждый вариант отвечает, куда это уходит.</p>
+    <p>Вариант E отдельно решает судьбу правой панели, если мешает и она.</p>
+  </header>
+  <div class="toolbar">
+    <div class="theme-switch" role="group" aria-label="Тема">
+      <button type="button" data-theme-pick="light" aria-pressed="false">Светлая</button>
+      <button type="button" data-theme-pick="auto" aria-pressed="true">Авто</button>
+      <button type="button" data-theme-pick="dark" aria-pressed="false">Тёмная</button>
+    </div>
+  </div>
+
+  <template id="tpl-doc">
+    <div class="crumbs"><span>проект</span><span class="sep">/</span><span>Hub</span></div>
+    <h3><span class="kind project">проект</span>Hub</h3>
+    <div class="props">
+      <div class="pl">Ведёт</div><div class="pv"><span class="prov"></span><button type="button" class="wl person">Саша</button></div>
+      <div class="pl">Команда</div><div class="pv"><span class="prov fact"></span><button type="button" class="wl person">BE-команда</button></div>
+      <div class="pl">Ближайшая встреча</div><div class="pv"><span class="prov fact"></span><button type="button" class="wl meeting">Созвон с BE по секретам сессий</button></div>
+    </div>
+    <div class="body">
+      <h4><span class="mark">##</span>Что это</h4>
+      <p>Сервис сессий и секретов для внутренних инструментов. Ведёт <button type="button" class="wl person">Саша</button>, бэкенд у <button type="button" class="wl person">BE-команда</button>.</p>
+      <h4><span class="mark">##</span>Решения</h4>
+      <div class="callout"><div class="ct">Секреты сессий храним в Vault</div><div>Ротация раз в сутки. Согласовано с <button type="button" class="wl person">BE-команда</button> устно.</div></div>
+      <h4><span class="mark">##</span>Открытые дела</h4>
+      <div class="ev">
+        <div class="ev-head">kind: task · project = [[Hub]] · status ≠ done<span>3</span></div>
+        <div class="row"><span class="circle"></span><span class="t">Согласовать схему сессий с фронтом</span><span class="st late">вчера</span></div>
+        <div class="row"><span class="circle"></span><span class="t">Подготовить контекст к созвону с BE</span><span class="st today">завтра, 10:30</span></div>
+        <div class="row"><span class="circle"></span><span class="t">Настроить ротацию секретов раз в сутки</span><span class="st ontime">пятница</span></div>
+      </div>
+    </div>
+  </template>
+  <template id="tpl-aside">
+    <section><h6>Собрано из записей <span>3</span></h6><ul>
+      <li><button type="button" class="wl capture">Завтра в 11 созвон с BE по секретам сессий…</button><span class="via">сегодня, 13:57</span></li>
+      <li><button type="button" class="wl capture">Решили: секреты сессий в Vault, ротация…</button><span class="via">сегодня, 14:20</span></li>
+      <li><button type="button" class="wl capture">Саша просил не трогать схему сессий до среды</button><span class="via">сегодня, 12:09</span></li>
+    </ul></section>
+    <section><h6>Сюда ссылаются <span>5</span></h6><ul>
+      <li><button type="button" class="wl person">Саша</button><span class="via">свойство «Проекты»</span></li>
+      <li><button type="button" class="wl person">BE-команда</button><span class="via">свойство «Проекты»</span></li>
+      <li><button type="button" class="wl decision">Секреты сессий храним в Vault</button><span class="via">свойство «Проект»</span></li>
+      <li><button type="button" class="wl">Секреты сессий</button><span class="via">свойство «Проект»</span></li>
+      <li><button type="button" class="wl meeting">Созвон с BE по секретам сессий</button><span class="via">из текста</span></li>
+    </ul></section>
+  </template>
+
+  <!-- A -->
+  <section class="variant" id="a">
+    <header>
+      <div class="letter">A</div>
+      <div>
+        <h2>Сегмент видов в одной строке шапки</h2>
+        <p>Виды страниц становятся сегментом в шапке, как разделы в нынешней шапке Кизуны. Сохранённые виды живут внутри «Дела»: «Сегодня», «Журнал», «Доска» это раскладки одного запроса. <b>Ближе всего к тому, что уже есть в приложении.</b></p>
+        <div class="pros"><span>одна строка, документ на всю ширину</span><span>совпадает с текущей шапкой</span><span class="con">своих kind в сегмент много не влезет</span><span class="con">на 390px сегмент придётся сжимать</span></div>
+      </div>
+    </header>
+    <div class="frame">
+      <div class="top">
+        <div class="brand"><i></i> Кизуна</div>
+        <div class="segnav" role="group" aria-label="Виды страниц">
+          <button type="button" aria-pressed="true" style="--c: var(--k-project)"><i></i>Проекты</button>
+          <button type="button" style="--c: var(--k-person)"><i></i>Люди</button>
+          <button type="button" style="--c: var(--k-decision)"><i></i>Решения</button>
+          <button type="button" style="--c: var(--k-task)"><i></i>Дела</button>
+          <button type="button" style="--c: var(--k-capture)"><i></i>Записи</button>
+        </div>
+        <span class="model">gpt-5 mini</span>
+        <button type="button" class="gear" aria-label="Настройки">⚙</button>
+      </div>
+      <div class="layout"><article class="doc" data-doc></article><aside class="aside" data-aside></aside></div>
+    </div>
+  </section>
+
+  <!-- B -->
+  <section class="variant" id="b">
+    <header>
+      <div class="letter">B</div>
+      <div>
+        <h2>Командная строка вместо навигации</h2>
+        <p>Панели нет вообще. В шапке одно поле «Найти или создать», по <code>⌘K</code> открывается палитра: недавние страницы, виды, сохранённые запросы и создание новой страницы одной строкой. <b>Навигация становится поиском</b>, а место ощущается через крошки и обратные ссылки.</p>
+        <div class="pros"><span>ноль хрома, документ главный</span><span>масштабируется на любое число kind</span><span class="con">новичку не видно, «что тут вообще есть»</span><span class="con">без клавиатуры два клика вместо одного</span></div>
+      </div>
+    </header>
+    <div class="frame">
+      <div class="top">
+        <div class="brand"><i></i> Кизуна</div>
+        <div class="cmd">
+          <div class="box" role="button" tabindex="0" data-pal-toggle aria-expanded="true">Найти или создать…<kbd>⌘K</kbd></div>
+          <div class="pal" data-pal>
+            <div class="q">се<span class="caret"></span></div>
+            <div class="mh">Страницы</div>
+            <button type="button" aria-selected="true"><span class="kind project">проект</span>Hub · Секреты сессий<span class="k">↵</span></button>
+            <button type="button"><span class="kind decision">решение</span>Секреты сессий храним в Vault</button>
+            <button type="button"><span class="kind meeting">встреча</span>Созвон с BE по секретам сессий</button>
+            <div class="mh">Виды</div>
+            <button type="button">Сегодня<span class="k">⌘1</span></button>
+            <button type="button">Доска<span class="k">⌘3</span></button>
+            <div class="mh">Создать</div>
+            <button type="button"><span class="kind capture">новая</span>Страница «се…»<span class="k">⇧↵</span></button>
+          </div>
+        </div>
+        <span class="model">gpt-5 mini</span>
+        <button type="button" class="gear" aria-label="Настройки">⚙</button>
+      </div>
+      <div class="layout"><article class="doc" data-doc></article><aside class="aside" data-aside></aside></div>
+    </div>
+  </section>
+
+  <!-- C -->
+  <section class="variant" id="c">
+    <header>
+      <div class="letter">C</div>
+      <div>
+        <h2>Рейка точек</h2>
+        <p>От панели остаются только цветные точки видов на узкой рейке слева, подпись всплывает при наведении. Сохранённые виды уходят в нижнюю часть рейки. Это вариация G из <code>capture-segment-variations.html</code>, перенесённая на навигацию. <b>Место чувствуется цветом, а не текстом.</b></p>
+        <div class="pros"><span>44px вместо 208px</span><span>цвета kind уже есть в системе</span><span class="con">без подписи точки надо выучить</span><span class="con">та же панель, только тише</span></div>
+      </div>
+    </header>
+    <div class="frame">
+      <div class="top">
+        <div class="brand"><i></i> Кизуна</div>
+        <span class="model" style="margin-left:auto">gpt-5 mini</span>
+        <button type="button" class="gear" aria-label="Настройки" style="margin-left:0">⚙</button>
+      </div>
+      <div class="layout rail">
+        <nav class="railbar" aria-label="Виды страниц">
+          <button type="button" aria-current="true" style="--c: var(--k-project)"><i></i><span class="lbl">Проекты · 1</span></button>
+          <button type="button" style="--c: var(--k-person)"><i></i><span class="lbl">Люди · 2</span></button>
+          <button type="button" style="--c: var(--k-decision)"><i></i><span class="lbl">Решения · 1</span></button>
+          <button type="button" style="--c: var(--k-task)"><i></i><span class="lbl">Дела · 5</span></button>
+          <button type="button" style="--c: var(--k-meeting)"><i></i><span class="lbl">Встречи · 1</span></button>
+          <button type="button" style="--c: var(--k-capture)"><i></i><span class="lbl">Записи · 3</span></button>
+          <span class="gap"></span>
+          <button type="button" style="--c: var(--today)"><i></i><span class="lbl">Сегодня</span></button>
+          <button type="button" style="--c: var(--ink)"><i></i><span class="lbl">Доска</span></button>
+        </nav>
+        <article class="doc" data-doc></article>
+        <aside class="aside" data-aside></aside>
+      </div>
+    </div>
+  </section>
+
+  <!-- D -->
+  <section class="variant" id="d">
+    <header>
+      <div class="letter">D</div>
+      <div>
+        <h2>Только страницы: дом это тоже страница</h2>
+        <p>Навигации как отдельного слоя нет. Есть кнопка «Дом», а дом это обычная страница «Сегодня» со встроенными видами и списками kind. Дальше по ссылкам и обратным ссылкам, как в wiki. <b>Самый честный вариант к тезису «всё страница»</b>: список проектов это вид, встроенный в страницу.</p>
+        <div class="pros"><span>один примитив без исключений</span><span>дом настраивается как любая страница</span><span class="con">глубоко в графе легко потеряться, спасают крошки</span><span class="con">непривычно тем, кто ждёт меню</span></div>
+      </div>
+    </header>
+    <div class="frame">
+      <div class="top">
+        <div class="brand"><i></i> Кизуна</div>
+        <span class="crumbs" style="margin-left:6px"><button type="button" class="wl" style="color: var(--muted)">Дом</button><span class="sep">/</span><span>проект</span><span class="sep">/</span><span>Hub</span></span>
+        <span class="model" style="margin-left:auto">gpt-5 mini</span>
+        <button type="button" class="gear" aria-label="Настройки" style="margin-left:0">⚙</button>
+      </div>
+      <div class="layout">
+        <article class="doc">
+          <div class="crumbs"><span>страница</span><span class="sep">/</span><span>Дом</span></div>
+          <h3><span class="kind capture">дом</span>Сегодня, вторник</h3>
+          <div class="body">
+            <div class="home">
+              <div class="tile"><h5>Сегодня <span>3</span></h5>
+                <div class="row"><span class="circle"></span><span class="t">Согласовать схему сессий</span><span class="st late"></span></div>
+                <div class="row"><span class="circle"></span><span class="t">Контекст к созвону с BE</span><span class="st today"></span></div>
+                <div class="row"><span class="circle"></span><span class="t">Ответить Саше про доступы</span><span class="st ontime"></span></div>
+              </div>
+              <div class="tile"><h5>Встречи <span>1</span></h5><div class="row"><span class="t">11:00 <button type="button" class="wl meeting">Созвон с BE по секретам сессий</button></span></div></div>
+              <div class="tile"><h5>Что делал <span>2</span></h5><div class="row"><span class="t">Решили про Vault</span></div><div class="row"><span class="t">Завёл страницу Hub</span></div></div>
+            </div>
+            <h4><span class="mark">##</span>Проекты <span class="mark" style="font-size:12px">```view kind: project```</span></h4>
+            <div class="tilelist"><button type="button" class="wl">Hub</button><button type="button" class="wl">Кизуна</button><button type="button" class="wl">Личное</button></div>
+            <h4><span class="mark">##</span>Люди</h4>
+            <div class="tilelist"><button type="button" class="wl person">Саша</button><button type="button" class="wl person">BE-команда</button></div>
+            <h4><span class="mark">##</span>Последние записи</h4>
+            <div class="tilelist"><button type="button" class="wl capture" style="color: var(--muted)">Решили: секреты сессий в Vault…</button><button type="button" class="wl capture" style="color: var(--muted)">Завтра в 11 созвон с BE…</button></div>
+          </div>
+        </article>
+        <aside class="aside">
+          <section><h6>Открыто сейчас</h6><ul>
+            <li><button type="button" class="wl">Hub</button><span class="via">проект · 2 мин назад</span></li>
+            <li><button type="button" class="wl person">Саша</button><span class="via">человек · 10 мин назад</span></li>
+            <li><button type="button" class="wl decision">Секреты сессий храним в Vault</button><span class="via">решение · сегодня</span></li>
+          </ul></section>
+          <section><h6>Требует ответа <span>1</span></h6><ul><li><button type="button" class="wl capture">Уточнить время: 11:00 или 11:30?</button><span class="via">из записи о созвоне</span></li></ul></section>
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <!-- E -->
+  <section class="variant" id="e">
+    <header>
+      <div class="letter">E</div>
+      <div>
+        <h2>Обе панели убраны: контекст в раскрывашке под заголовком</h2>
+        <p>Левой панели нет (здесь взята шапка из A), а правая сложена в одну строку под заголовком: «из 3 записей · 5 ссылок сюда». Клик раскрывает её на месте. <b>Документ занимает весь лист</b>, как карточка записи сейчас, а provenance появляется, когда за ним пришли.</p>
+        <div class="pros"><span>лист один в один с карточкой ввода</span><span>provenance не шумит, но в одном клике</span><span class="con">обратные ссылки перестают быть заметны боковым зрением</span></div>
+      </div>
+    </header>
+    <div class="frame">
+      <div class="top">
+        <div class="brand"><i></i> Кизуна</div>
+        <div class="segnav" role="group" aria-label="Виды страниц">
+          <button type="button" aria-pressed="true" style="--c: var(--k-project)"><i></i>Проекты</button>
+          <button type="button" style="--c: var(--k-person)"><i></i>Люди</button>
+          <button type="button" style="--c: var(--k-decision)"><i></i>Решения</button>
+          <button type="button" style="--c: var(--k-task)"><i></i>Дела</button>
+          <button type="button" style="--c: var(--k-capture)"><i></i>Записи</button>
+        </div>
+        <span class="model">gpt-5 mini</span>
+        <button type="button" class="gear" aria-label="Настройки">⚙</button>
+      </div>
+      <div class="layout solo">
+        <article class="doc" style="max-width: 820px; margin: 0 auto; width: 100%">
+          <div class="crumbs"><span>проект</span><span class="sep">/</span><span>Hub</span></div>
+          <h3><span class="kind project">проект</span>Hub</h3>
+          <div><button type="button" class="ctx-btn" data-ctx-toggle aria-expanded="true">собрано из <b>3</b> записей · <b>5</b> ссылок сюда · журнал</button></div>
+          <div class="ctx" data-ctx>
+            <section><h6>Собрано из записей</h6><ul>
+              <li><button type="button" class="wl capture">Завтра в 11 созвон с BE по секретам сессий…</button><span class="via">сегодня, 13:57</span></li>
+              <li><button type="button" class="wl capture">Решили: секреты сессий в Vault, ротация…</button><span class="via">сегодня, 14:20</span></li>
+              <li><button type="button" class="wl capture">Саша просил не трогать схему сессий до среды</button><span class="via">сегодня, 12:09</span></li>
+            </ul></section>
+            <section><h6>Сюда ссылаются</h6><ul>
+              <li><button type="button" class="wl person">Саша</button><span class="via">свойство «Проекты»</span></li>
+              <li><button type="button" class="wl person">BE-команда</button><span class="via">свойство «Проекты»</span></li>
+              <li><button type="button" class="wl decision">Секреты сессий храним в Vault</button><span class="via">свойство «Проект»</span></li>
+              <li><button type="button" class="wl meeting">Созвон с BE по секретам сессий</button><span class="via">из текста</span></li>
+            </ul></section>
+          </div>
+          <div data-doc-body></div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- F -->
+  <section class="variant" id="f">
+    <header>
+      <div class="letter">F</div>
+      <div>
+        <h2>Таббар снизу, как на 390px</h2>
+        <p>На телефоне левой панели и так не будет. Четыре вкладки: Сегодня, Страницы, Ввод, Поиск. «Страницы» открывает список kind, а не дерево. <b>Если на десктопе выбирается A или B, на телефоне это превращается ровно в F</b>, и один документ выглядит одинаково в обоих.</p>
+        <div class="pros"><span>привычно на телефоне</span><span>ввод всегда под большим пальцем</span><span class="con">на десктопе таббар не нужен, это пара к A или B</span></div>
+      </div>
+    </header>
+    <div class="phone-wrap">
+      <div class="phone">
+        <div class="top"><div class="brand"><i></i> Кизуна</div><span class="model" style="margin-left:auto">gpt-5 mini</span></div>
+        <article class="doc" data-doc></article>
+        <nav class="tabbar" aria-label="Разделы">
+          <button type="button"><i></i>Сегодня</button>
+          <button type="button" aria-current="true"><i></i>Страницы</button>
+          <button type="button" class="plus"><i></i>Ввод</button>
+          <button type="button"><i></i>Поиск</button>
+        </nav>
+      </div>
+      <div class="phone-note">
+        <p>Документ тот же: крошки, kind, свойства, тело, встроенный вид. Правая панель на телефоне это раскрывашка из варианта E.</p>
+        <p>«Страницы» на телефоне это одна страница-список: сначала kind с числами, внутри каждый kind как вид в раскладке «список».</p>
+      </div>
+    </div>
+  </section>
+
+  <footer class="verdict">
+    <p><strong>Моя рекомендация: A на десктопе, F на телефоне, контекст как в E.</strong> A повторяет шапку, которая уже есть в Кизуне, и не требует новых привычек. Раскрывашка E освобождает лист под текст, при этом provenance остаётся в одном клике. B хорош как дополнение к любому варианту, а не замена: <code>⌘K</code> стоит добавить в любом случае. D красив идейно, но проверять его лучше после того, как страницы появятся в продукте. Решение не принято: страница для выбора.</p>
+  </footer>
+</main>
+
+<script>
+(() => {
+  const root = document.documentElement;
+  const picks = document.querySelectorAll('[data-theme-pick]');
+  const applyTheme = (t) => {
+    if (t === 'auto') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', t);
+    picks.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.themePick === t)));
+    try { localStorage.setItem('kizuna-pages-theme', t); } catch (e) {}
+  };
+  picks.forEach(b => b.addEventListener('click', () => applyTheme(b.dataset.themePick)));
+  try { const s = localStorage.getItem('kizuna-pages-theme'); if (s === 'light' || s === 'dark') applyTheme(s); } catch (e) {}
+
+  const doc = document.getElementById('tpl-doc').content;
+  const aside = document.getElementById('tpl-aside').content;
+  document.querySelectorAll('[data-doc]').forEach(el => el.appendChild(doc.cloneNode(true)));
+  document.querySelectorAll('[data-aside]').forEach(el => el.appendChild(aside.cloneNode(true)));
+  document.querySelectorAll('[data-doc-body]').forEach(el => { const c = doc.cloneNode(true); el.replaceWith(c.querySelector('.body')); });
+
+  document.addEventListener('click', (e) => {
+    const seg = e.target.closest('.segnav button');
+    if (seg) { seg.parentElement.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === seg))); return; }
+    const rail = e.target.closest('.railbar button');
+    if (rail) { rail.parentElement.querySelectorAll('button').forEach(b => b.setAttribute('aria-current', String(b === rail))); return; }
+    const tab = e.target.closest('.tabbar button');
+    if (tab) { tab.parentElement.querySelectorAll('button').forEach(b => b.setAttribute('aria-current', String(b === tab))); return; }
+    const pal = e.target.closest('[data-pal-toggle]');
+    if (pal) { const p = pal.parentElement.querySelector('[data-pal]'); const open = pal.getAttribute('aria-expanded') !== 'true'; pal.setAttribute('aria-expanded', String(open)); p.hidden = !open; return; }
+    const ctx = e.target.closest('[data-ctx-toggle]');
+    if (ctx) { const p = ctx.closest('.doc').querySelector('[data-ctx]'); const open = ctx.getAttribute('aria-expanded') !== 'true'; ctx.setAttribute('aria-expanded', String(open)); p.hidden = !open; return; }
+  });
+  document.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[role="button"]')) { e.preventDefault(); e.target.click(); } });
+})();
+</script>
+  </body>
+</html>
