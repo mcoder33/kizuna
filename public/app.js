@@ -190,6 +190,9 @@ function updatePageFromHash() {
       link.getAttribute("href") === `#${activePage}`,
     );
   if (activePage !== pageId) history.replaceState(null, "", "#today");
+  // Вернулись на «Сегодня» — колонки перемеряются: пока страница была скрыта,
+  // высоты равнялись нулю, и подгонка превью откладывалась.
+  if (activePage === "today") requestAnimationFrame(fitPreviews);
   // Открыли настройки — перечитываем расход: он меняется от каждой записи, а
   // страница может висеть открытой долго.
   if (activePage === "settings") {
@@ -537,9 +540,13 @@ function fitPreviews() {
   for (const container of containers)
     for (const [index, card] of [...container.querySelectorAll(":scope > .entry")].entries())
       card.hidden = index >= previewLimit;
+  // На скрытой странице (журнал обновился, пока открыт календарь) все высоты
+  // нулевые: колонка «не растёт», и подгонка раскрывала весь запас. Тогда
+  // остаются первые записи и «Ещё N»; перемерим, когда страницу откроют.
+  if ($("#today")?.hidden) return;
   for (const container of containers) {
     const panel = container.closest(".preview-card");
-    if (!panel) continue;
+    if (!panel || !panel.clientHeight) continue;
     const cards = [...container.querySelectorAll(":scope > .entry")];
     const total = Number(container.dataset.total || cards.length);
     let shown = Math.min(previewLimit, cards.length);
@@ -726,11 +733,26 @@ function propIcon(name) {
   glyph.innerHTML = `<svg viewBox="0 0 16 16" width="16" height="16">${PROP_ICONS[name]}</svg>`;
   return glyph;
 }
-function propertyRow(label, control, icon) {
+// Крестик справа — быстрый сброс свойства: «без даты», «без проекта». Показан
+// только у заполненного свойства и только по наведению, чтобы не шуметь.
+function propertyRow(label, control, icon, { clear = null, filled = null } = {}) {
   const row = node("div", undefined, "prop");
   const name = node("span", label, "prop-label");
   if (icon) name.prepend(propIcon(icon));
   row.append(name, control);
+  if (clear) {
+    const reset = node("button", "×", "prop-clear");
+    reset.type = "button";
+    reset.title = `Сбросить: ${label.toLowerCase()}`;
+    reset.setAttribute("aria-label", reset.title);
+    reset.addEventListener("click", (event) => { event.preventDefault(); clear(); paint(); });
+    const paint = () => { reset.hidden = filled ? !filled() : false; };
+    control.addEventListener("input", paint);
+    control.addEventListener("change", paint);
+    row.append(reset);
+    row.classList.add("has-clear");
+    paint();
+  }
   return row;
 }
 // ── вложения записи ──────────────────────────────────────────────────────────
@@ -1142,14 +1164,18 @@ function showReview(entry, review, undoGroupId, provenance) {
   const endWrap = node("span", undefined, "review-end");
   endWrap.append(node("span", "до", "review-end-label"), end);
   scheduleRow.append(date, time, endWrap);
-  const scheduleWrap = propertyRow("Срок", scheduleRow, "schedule"),
-    peopleWrap = propertyRow("Участники", people, "people"),
-    followUpWrap = propertyRow("Далее", followUp, "next");
+  // Сброс уходит на сервер сразу: «без даты» — это решение, а не правка на
+  // полпути, и ждать закрытия карточки ему незачем.
+  let saveProps = () => {};
+  const clearAndSave = (apply) => { apply(); saveProps(); };
+  const scheduleWrap = propertyRow("Срок", scheduleRow, "schedule", { clear: () => clearAndSave(() => { date.value = ""; time.value = ""; end.value = ""; paintEnd(); }), filled: () => Boolean(date.value || time.value) }),
+    peopleWrap = propertyRow("Участники", people, "people", { clear: () => clearAndSave(() => { people.value = ""; }), filled: () => Boolean(people.value.trim()) }),
+    followUpWrap = propertyRow("Далее", followUp, "next", { clear: () => clearAndSave(() => { followUp.value = ""; }), filled: () => Boolean(followUp.value.trim()) });
   const props = node("div", undefined, "props");
   props.append(
     propertyRow("Тип", type, "type"),
     scheduleWrap,
-    propertyRow("Проект", project, "project"),
+    propertyRow("Проект", project, "project", { clear: () => clearAndSave(() => { project.value = ""; }), filled: () => Boolean(project.value.trim()) }),
     peopleWrap,
     followUpWrap,
     propertyRow("Сделано", doneToggle, "done"),
@@ -1225,7 +1251,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   pendingProps = () =>
     JSON.stringify(propsPatch()) === untouched ? null : propsPatch();
   let propsSaving = false;
-  const saveProps = async () => {
+  saveProps = async () => {
     const patch = pendingProps();
     if (!patch || propsSaving) return;
     propsSaving = true;
@@ -3471,6 +3497,26 @@ function boardCardEl(card, column, { closed = false } = {}) {
   title.type = "button";
   title.addEventListener("click", () => openReportEntry(card.captureId));
   titleRow.append(title);
+  if (!closed) {
+    // Крестик по наведению — удалить дело прямо с доски. Удаление мягкое, тост
+    // даёт «Вернуть», как в карточке.
+    const remove = node("button", "×", "board-remove");
+    remove.type = "button";
+    remove.title = "Удалить дело";
+    remove.setAttribute("aria-label", `Удалить: ${card.title}`);
+    remove.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      remove.disabled = true;
+      try {
+        await request(`/api/captures/${card.captureId}`, { method: "DELETE" });
+        element.remove();
+        toast("Дело удалено", { label: "Вернуть", run: async () => { try { await request(`/api/captures/${card.captureId}/restore`, { method: "POST" }); toast("Дело возвращено"); } catch (error) { toast(error.message); } loadBoard(); } });
+        loadBoard();
+        load();
+      } catch (error) { toast(error.message); remove.disabled = false; }
+    });
+    titleRow.append(remove);
+  }
   const status = boardCardStatus(card);
   // Как на «Сегодня»: просроченное — розовая плашка и красный заголовок,
   // открытое — песочная.
@@ -4320,6 +4366,7 @@ function calToolbarEl() {
 function calChipEl(item, { overdue = false } = {}) {
   const chip = node("div", undefined, `cal-chip ${item.kind}${item.done ? " done" : ""}${overdue || item.overdue ? " late" : ""}`);
   chip.dataset.id = item.id;
+  if (item.kind === "external" && item.editable) { chip.draggable = true; chip.dataset.own = "1"; }
   if (item.kind !== "external") {
     chip.draggable = !item.done;
     chip.dataset.own = "1";
@@ -4346,7 +4393,7 @@ function calEventEl(item) {
   element.style.height = `${height}px`;
   element.dataset.id = item.id;
   if (item.kind !== "external") { element.draggable = !item.done; element.dataset.own = "1"; }
-  else if (item.color) element.style.setProperty("--cal-c", item.color);
+  else { if (item.editable) { element.draggable = true; element.dataset.own = "1"; } if (item.color) element.style.setProperty("--cal-c", item.color); }
   const title = node("b", undefined);
   title.append(node("span", `${item.time} `, "cal-ev-time"), document.createTextNode(item.title));
   element.append(title);
@@ -4478,7 +4525,7 @@ function renderCalendar() {
   else { const { from } = calRange(); body.append(calGridEl(Array.from({ length: calDays() }, (_, index) => shiftDate(from, index)))); }
   wrap.append(body);
   const hint = node("p", undefined, "cal-hint");
-  hint.append(node("kbd", "D"), node("kbd", "W"), node("kbd", "M"), document.createTextNode(" виды · "), node("kbd", "T"), document.createTextNode(" сегодня · "), node("kbd", "←"), node("kbd", "→"), document.createTextNode(" листать · "), node("kbd", "1"), document.createTextNode("–"), node("kbd", "7"), document.createTextNode(" дней · тяните дела и встречи, клик по пустому месту — новая запись"));
+  hint.append(node("kbd", "D"), node("kbd", "W"), node("kbd", "M"), document.createTextNode(" виды · "), node("kbd", "T"), document.createTextNode(" сегодня · "), node("kbd", "←"), node("kbd", "→"), document.createTextNode(" листать · "), node("kbd", "1"), document.createTextNode("–"), node("kbd", "7"), document.createTextNode(" дней · тяните дела, встречи и чужие события, клик по пустому месту — новая запись"));
   wrap.append(hint);
 }
 // Клик по своему делу — карточка записи; по чужому событию — плашка с тем,
@@ -4510,9 +4557,33 @@ function showExternalEvent(item) {
   pop.append(node("b", item.title, "cal-pop-title"));
   const when = item.allDay ? `${calHuman(item.date)} · весь день${item.days > 1 ? ` · ${item.days} дн.` : ""}` : `${calHuman(item.date)}, ${item.time}–${item.end}`;
   pop.append(node("p", when, "cal-pop-when"));
-  pop.append(node("p", `${item.source}${item.calendarName && item.calendarName !== item.source ? ` · ${item.calendarName}` : ""} · только чтение`, "cal-pop-src"));
+  pop.append(node("p", `${item.source}${item.calendarName && item.calendarName !== item.source ? ` · ${item.calendarName}` : ""}${item.editable ? "" : item.recurring ? " · повтор, правится в календаре" : " · только чтение"}`, "cal-pop-src"));
   if (item.location) pop.append(node("p", item.location, "cal-pop-src"));
   const actions = node("div", undefined, "cal-pop-actions");
+  if (item.editable) {
+    // Название правится по месту: Enter — отправить в календарь, Esc — отмена.
+    const title = pop.querySelector(".cal-pop-title");
+    title.title = "Переименовать";
+    title.tabIndex = 0;
+    const rename = () => {
+      const input = node("input", undefined, "cal-pop-rename");
+      input.type = "text"; input.value = item.title; input.maxLength = 300; input.setAttribute("aria-label", "Название события");
+      title.replaceWith(input); input.focus(); input.select();
+      let done = false;
+      const finish = async (save) => {
+        if (done) return; done = true;
+        const next = input.value.trim();
+        if (!save || !next || next === item.title) { input.replaceWith(title); return; }
+        input.disabled = true;
+        try { await request(`/api/calendar/external/${encodeURIComponent(item.id)}`, { method: "PATCH", body: JSON.stringify({ title: next }) }); toast(`Переименовано в ${item.source}`); closeCalendarPop(); await loadCalendar(); }
+        catch (error) { toast(error.message); input.replaceWith(title); }
+      };
+      input.addEventListener("keydown", (keyEvent) => { if (keyEvent.key === "Enter") { keyEvent.preventDefault(); finish(true); } else if (keyEvent.key === "Escape") { keyEvent.preventDefault(); finish(false); } });
+      input.addEventListener("blur", () => finish(true));
+    };
+    title.addEventListener("click", rename);
+    title.addEventListener("keydown", (keyEvent) => { if (keyEvent.key === "Enter") rename(); });
+  }
   if (item.joinUrl) { const join = node("a", "Присоединиться", "cal-pop-btn primary"); join.href = item.joinUrl; join.target = "_blank"; join.rel = "noopener"; actions.append(join); }
   const take = calButton("Взять в память", `cal-pop-btn${item.joinUrl ? "" : " primary"}`, async () => {
     take.disabled = true;
@@ -4529,8 +4600,17 @@ function showExternalEvent(item) {
   });
   actions.append(take);
   if (item.href) { const open = node("a", "Открыть", "cal-pop-btn"); open.href = item.href; open.target = "_blank"; open.rel = "noopener"; actions.append(open); }
+  if (item.editable) {
+    const remove = calButton("Удалить", "cal-pop-btn danger", async () => {
+      if (!confirm(`Удалить «${item.title}» из календаря ${item.source}? Это не вернуть.`)) return;
+      remove.disabled = true;
+      try { await request(`/api/calendar/external/${encodeURIComponent(item.id)}`, { method: "DELETE" }); toast(`Удалено из ${item.source}`); closeCalendarPop(); await loadCalendar(); }
+      catch (error) { toast(error.message); remove.disabled = false; }
+    });
+    actions.append(remove);
+  }
   pop.append(actions);
-  pop.append(node("p", "Чужое событие не запись: его нет в поиске и отчётах, пока вы не возьмёте его в память.", "cal-pop-note"));
+  pop.append(node("p", item.editable ? "Чужое событие не запись: его нет в поиске и отчётах, пока вы не возьмёте его в память. Название правится по клику, перенос — мышкой, изменения уходят в календарь сразу." : "Чужое событие не запись: его нет в поиске и отчётах, пока вы не возьмёте его в память.", "cal-pop-note"));
 }
 // Клик по пустому месту сетки — новая запись с уже подставленным временем.
 function openCalendarQuickAdd(target, event) {
@@ -4589,20 +4669,23 @@ async function toggleCalendarDone(item) {
 // Перенос — уточнение записи: сервер пересобирает проекции. «Вернуть» — не
 // откат, а ещё одно уточнение с прежним сроком: история записи append-only,
 // и снятие проекций через /api/undo оставило бы дело вовсе без срока.
+// Чужое событие переносится в самом календаре — PATCH уходит в Яндекс, Apple
+// или Google; «Вернуть» — такой же перенос обратно.
 async function moveCalendarItem(item, schedule, { announce = true } = {}) {
   if (item.date === schedule.date && (item.time || null) === (schedule.time || null) && (item.end || null) === (schedule.end || null)) return;
   const before = { date: item.date, time: item.time, ...(item.end ? { end: item.end } : {}) };
   try {
-    await request(`/api/captures/${item.id}/corrections`, { method: "POST", body: JSON.stringify({ patch: { schedule } }) });
+    if (item.kind === "external") await request(`/api/calendar/external/${encodeURIComponent(item.id)}`, { method: "PATCH", body: JSON.stringify({ date: schedule.date, time: schedule.time ?? null, end: schedule.end ?? null }) });
+    else await request(`/api/captures/${item.id}/corrections`, { method: "POST", body: JSON.stringify({ patch: { schedule } }) });
     await loadCalendar();
     const label = schedule.time ? `${calHuman(schedule.date)}, ${schedule.time}` : `${calHuman(schedule.date)}, без времени`;
-    if (announce) toast(`Перенесено: ${label}`, { label: "Вернуть", run: () => moveCalendarItem({ ...item, ...schedule }, before, { announce: false }) });
-    await load();
+    if (announce) toast(`Перенесено${item.kind === "external" ? ` в ${item.source}` : ""}: ${label}`, { label: "Вернуть", run: () => moveCalendarItem({ ...item, ...schedule }, before, { announce: false }) });
+    if (item.kind !== "external") await load();
   } catch (error) { toast(error.message); }
 }
 {
   const wrap = $("#calendar-view");
-  const findItem = (id) => calState.data?.items.find((item) => item.id === id) || calState.data?.overdue?.find((item) => item.id === id);
+  const findItem = (id) => calState.data?.items.find((item) => item.id === id) || calState.data?.overdue?.find((item) => item.id === id) || calState.data?.external?.find((item) => item.id === id);
   wrap.addEventListener("dragstart", (event) => {
     const element = event.target.closest?.("[data-own][draggable='true']");
     if (!element) return;
@@ -4622,7 +4705,7 @@ async function moveCalendarItem(item, schedule, { announce = true } = {}) {
       const rect = target.getBoundingClientRect();
       const minutes = calSnap(CAL_H0 * 60 + ((event.clientY - rect.top) / CAL_HOUR_PX) * 60);
       const item = calState.drag;
-      const duration = item.time !== null ? calMinutes(calEndOf(item)) - calMinutes(item.time) : item.kind === "meeting" ? 60 : 30;
+      const duration = item.time !== null ? calMinutes(calEndOf(item)) - calMinutes(item.time) : item.kind === "meeting" || item.kind === "external" ? 60 : 30;
       let ghost = wrap.querySelector(".cal-ghost");
       if (!ghost || ghost.parentElement !== target) { ghost?.remove(); ghost = node("div", undefined, "cal-ghost"); target.append(ghost); }
       ghost.style.top = `${((minutes - CAL_H0 * 60) / 60) * CAL_HOUR_PX}px`;
@@ -4640,7 +4723,7 @@ async function moveCalendarItem(item, schedule, { announce = true } = {}) {
     if (target.classList.contains("cal-col")) {
       const rect = target.getBoundingClientRect();
       const start = calSnap(CAL_H0 * 60 + ((event.clientY - rect.top) / CAL_HOUR_PX) * 60);
-      const duration = item.time !== null ? calMinutes(calEndOf(item)) - calMinutes(item.time) : item.kind === "meeting" ? 60 : 30;
+      const duration = item.time !== null ? calMinutes(calEndOf(item)) - calMinutes(item.time) : item.kind === "meeting" || item.kind === "external" ? 60 : 30;
       const end = Math.min(start + duration, 23 * 60 + 59);
       schedule = { date, time: calTime(start), ...(item.end || item.time === null ? { end: calTime(end) } : {}) };
     } else if (target.dataset.notime && !target.classList.contains("cal-mc")) schedule = { date, time: null };
@@ -4712,7 +4795,7 @@ function paintCalendarAccounts() {
       if (next === null || !next.trim() || next.trim() === account.label) return;
       await patchCalendarAccount(account.id, { label: next.trim() });
     });
-    const meta = node("span", `${account.provider === "google" ? "Google" : account.preset === "yandex" ? "Яндекс · CalDAV" : account.preset === "icloud" ? "Apple · CalDAV" : "CalDAV"} · ${account.disabled ? "отключён" : calendarSyncLabel(account)}`, `calendar-account-meta${account.syncError ? " is-error" : ""}`);
+    const meta = node("span", `${account.provider === "google" ? "Google" : account.preset === "yandex" ? "Яндекс · CalDAV" : account.preset === "icloud" ? "Apple · CalDAV" : "CalDAV"} · ${account.disabled ? "отключён" : calendarSyncLabel(account)}${account.exportError ? ` · отправка: ${account.exportError}` : ""}`, `calendar-account-meta${account.syncError || account.exportError ? " is-error" : ""}`);
     head.append(dot, name, meta);
     card.append(head);
     const list = node("div", undefined, "calendar-account-calendars");
@@ -4753,6 +4836,26 @@ function paintCalendarAccounts() {
     });
     controls.append(mode, color, sync, toggle, remove);
     card.append(controls);
+    // Автоотправка: свои дела и встречи со сроком сами уходят в выбранный
+    // календарь и следуют за записью — перенос, «сделано», удаление. Это
+    // разрешение даётся один раз здесь, а не на каждую запись.
+    const auto = node("div", undefined, "calendar-account-auto");
+    const autoMode = node("select");
+    for (const [value, text] of [["off", "Наружу — только кнопкой"], ["meetings", "Отправлять встречи"], ["all", "Отправлять встречи и дела"]]) { const option = node("option", text); option.value = value; option.selected = (account.autoExport || "off") === value; autoMode.append(option); }
+    autoMode.setAttribute("aria-label", "Автоматическая отправка");
+    autoMode.addEventListener("change", () => patchCalendarAccount(account.id, { autoExport: autoMode.value }));
+    auto.append(autoMode);
+    const writable = account.calendars.filter((calendar) => calendar.writable);
+    if ((account.autoExport || "off") !== "off" && writable.length) {
+      auto.append(node("span", "в", "calendar-account-auto-in"));
+      const target = node("select");
+      target.setAttribute("aria-label", "Календарь для отправки");
+      for (const calendar of writable) { const option = node("option", calendar.name); option.value = calendar.id; option.selected = calendar.id === account.autoCalendarId; target.append(option); }
+      target.addEventListener("change", () => patchCalendarAccount(account.id, { autoCalendarId: target.value }));
+      auto.append(target);
+    }
+    auto.append(node("small", (account.autoExport || "off") === "off" ? "Дела и встречи уходят в календарь только кнопкой «В календарь» в карточке." : "Уходят сами и следуют за записью: перенос, конец, удаление. Сдвинули событие в календаре — срок записи подвинется тоже.", "setting-hint"));
+    card.append(auto);
     wrap.append(card);
   }
 }
@@ -4814,8 +4917,11 @@ function calendarExportEl(entry) {
       for (const link of exports) {
         const account = accounts.find((candidate) => candidate.id === link.accountId);
         const row = node("span", undefined, "card-calendar-link");
-        row.append(node("span", `В календаре: ${account?.label || "внешний"}`));
+        row.append(node("span", `В календаре: ${account?.label || "внешний"}${link.auto ? " · автоматически" : ""}`));
         if (link.href && link.href.startsWith("http")) { const open = node("a", "открыть"); open.href = link.href; open.target = "_blank"; open.rel = "noopener"; row.append(open); }
+        // Автоматическую отправку «убрать» нельзя: следующий проход вернул бы
+        // событие. Выключается в настройках календаря.
+        if (link.auto && (account?.autoExport || "off") !== "off") { wrap.append(row); continue; }
         const remove = node("button", "убрать", "card-calendar-remove");
         remove.type = "button";
         remove.addEventListener("click", async () => {

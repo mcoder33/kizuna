@@ -1106,3 +1106,30 @@ test("on a phone the card stays pinned to the screen while the page behind is sc
   // Карточка закрыта — страница снова прокручивается.
   await expect(page.locator("body")).not.toHaveCSS("overflow", "hidden");
 });
+
+test("a cross next to a filled property resets it at once: a dated task becomes undated", async ({ page, request }) => {
+  const raw = "Дело с датой для сброса";
+  await request.post("/api/captures", { data: { raw, primaryType: "todo", due: { date: "2026-09-04", time: "11:00" } } });
+  await page.goto("/");
+  await openCard(page, "#todo", raw);
+  const propsBar = page.locator(".props-bar");
+  if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
+  await expect(page.locator("#review-date")).toHaveValue("2026-09-04");
+  const row = page.locator(".prop", { has: page.locator(".prop-label", { hasText: "Срок" }) });
+  await row.hover();
+  const saved = page.waitForResponse((response) => response.url().includes("/corrections") && response.request().method() === "POST");
+  await row.locator(".prop-clear").click();
+  expect((await saved).status()).toBe(200);
+  await expect(page.locator("#review-date")).toHaveValue("");
+  await expect(page.locator("#review-time")).toHaveValue("");
+  await expect(row.locator(".prop-clear")).toBeHidden();
+  // Проект без значения крестика не показывает.
+  await expect(page.locator(".prop", { has: page.locator(".prop-label", { hasText: "Проект" }) }).locator(".prop-clear")).toBeHidden();
+  await page.keyboard.press("Escape");
+  // На сервере срока больше нет: на доске дело лежит без даты.
+  await expect.poll(async () => {
+    const board = await (await request.get("/api/board")).json();
+    const card = JSON.stringify(board).match(new RegExp(`"title":"${raw}"[^}]*`));
+    return card ? /"due":null/.test(card[0]) : null;
+  }).toBe(true);
+});

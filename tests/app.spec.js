@@ -1074,7 +1074,8 @@ test("колонка честно говорит, сколько записей 
     );
 
   const todo = page.locator("#todo");
-  await expect(todo.locator(".entry")).toHaveCount(3, { timeout: 15000 });
+  // Запас сверх трёх лежит в DOM скрытым — считаются видимые карточки.
+  await expect(todo.locator(".entry:visible")).toHaveCount(3, { timeout: 15000 });
   const more = todo.locator(".preview-more");
   await expect(more).toHaveText("Ещё 1 — весь список →");
   await expect(more).toHaveAttribute("href", "#board?view=list");
@@ -1145,7 +1146,7 @@ test("настройки меняются в приложении и приме�
   for (const name of ["дело 1", "дело 2", "дело 3", "дело 4", "дело 5", "дело 6"])
     created.push(await request.post("/api/captures", { data: { raw: name, primaryType: "todo" } }));
   await page.locator('nav a[href="#today"]').click();
-  await expect(page.locator("#todo .entry")).toHaveCount(5, { timeout: 15000 });
+  await expect(page.locator("#todo .entry:visible")).toHaveCount(5, { timeout: 15000 });
   await expect(page.locator("#todo .preview-more")).toHaveText("Ещё 1 — весь список →");
 
   // Новое слово пробуждения видно в подсказке разговора.

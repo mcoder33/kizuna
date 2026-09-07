@@ -201,3 +201,17 @@ test("на телефоне список не растягивает карто�
   await expect(page.locator("#board-columns .board-column.is-active")).toHaveCount(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
+
+test("крестик на карточке доски удаляет дело мягко, «Вернуть» возвращает его", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await request.post("/api/captures", { data: { raw: "Дело под удаление с доски", primaryType: "todo" } });
+  await page.goto("/#board?view=list");
+  const card = page.locator(".board-card").filter({ hasText: "Дело под удаление с доски" });
+  await expect(card).toBeVisible();
+  await card.hover();
+  await card.locator(".board-remove").click();
+  await expect(card).toHaveCount(0);
+  await expect(page.locator("#toast")).toContainText("Дело удалено");
+  await page.locator("#toast .toast-action", { hasText: "Вернуть" }).click();
+  await expect(page.locator(".board-card").filter({ hasText: "Дело под удаление с доски" })).toBeVisible();
+});
