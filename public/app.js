@@ -4374,11 +4374,7 @@ function calChipEl(item, { overdue = false } = {}) {
     box.title = item.done ? "Вернуть в работу" : "Готово";
     if (item.kind === "meeting" && !item.done) box.innerHTML = BOARD_CLOCK;
     chip.append(box);
-  } else {
-    const dot = node("i", undefined, "cal-dot");
-    if (item.color) dot.style.background = item.color;
-    chip.append(dot);
-  }
+  } else if (item.color) chip.style.setProperty("--cal-c", item.color);
   chip.append(node("span", item.title, "cal-chip-title"));
   chip.title = item.title;
   chip.addEventListener("click", () => openCalendarItem(item));
@@ -4397,8 +4393,10 @@ function calEventEl(item) {
   const title = node("b", undefined);
   title.append(node("span", `${item.time} `, "cal-ev-time"), document.createTextNode(item.title));
   element.append(title);
-  const sub = item.kind === "external" ? item.source : [item.project, ...(item.people || [])].filter(Boolean).join(" · ");
+  const sub = item.kind === "external" ? item.calendarName || item.source : [item.project, ...(item.people || [])].filter(Boolean).join(" · ");
   if (sub) element.append(node("small", sub));
+  // Повтор — значком в правом верхнем углу, как в Apple.
+  if (item.kind === "external" && (item.repeat || item.recurring)) { const repeat = node("i", "⟳", "cal-ev-repeat"); repeat.title = item.repeat || "Повторяется"; element.append(repeat); }
   if (item.joinUrl && height >= 34) {
     const join = node("a", "Войти", "cal-join");
     join.href = item.joinUrl; join.target = "_blank"; join.rel = "noopener";

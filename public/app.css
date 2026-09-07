@@ -6003,7 +6003,10 @@ body {
 .cal-chip-title { overflow: hidden; text-overflow: ellipsis; }
 .cal-chip-time { color: var(--cal-c); font-weight: 600; font-variant-numeric: tabular-nums; flex: none; }
 .cal-chip.meeting { --cal-c: var(--type-meeting); --cal-bg: var(--tint-wait); }
-.cal-chip.external { --cal-c: var(--n-62); --cal-bg: var(--n-97); color: var(--n-52); }
+/* Чужое событие — как в Календаре Apple: сплошная светлая заливка цвета
+   календаря, полоска слева и текст тем же цветом, без штриховки. */
+.cal-chip.external { --cal-c: var(--n-62); --cal-bg: color-mix(in srgb, var(--cal-c) 16%, var(--paper)); color: color-mix(in srgb, var(--cal-c) 72%, var(--ink)); border-left: 3px solid var(--cal-c); padding-left: 5px; font-weight: 500; }
+.cal-chip.external .cal-chip-time { color: inherit; }
 .cal-chip.late { --cal-c: var(--red-49); --cal-bg: var(--tint-late); color: var(--red-49); }
 .cal-chip.done { text-decoration: line-through; color: var(--n-72); --cal-c: var(--green); --cal-bg: var(--n-97); }
 .cal-chip.dragging, .cal-ev.dragging { opacity: 0.4; }
@@ -6030,8 +6033,13 @@ body {
 .cal-ev-time { color: var(--cal-c); font-variant-numeric: tabular-nums; }
 .cal-ev small { display: block; color: var(--n-52); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cal-ev.meeting { --cal-c: var(--type-meeting); --cal-bg: var(--tint-wait); }
-.cal-ev.external { --cal-c: var(--n-62); --cal-bg: var(--n-97); color: var(--n-52); background-image: repeating-linear-gradient(135deg, transparent 0 6px, rgba(0, 0, 0, 0.035) 6px 7px); }
-.cal-ev.external b { font-weight: 500; }
+.cal-ev.external { --cal-c: var(--n-62); --cal-bg: color-mix(in srgb, var(--cal-c) 16%, var(--paper)); color: color-mix(in srgb, var(--cal-c) 72%, var(--ink)); border-left: 3px solid var(--cal-c); padding-left: 6px; }
+.cal-ev.external b { font-weight: 600; }
+.cal-ev.external .cal-ev-time { color: inherit; font-weight: 500; }
+.cal-ev.external small { color: color-mix(in srgb, var(--cal-c) 55%, var(--n-52)); }
+.cal-ev-repeat { position: absolute; top: 4px; right: 7px; font-style: normal; font-size: 12px; line-height: 1; color: var(--cal-c); opacity: 0.9; }
+.cal-ev:has(.cal-join) .cal-ev-repeat { display: none; }
+.cal-ev.short .cal-ev-repeat { top: 2px; }
 .cal-ev.late { --cal-c: var(--red-49); --cal-bg: var(--tint-late); }
 .cal-ev.done { --cal-c: var(--green); --cal-bg: var(--n-97); }
 .cal-ev.done b { text-decoration: line-through; color: var(--n-72); }
