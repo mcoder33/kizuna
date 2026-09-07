@@ -12,6 +12,7 @@
 // через них, поэтому поведение совпадает, а контракт памяти не обходится.
 import { enqueueCaptureJob, getAggregate, fullEntry, activeNote, saveNote, search, day, replaceInterpretation, deleteCapture, restoreCapture, captureOwner } from './db.js';
 import { parseCaptureOverrides, applyUserOverrides, gateClassification, shouldMaterializeProjections } from './classifier.js';
+import { dateInZone, shiftDate } from './reports.js';
 
 export const VOICE_MODEL = 'gpt-realtime';
 export const GEMINI_VOICE_MODEL = 'models/gemini-3.1-flash-live-preview';
@@ -34,6 +35,7 @@ export const VOICE_INSTRUCTIONS = [
   'Не уверен, о какой записи речь, — найди search_memory или list_today и переспроси, а не угадывай.',
   'Не читай длинные списки целиком: назови сколько нашлось и самое важное.',
   'Если человек размышляет вслух и обращается к тебе, помоги подумать: уточняющий вопрос или следующий шаг.',
+  'Календарь — тоже твоя часть: list_calendar показывает свои дела и встречи вместе с событиями внешних календарей (Яндекс, Apple, Google). Своё дело или встречу двигай update_capture, чужое событие — update_event, удаление чужого события подтверждай вслух и вызывай delete_event только после согласия. Чтобы чужое событие стало записью в памяти — take_event.',
 ].join(' ');
 
 // Характер Кизуны по умолчанию — значение настройки «Системный промпт», пока
@@ -183,7 +185,7 @@ export const VOICE_TOOLS = [
         type: { type: 'string', enum: ['todo', 'outcome', 'note'] },
         due: {
           type: 'object',
-          properties: { date: { type: 'string' }, time: { type: 'string' } },
+          properties: { date: { type: 'string' }, time: { type: 'string' }, end: { type: 'string', description: 'ЧЧ:ММ, конец встречи или дела' } },
           required: ['date'],
         },
         priority: { type: 'string', enum: ['low', 'normal', 'high'] },
@@ -191,6 +193,51 @@ export const VOICE_TOOLS = [
         done: { type: 'boolean' },
       },
       required: ['captureId'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'list_calendar',
+    description: 'Календарь за период: свои дела и встречи со сроком (captureId) и события внешних календарей (eventId вида ext:…). Без дат — неделя с сегодняшнего дня.',
+    parameters: {
+      type: 'object',
+      properties: { from: { type: 'string', description: 'YYYY-MM-DD' }, to: { type: 'string', description: 'YYYY-MM-DD' } },
+    },
+  },
+  {
+    type: 'function',
+    name: 'update_event',
+    description: 'Перенести или переименовать событие внешнего календаря (eventId из list_calendar). Своё дело или встречу правь update_capture. Изменение уходит в Яндекс, Apple или Google сразу.',
+    parameters: {
+      type: 'object',
+      properties: {
+        eventId: { type: 'string' },
+        title: { type: 'string' },
+        date: { type: 'string', description: 'YYYY-MM-DD' },
+        time: { type: 'string', description: 'ЧЧ:ММ; пусто — на весь день' },
+        end: { type: 'string', description: 'ЧЧ:ММ' },
+      },
+      required: ['eventId'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'delete_event',
+    description: 'Удалить событие из внешнего календаря. Необратимо — вызывать только после подтверждения человеком.',
+    parameters: {
+      type: 'object',
+      properties: { eventId: { type: 'string' } },
+      required: ['eventId'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'take_event',
+    description: 'Взять событие внешнего календаря в память: создать по нему запись в журнале. Само событие в календаре не меняется.',
+    parameters: {
+      type: 'object',
+      properties: { eventId: { type: 'string' } },
+      required: ['eventId'],
     },
   },
 ];
@@ -237,11 +284,12 @@ function entrySummary(entry) {
 // provider — тот же разбор, что и у записи из карточки ввода. Раньше здесь
 // стояло жёсткое 'fallback': сказанное вслух разбирали правила, а не модель, и
 // отчёт о сделанном («поговорил с парнями») уходил в заметки вместо «Что делал».
-export function runVoiceTool(db, name, args = {}, { now = () => new Date(), timeZone = 'Europe/Samara', provider = 'fallback', userId = null } = {}) {
+export function runVoiceTool(db, name, args = {}, { now = () => new Date(), timeZone = 'Europe/Samara', provider = 'fallback', userId = null, calendar = null } = {}) {
   // Идентификатор записи модель называет сама, а значит может назвать чужой.
   // Одна проверка на входе закрывает это для всех инструментов сразу: чужая
   // запись для разговора просто не существует.
   if (args.captureId !== undefined && captureOwner(db, args.captureId) !== userId) return { error: 'Запись не найдена.' };
+  if (CALENDAR_TOOLS.has(name)) return runCalendarTool(db, name, args, { now, timeZone, provider, userId, calendar });
   if (name === 'create_capture') {
     const text = typeof args.text === 'string' ? args.text.trim() : '';
     if (!text || text.length > 10000) return { error: 'Нужен текст записи от 1 до 10 000 символов.' };
@@ -378,10 +426,11 @@ export function runVoiceTool(db, name, args = {}, { now = () => new Date(), time
       Object.assign(overrides, parsed.overrides);
     }
     if (args.due) {
-      const parsed = parseCaptureOverrides({ primaryType: 'todo', due: args.due }, now(), timeZone);
+      const parsed = parseCaptureOverrides({ primaryType: 'todo', due: { date: args.due.date, time: args.due.time } }, now(), timeZone);
       if (parsed.error) return { error: 'Некорректный срок.' };
       overrides.due = parsed.overrides.due;
-      overrides.primaryType = overrides.primaryType || 'task';
+      // Встреча остаётся встречей: срок у неё тоже есть, тип менять незачем.
+      overrides.primaryType = overrides.primaryType || (original.primaryType === 'meeting_event' ? 'meeting_event' : 'task');
     }
     if (args.priority && args.priority !== 'normal') {
       if (!['low', 'high'].includes(args.priority)) return { error: 'Некорректная важность.' };
@@ -389,6 +438,11 @@ export function runVoiceTool(db, name, args = {}, { now = () => new Date(), time
       overrides.primaryType = overrides.primaryType || 'task';
     }
     let classification = applyUserOverrides(original, Object.keys(overrides).length ? overrides : null, now(), timeZone);
+    // Конец — только при времени начала и строго после него, как в карточке.
+    const end = typeof args.due?.end === 'string' && /^\d{2}:\d{2}$/.test(args.due.end) ? args.due.end : null;
+    const schedule = classification.entities?.schedule;
+    if (end && schedule?.time && end > schedule.time)
+      classification = { ...classification, entities: { ...classification.entities, schedule: { ...schedule, end, display: `${[schedule.date, schedule.time].filter(Boolean).join(', ')}–${end}` } } };
     if (typeof args.project === 'string' && args.project.trim())
       classification = { ...classification, entities: { ...classification.entities, projects: [args.project.trim().slice(0, 120)] } };
     if (typeof args.done === 'boolean') classification = { ...classification, completed: args.done };
@@ -400,11 +454,59 @@ export function runVoiceTool(db, name, args = {}, { now = () => new Date(), time
   return { error: `Неизвестный инструмент: ${name}` };
 }
 
+// ── Календарь в разговоре ───────────────────────────────────────────────────
+// Те же операции, что и в сетке: посмотреть окно, подвинуть или переименовать
+// чужое событие, удалить его, взять в память. Свои дела и встречи правятся
+// update_capture — это запись, а не событие.
+const CALENDAR_TOOLS = new Set(['list_calendar', 'update_event', 'delete_event', 'take_event']);
+const isoDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
+function calendarItem(item) {
+  return item.kind === 'external'
+    ? { eventId: item.id, kind: 'событие', source: item.source, title: item.title, date: item.date, time: item.time, end: item.end, location: item.location || null, joinUrl: item.joinUrl || null, editable: Boolean(item.editable) }
+    : { captureId: item.id, kind: item.kind === 'meeting' ? 'встреча' : 'задача', title: item.title, date: item.date, time: item.time, end: item.end, done: item.done, overdue: Boolean(item.overdue), project: item.project || null };
+}
+function runCalendarTool(db, name, args, { now, timeZone, provider, userId, calendar }) {
+  if (!calendar) return { error: 'Календарь недоступен.' };
+  if (name === 'list_calendar') {
+    const today = dateInZone(now(), timeZone);
+    const from = isoDate(args.from) ? args.from : today, to = isoDate(args.to) ? args.to : shiftDate(from, 6);
+    const view = calendar.view({ userId, from, to });
+    if (view.error) return { error: view.error === 'range_too_wide' ? 'Окно не больше двух месяцев.' : 'Некорректные даты.' };
+    const items = view.items.concat(view.external).sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || ''))).slice(0, 60).map(calendarItem);
+    return { from, to, total: items.length, items, overdue: view.overdue.slice(0, 10).map(calendarItem), calendars: view.accounts.map(account => account.label) };
+  }
+  const eventId = typeof args.eventId === 'string' ? args.eventId : '';
+  if (!eventId.startsWith('ext:')) return { error: 'Нужен eventId события из list_calendar. Своё дело правится update_capture.' };
+  const messages = { not_found: 'Событие не найдено.', busy_mode: 'Этот календарь подключён в режиме «только занято»: его события не правятся.', recurring: 'Повторяющееся событие правьте в самом календаре.', calendar_not_found: 'В этот календарь писать нельзя.', account_not_found: 'Календарь отключён.', invalid_title: 'Название — до 300 символов.', invalid_schedule: 'Некорректная дата или время.', conflict: 'Событие только что изменили снаружи — обновите календарь.', unauthorized: 'Календарь не принял учётные данные, подключите его заново.' };
+  const failed = result => ({ error: `${messages[result.error] || 'Календарь не принял правку.'}${result.message ? ` ${result.message}` : ''}` });
+  if (name === 'update_event') {
+    const patch = {};
+    if (args.title !== undefined) patch.title = args.title;
+    if (args.date !== undefined) patch.date = args.date;
+    if (args.time !== undefined) patch.time = args.time === '' ? null : args.time;
+    if (args.end !== undefined) patch.end = args.end === '' ? null : args.end;
+    if (!Object.keys(patch).length) return { error: 'Нечего менять: назовите новое время, дату или название.' };
+    return calendar.updateExternalEvent({ userId, id: eventId, ...patch }).then(result => (result.error ? failed(result) : { eventId, updated: true, event: result.event }));
+  }
+  if (name === 'delete_event') return calendar.deleteExternalEvent({ userId, id: eventId }).then(result => (result.error ? failed(result) : { eventId, removed: true, title: result.title }));
+  if (name === 'take_event') {
+    const event = calendar.externalEvent({ userId, id: eventId });
+    if (!event) return { error: messages.not_found };
+    const [year, month, day] = event.date.split('-');
+    const numeric = `${day}.${month}.${year}`;
+    const raw = event.allDay ? `${event.title} — ${numeric}, весь день (из календаря ${event.source})` : `${event.title} — ${numeric} в ${event.time}${event.end ? `–${event.end}` : ''}${event.location ? `, ${event.location}` : ''} (из календаря ${event.source})`;
+    const queued = enqueueCaptureJob(db, { userId, raw, occurredAt: undefined, selectedProvider: provider, overrides: null });
+    return { captureId: queued.captureId, jobId: queued.jobId, saved: true, title: event.title };
+  }
+  return { error: `Неизвестный инструмент: ${name}` };
+}
+
 // ── Заглушка разговора ──────────────────────────────────────────────────────
 // Разбирает реплику по правилам и ходит теми же инструментами. Это не попытка
 // изобразить модель: заглушка нужна, чтобы весь путь — интерфейс, инструменты,
 // журнал — работал и проверялся до появления ключа.
 const RULES = [
+  { intent: 'list_calendar', re: /(что\s+(у\s+меня\s+)?(в\s+календаре|завтра|на\s+неделе)|какие\s+(у\s+меня\s+)?(встречи|события)|календарь\s+на\s+(?<when>сегодня|завтра|неделю))/i },
   { intent: 'list_today', re: /(что\s+(у\s+меня\s+)?(сегодня|на\s+сегодня)|какие\s+(дела|задачи)|план\s+на\s+день)/i },
   { intent: 'complete', re: /(отметь|пометь)\s+(как\s+)?(сделан|готов|выполнен)/i },
   { intent: 'reschedule', re: /(перенеси|сдвинь|отложи)\s*(?<when>.+)?/i },
@@ -481,16 +583,27 @@ function relativeDate(text, now) {
 }
 
 /** Один ход разговора в режиме заглушки: реплика → инструменты → ответ. */
-export function mockVoiceTurn(db, text, { now = () => new Date(), timeZone = 'Europe/Samara', provider = 'fallback', userId = null } = {}) {
+export function mockVoiceTurn(db, text, { now = () => new Date(), timeZone = 'Europe/Samara', provider = 'fallback', userId = null, calendar = null } = {}) {
   const said = String(text || '').trim();
   if (!said) return { reply: 'Я слушаю.', calls: [] };
   const { intent, groups } = detectIntent(said);
   const calls = [];
   const call = (name, args) => {
-    const result = runVoiceTool(db, name, args, { now, timeZone, provider, userId });
+    const result = runVoiceTool(db, name, args, { now, timeZone, provider, userId, calendar });
     calls.push({ name, arguments: args, result });
     return result;
   };
+
+  if (intent === 'list_calendar') {
+    const today = dateInZone(now(), timeZone);
+    const tomorrow = /завтра/i.test(said);
+    const from = tomorrow ? shiftDate(today, 1) : today, to = tomorrow ? from : /недел/i.test(said) ? shiftDate(today, 6) : /календар/i.test(said) ? shiftDate(today, 6) : today;
+    const result = call('list_calendar', { from, to });
+    if (result.error) return { reply: result.error, calls };
+    if (!result.total) return { reply: tomorrow ? 'На завтра в календаре пусто.' : 'В календаре на этот срок пусто.', calls };
+    const named = result.items.slice(0, 4).map(item => `${item.time ? `${item.time} ` : ''}${item.title}`);
+    return { reply: `В календаре ${result.total}: ${named.join('; ')}.`, calls };
+  }
 
   if (intent === 'list_today') {
     const result = call('list_today', {});

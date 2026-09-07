@@ -132,11 +132,23 @@ export function createCaldavClient({ fetch = globalThis.fetch, timeoutMs = 20000
     return events;
   }
 
-  async function putEvent({ calendarUrl, username, password, uid, ics, etag = null }) {
-    const href = new URL(`${encodeURIComponent(uid)}.ics`, calendarUrl.replace(/\/?$/, '/')).toString();
-    const result = await call(href, { method: 'PUT', body: ics, auth: { username, password }, headers: { 'Content-Type': 'text/calendar; charset=utf-8', ...(etag ? { 'If-Match': etag } : { 'If-None-Match': '*' }) } });
+  // Новое событие кладётся с If-None-Match: * — чтобы не затереть чужое с тем
+  // же uid. Обновление своего (replace) идёт без предусловий: etag после
+  // чужой правки устарел бы, и событие навсегда застряло бы в 412.
+  async function putEvent({ calendarUrl = null, href: givenHref = null, username, password, uid, ics, etag = null, replace = false }) {
+    const href = givenHref || new URL(`${encodeURIComponent(uid)}.ics`, calendarUrl.replace(/\/?$/, '/')).toString();
+    const result = await call(href, { method: 'PUT', body: ics, auth: { username, password }, headers: { 'Content-Type': 'text/calendar; charset=utf-8', ...(etag ? { 'If-Match': etag } : replace ? {} : { 'If-None-Match': '*' }) } });
+    if (result.status === 412) throw Object.assign(new Error('Событие изменили снаружи, пока мы его правили. Обновите календарь и попробуйте снова.'), { code: 'conflict', status: 412 });
     if (result.status < 200 || result.status >= 300) throw fail(result.status, 'PUT');
     return { href, etag: result.headers.get('etag') || null };
+  }
+
+  // Чужое событие целиком — чтобы поправить в нём время и положить обратно,
+  // не потеряв ничего из того, чего мы не разбираем.
+  async function getEvent({ href, username, password }) {
+    const result = await call(href, { method: 'GET', auth: { username, password } });
+    if (result.status < 200 || result.status >= 300) throw fail(result.status, 'GET');
+    return { ics: result.text, etag: result.headers.get('etag') || null };
   }
 
   async function deleteEvent({ href, username, password }) {
@@ -145,7 +157,7 @@ export function createCaldavClient({ fetch = globalThis.fetch, timeoutMs = 20000
     return true;
   }
 
-  return { discover, listEvents, putEvent, deleteEvent };
+  return { discover, listEvents, getEvent, putEvent, deleteEvent };
 }
 
 // Цвет календаря приходит как #RRGGBB или #RRGGBBAA; оставляем шесть знаков.

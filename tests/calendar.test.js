@@ -63,7 +63,8 @@ test('календарь Яндекса: подключение по парол�
   // Событие Яндекса в окне: московские 11:00 — самарские 12:00.
   let view = (await api.get('/api/calendar?from=2026-09-07&to=2026-09-07').expect(200)).body;
   assert.equal(view.external.length, 1);
-  assert.deepEqual([view.external[0].title, view.external[0].date, view.external[0].time, view.external[0].end, view.external[0].readOnly], ['Созвон <важный>', '2026-09-07', '12:00', '13:00', true]);
+  // Пишущий календарь не в режиме «занято» — событие можно править из сетки.
+  assert.deepEqual([view.external[0].title, view.external[0].date, view.external[0].time, view.external[0].end, view.external[0].readOnly, view.external[0].editable], ['Созвон <важный>', '2026-09-07', '12:00', '13:00', false, true]);
   assert.equal(view.accounts[0].calendars[0].name, 'Личное');
   // Режим «занято» прячет названия; отключённый календарь пропадает из сетки.
   await api.patch(`/api/calendar/accounts/${created.account.id}`).send({ mode: 'busy', label: 'Яндекс' }).expect(200);
@@ -155,4 +156,245 @@ test('очистка данных стирает и внешние календ�
   await api.post('/api/reset').send({ confirmation: 'СБРОСИТЬ КИЗУНА' }).expect(200);
   assert.equal(app.database.prepare('SELECT COUNT(*) n FROM calendar_accounts').get().n, 0);
   assert.equal(app.database.prepare('SELECT COUNT(*) n FROM calendar_events').get().n, 0);
+});
+
+// Синхронизация Яндекса, где наше же событие можно «подвинуть снаружи»:
+// REPORT отдаёт то, что лежит в outside, поверх обычного события abc.
+function yandexWithOutside({ calls = [], outside = { list: [] } } = {}) {
+  const base = fakeYandex({ calls });
+  return async (url, options) => {
+    if (options.method === 'REPORT' && url === 'https://caldav.yandex.ru/calendars/user@yandex.ru/events-123/' && outside.list.length) {
+      const responses = outside.list.map(event => `<D:response><D:href>/calendars/user@yandex.ru/events-123/${encodeURIComponent(event.uid)}.ics</D:href><D:propstat><D:prop><D:getetag>"${event.etag}"</D:getetag><C:calendar-data>BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:${event.uid}
+DTSTART:${event.start}
+DTEND:${event.end}
+SUMMARY:${event.title}
+END:VEVENT
+END:VCALENDAR</C:calendar-data></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>`).join('');
+      calls.push({ url, method: 'REPORT', body: options.body, headers: options.headers });
+      return new Response(`<?xml version="1.0"?><D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">${responses}</D:multistatus>`, { status: 207 });
+    }
+    return base(url, options);
+  };
+}
+const stampUtc = iso => iso.replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+
+test('автосинк с Яндексом: дела и встречи уходят сами, следуют за записью и уходят вместе с ней', async () => {
+  const calls = [];
+  const app = freshApp({ calendarFetch: fakeYandex({ calls }) });
+  const api = authed(app);
+  const account = (await api.post('/api/calendar/accounts').send(yandexBody).expect(201)).body.account;
+  assert.equal(account.autoExport, 'off');
+  await api.patch(`/api/calendar/accounts/${account.id}`).send({ autoExport: 'weird' }).expect(400);
+  // Включили «встречи и дела» — календарь-приёмник подставился сам.
+  const enabled = (await api.patch(`/api/calendar/accounts/${account.id}`).send({ autoExport: 'all' }).expect(200)).body.account;
+  assert.equal(enabled.autoExport, 'all');
+  assert.equal(enabled.autoCalendarId, account.calendars[0].id);
+  const day = shiftDate(today(), 3);
+  const todo = (await api.post('/api/captures').send({ raw: 'отправить смету', primaryType: 'todo', due: { date: day, time: '10:00' } }).expect(201)).body.entry;
+  const past = (await api.post('/api/captures').send({ raw: 'давно просроченное', primaryType: 'todo', due: { date: shiftDate(today(), -5) } }).expect(201)).body.entry;
+  await api.post('/api/captures').send({ raw: 'Просто заметка' }).expect(201);
+  calls.length = 0;
+  const pushed = await app.calendar.autoExport();
+  assert.deepEqual(pushed.map(result => [result.created, result.updated, result.removed]), [[1, 0, 0]]);
+  let puts = calls.filter(call => call.method === 'PUT');
+  assert.equal(puts.length, 1, 'просроченное задним числом не отправляется, заметка тем более');
+  assert.ok(puts[0].url.endsWith(`kizuna-${todo.id}%40kizuna.ics`));
+  assert.equal(puts[0].headers['If-None-Match'], '*');
+  assert.ok(puts[0].body.includes('SUMMARY:отправить смету'));
+  let view = (await api.get(`/api/calendar?from=${day}&to=${day}`).expect(200)).body;
+  assert.deepEqual(view.items.find(item => item.id === todo.id).exports, [{ accountId: account.id, calendarId: account.calendars[0].id, href: puts[0].url, auto: true }]);
+  assert.equal(view.external.length, 0, 'своё событие в чужом кэше не показывается второй раз');
+  // Повторный проход без изменений ничего не пишет.
+  calls.length = 0;
+  await app.calendar.autoExport();
+  assert.equal(calls.filter(call => call.method === 'PUT').length, 0);
+  // Перенос — переписывается тем же uid, уже без If-None-Match.
+  await api.post(`/api/captures/${todo.id}/corrections`).send({ patch: { schedule: { date: day, time: '15:00', end: '16:00' } } }).expect(200);
+  calls.length = 0;
+  await app.calendar.autoExport();
+  puts = calls.filter(call => call.method === 'PUT');
+  assert.equal(puts.length, 1);
+  assert.equal(puts[0].headers['If-None-Match'], undefined);
+  assert.ok(puts[0].url.endsWith(`kizuna-${todo.id}%40kizuna.ics`));
+  // «Сделано» оставляет событие в календаре, удаление записи убирает его.
+  const projectionId = app.database.prepare(`SELECT id FROM projections WHERE capture_id=? AND status='active' AND projection_type='task'`).get(todo.id).id;
+  await api.post(`/api/projections/${projectionId}/complete`).send({}).expect(200);
+  calls.length = 0;
+  await app.calendar.autoExport();
+  assert.equal(calls.filter(call => call.method === 'DELETE').length, 0);
+  await api.delete(`/api/captures/${todo.id}`).expect(200);
+  calls.length = 0;
+  const removed = await app.calendar.autoExport();
+  assert.equal(removed[0].removed, 1);
+  assert.equal(calls.filter(call => call.method === 'DELETE').length, 1);
+  assert.equal(app.database.prepare('SELECT COUNT(*) n FROM calendar_links').get().n, 0);
+  // Режим «встречи» дела не трогает; выключение не забирает уже отправленное.
+  await api.patch(`/api/calendar/accounts/${account.id}`).send({ autoExport: 'meetings' }).expect(200);
+  const another = (await api.post('/api/captures').send({ raw: 'ещё одно дело', primaryType: 'todo', due: { date: day } }).expect(201)).body.entry;
+  calls.length = 0;
+  await app.calendar.autoExport();
+  assert.equal(calls.filter(call => call.method === 'PUT').length, 0);
+  await api.patch(`/api/calendar/accounts/${account.id}`).send({ autoExport: 'all' }).expect(200);
+  await app.calendar.autoExport();
+  assert.equal(app.database.prepare('SELECT auto FROM calendar_links WHERE capture_id=?').get(another.id).auto, 1);
+  await api.patch(`/api/calendar/accounts/${account.id}`).send({ autoExport: 'off' }).expect(200);
+  calls.length = 0;
+  await app.calendar.autoExport();
+  assert.equal(calls.filter(call => call.method === 'DELETE').length, 0);
+  assert.equal(app.database.prepare('SELECT COUNT(*) n FROM calendar_links').get().n, 1);
+  // Автоматически отправленное «убрать» руками нельзя, пока режим включён — но
+  // при выключенном оно ведёт себя как ручное.
+  await api.post('/api/calendar/export/remove').send({ captureId: another.id, accountId: account.id }).expect(200);
+  assert.equal(past.id.length > 0, true);
+});
+
+test('автосинк обратно: событие подвинули в Яндексе — срок записи подвинулся, наружу ничего не ушло', async () => {
+  const calls = [];
+  const outside = { list: [] };
+  const app = freshApp({ calendarFetch: yandexWithOutside({ calls, outside }) });
+  const api = authed(app);
+  const account = (await api.post('/api/calendar/accounts').send(yandexBody).expect(201)).body.account;
+  await api.patch(`/api/calendar/accounts/${account.id}`).send({ autoExport: 'all' }).expect(200);
+  const day = shiftDate(today(), 2);
+  const todo = (await api.post('/api/captures').send({ raw: 'сходить к врачу', primaryType: 'todo', due: { date: day, time: '09:00' } }).expect(201)).body.entry;
+  await app.calendar.autoExport();
+  const link = app.database.prepare('SELECT * FROM calendar_links WHERE capture_id=?').get(todo.id);
+  assert.equal(link.etag, '"new-etag"');
+  // Снаружи событие перенесли на 14:00–15:00 самарского (10:00Z–11:00Z) и etag сменился.
+  outside.list = [{ uid: `kizuna-${todo.id}@kizuna`, etag: 'moved-etag', title: 'сходить к врачу', start: stampUtc(`${day}T10:00:00.000Z`), end: stampUtc(`${day}T11:00:00.000Z`) }];
+  await app.calendar.syncAccount(account.id);
+  calls.length = 0;
+  const result = await app.calendar.autoExport();
+  assert.equal(result[0].pulled, 1);
+  assert.equal(calls.filter(call => call.method === 'PUT').length, 0);
+  const schedule = JSON.parse(app.database.prepare(`SELECT classification_json FROM interpretations WHERE capture_id=? AND status='active'`).get(todo.id).classification_json).entities.schedule;
+  assert.deepEqual([schedule.date, schedule.time, schedule.end], [day, '14:00', '15:00']);
+  // Отпечаток и etag обновлены: следующий проход тих.
+  calls.length = 0;
+  await app.calendar.autoExport();
+  assert.equal(calls.filter(call => call.method === 'PUT').length, 0);
+});
+
+test('чужое событие из сетки: перенос и переименование уходят PUT с If-Match, удаление — DELETE; «занято» и повторы не правятся', async () => {
+  const calls = [];
+  const app = freshApp({ calendarFetch: fakeYandex({ calls }) });
+  const api = authed(app);
+  const account = (await api.post('/api/calendar/accounts').send(yandexBody).expect(201)).body.account;
+  let view = (await api.get('/api/calendar?from=2026-09-07&to=2026-09-07').expect(200)).body;
+  const event = view.external[0];
+  assert.equal(event.editable, true);
+  calls.length = 0;
+  const moved = (await api.patch(`/api/calendar/external/${encodeURIComponent(event.id)}`).send({ date: '2026-09-08', time: '15:00', end: '15:45', title: 'Созвон перенесён' }).expect(200)).body.event;
+  assert.deepEqual([moved.date, moved.time, moved.end, moved.title], ['2026-09-08', '15:00', '15:45', 'Созвон перенесён']);
+  const get = calls.find(call => call.method === 'GET');
+  assert.ok(get.url.endsWith('/events-123/abc.ics'));
+  const put = calls.find(call => call.method === 'PUT');
+  assert.equal(put.url, 'https://caldav.yandex.ru/calendars/user@yandex.ru/events-123/abc.ics');
+  assert.equal(put.headers['If-Match'], '"etag-1"');
+  assert.ok(put.body.includes('DTSTART:20260908T110000Z'), 'самарские 15:00 — 11:00Z');
+  assert.ok(put.body.includes('DTEND:20260908T114500Z'));
+  assert.ok(put.body.includes('SUMMARY:Созвон перенесён'));
+  assert.ok(put.body.includes('X-YANDEX-FOO:bar'), 'чужие свойства сохранены');
+  assert.ok(!put.body.includes('TZID=Europe/Moscow'));
+  view = (await api.get('/api/calendar?from=2026-09-08&to=2026-09-08').expect(200)).body;
+  assert.deepEqual([view.external[0].time, view.external[0].end, view.external[0].title], ['15:00', '15:45', 'Созвон перенесён']);
+  await api.patch(`/api/calendar/external/${encodeURIComponent(event.id)}`).send({ time: '15:00', end: '14:00' }).expect(400);
+  await api.patch(`/api/calendar/external/${encodeURIComponent(event.id)}`).send({ title: '' }).expect(400);
+  await api.patch('/api/calendar/external/ext:nope').send({ title: 'x' }).expect(404);
+  // Режим «занято» закрывает правку; чужой пользователь события не видит.
+  await api.patch(`/api/calendar/accounts/${account.id}`).send({ mode: 'busy' }).expect(200);
+  await api.patch(`/api/calendar/external/${encodeURIComponent(event.id)}`).send({ title: 'x' }).expect(409);
+  await api.patch(`/api/calendar/accounts/${account.id}`).send({ mode: 'full' }).expect(200);
+  const stranger = authed(app, { email: 'other@kizuna.test', role: 'user' });
+  await stranger.delete(`/api/calendar/external/${encodeURIComponent(event.id)}`).expect(404);
+  calls.length = 0;
+  await api.delete(`/api/calendar/external/${encodeURIComponent(event.id)}`).expect(200);
+  assert.equal(calls.filter(call => call.method === 'DELETE')[0].url, 'https://caldav.yandex.ru/calendars/user@yandex.ru/events-123/abc.ics');
+  view = (await api.get('/api/calendar?from=2026-09-08&to=2026-09-08').expect(200)).body;
+  assert.equal(view.external.length, 0);
+  // Экземпляр повтора по CalDAV не правится: строка кэша с instance_key.
+  app.database.prepare(`INSERT INTO calendar_events(id,account_id,calendar_id,uid,instance_key,title,description,location,start_at,end_at,all_day,busy,join_url,etag,href,updated_at) VALUES('rec1',?,?,'rr','20260909T070000Z','Стендап',NULL,NULL,'2026-09-09T07:00:00.000Z','2026-09-09T07:15:00.000Z',0,1,NULL,'"e"','https://caldav.yandex.ru/calendars/user@yandex.ru/events-123/rr.ics',?)`).run(account.id, account.calendars[0].id, new Date().toISOString());
+  view = (await api.get('/api/calendar?from=2026-09-09&to=2026-09-09').expect(200)).body;
+  assert.equal(view.external[0].editable, false);
+  await api.patch('/api/calendar/external/ext:rec1').send({ time: '12:00' }).expect(409);
+});
+
+test('голос и календарь: list_calendar видит своё и чужое, update_event двигает чужое, take_event кладёт в память', async () => {
+  const calls = [];
+  const app = freshApp({ calendarFetch: fakeYandex({ calls }) });
+  const api = authed(app);
+  await api.post('/api/calendar/accounts').send(yandexBody).expect(201);
+  const todo = (await api.post('/api/captures').send({ raw: 'отдать ключи', primaryType: 'todo', due: { date: '2026-09-07', time: '09:30' } }).expect(201)).body.entry;
+  const listed = (await api.post('/api/voice/tool').send({ name: 'list_calendar', arguments: { from: '2026-09-07', to: '2026-09-07' } }).expect(200)).body.result;
+  assert.deepEqual(listed.items.map(item => [item.kind, item.title, item.time, item.captureId || item.eventId?.startsWith('ext:')]), [['задача', 'отдать ключи', '09:30', todo.id], ['событие', 'Созвон <важный>', '12:00', true]]);
+  assert.deepEqual(listed.calendars, ['Яндекс · user@yandex.ru']);
+  const eventId = listed.items[1].eventId;
+  await api.post('/api/voice/tool').send({ name: 'update_event', arguments: { eventId: todo.id, time: '10:00' } }).expect(400);
+  const moved = (await api.post('/api/voice/tool').send({ name: 'update_event', arguments: { eventId, time: '16:00' } }).expect(200)).body.result;
+  assert.deepEqual([moved.updated, moved.event.time, moved.event.end], [true, '16:00', '17:00']);
+  assert.ok(calls.some(call => call.method === 'PUT' && call.body.includes('DTSTART:20260907T120000Z')));
+  // Своё дело двигается update_capture, теперь и с концом.
+  const own = (await api.post('/api/voice/tool').send({ name: 'update_capture', arguments: { captureId: todo.id, due: { date: '2026-09-07', time: '11:00', end: '11:30' } } }).expect(200)).body.result;
+  assert.equal(own.due, '2026-09-07, 11:00–11:30');
+  const taken = (await api.post('/api/voice/tool').send({ name: 'take_event', arguments: { eventId } }).expect(200)).body.result;
+  assert.equal(taken.saved, true);
+  assert.match(app.database.prepare('SELECT raw FROM captures WHERE id=?').get(taken.captureId).raw, /Созвон <важный> — 07\.09\.2026 в 16:00–17:00 \(из календаря Яндекс/);
+  const gone = (await api.post('/api/voice/tool').send({ name: 'delete_event', arguments: { eventId } }).expect(200)).body.result;
+  assert.equal(gone.removed, true);
+  await api.post('/api/voice/tool').send({ name: 'delete_event', arguments: { eventId } }).expect(400);
+  // Заглушка разговора отвечает по календарю той же дорогой.
+  const turn = (await api.post('/api/voice/turn').send({ text: 'что у меня в календаре' }).expect(200)).body;
+  assert.equal(turn.calls[0].name, 'list_calendar');
+  assert.match(turn.reply, /В календаре \d|пусто/);
+});
+
+test('автосинк с Google: встреча создаётся events.insert, перенос — events.update, чужое событие правится PATCH', async () => {
+  const calls = [];
+  const googleFetch = async (url, options = {}) => {
+    calls.push({ url, method: options.method || 'GET', body: options.body });
+    if (url.startsWith('https://oauth2.googleapis.com/token')) return Response.json({ access_token: 'at-1', refresh_token: 'rt-1', expires_in: 3600 });
+    if (url.includes('/users/me/calendarList')) return Response.json({ items: [{ id: 'me@gmail.com', summary: 'me@gmail.com', primary: true, accessRole: 'owner' }] });
+    if (url.includes('/calendars/me%40gmail.com/events/g-1') && options.method === 'PUT') return Response.json({ id: 'g-1', htmlLink: 'https://calendar.google.com/g-1', etag: '"g-etag-2"' });
+    if (url.includes('/calendars/me%40gmail.com/events/ev1') && options.method === 'PATCH') return Response.json({ id: 'ev1', etag: '"ev1-2"' });
+    if (url.includes('/calendars/me%40gmail.com/events?')) return Response.json({ items: [{ id: 'ev1', summary: '1:1', status: 'confirmed', start: { dateTime: '2026-09-07T12:00:00+04:00' }, end: { dateTime: '2026-09-07T13:00:00+04:00' } }] });
+    if (url.includes('/calendars/me%40gmail.com/events') && options.method === 'POST') return Response.json({ id: 'g-1', htmlLink: 'https://calendar.google.com/g-1', etag: '"g-etag-1"' });
+    return new Response('not found', { status: 404 });
+  };
+  const app = freshApp({ calendarFetch: googleFetch });
+  const api = authed(app);
+  await api.put('/api/settings').send({ googleClientId: 'client-id', googleClientSecret: 'client-secret' }).expect(200);
+  const start = await api.get('/api/calendar/google/start').set('Host', 'kizuna.example').expect(302);
+  const state = new URL(start.headers.location).searchParams.get('state');
+  await api.get(`/api/calendar/google/callback?state=${state}&code=the-code`).expect(302);
+  const account = (await api.get('/api/calendar/accounts').expect(200)).body.accounts[0];
+  await api.patch(`/api/calendar/accounts/${account.id}`).send({ autoExport: 'meetings' }).expect(200);
+  const meeting = (await api.post('/api/captures').send({ raw: 'Завтра в 11 созвон с BE по секретам сессий в Hub' }).expect(201)).body.entry;
+  assert.equal(meeting.interpretation.classification.primaryType, 'meeting_event');
+  await api.post('/api/captures').send({ raw: 'купить молоко', primaryType: 'todo', due: { date: shiftDate(today(), 1) } }).expect(201);
+  calls.length = 0;
+  await app.calendar.autoExport();
+  const posts = calls.filter(call => call.method === 'POST' && call.url.includes('/events'));
+  assert.equal(posts.length, 1, 'в режиме «встречи» дело не уходит');
+  const body = JSON.parse(posts[0].body);
+  assert.equal(body.extendedProperties.private.kizunaCaptureId, meeting.id);
+  assert.ok(body.start.dateTime);
+  const date = meeting.interpretation.classification.entities.schedule.date;
+  await api.post(`/api/captures/${meeting.id}/corrections`).send({ patch: { schedule: { date, time: '12:00', end: '12:30' } } }).expect(200);
+  calls.length = 0;
+  await app.calendar.autoExport();
+  const put = calls.find(call => call.method === 'PUT');
+  assert.ok(put.url.endsWith('/events/g-1'));
+  assert.equal(JSON.parse(put.body).summary, body.summary);
+  // Чужое событие Google переносится PATCH по его id.
+  const view = (await api.get('/api/calendar?from=2026-09-07&to=2026-09-07').expect(200)).body;
+  const external = view.external.find(item => item.title === '1:1');
+  assert.equal(external.editable, true);
+  calls.length = 0;
+  await api.patch(`/api/calendar/external/${encodeURIComponent(external.id)}`).send({ time: '14:00' }).expect(200);
+  const patch = calls.find(call => call.method === 'PATCH');
+  assert.ok(patch.url.endsWith('/events/ev1'));
+  assert.deepEqual(JSON.parse(patch.body).start, { dateTime: '2026-09-07T10:00:00.000Z' });
+  assert.deepEqual(JSON.parse(patch.body).end, { dateTime: '2026-09-07T11:00:00.000Z' });
 });

@@ -25,6 +25,7 @@ DTEND;TZID=Europe/Moscow:20260907T120000
 SUMMARY:Созвон &lt;важный&gt;
 END:VEVENT
 END:VCALENDAR</C:calendar-data></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>`, { status: 207 });
+    if (method === 'GET' && url.endsWith('/events-123/abc.ics')) return new Response(`BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:abc\r\nDTSTART;TZID=Europe/Moscow:20260907T110000\r\nDTEND;TZID=Europe/Moscow:20260907T120000\r\nSUMMARY:Созвон <важный>\r\nX-YANDEX-FOO:bar\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n`, { status: 200, headers: { ETag: '"etag-1"' } });
     if (method === 'PUT') return new Response('', { status: 201, headers: { ETag: '"new-etag"' } });
     if (method === 'DELETE') return new Response(null, { status: 204 });
     return new Response('nope', { status: 404 });

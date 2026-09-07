@@ -342,3 +342,37 @@ export function buildEvent({ uid, title, description = '', start, end, allDay = 
   lines.push('END:VEVENT', 'END:VCALENDAR');
   return lines.map(fold).join('\r\n') + '\r\n';
 }
+
+// Правка чужого события по месту: меняются только начало, конец и, если
+// просили, название; всё остальное — участники, напоминания, описание, чужие
+// X-свойства — остаётся как было. Правится главный VEVENT (без RECURRENCE-ID):
+// повторяющиеся события снаружи не правим вовсе, это решает вызывающий.
+export function rewriteEvent(text, { title, start, end, allDay = false, now = new Date() }) {
+  const lines = unfold(text);
+  const out = [];
+  let inEvent = false, isMaster = false, block = [];
+  const flush = () => {
+    if (!isMaster) { out.push(...block); block = []; return; }
+    const keep = block.filter(line => !/^(DTSTART|DTEND|DURATION|DTSTAMP|LAST-MODIFIED|SEQUENCE)(;|:)/i.test(line) && !(title !== undefined && /^SUMMARY(;|:)/i.test(line)));
+    const sequence = block.map(line => line.match(/^SEQUENCE:(\d+)/i)).find(Boolean);
+    const summaryLine = title !== undefined ? `SUMMARY:${escapeText(title)}` : null;
+    const timing = allDay
+      ? [`DTSTART;VALUE=DATE:${wallStamp(start).slice(0, 8)}`, `DTEND;VALUE=DATE:${wallStamp(end).slice(0, 8)}`]
+      : [`DTSTART:${stamp(start)}`, `DTEND:${stamp(end)}`];
+    const extra = [`DTSTAMP:${stamp(now)}`, `LAST-MODIFIED:${stamp(now)}`, `SEQUENCE:${(sequence ? Number(sequence[1]) : 0) + 1}`, ...timing, ...(summaryLine ? [summaryLine] : [])];
+    const endIndex = keep.findIndex(line => /^END:VEVENT/i.test(line));
+    out.push(...keep.slice(0, endIndex), ...extra, ...keep.slice(endIndex));
+    block = [];
+  };
+  for (const line of lines) {
+    if (/^BEGIN:VEVENT/i.test(line)) { inEvent = true; isMaster = true; block = [line]; continue; }
+    if (inEvent) {
+      block.push(line);
+      if (/^RECURRENCE-ID(;|:)/i.test(line)) isMaster = false;
+      if (/^END:VEVENT/i.test(line)) { inEvent = false; flush(); }
+      continue;
+    }
+    out.push(line);
+  }
+  return out.filter(line => line !== '').map(fold).join('\r\n') + '\r\n';
+}

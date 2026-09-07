@@ -260,6 +260,18 @@ function migrate(db) {
       PRIMARY KEY(capture_id, account_id)
     )`);
     db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(12, now());
+    // Миграция 13: автоматическая отправка наружу. У учётной записи — режим
+    // (off / meetings / all) и календарь-приёмник; у ссылки — отпечаток
+    // отправленного события, чтобы понимать, менялась ли запись, признак
+    // «создано автоматом» и когда обновлялось. Ошибка отправки хранится
+    // отдельно от ошибки чтения: чтение и запись ломаются по-разному.
+    for (const [table, column, definition] of [
+      ['calendar_accounts', 'auto_export', "TEXT NOT NULL DEFAULT 'off'"], ['calendar_accounts', 'auto_calendar_id', 'TEXT'], ['calendar_accounts', 'export_error', 'TEXT'],
+      ['calendar_links', 'fingerprint', 'TEXT'], ['calendar_links', 'auto', 'INTEGER NOT NULL DEFAULT 0'], ['calendar_links', 'updated_at', 'TEXT'],
+    ]) {
+      if (!db.prepare(`PRAGMA table_info(${table})`).all().some(entry => entry.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(13, now());
 }
 // Ограничение переписывается из собственного определения таблицы, а не из
 // зашитой здесь копии: копия разошлась бы с настоящей схемой на первой же новой

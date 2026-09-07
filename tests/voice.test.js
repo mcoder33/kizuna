@@ -48,6 +48,10 @@ test('voice tools are declared once and shared by both modes', () => {
     'delete_capture',
     'restore_capture',
     'update_capture',
+    'list_calendar',
+    'update_event',
+    'delete_event',
+    'take_event',
   ]);
   for (const tool of VOICE_TOOLS) {
     assert.equal(tool.type, 'function');

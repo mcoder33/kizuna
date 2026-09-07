@@ -101,14 +101,39 @@ export function createGoogleCalendarClient({ fetch = globalThis.fetch, timeoutMs
     return out;
   }
 
-  async function insertEvent({ accessToken, calendarId, event }) {
-    const body = {
+  function eventBody(event) {
+    return {
       summary: event.title, description: event.description || undefined, location: event.location || undefined,
       start: event.allDay ? { date: event.startDate } : { dateTime: event.start.toISOString() },
       end: event.allDay ? { date: event.endDate } : { dateTime: event.end.toISOString() },
       extendedProperties: { private: { kizunaCaptureId: event.captureId || '' } },
     };
-    const data = await call(`${API_URL}/calendars/${encodeURIComponent(calendarId)}/events`, { method: 'POST', accessToken, body });
+  }
+  async function insertEvent({ accessToken, calendarId, event }) {
+    const data = await call(`${API_URL}/calendars/${encodeURIComponent(calendarId)}/events`, { method: 'POST', accessToken, body: eventBody(event) });
+    return { id: data.id, href: data.htmlLink || null, etag: data.etag || null };
+  }
+  // Обновление своего события целиком (PUT): стёртое снаружи — 404/410 —
+  // возвращается как missing, чтобы вызывающий создал его заново.
+  async function updateEvent({ accessToken, calendarId, eventId, event }) {
+    try {
+      const data = await call(`${API_URL}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, { method: 'PUT', accessToken, body: eventBody(event) });
+      return { id: data.id, href: data.htmlLink || null, etag: data.etag || null };
+    } catch (error) {
+      if (error.status === 404 || error.status === 410) return { missing: true };
+      throw error;
+    }
+  }
+  // Частичная правка чужого события: только то, что человек менял. Экземпляр
+  // повтора у Google — свой id, PATCH по нему правит один экземпляр.
+  async function patchEvent({ accessToken, calendarId, eventId, patch }) {
+    const body = {};
+    if (patch.title !== undefined) body.summary = patch.title;
+    if (patch.start !== undefined) {
+      body.start = patch.allDay ? { date: patch.startDate } : { dateTime: patch.start.toISOString() };
+      body.end = patch.allDay ? { date: patch.endDate } : { dateTime: patch.end.toISOString() };
+    }
+    const data = await call(`${API_URL}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, { method: 'PATCH', accessToken, body });
     return { id: data.id, href: data.htmlLink || null, etag: data.etag || null };
   }
   async function deleteEvent({ accessToken, calendarId, eventId }) {
@@ -117,5 +142,5 @@ export function createGoogleCalendarClient({ fetch = globalThis.fetch, timeoutMs
     return true;
   }
 
-  return { authorizeUrl, exchangeCode, refreshAccessToken, listCalendars, listEvents, insertEvent, deleteEvent };
+  return { authorizeUrl, exchangeCode, refreshAccessToken, listCalendars, listEvents, insertEvent, updateEvent, patchEvent, deleteEvent };
 }

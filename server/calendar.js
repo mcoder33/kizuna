@@ -3,16 +3,29 @@
 // Внешние события (Яндекс, Apple, Google) живут в отдельном кэше и не
 // становятся записями: их нет в поиске, отчётах и брифе, пока человек не
 // возьмёт событие в память сам. Перенос дела в сетке — это уточнение записи
-// (patch.schedule), а не правка календаря; наружу события уходят только по
-// явной кнопке — ActionProposal с подтверждением, как велит контракт памяти.
+// (patch.schedule), а не правка календаря. Наружу события уходят либо по
+// явной кнопке, либо автоматически — когда человек один раз разрешил это в
+// настройках учётной записи (режим «встречи» или «встречи и дела»): такое
+// разрешение и есть подтверждение действия во внешний мир по контракту
+// памяти. Чужие события можно двигать, переименовывать и удалять из сетки,
+// если календарь пишущий и не в режиме «занято».
 import crypto from 'node:crypto';
 import { dateInZone, shiftDate } from './reports.js';
 import { CALDAV_PRESETS, createCaldavClient } from './caldav.js';
 import { createGoogleCalendarClient } from './google-calendar.js';
-import { buildEvent, findJoinUrl, localDateTime, zonedToUtc } from './ics.js';
+import { buildEvent, findJoinUrl, localDateTime, rewriteEvent, zonedToUtc } from './ics.js';
+import { replaceInterpretation } from './db.js';
+import { shouldMaterializeProjections } from './classifier.js';
 
 export const PROVIDERS = ['caldav', 'google'];
 export const ACCOUNT_MODES = ['full', 'busy'];
+// Автоматическая отправка: выключена, только встречи, встречи и дела со сроком.
+export const AUTO_EXPORT_MODES = ['off', 'meetings', 'all'];
+// За один проход в одну учётную запись уходит не больше стольких правок: при
+// первом включении на длинном журнале лучше догнать за несколько минут, чем
+// упереться в лимиты сервера.
+export const AUTO_EXPORT_BATCH = 40;
+export const TITLE_LIMIT = 300;
 export const LABEL_LIMIT = 60;
 // Окно синхронизации: полтора месяца назад — чтобы «Обзор» и день видели
 // прошедшие встречи, четыре месяца вперёд — чтобы месяц листался без дыр.
@@ -28,14 +41,17 @@ const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
 const nowIso = () => new Date().toISOString();
 const validDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
+const validTime = value => typeof value === 'string' && /^\d{2}:\d{2}$/.test(value) && Number(value.slice(0, 2)) <= 23 && Number(value.slice(3)) <= 59;
+const plainEtag = value => String(value || '').replace(/^W\//, '').replace(/"/g, '');
 function minutesOf(time) { return Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5)); }
 function timeOf(minutes) { const m = ((minutes % 1440) + 1440) % 1440; return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; }
 
-export function createCalendarService({ db, secrets, now = () => new Date(), timeZone = () => 'Europe/Samara', googleConfig = () => ({ clientId: null, clientSecret: null }), fetch = globalThis.fetch, caldav = null, google = null, audit = () => {} } = {}) {
+export function createCalendarService({ db, secrets, now = () => new Date(), timeZone = () => 'Europe/Samara', googleConfig = () => ({ clientId: null, clientSecret: null }), fetch = globalThis.fetch, caldav = null, google = null, audit = () => {}, onChange = () => {}, autoExportDelayMs = 1500 } = {}) {
   const caldavClient = caldav || createCaldavClient({ fetch });
   const googleClient = google || createGoogleCalendarClient({ fetch });
   const oauthStates = new Map();
   const report = event => { try { audit(event); } catch {} };
+  const changed = () => { try { onChange(); } catch {} };
 
   // ── учётные записи ──
   function rowToAccount(row, { withCalendars = true } = {}) {
@@ -45,6 +61,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
       serverUrl: row.server_url || null, username: row.username || null,
       calendars: withCalendars ? calendars.map(calendar => ({ id: calendar.id, name: calendar.name, color: calendar.color || null, selected: calendar.selected !== false, writable: calendar.writable !== false, primary: Boolean(calendar.primary) })) : undefined,
       syncedAt: row.synced_at || null, syncError: row.sync_error || null, createdAt: row.created_at, disabled: Boolean(row.disabled_at),
+      autoExport: row.auto_export || 'off', autoCalendarId: row.auto_calendar_id || null, exportError: row.export_error || null,
     };
   }
   function accountRow(userId, id) { return db.prepare('SELECT * FROM calendar_accounts WHERE id=? AND user_id IS ?').get(id, userId) || null; }
@@ -74,10 +91,21 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
   }
 
   function validLabel(value) { const label = typeof value === 'string' ? value.trim() : ''; return label && label.length <= LABEL_LIMIT ? label : null; }
-  function updateAccount({ userId, id, label, color, mode, calendars, disabled }) {
+  // Календарь-приёмник для автоотправки: выбранный, иначе основной, иначе
+  // первый, куда можно писать.
+  function defaultTarget(calendars) { return calendars.find(calendar => calendar.primary && calendar.writable !== false) || calendars.find(calendar => calendar.writable !== false) || null; }
+  function updateAccount({ userId, id, label, color, mode, calendars, disabled, autoExport, autoCalendarId }) {
     const row = accountRow(userId, id);
     if (!row) return { error: 'not_found' };
     const next = {};
+    const knownCalendars = JSON.parse(row.calendars_json || '[]');
+    if (autoExport !== undefined) { if (!AUTO_EXPORT_MODES.includes(autoExport)) return { error: 'invalid_auto_export' }; next.auto_export = autoExport; next.export_error = null; }
+    if (autoCalendarId !== undefined) {
+      if (autoCalendarId !== null && !knownCalendars.some(calendar => calendar.id === autoCalendarId && calendar.writable !== false)) return { error: 'calendar_not_found' };
+      next.auto_calendar_id = autoCalendarId; next.export_error = null;
+    }
+    const autoMode = next.auto_export ?? row.auto_export ?? 'off';
+    if (autoMode !== 'off' && !(next.auto_calendar_id ?? row.auto_calendar_id)) { const target = defaultTarget(knownCalendars); if (!target) return { error: 'calendar_not_found' }; next.auto_calendar_id = target.id; }
     if (label !== undefined) { const value = validLabel(label); if (!value) return { error: 'invalid_label' }; next.label = value; }
     if (color !== undefined) { if (color !== null && !/^#[0-9a-f]{6}$/i.test(String(color))) return { error: 'invalid_color' }; next.color = color ? String(color).toLowerCase() : null; }
     if (mode !== undefined) { if (!ACCOUNT_MODES.includes(mode)) return { error: 'invalid_mode' }; next.mode = mode; }
@@ -96,6 +124,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
       const stale = db.prepare('SELECT DISTINCT calendar_id FROM calendar_events WHERE account_id=?').all(id).map(r => r.calendar_id).filter(calendarId => !keep.includes(calendarId));
       for (const calendarId of stale) db.prepare('DELETE FROM calendar_events WHERE account_id=? AND calendar_id=?').run(id, calendarId);
     }
+    if (autoMode !== 'off' && (next.auto_export || next.auto_calendar_id) && !(next.disabled_at ?? row.disabled_at)) wakeAutoExport();
     return { account: rowToAccount(accountRow(userId, id)) };
   }
   function removeAccount({ userId, id }) {
@@ -235,9 +264,9 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     }
     const completion = completionMap();
     const links = new Map();
-    for (const row of db.prepare('SELECT l.capture_id, l.account_id, l.calendar_id, l.href FROM calendar_links l JOIN calendar_accounts a ON a.id=l.account_id WHERE a.user_id IS ?').all(userId)) {
+    for (const row of db.prepare('SELECT l.capture_id, l.account_id, l.calendar_id, l.href, l.auto FROM calendar_links l JOIN calendar_accounts a ON a.id=l.account_id WHERE a.user_id IS ?').all(userId)) {
       if (!links.has(row.capture_id)) links.set(row.capture_id, []);
-      links.get(row.capture_id).push({ accountId: row.account_id, calendarId: row.calendar_id, href: row.href });
+      links.get(row.capture_id).push({ accountId: row.account_id, calendarId: row.calendar_id, href: row.href, auto: Boolean(row.auto) });
     }
     const items = [], overdue = [];
     for (const row of rows) {
@@ -265,17 +294,23 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     const zone = timeZone();
     const fromUtc = zonedToUtc({ year: Number(from.slice(0, 4)), month: Number(from.slice(5, 7)), day: Number(from.slice(8, 10)) }, zone);
     const toUtc = zonedToUtc({ year: Number(to.slice(0, 4)), month: Number(to.slice(5, 7)), day: Number(to.slice(8, 10)) + 1 }, zone);
-    const rows = db.prepare(`SELECT e.*, a.mode, a.label account_label, a.color account_color, a.calendars_json FROM calendar_events e JOIN calendar_accounts a ON a.id=e.account_id
-      WHERE a.user_id IS ? AND a.disabled_at IS NULL AND e.start_at<? AND e.end_at>? ORDER BY e.start_at LIMIT 2000`).all(userId, toUtc.toISOString(), fromUtc.toISOString());
+    // Свои же отправленные события в чужом календаре не показываются второй
+    // раз: они и так на сетке как дела и встречи.
+    const rows = db.prepare(`SELECT e.*, a.mode, a.provider, a.label account_label, a.color account_color, a.calendars_json FROM calendar_events e JOIN calendar_accounts a ON a.id=e.account_id
+      WHERE a.user_id IS ? AND a.disabled_at IS NULL AND e.start_at<? AND e.end_at>?
+        AND NOT EXISTS (SELECT 1 FROM calendar_links l WHERE l.account_id=e.account_id AND l.uid=e.uid)
+      ORDER BY e.start_at LIMIT 2000`).all(userId, toUtc.toISOString(), fromUtc.toISOString());
     const out = [];
     for (const row of rows) {
       const calendar = JSON.parse(row.calendars_json || '[]').find(item => item.id === row.calendar_id) || null;
       const busyOnly = row.mode === 'busy';
+      const editable = !busyOnly && calendar?.writable !== false && !(row.provider === 'caldav' && row.instance_key);
       const base = {
         id: `ext:${row.id}`, kind: 'external', accountId: row.account_id, calendarId: row.calendar_id, calendarName: calendar?.name || row.account_label,
         color: row.account_color || calendar?.color || null, source: row.account_label,
         title: busyOnly ? 'Занято' : row.title, description: busyOnly ? null : row.description, location: busyOnly ? null : row.location,
-        busy: Boolean(row.busy), joinUrl: busyOnly ? null : row.join_url, href: busyOnly ? null : row.href, readOnly: true,
+        busy: Boolean(row.busy), joinUrl: busyOnly ? null : row.join_url, href: busyOnly ? null : row.href, readOnly: !editable, editable,
+        recurring: Boolean(row.instance_key),
       };
       if (row.all_day) {
         // Событие на весь день хранится датами UTC-полуночи; конец —
@@ -309,7 +344,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     };
   }
 
-  // ── наружу: встреча из записи во внешний календарь ──
+  // ── наружу: дело или встреча из записи во внешний календарь ──
   function eventFromCapture(captureRow, tz) {
     const c = JSON.parse(captureRow.classification_json);
     const schedule = c.entities?.schedule;
@@ -327,6 +362,39 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     const end = new Date(start.getTime() + (endMinutes - startMinutes) * 60000);
     return { title, description, allDay: false, start, end };
   }
+  // Отпечаток того, что ушло наружу: пока он не меняется, писать заново нечего.
+  function fingerprintOf(event) {
+    const moment = value => (value instanceof Date ? value.toISOString() : JSON.stringify(value));
+    return crypto.createHash('sha1').update(JSON.stringify([event.title, event.description, event.allDay, moment(event.start), moment(event.end)])).digest('hex');
+  }
+  const captureQuery = `SELECT c.id, c.raw, c.deleted_at, i.classification_json FROM captures c LEFT JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.id=?`;
+  function hasActiveProjection(captureId) { return Boolean(db.prepare(`SELECT 1 FROM projections WHERE capture_id=? AND status='active' AND projection_type IN ('task','meeting_event') LIMIT 1`).get(captureId)); }
+  async function writeEvent(row, calendar, capture, event, link = null) {
+    const uid = link?.uid || `kizuna-${capture.id}@kizuna`;
+    if (row.provider === 'caldav') {
+      const creds = credentialsOf(row);
+      const ics = buildEvent({ uid, title: event.title, description: event.description, start: event.start, end: event.end, allDay: event.allDay, now: now() });
+      const put = await caldavClient.putEvent({ calendarUrl: calendar.url || calendar.id, username: row.username, password: creds?.password || '', uid, ics, replace: Boolean(link) });
+      return { uid, href: put.href, etag: put.etag };
+    }
+    const accessToken = await googleAccessToken(row);
+    if (link) {
+      const updated = await googleClient.updateEvent({ accessToken, calendarId: calendar.id, eventId: link.uid, event: { ...event, captureId: capture.id } });
+      if (!updated.missing) return { uid: updated.id, href: updated.href, etag: updated.etag };
+    }
+    const inserted = await googleClient.insertEvent({ accessToken, calendarId: calendar.id, event: { ...event, captureId: capture.id } });
+    return { uid: inserted.id, href: inserted.href, etag: inserted.etag };
+  }
+  function saveLink({ captureId, accountId, calendarId, stored, fingerprint, auto, existing }) {
+    if (existing) db.prepare('UPDATE calendar_links SET calendar_id=?, uid=?, href=?, etag=?, fingerprint=?, updated_at=? WHERE capture_id=? AND account_id=?').run(calendarId, stored.uid, stored.href, stored.etag, fingerprint, nowIso(), captureId, accountId);
+    else db.prepare('INSERT INTO calendar_links(capture_id,account_id,calendar_id,uid,href,etag,created_at,fingerprint,auto,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(captureId, accountId, calendarId, stored.uid, stored.href, stored.etag, nowIso(), fingerprint, auto ? 1 : 0, nowIso());
+  }
+  async function deleteLinked(row, link) {
+    if (row.provider === 'caldav') await caldavClient.deleteEvent({ href: link.href, username: row.username, password: credentialsOf(row)?.password || '' });
+    else await googleClient.deleteEvent({ accessToken: await googleAccessToken(row), calendarId: link.calendar_id, eventId: link.uid });
+    db.prepare('DELETE FROM calendar_links WHERE capture_id=? AND account_id=?').run(link.capture_id, row.id);
+    db.prepare('DELETE FROM calendar_events WHERE account_id=? AND uid=?').run(row.id, link.uid);
+  }
   async function exportCapture({ userId, captureId, accountId, calendarId }) {
     const capture = db.prepare(`SELECT c.id, c.raw, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.id=? AND c.deleted_at IS NULL AND c.user_id IS ?`).get(captureId, userId);
     if (!capture) return { error: 'capture_not_found' };
@@ -337,41 +405,233 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     if (db.prepare('SELECT 1 FROM calendar_links WHERE capture_id=? AND account_id=?').get(captureId, accountId)) return { error: 'already_exported' };
     const event = eventFromCapture(capture, timeZone());
     if (!event) return { error: 'no_schedule' };
-    const uid = `kizuna-${captureId}@kizuna`;
     let stored;
-    try {
-      if (row.provider === 'caldav') {
-        const creds = credentialsOf(row);
-        const ics = buildEvent({ uid, title: event.title, description: event.description, start: event.start, end: event.end, allDay: event.allDay, now: now() });
-        const put = await caldavClient.putEvent({ calendarUrl: calendar.url || calendar.id, username: row.username, password: creds?.password || '', uid, ics });
-        stored = { uid, href: put.href, etag: put.etag };
-      } else {
-        const accessToken = await googleAccessToken(row);
-        const inserted = await googleClient.insertEvent({ accessToken, calendarId, event: { ...event, captureId } });
-        stored = { uid: inserted.id, href: inserted.href, etag: inserted.etag };
-      }
-    } catch (error) { return { error: error.code === 'unauthorized' ? 'unauthorized' : 'export_failed', message: error.message }; }
-    db.prepare('INSERT INTO calendar_links(capture_id,account_id,calendar_id,uid,href,etag,created_at) VALUES(?,?,?,?,?,?,?)').run(captureId, accountId, calendarId, stored.uid, stored.href, stored.etag, nowIso());
+    try { stored = await writeEvent(row, calendar, capture, event); }
+    catch (error) { return { error: error.code === 'unauthorized' ? 'unauthorized' : 'export_failed', message: error.message }; }
+    saveLink({ captureId, accountId, calendarId, stored, fingerprint: fingerprintOf(event), auto: false });
     report({ event: 'calendar_event_exported', provider: row.provider });
-    // Своё событие тут же попадает в кэш: иначе до следующей синхронизации в
-    // сетке его не видно, и кажется, что ничего не произошло.
-    syncAccount(accountId).catch(() => {});
-    return { link: { accountId, calendarId, href: stored.href } };
+    return { link: { accountId, calendarId, href: stored.href, auto: false } };
   }
   async function removeExport({ userId, captureId, accountId }) {
     const link = db.prepare('SELECT l.* FROM calendar_links l JOIN calendar_accounts a ON a.id=l.account_id WHERE l.capture_id=? AND l.account_id=? AND a.user_id IS ?').get(captureId, accountId, userId);
     if (!link) return { error: 'not_found' };
     const row = accountRow(userId, accountId);
-    try {
-      if (row.provider === 'caldav') await caldavClient.deleteEvent({ href: link.href, username: row.username, password: credentialsOf(row)?.password || '' });
-      else await googleClient.deleteEvent({ accessToken: await googleAccessToken(row), calendarId: link.calendar_id, eventId: link.uid });
-    } catch (error) { return { error: 'remove_failed', message: error.message }; }
-    db.prepare('DELETE FROM calendar_links WHERE capture_id=? AND account_id=?').run(captureId, accountId);
-    db.prepare('DELETE FROM calendar_events WHERE account_id=? AND uid=?').run(accountId, link.uid);
+    try { await deleteLinked(row, link); }
+    catch (error) { return { error: 'remove_failed', message: error.message }; }
     return { removed: true };
   }
 
-  return { listAccounts, addCaldavAccount, updateAccount, removeAccount, googleReady, googleStart, googleFinish, syncAccount, syncDue, view, exportCapture, removeExport, presets: Object.fromEntries(Object.entries(CALDAV_PRESETS).map(([key, preset]) => [key, { label: preset.label, serverUrl: preset.serverUrl }])) };
+  // ── автоматическая синхронизация своих дел и встреч с внешним календарём ──
+  // Один проход по учётной записи: (1) что человек поменял снаружи в наших же
+  // событиях — возвращается в запись уточнением; (2) чего больше нет в памяти
+  // — удаляется снаружи; (3) что изменилось в памяти — переписывается; (4)
+  // новые дела и встречи со сроком — создаются. Ручные отправки тоже держатся
+  // в актуальном виде: отправленное один раз не должно устаревать.
+  function scheduleFromCached(cached, tz) {
+    if (cached.all_day) return { date: cached.start_at.slice(0, 10), time: null };
+    const start = localDateTime(new Date(cached.start_at), tz), end = localDateTime(new Date(cached.end_at), tz);
+    return { date: start.date, time: start.time, ...(end.date === start.date && minutesOf(end.time) > minutesOf(start.time) ? { end: end.time } : {}) };
+  }
+  // Уточнение срока записи из кода, тем же путём, что и из карточки: новая
+  // интерпретация, проекции пересобираются, история append-only.
+  function applySchedule(captureId, schedule, note) {
+    const active = db.prepare(`SELECT i.classification_json FROM interpretations i WHERE i.capture_id=? AND i.status='active'`).get(captureId);
+    if (!active) return null;
+    const original = JSON.parse(active.classification_json);
+    const end = schedule.time && schedule.end && minutesOf(schedule.end) > minutesOf(schedule.time) ? schedule.end : null;
+    const next = { state: schedule.date && schedule.time ? 'ok' : 'ambiguous', date: schedule.date || null, time: schedule.time || null, ...(end ? { end } : {}), sortAt: schedule.date ? `${schedule.date}T${schedule.time || '23:59'}:00` : null, display: [schedule.date, schedule.time].filter(Boolean).join(', ') + (end ? `–${end}` : '') };
+    const classification = { ...original, entities: { ...original.entities, schedule: next } };
+    return replaceInterpretation(db, captureId, classification, 'manual', { patch: { schedule: { date: next.date, time: next.time, ...(end ? { end } : {}) } }, note }, shouldMaterializeProjections(classification));
+  }
+  async function autoExportAccount(row) {
+    const tz = timeZone(), today = dateInZone(now(), tz);
+    const calendars = JSON.parse(row.calendars_json || '[]');
+    const target = row.auto_export !== 'off' ? calendars.find(calendar => calendar.id === row.auto_calendar_id && calendar.writable !== false) || null : null;
+    const types = row.auto_export === 'all' ? ['task', 'meeting_event'] : ['meeting_event'];
+    const completion = completionMap();
+    const isDone = (captureId, c) => Boolean(c.completed) || (() => { const ids = db.prepare(`SELECT id FROM projections WHERE capture_id=? AND status='active' AND projection_type IN ('task','meeting_event')`).all(captureId).map(r => r.id); return ids.length > 0 && ids.every(id => completion.get(id) === true); })();
+    let writes = 0, pulled = 0, created = 0, updated = 0, removed = 0;
+    const budget = () => writes < AUTO_EXPORT_BATCH;
+    const links = db.prepare('SELECT * FROM calendar_links WHERE account_id=?').all(row.id);
+    for (const link of links) {
+      if (!budget()) break;
+      const capture = db.prepare(captureQuery).get(link.capture_id);
+      const c = capture && !capture.deleted_at && capture.classification_json ? JSON.parse(capture.classification_json) : null;
+      let event = c && ['task', 'meeting_event'].includes(c.primaryType) && hasActiveProjection(capture.id) ? eventFromCapture(capture, tz) : null;
+      // Выключенная автоотправка не забирает уже отправленное: события живут
+      // дальше как ручные. А суженный режим («только встречи») дела убирает.
+      const following = link.auto && row.auto_export !== 'off';
+      const wanted = event && (!following || (types.includes(c.primaryType) && target));
+      if (!wanted) { await deleteLinked(row, link); writes += 1; removed += 1; continue; }
+      if (following && link.calendar_id !== target.id) { await deleteLinked(row, link); writes += 1; removed += 1; continue; }
+      // Снаружи подвинули наше событие — правим запись, а не событие.
+      const cached = db.prepare('SELECT * FROM calendar_events WHERE account_id=? AND uid=? ORDER BY start_at LIMIT 1').get(row.id, link.uid);
+      if (cached && link.etag && cached.etag && plainEtag(cached.etag) !== plainEtag(link.etag)) {
+        const outside = scheduleFromCached(cached, tz);
+        const own = c.entities?.schedule || {};
+        if (outside.date !== own.date || (outside.time || null) !== (own.time || null) || (outside.end || null) !== (own.end || null)) {
+          applySchedule(capture.id, outside, `Перенесено в календаре «${row.label}»`);
+          pulled += 1;
+          const refreshed = db.prepare(captureQuery).get(capture.id);
+          event = eventFromCapture(refreshed, tz) || event;
+        }
+        db.prepare('UPDATE calendar_links SET etag=?, fingerprint=?, updated_at=? WHERE capture_id=? AND account_id=?').run(cached.etag, fingerprintOf(event), nowIso(), capture.id, row.id);
+        continue;
+      }
+      const fingerprint = fingerprintOf(event);
+      if (fingerprint === link.fingerprint) continue;
+      const calendar = calendars.find(item => item.id === link.calendar_id);
+      if (!calendar) continue;
+      const stored = await writeEvent(row, calendar, capture, event, link);
+      saveLink({ captureId: capture.id, accountId: row.id, calendarId: calendar.id, stored, fingerprint, auto: link.auto, existing: true });
+      writes += 1; updated += 1;
+    }
+    if (target) {
+      const candidates = db.prepare(`SELECT c.id, c.raw, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active'
+        WHERE c.deleted_at IS NULL AND c.user_id IS ? AND json_extract(i.classification_json,'$.primaryType') IN (${types.map(() => '?').join(',')})
+          AND json_extract(i.classification_json,'$.completed') IS NOT 1 AND json_extract(i.classification_json,'$.entities.schedule.date') >= ?
+          AND NOT EXISTS (SELECT 1 FROM calendar_links l WHERE l.capture_id=c.id AND l.account_id=?)
+        ORDER BY json_extract(i.classification_json,'$.entities.schedule.date') LIMIT 400`).all(row.user_id, ...types, today, row.id);
+      for (const capture of candidates) {
+        if (!budget()) break;
+        const c = JSON.parse(capture.classification_json);
+        if (!hasActiveProjection(capture.id) || isDone(capture.id, c)) continue;
+        const event = eventFromCapture(capture, tz);
+        if (!event) continue;
+        const stored = await writeEvent(row, target, capture, event);
+        saveLink({ captureId: capture.id, accountId: row.id, calendarId: target.id, stored, fingerprint: fingerprintOf(event), auto: true });
+        writes += 1; created += 1;
+      }
+    }
+    return { writes, created, updated, removed, pulled };
+  }
+  const autoBusy = new Set();
+  async function autoExport({ accountId = null } = {}) {
+    const rows = db.prepare(`SELECT * FROM calendar_accounts WHERE disabled_at IS NULL${accountId ? ' AND id=?' : ''} ORDER BY created_at`).all(...(accountId ? [accountId] : []));
+    const results = [];
+    let anything = false;
+    for (const row of rows) {
+      if (row.auto_export === 'off' && !db.prepare('SELECT 1 FROM calendar_links WHERE account_id=? LIMIT 1').get(row.id)) continue;
+      if (autoBusy.has(row.id)) continue;
+      autoBusy.add(row.id);
+      try {
+        const result = await autoExportAccount(row);
+        if (result.writes || result.pulled) { anything = true; report({ event: 'calendar_auto_synced', provider: row.provider, ...result }); }
+        if (row.export_error) db.prepare('UPDATE calendar_accounts SET export_error=NULL WHERE id=?').run(row.id);
+        results.push({ accountId: row.id, ...result });
+      } catch (error) {
+        const message = String(error?.message || 'Отправка не удалась.').slice(0, 300);
+        db.prepare('UPDATE calendar_accounts SET export_error=? WHERE id=?').run(message, row.id);
+        report({ event: 'calendar_auto_sync_failed', provider: row.provider, errorCode: error?.code || 'export_error' });
+        results.push({ accountId: row.id, error: error?.code === 'unauthorized' ? 'unauthorized' : 'export_error', message });
+        anything = true;
+      } finally { autoBusy.delete(row.id); }
+    }
+    if (anything) changed();
+    return results;
+  }
+  // Журнал меняется часто и пачками; наружу идём один раз после паузы.
+  let autoTimer = null;
+  function wakeAutoExport() {
+    if (autoTimer) return;
+    autoTimer = setTimeout(() => { autoTimer = null; autoExport().catch(() => {}); }, autoExportDelayMs);
+    autoTimer.unref?.();
+  }
+
+  // ── чужие события: перенос, переименование, удаление из сетки ──
+  function externalRow(userId, id) {
+    const key = String(id || '').replace(/^ext:/, '').split(':')[0];
+    if (!key) return null;
+    return db.prepare(`SELECT e.*, a.user_id, a.mode, a.provider, a.username, a.credentials_enc, a.calendars_json, a.label account_label, a.disabled_at FROM calendar_events e JOIN calendar_accounts a ON a.id=e.account_id WHERE e.id=? AND a.user_id IS ?`).get(key, userId) || null;
+  }
+  function externalInfo(row) {
+    const tz = timeZone();
+    const calendar = JSON.parse(row.calendars_json || '[]').find(item => item.id === row.calendar_id) || null;
+    const base = { id: `ext:${row.id}`, title: row.mode === 'busy' ? 'Занято' : row.title, source: row.account_label, calendarName: calendar?.name || row.account_label, location: row.mode === 'busy' ? null : row.location, joinUrl: row.mode === 'busy' ? null : row.join_url, href: row.href, recurring: Boolean(row.instance_key) };
+    if (row.all_day) return { ...base, allDay: true, date: row.start_at.slice(0, 10), time: null, end: null };
+    const start = localDateTime(new Date(row.start_at), tz), end = localDateTime(new Date(row.end_at), tz);
+    return { ...base, allDay: false, date: start.date, time: start.time, end: end.date === start.date ? end.time : '23:59' };
+  }
+  function externalWritable(row) {
+    if (!row) return 'not_found';
+    if (row.disabled_at) return 'account_not_found';
+    if (row.mode === 'busy') return 'busy_mode';
+    const calendar = JSON.parse(row.calendars_json || '[]').find(item => item.id === row.calendar_id);
+    if (!calendar || calendar.writable === false) return 'calendar_not_found';
+    if (row.provider === 'caldav' && row.instance_key) return 'recurring';
+    return null;
+  }
+  async function updateExternalEvent({ userId, id, title, date, time, end }) {
+    const row = externalRow(userId, id);
+    const refused = externalWritable(row);
+    if (refused) return { error: refused };
+    if (title !== undefined && (typeof title !== 'string' || !title.trim() || title.trim().length > TITLE_LIMIT)) return { error: 'invalid_title' };
+    if (date !== undefined && !validDate(date)) return { error: 'invalid_schedule' };
+    if (time !== undefined && time !== null && !validTime(time)) return { error: 'invalid_schedule' };
+    if (end !== undefined && end !== null && (!validTime(end) || (time === null))) return { error: 'invalid_schedule' };
+    const tz = timeZone();
+    const current = externalInfo(row);
+    const nextDate = date ?? current.date;
+    const nextTime = time === undefined ? current.time : time;
+    // Перенос по времени сохраняет длительность; конец меняется только явно.
+    let nextEnd = end;
+    if (end === undefined) {
+      if (!nextTime) nextEnd = null;
+      else if (time === undefined) nextEnd = current.end;
+      else if (current.time && current.end) { const total = minutesOf(nextTime) + (minutesOf(current.end) - minutesOf(current.time)); nextEnd = total >= 24 * 60 ? '23:59' : timeOf(total); }
+      else nextEnd = null;
+    }
+    if (nextTime && nextEnd && minutesOf(nextEnd) <= minutesOf(nextTime)) return { error: 'invalid_schedule' };
+    const [year, month, day] = nextDate.split('-').map(Number);
+    let event;
+    if (!nextTime) {
+      const days = row.all_day ? Math.max(1, Math.round((Date.parse(row.end_at.slice(0, 10)) - Date.parse(row.start_at.slice(0, 10))) / 86400000)) : 1;
+      const last = shiftDate(nextDate, days);
+      event = { allDay: true, startDate: nextDate, endDate: last, start: { year, month, day }, end: { year: Number(last.slice(0, 4)), month: Number(last.slice(5, 7)), day: Number(last.slice(8, 10)) } };
+    } else {
+      const startMinutes = minutesOf(nextTime);
+      const duration = nextEnd ? minutesOf(nextEnd) - startMinutes : row.all_day ? DEFAULT_MEETING_MINUTES : Math.max(15, Math.round((Date.parse(row.end_at) - Date.parse(row.start_at)) / 60000));
+      const start = zonedToUtc({ year, month, day, hour: Math.floor(startMinutes / 60), minute: startMinutes % 60 }, tz);
+      event = { allDay: false, start, end: new Date(start.getTime() + duration * 60000) };
+    }
+    const nextTitle = title !== undefined ? title.trim() : undefined;
+    let etag = row.etag;
+    try {
+      if (row.provider === 'caldav') {
+        const password = credentialsOf(row)?.password || '';
+        const got = await caldavClient.getEvent({ href: row.href, username: row.username, password });
+        const ics = rewriteEvent(got.ics, { title: nextTitle, start: event.start, end: event.end, allDay: event.allDay, now: now() });
+        const put = await caldavClient.putEvent({ href: row.href, username: row.username, password, uid: row.uid, ics, etag: got.etag || null });
+        etag = put.etag || null;
+      } else {
+        const patched = await googleClient.patchEvent({ accessToken: await googleAccessToken(row), calendarId: row.calendar_id, eventId: row.uid, patch: { title: nextTitle, ...event } });
+        etag = patched.etag || etag;
+      }
+    } catch (error) { return { error: error.code === 'unauthorized' ? 'unauthorized' : error.code === 'conflict' ? 'conflict' : 'update_failed', message: error.message }; }
+    const startAt = event.allDay ? new Date(Date.UTC(event.start.year, event.start.month - 1, event.start.day)) : event.start;
+    const endAt = event.allDay ? new Date(Date.UTC(event.end.year, event.end.month - 1, event.end.day)) : event.end;
+    db.prepare('UPDATE calendar_events SET title=?, start_at=?, end_at=?, all_day=?, etag=?, updated_at=? WHERE id=?').run(nextTitle ?? row.title, startAt.toISOString(), endAt.toISOString(), event.allDay ? 1 : 0, etag, nowIso(), row.id);
+    report({ event: 'calendar_external_updated', provider: row.provider });
+    changed();
+    return { event: externalInfo(externalRow(userId, id)) };
+  }
+  async function deleteExternalEvent({ userId, id }) {
+    const row = externalRow(userId, id);
+    const refused = externalWritable(row);
+    if (refused) return { error: refused };
+    try {
+      if (row.provider === 'caldav') await caldavClient.deleteEvent({ href: row.href, username: row.username, password: credentialsOf(row)?.password || '' });
+      else await googleClient.deleteEvent({ accessToken: await googleAccessToken(row), calendarId: row.calendar_id, eventId: row.uid });
+    } catch (error) { return { error: error.code === 'unauthorized' ? 'unauthorized' : 'remove_failed', message: error.message }; }
+    if (row.provider === 'caldav') db.prepare('DELETE FROM calendar_events WHERE account_id=? AND uid=?').run(row.account_id, row.uid);
+    else db.prepare('DELETE FROM calendar_events WHERE id=?').run(row.id);
+    report({ event: 'calendar_external_removed', provider: row.provider });
+    changed();
+    return { removed: true, title: row.title };
+  }
+  function externalEvent({ userId, id }) { const row = externalRow(userId, id); return row && !row.disabled_at ? externalInfo(row) : null; }
+
+  return { listAccounts, addCaldavAccount, updateAccount, removeAccount, googleReady, googleStart, googleFinish, syncAccount, syncDue, view, exportCapture, removeExport, autoExport, wakeAutoExport, updateExternalEvent, deleteExternalEvent, externalEvent, applySchedule, presets: Object.fromEntries(Object.entries(CALDAV_PRESETS).map(([key, preset]) => [key, { label: preset.label, serverUrl: preset.serverUrl }])) };
 }
 
 // Фоновая синхронизация: раз в минуту смотрит, у кого прошло пять минут с
@@ -385,7 +645,15 @@ export class CalendarSyncWorker {
   start() {
     if (this.running) return;
     this.running = true;
-    const tick = () => { this.inFlight = this.service.syncDue({ intervalMs: this.intervalMs }).catch(error => { try { this.audit({ event: 'calendar_sync_failed', errorCode: error?.code || 'sync_error' }); } catch {} }).finally(() => { this.inFlight = null; }); };
+    const tick = () => {
+      this.inFlight = this.service.syncDue({ intervalMs: this.intervalMs })
+        .catch(error => { try { this.audit({ event: 'calendar_sync_failed', errorCode: error?.code || 'sync_error' }); } catch {} })
+        // Отправка наружу — тем же потоком после чтения: сначала узнаём, что
+        // поменяли снаружи, потом дописываем своё.
+        .then(() => this.service.autoExport?.())
+        .catch(error => { try { this.audit({ event: 'calendar_auto_sync_failed', errorCode: error?.code || 'export_error' }); } catch {} })
+        .finally(() => { this.inFlight = null; });
+    };
     this.timer = setInterval(tick, this.pollMs);
     this.timer.unref?.();
     setTimeout(tick, 1500).unref?.();
