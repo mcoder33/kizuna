@@ -206,6 +206,11 @@ function updatePageFromHash() {
   }
   if (activePage === "admin") loadAdmin();
   if (activePage === "board") loadBoard(params.get("view"));
+  // Календарь перечитывается при каждом открытии: сроки правятся из карточек
+  // и с доски, а чужие события приходят синхронизацией в фоне. Первый разбор
+  // адреса случается до того, как модуль дошёл до состояния календаря, —
+  // вызов откладывается на микрозадачу, когда модуль уже прочитан целиком.
+  if (activePage === "calendar") Promise.resolve().then(() => loadCalendar());
   // «Обзор» пересчитывается при каждом открытии: цифры меняются от каждой
   // записи, а страница может быть открыта спустя часы.
   if (activePage === "reports") loadReports();
@@ -631,6 +636,7 @@ async function load() {
   // при старте их собирает переход по хэшу.
   const page = document.querySelector(".app-page:not([hidden])")?.id;
   if (page === "board" && boardState.data) await loadBoard();
+  if (page === "calendar" && calState.data) await loadCalendar();
   if (page === "reports" && reportsState.loaded) await loadReports();
 }
 // Движение в приложении одно на всё: предмет не летит через экран и не растёт
@@ -3362,7 +3368,7 @@ async function uploadPendingShots(captureId) {
 // (колонки, даты, проекты, список), панель свойств, фильтр и поиск. Клик по
 // названию открывает карточку записи, кружок закрывает дело, перенос между
 // колонками сохраняется на сервере.
-const BOARD_VIEWS = ["columns", "dates", "projects", "tags", "list", "calendar"];
+const BOARD_VIEWS = ["columns", "dates", "projects", "tags", "list"];
 const BOARD_COLORS = ["gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"];
 const BOARD_COLOR_NAMES = { gray: "Серый", brown: "Коричневый", orange: "Оранжевый", yellow: "Жёлтый", green: "Зелёный", blue: "Синий", purple: "Фиолетовый", pink: "Розовый", red: "Красный" };
 const BOARD_PROPS_DEFAULT = { people: true, type: true, due: true, project: true, priority: true, files: true, compact: false };
@@ -4021,16 +4027,6 @@ function renderBoard(source) {
   clear(wrap);
   boardState.openAdder = openAdder;
   paintBoardFilter(source);
-  // Календарь — свой запрос и своя раскладка: лента колонок прячется, а
-  // фильтр и поиск действуют и на него.
-  const calendarView = boardState.view === "calendar";
-  $("#board-calendar").hidden = !calendarView;
-  wrap.hidden = calendarView;
-  if (calendarView) {
-    $("#board-segments").hidden = true;
-    if (calState.data) renderCalendar(); else loadCalendar();
-    return;
-  }
   const data = boardFilteredData(source);
   wrap.classList.toggle("list", boardState.view === "list");
   wrap.classList.toggle("compact", Boolean(boardState.props.compact));
@@ -4163,7 +4159,6 @@ async function loadBoard(view) {
     // бы ISO-строкой вместо «завтра» и «05.09».
     currentDayDate ||= data.today;
     renderBoard(data);
-    if (boardState.view === "calendar") await loadCalendar();
   } catch (error) {
     clear(wrap);
     wrap.append(node("p", error.message, "empty"));
@@ -4171,8 +4166,8 @@ async function loadBoard(view) {
 }
 
 // ── Календарь ───────────────────────────────────────────────────────────────
-// Календарь — вид «Доски», а не отдельный раздел: те же дела, тот же фильтр и
-// поиск, та же карточка по клику. Свои дела и встречи лежат в сетке по сроку,
+// Календарь — свой раздел, как «Доска»: те же дела и встречи по срокам, та же
+// карточка по клику, свой поиск. Свои дела и встречи лежат в сетке по сроку,
 // чужие календари — серым и только для чтения. Перенос мышкой — уточнение
 // записи (patch.schedule) с «Вернуть», а не правка календаря.
 const CAL_HOUR_PX = 48;
@@ -4183,7 +4178,7 @@ const CAL_DOW = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"];
 const CAL_MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
 const CAL_MONTHS_G = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
 const CAL_PHONE = window.matchMedia("(max-width: 760px)");
-const calState = { mode: "week", anchor: null, days: 7, data: null, hidden: new Set(), seq: 0, drag: null, pop: null };
+const calState = { mode: "week", anchor: null, days: 7, data: null, hidden: new Set(), seq: 0, drag: null, pop: null, search: "" };
 try {
   const storedMode = localStorage.getItem("kizuna-calendar-mode");
   if (["day", "week", "month"].includes(storedMode)) calState.mode = storedMode;
@@ -4202,6 +4197,8 @@ function calHuman(date) {
   return `${CAL_DOW[calDow(date)]}, ${d.getUTCDate()} ${CAL_MONTHS_G[d.getUTCMonth()]}`;
 }
 function calToday() { return calState.data?.today || currentDayDate || new Date().toISOString().slice(0, 10); }
+// На телефоне неделя — три дня: семь колонок на 390px не читаются.
+function calDays() { return CAL_PHONE.matches ? Math.min(calState.days, 3) : calState.days; }
 function calRange() {
   const anchor = calState.anchor || calToday();
   if (calState.mode === "day") return { from: anchor, to: anchor };
@@ -4211,8 +4208,8 @@ function calRange() {
     const start = calMonday(first);
     return { from: start, to: shiftDate(start, 41) };
   }
-  const start = calState.days === 7 ? calMonday(anchor) : anchor;
-  return { from: start, to: shiftDate(start, calState.days - 1) };
+  const start = calDays() === 7 ? calMonday(anchor) : anchor;
+  return { from: start, to: shiftDate(start, calDays() - 1) };
 }
 function calTitle() {
   const { from, to } = calRange();
@@ -4229,7 +4226,7 @@ function setCalendarMode(mode) {
 function calStep(direction) {
   const anchor = calState.anchor || calToday();
   if (calState.mode === "month") { const d = calParse(anchor); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() + direction); calState.anchor = d.toISOString().slice(0, 10); }
-  else calState.anchor = shiftDate(anchor, direction * (calState.mode === "day" ? 1 : calState.days));
+  else calState.anchor = shiftDate(anchor, direction * (calState.mode === "day" ? 1 : calDays()));
   loadCalendar();
 }
 // Длительность блока: конец из записи, иначе час встрече и полчаса делу.
@@ -4239,26 +4236,28 @@ function calEndOf(item) {
   const minutes = calMinutes(item.time) + (item.kind === "meeting" ? calState.data?.defaults?.meetingMinutes || 60 : calState.data?.defaults?.taskMinutes || 30);
   return calTime(Math.min(minutes, 23 * 60 + 59));
 }
-// Фильтр доски действует и на календарь: тип, проект и поиск.
+// Поиск действует на всё: название, теги и проекты своих дел, названия
+// чужих событий.
 function calOwnVisible(item) {
   if (calState.hidden.has(`kind:${item.kind}`)) return false;
-  const { type, projects } = boardState.filter;
-  if (type === "task" && item.kind === "meeting") return false;
-  if (type === "meeting_event" && item.kind !== "meeting") return false;
-  if (projects.length && !item.projects.some((project) => projects.includes(project))) return false;
-  const query = boardState.search.trim().toLowerCase();
-  if (query && !item.title.toLowerCase().includes(query) && !item.tags.some((tag) => tag.toLowerCase().includes(query))) return false;
+  const query = calState.search.trim().toLowerCase();
+  if (query && !item.title.toLowerCase().includes(query) && !item.tags.some((tag) => tag.toLowerCase().includes(query)) && !item.projects.some((project) => project.toLowerCase().includes(query))) return false;
   return true;
+}
+function calExternalVisible(item) {
+  if (calState.hidden.has(`account:${item.accountId}`)) return false;
+  const query = calState.search.trim().toLowerCase();
+  return !query || item.title.toLowerCase().includes(query);
 }
 function calItemsOf(date) {
   const data = calState.data;
   if (!data) return { own: [], external: [] };
   const own = data.items.filter((item) => item.date === date && calOwnVisible(item));
-  const external = data.external.filter((item) => item.date === date && !calState.hidden.has(`account:${item.accountId}`));
+  const external = data.external.filter((item) => item.date === date && calExternalVisible(item));
   return { own, external };
 }
 async function loadCalendar() {
-  const wrap = $("#board-calendar");
+  const wrap = $("#calendar-view");
   const { from, to } = calRange();
   const seq = ++calState.seq;
   if (!wrap.childNodes.length) wrap.append(node("p", "Собираем календарь…", "empty"));
@@ -4300,9 +4299,6 @@ function calSourcesEl() {
     if (account.disabled) continue;
     wrap.append(chip(`account:${account.id}`, account.label, account.color || "var(--n-72)", account.syncError ? "ошибка" : account.mode === "busy" ? "занято" : null));
   }
-  const manage = node("a", data.accounts.length ? "Календари…" : "+ Подключить календарь", "cal-manage");
-  manage.href = "#settings";
-  wrap.append(manage);
   return wrap;
 }
 function calToolbarEl() {
@@ -4313,7 +4309,7 @@ function calToolbarEl() {
   const seg = node("div", undefined, "cal-seg");
   seg.setAttribute("role", "group");
   for (const [mode, label, key] of [["day", "День", "D"], ["week", "Неделя", "W"], ["month", "Месяц", "M"]]) {
-    const button = calButton(undefined, undefined, () => { setCalendarMode(mode); if (mode === "week") calState.days = CAL_PHONE.matches ? 3 : 7; loadCalendar(); });
+    const button = calButton(undefined, undefined, () => { setCalendarMode(mode); if (mode === "week") calState.days = 7; loadCalendar(); });
     button.append(node("span", label), node("kbd", key));
     button.setAttribute("aria-pressed", String(calState.mode === mode));
     seg.append(button);
@@ -4468,15 +4464,18 @@ function calMonthEl() {
   return wrap;
 }
 function renderCalendar() {
-  const wrap = $("#board-calendar");
+  const wrap = $("#calendar-view");
   if (!calState.data) return;
   closeCalendarPop();
   clear(wrap);
-  wrap.append(calToolbarEl(), calSourcesEl());
+  // Источники живут в шапке страницы, рядом с поиском, как фильтр на доске.
+  const sources = $("#calendar-sources");
+  if (sources) sources.replaceWith(Object.assign(calSourcesEl(), { id: "calendar-sources" }));
+  wrap.append(calToolbarEl());
   const body = node("div", undefined, "cal-body");
   if (calState.mode === "month") body.append(calMonthEl());
   else if (calState.mode === "day") { const day = node("div", undefined, "cal-day"); const { from } = calRange(); day.append(calGridEl([from]), calAgendaEl(from)); body.append(day); }
-  else { const { from } = calRange(); body.append(calGridEl(Array.from({ length: calState.days }, (_, index) => shiftDate(from, index)))); }
+  else { const { from } = calRange(); body.append(calGridEl(Array.from({ length: calDays() }, (_, index) => shiftDate(from, index)))); }
   wrap.append(body);
   const hint = node("p", undefined, "cal-hint");
   hint.append(node("kbd", "D"), node("kbd", "W"), node("kbd", "M"), document.createTextNode(" виды · "), node("kbd", "T"), document.createTextNode(" сегодня · "), node("kbd", "←"), node("kbd", "→"), document.createTextNode(" листать · "), node("kbd", "1"), document.createTextNode("–"), node("kbd", "7"), document.createTextNode(" дней · тяните дела и встречи, клик по пустому месту — новая запись"));
@@ -4492,7 +4491,7 @@ function closeCalendarPop() { calState.pop?.remove(); calState.pop = null; }
 function calPopAt(anchorElement) {
   closeCalendarPop();
   const pop = node("div", undefined, "cal-pop");
-  const wrap = $("#board-calendar");
+  const wrap = $("#calendar-view");
   const box = anchorElement.getBoundingClientRect(), base = wrap.getBoundingClientRect();
   pop.style.left = `${Math.max(8, Math.min(box.left - base.left, base.width - 320))}px`;
   pop.style.top = `${box.bottom - base.top + 6}px`;
@@ -4505,7 +4504,7 @@ function calPopAt(anchorElement) {
   return pop;
 }
 function showExternalEvent(item) {
-  const anchorElement = $("#board-calendar").querySelector(`[data-id="${CSS.escape(item.id)}"]`);
+  const anchorElement = $("#calendar-view").querySelector(`[data-id="${CSS.escape(item.id)}"]`);
   if (!anchorElement) return;
   const pop = calPopAt(anchorElement);
   pop.append(node("b", item.title, "cal-pop-title"));
@@ -4542,7 +4541,7 @@ function openCalendarQuickAdd(target, event) {
     time = calTime(calSnap(CAL_H0 * 60 + ((event.clientY - rect.top) / CAL_HOUR_PX) * 60));
   }
   const pop = calPopAt(target);
-  const wrap = $("#board-calendar").getBoundingClientRect();
+  const wrap = $("#calendar-view").getBoundingClientRect();
   pop.style.left = `${Math.max(8, Math.min(event.clientX - wrap.left + 8, wrap.width - 320))}px`;
   pop.style.top = `${event.clientY - wrap.top + 8}px`;
   pop.classList.add("quick");
@@ -4602,7 +4601,7 @@ async function moveCalendarItem(item, schedule, { announce = true } = {}) {
   } catch (error) { toast(error.message); }
 }
 {
-  const wrap = $("#board-calendar");
+  const wrap = $("#calendar-view");
   const findItem = (id) => calState.data?.items.find((item) => item.id === id) || calState.data?.overdue?.find((item) => item.id === id);
   wrap.addEventListener("dragstart", (event) => {
     const element = event.target.closest?.("[data-own][draggable='true']");
@@ -4653,13 +4652,14 @@ async function moveCalendarItem(item, schedule, { announce = true } = {}) {
     const target = event.target.closest(".cal-col, .cal-nt, .cal-mc");
     if (target) openCalendarQuickAdd(target, event);
   });
+  $("#calendar-search")?.addEventListener("input", (event) => { calState.search = event.target.value; if (calState.data) renderCalendar(); });
   document.addEventListener("keydown", (event) => {
-    if ($("#board").hidden || boardState.view !== "calendar") return;
+    if ($("#calendar").hidden) return;
     if (event.target.closest?.("input, textarea, select, [contenteditable='true'], dialog")) return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const key = event.key.toLowerCase();
     if (key === "d" || key === "в") setCalendarMode("day");
-    else if (key === "w" || key === "ц") { setCalendarMode("week"); calState.days = CAL_PHONE.matches ? 3 : 7; }
+    else if (key === "w" || key === "ц") { setCalendarMode("week"); calState.days = 7; }
     else if (key === "m" || key === "ь") setCalendarMode("month");
     else if (key === "t" || key === "е") calState.anchor = calToday();
     else if (event.key === "ArrowLeft") { calStep(-1); event.preventDefault(); return; }

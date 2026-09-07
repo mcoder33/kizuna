@@ -32,6 +32,7 @@
       <nav aria-label="Разделы">
         <a class="active" href="#today">Сегодня</a>
         <a href="#board">Доска</a>
+        <a href="#calendar">Календарь</a>
         <a href="#reports">Обзор</a>
       </nav>
       <div class="header-tail">
@@ -232,7 +233,6 @@
             <button type="button" data-board-view="projects" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v6.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 12.5z"/></svg><span>По проектам</span></button>
             <button type="button" data-board-view="tags" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2.5h5.2L14 9.3 9.3 14 2.5 7.2z"/><circle cx="5.5" cy="5.5" r="1"/></svg><span>По тегам</span></button>
             <button type="button" data-board-view="list" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12"/></svg><span>Список</span></button>
-            <button type="button" data-board-view="calendar" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 7h12M5.5 1.5v3M10.5 1.5v3M5 10h2M9 10h2"/></svg><span>Календарь</span></button>
           </div>
           <div class="board-tools">
             <button type="button" id="board-props-toggle" aria-pressed="false" aria-controls="board-props">Свойства</button>
@@ -270,9 +270,27 @@
         </div>
         <div class="board-segments" id="board-segments" role="tablist" aria-label="Колонки"></div>
         <div id="board-columns" class="board-columns" aria-label="Колонки доски"></div>
-        <!-- Календарь — ещё один вид на те же дела: неделя, день и месяц с
-             наложением внешних календарей. Собирается public/app.js. -->
-        <div id="board-calendar" class="board-calendar" aria-label="Календарь дел" hidden></div>
+      </section>
+
+      <!-- Календарь — свой раздел, как «Доска»: те же дела и встречи по срокам
+           в сетке недели, дня и месяца, поверх — внешние календари. Сетку
+           собирает public/app.js. -->
+      <section id="calendar" class="app-page calendar-page" hidden>
+        <div class="page-heading">
+          <p class="eyebrow">ДЕЛА · КАЛЕНДАРЬ</p>
+          <h2>Календарь</h2>
+        </div>
+        <div class="board-controls calendar-controls">
+          <div class="cal-sources" id="calendar-sources"></div>
+          <div class="board-tools">
+            <label class="board-search">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>
+              <input id="calendar-search" type="search" placeholder="Поиск" aria-label="Поиск по календарю" autocomplete="off" />
+            </label>
+            <a class="calendar-manage" href="#settings">Календари</a>
+          </div>
+        </div>
+        <div id="calendar-view" class="board-calendar" aria-label="Календарь дел"></div>
       </section>
 
       <section id="reports" class="app-page reports-page" hidden>

@@ -13,12 +13,13 @@ test("календарь: неделя, день, месяц, перенос м�
   await request.post("/api/captures", { data: { raw: "Прочитать спеку по OAuth", primaryType: "todo", due: { date: slotDay } } });
   await request.post("/api/captures", { data: { raw: "Написать Антону Гришину по внедрению", primaryType: "todo", due: { date: shift(today, -3) } } });
 
-  await page.goto("/#board?view=calendar");
+  await page.goto("/#calendar");
   await page.evaluate(() => { localStorage.setItem("kizuna-calendar-mode", "week"); });
   await page.reload();
-  const calendar = page.locator("#board-calendar");
+  const calendar = page.locator("#calendar-view");
   await expect(calendar).toBeVisible();
-  await expect(page.locator("#board-columns")).toBeHidden();
+  await expect(page.locator("nav a.active")).toHaveText("Календарь");
+  await expect(page.locator("#calendar .page-heading h2")).toHaveText("Календарь");
   await expect(calendar.locator(".cal-title")).toContainText(String(new Date(`${monday}T12:00:00Z`).getUTCDate()));
   // Дело со временем — блок в сетке, дело без времени — чип в полосе «без
   // времени», просроченное — красным в сегодняшнем дне.
@@ -52,6 +53,13 @@ test("календарь: неделя, день, месяц, перенос м�
   await expect(added).toBeVisible();
   await expect(added.locator(".cal-ev-time")).toHaveText("14:00 ");
 
+  // Поиск в шапке страницы сужает сетку.
+  await page.locator("#calendar-search").fill("рисков");
+  await expect(calendar.locator(".cal-ev.task", { hasText: "быстрый ввод" })).toBeHidden();
+  await expect(timed).toBeVisible();
+  await page.locator("#calendar-search").fill("");
+  // Клавиши работают вне поля ввода: в поиске «d» — просто буква.
+  await page.locator("#calendar-search").blur();
   // Клавиши: D — день с повесткой, M — месяц, W — обратно.
   await page.keyboard.press("d");
   await expect(calendar.locator(".cal-agenda")).toBeVisible();

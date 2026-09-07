@@ -5844,9 +5844,26 @@ body {
    и встречи — плашками цвета типа, чужие события — серые с точкой цвета
    календаря. Линия «сейчас» и столбец сегодняшнего дня — коралловые, как
    отметка дня в мини-календаре. */
+/* Страница календаря устроена как страница дел: во всю ширину, слева поле,
+   справа такое же — сетке нужен весь экран, а не колонка чтения. */
+.calendar-page {
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  padding: 0 clamp(24px, 4vw, 64px);
+}
+.calendar-page .page-heading { margin-bottom: 8px; }
+.calendar-controls { margin-right: 0; }
+.calendar-controls .cal-sources { padding: 0; border: 0; }
+/* Ссылка в настройки календарей — тихая, как «Свойства» на доске: это не
+   действие над делами, а дверь в другой раздел. */
+.calendar-manage {
+  display: inline-flex; align-items: center;
+  border-radius: 6px; padding: 5px 8px; margin-left: 4px;
+  color: var(--n-52); font-size: 13.5px; line-height: 1; text-decoration: none; white-space: nowrap;
+}
+.calendar-manage:hover { background: var(--n-25-a8); color: var(--ink); }
 .board-calendar {
   position: relative;
-  margin-right: clamp(24px, 4vw, 64px);
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--paper);
@@ -5889,7 +5906,7 @@ body {
   padding: 2px 4px 1px;
   background: var(--paper);
 }
-.cal-sources { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.cal-sources { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
 .cal-source {
   display: inline-flex; align-items: center; gap: 6px;
   font: inherit; font-size: 12px; cursor: pointer;
@@ -6057,7 +6074,8 @@ body {
 .cal-pop.quick input:focus { border-bottom-color: var(--focus); }
 
 @media (max-width: 760px) {
-  .board-calendar { margin-right: 12px; }
+  .calendar-page { padding: 0 12px; }
+  .calendar-controls { flex-wrap: wrap; }
   .cal-top { gap: 8px; padding: 8px 10px; }
   .cal-title { font-size: 14px; width: 100%; order: 3; }
   .cal-seg { margin-left: auto; }
