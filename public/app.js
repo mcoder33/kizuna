@@ -4673,9 +4673,13 @@ function showExternalEvent(item) {
       } catch (error) { toast(error.message); for (const button of buttons.children) button.disabled = false; }
     };
     const buttons = node("div", undefined, "pop-me-buttons");
-    for (const [status, label] of [["accepted", "Принять"], ["tentative", "Под вопросом"], ["declined", "Отклонить"]]) {
-      const button = calButton(label, `cal-pop-btn small${item.me.status === status ? " is-current" : ""}`, () => respond(status));
-      button.setAttribute("aria-pressed", String(item.me.status === status));
+    // Текущий ответ — не кнопка призыва, а отметка состояния: цветом статуса,
+    // с галочкой и без нажатия. Чёрная заливка читалась как «нажми меня».
+    for (const [status, label, chosen] of [["accepted", "Принять", "Принято"], ["tentative", "Под вопросом", "Под вопросом"], ["declined", "Отклонить", "Отклонено"]]) {
+      const current = item.me.status === status;
+      const button = calButton(current ? `${POP_STATUS[status][0]} ${chosen}` : label, `cal-pop-btn small${current ? ` is-current ${status}` : ""}`, () => respond(status));
+      button.setAttribute("aria-pressed", String(current));
+      if (current) { button.disabled = true; button.title = "Ваш текущий ответ"; }
       buttons.append(button);
     }
     comment.addEventListener("keydown", (keyEvent) => { if (keyEvent.key === "Enter") { keyEvent.preventDefault(); respond(item.me.status === "needs-action" ? "accepted" : item.me.status); } });

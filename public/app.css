@@ -6111,7 +6111,10 @@ body {
 .pop-me-label { color: var(--n-52); }
 .pop-me-buttons { display: flex; gap: 4px; margin: 8px 0 6px; flex-wrap: wrap; }
 .cal-pop-btn.small { padding: 3px 9px; font-size: 12px; }
-.cal-pop-btn.is-current { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.cal-pop-btn.is-current, .cal-pop-btn.is-current:disabled { opacity: 1; cursor: default; font-weight: 600; background: color-mix(in srgb, var(--pop-status, var(--n-62)) 14%, transparent); color: var(--pop-status, var(--n-62)); border-color: color-mix(in srgb, var(--pop-status, var(--n-62)) 55%, transparent); }
+.cal-pop-btn.is-current.accepted { --pop-status: var(--green); }
+.cal-pop-btn.is-current.declined { --pop-status: var(--red-50); }
+.cal-pop-btn.is-current.tentative { --pop-status: var(--amber, #d29922); }
 .pop-comment { width: 100%; box-sizing: border-box; font: inherit; font-size: 12.5px; border: 0; border-top: 1px solid var(--line); background: none; color: var(--ink); padding: 7px 0 2px; outline: 0; }
 .pop-comment::placeholder { color: var(--n-72); }
 .cal-ev.external[draggable="true"], .cal-chip.external[draggable="true"] { cursor: grab; }

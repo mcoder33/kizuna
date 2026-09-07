@@ -155,7 +155,12 @@ test("плашка чужого события: участники с ответ
   await expect(pop.locator(".pop-person").nth(3)).toContainText("(вы, необязательно)");
   await expect(pop.locator(".pop-link a").first()).toHaveAttribute("href", "https://telemost.360.yandex.ru/j/0319350436");
   await expect(pop.locator(".pop-me-line")).toContainText("принято");
-  await expect(pop.locator(".pop-me-buttons button[aria-pressed='true']")).toHaveText("Принять");
+  // Текущий ответ — отметка состояния, не кнопка призыва: с галочкой, зелёная и без нажатия.
+  const current = pop.locator(".pop-me-buttons button[aria-pressed='true']");
+  await expect(current).toHaveText("✓ Принято");
+  await expect(current).toBeDisabled();
+  await expect(current).toHaveClass(/accepted/);
+  await expect(pop.locator(".pop-me-buttons button", { hasText: "Отклонить" })).toBeEnabled();
   await expect(pop.locator(".pop-comment")).toHaveAttribute("placeholder", "Комментарий организатору");
   await expect(pop.locator(".cal-pop-btn", { hasText: "Удалить" })).toBeVisible();
 });
