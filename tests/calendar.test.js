@@ -7,7 +7,7 @@ import { createApp } from '../server/index.js';
 import { fakeModelService } from './helpers/fake-model.js';
 import { authed } from './helpers/auth.js';
 import { dateInZone, shiftDate } from '../server/reports.js';
-import { fakeYandex } from './caldav.test.js';
+import { fakeYandex, INVITATION } from './caldav.test.js';
 
 function freshApp(options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pagent-calendar-'));
@@ -54,7 +54,7 @@ test('календарь Яндекса: подключение по парол�
   assert.equal(created.account.provider, 'caldav');
   assert.equal(created.account.label, 'Яндекс · user@yandex.ru');
   assert.deepEqual(created.account.calendars.map(calendar => calendar.name), ['Личное']);
-  assert.equal(created.events, 1);
+  assert.ok(created.events >= 2, 'событие и экземпляры еженедельного приглашения');
   assert.ok(created.account.syncedAt);
   // Пароль в базе — только шифртекстом.
   const row = app.database.prepare('SELECT credentials_enc, username FROM calendar_accounts').get();
@@ -116,7 +116,11 @@ test('Google: без ключей подключение отказывает, �
     calls.push({ url, method: options.method || 'GET', body: options.body });
     if (url.startsWith('https://oauth2.googleapis.com/token')) return Response.json({ access_token: 'at-1', refresh_token: 'rt-1', expires_in: 3600 });
     if (url.includes('/users/me/calendarList')) return Response.json({ items: [{ id: 'me@gmail.com', summary: 'me@gmail.com', primary: true, accessRole: 'owner', backgroundColor: '#4285f4' }, { id: 'holidays', summary: 'Праздники', accessRole: 'reader', selected: false }] });
-    if (url.includes('/calendars/me%40gmail.com/events')) return Response.json({ items: [{ id: 'ev1', summary: '1:1', status: 'confirmed', start: { dateTime: '2026-09-07T12:00:00+04:00' }, end: { dateTime: '2026-09-07T13:00:00+04:00' }, hangoutLink: 'https://meet.google.com/abc-defg-hij' }, { id: 'ev2', summary: 'Отпуск', status: 'confirmed', transparency: 'transparent', start: { date: '2026-09-08' }, end: { date: '2026-09-10' } }] });
+    if (url.includes('/calendars/me%40gmail.com/events/ev1-series')) return Response.json({ id: 'ev1-series', recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=MO'] });
+    if (url.includes('/calendars/me%40gmail.com/events/ev1_20260907') && options.method === 'GET') return Response.json({ id: 'ev1_20260907', attendees: [{ email: 'boss@corp.example', displayName: 'Босс', organizer: true, responseStatus: 'accepted' }, { email: 'me@gmail.com', self: true, responseStatus: 'needsAction' }] });
+    if (url.includes('/calendars/me%40gmail.com/events/ev1_20260907') && options.method === 'PATCH') return Response.json({ id: 'ev1_20260907', etag: '"r2"', attendees: JSON.parse(options.body).attendees });
+    if (url.includes('/calendars/me%40gmail.com/events/ev1_20260907/move')) return Response.json({ id: 'ev1_20260907', htmlLink: 'https://calendar.google.com/moved', etag: '"m1"' });
+    if (url.includes('/calendars/me%40gmail.com/events')) return Response.json({ items: [{ id: 'ev1_20260907', recurringEventId: 'ev1-series', sequence: 3, summary: '1:1', status: 'confirmed', start: { dateTime: '2026-09-07T12:00:00+04:00' }, end: { dateTime: '2026-09-07T13:00:00+04:00' }, hangoutLink: 'https://meet.google.com/abc-defg-hij', htmlLink: 'https://calendar.google.com/ev1', attendees: [{ email: 'boss@corp.example', displayName: 'Босс', organizer: true, responseStatus: 'accepted' }, { email: 'me@gmail.com', self: true, responseStatus: 'needsAction' }] }, { id: 'ev2', summary: 'Отпуск', status: 'confirmed', transparency: 'transparent', start: { date: '2026-09-08' }, end: { date: '2026-09-10' } }] });
     return new Response('not found', { status: 404 });
   };
   const app = freshApp({ calendarFetch: googleFetch });
@@ -139,6 +143,19 @@ test('Google: без ключей подключение отказывает, �
   const view = (await api.get('/api/calendar?from=2026-09-07&to=2026-09-09').expect(200)).body;
   const meeting = view.external.find(item => item.title === '1:1');
   assert.deepEqual([meeting.date, meeting.time, meeting.end, meeting.joinUrl], ['2026-09-07', '12:00', '13:00', 'https://meet.google.com/abc-defg-hij']);
+  // Плашка: правило серии, участники, мой ответ, ссылка на событие.
+  assert.equal(meeting.repeat, 'Повторяется каждую неделю по пн');
+  assert.deepEqual(meeting.attendees.map(a => [a.name || a.email, a.status, a.organizer, a.self]), [['Босс', 'accepted', true, false], ['me@gmail.com', 'needs-action', false, true]]);
+  assert.deepEqual([meeting.me.status, meeting.url, meeting.editable], ['needs-action', 'https://calendar.google.com/ev1', true]);
+  calls.length = 0;
+  const responded = (await api.post(`/api/calendar/external/${encodeURIComponent(meeting.id)}/respond`).send({ status: 'accepted', comment: 'буду' }).expect(200)).body.event;
+  assert.equal(responded.me.status, 'accepted');
+  const patch = calls.find(call => call.method === 'PATCH');
+  assert.ok(patch.url.includes('sendUpdates=all'));
+  assert.deepEqual(JSON.parse(patch.body).attendees.find(a => a.self), { email: 'me@gmail.com', self: true, responseStatus: 'accepted', comment: 'буду' });
+  await api.post(`/api/calendar/external/${encodeURIComponent(meeting.id)}/respond`).send({ status: 'maybe' }).expect(400);
+  // Перенос в другой календарь учётной записи — events.move; чужой календарь без прав — отказ.
+  await api.post(`/api/calendar/external/${encodeURIComponent(meeting.id)}/move`).send({ calendarId: 'holidays' }).expect(404);
   // Отпуск на два дня — по плашке на каждый день, «свободно», а не «занято».
   const vacation = view.external.filter(item => item.title === 'Отпуск');
   assert.deepEqual(vacation.map(item => [item.date, item.allDay, item.busy]), [['2026-09-08', true, false], ['2026-09-09', true, false]]);
@@ -205,7 +222,7 @@ test('автосинк с Яндексом: дела и встречи уход�
   assert.ok(puts[0].body.includes('SUMMARY:отправить смету'));
   let view = (await api.get(`/api/calendar?from=${day}&to=${day}`).expect(200)).body;
   assert.deepEqual(view.items.find(item => item.id === todo.id).exports, [{ accountId: account.id, calendarId: account.calendars[0].id, href: puts[0].url, auto: true }]);
-  assert.equal(view.external.length, 0, 'своё событие в чужом кэше не показывается второй раз');
+  assert.ok(!view.external.some(item => item.title === 'отправить смету'), 'своё событие в чужом кэше не показывается второй раз');
   // Повторный проход без изменений ничего не пишет.
   calls.length = 0;
   await app.calendar.autoExport();
@@ -397,4 +414,42 @@ test('автосинк с Google: встреча создаётся events.inser
   assert.ok(patch.url.endsWith('/events/ev1'));
   assert.deepEqual(JSON.parse(patch.body).start, { dateTime: '2026-09-07T10:00:00.000Z' });
   assert.deepEqual(JSON.parse(patch.body).end, { dateTime: '2026-09-07T11:00:00.000Z' });
+});
+
+
+test('приглашение из Яндекса: участники с ответами, повтор словами, ответ организатору уходит PUT с PARTSTAT и COMMENT', async () => {
+  const calls = [];
+  const app = freshApp({ calendarFetch: fakeYandex({ calls }) });
+  const api = authed(app);
+  await api.post('/api/calendar/accounts').send(yandexBody).expect(201);
+  let view = (await api.get('/api/calendar?from=2026-09-10&to=2026-09-10').expect(200)).body;
+  const invite = view.external.find(item => item.title === 'Монетизация ZB');
+  assert.ok(invite);
+  assert.equal(invite.repeat, 'Повторяется каждую неделю по чт');
+  assert.equal(invite.editable, false, 'экземпляр повтора по CalDAV не двигается');
+  assert.deepEqual(invite.attendees.map(a => [a.name, a.status, a.organizer, a.optional, a.self]), [['Стас Косухин', 'accepted', true, false, false], ['Клим Андреев', 'accepted', false, false, false], ['Александр', 'needs-action', false, true, true]]);
+  assert.deepEqual([invite.organizer.name, invite.me.status, invite.url, invite.joinUrl], ['Стас Косухин', 'needs-action', 'https://calendar.yandex.ru/event?event_id=2916085540', 'https://telemost.360.yandex.ru/j/0319350436']);
+  calls.length = 0;
+  const responded = (await api.post(`/api/calendar/external/${encodeURIComponent(invite.id)}/respond`).send({ status: 'tentative', comment: 'буду с опозданием' }).expect(200)).body.event;
+  assert.equal(responded.me.status, 'tentative');
+  const put = calls.find(call => call.method === 'PUT');
+  assert.ok(put.url.endsWith('/events-123/inv.ics'));
+  assert.equal(put.headers['If-Match'], '"inv-1"');
+  const body = put.body.replace(/\r\n[ \t]/g, '');
+  assert.ok(body.includes('PARTSTAT=TENTATIVE:mailto:user@yandex.ru'));
+  assert.ok(!body.includes('RSVP=TRUE'));
+  assert.ok(body.includes('COMMENT:буду с опозданием'));
+  assert.ok(body.includes('RRULE:FREQ=WEEKLY;BYDAY=TH'), 'серия не тронута');
+  // Кэш отвечает сразу, у всех экземпляров серии.
+  view = (await api.get('/api/calendar?from=2026-09-17&to=2026-09-17').expect(200)).body;
+  assert.equal(view.external.find(item => item.title === 'Монетизация ZB').me.status, 'tentative');
+  // Там, где нас нет среди участников, отвечать некому.
+  view = (await api.get('/api/calendar?from=2026-09-07&to=2026-09-07').expect(200)).body;
+  await api.post(`/api/calendar/external/${encodeURIComponent(view.external[0].id)}/respond`).send({ status: 'accepted' }).expect(409);
+  // Голос: respond_event — та же дорога.
+  const spoken = (await api.post('/api/voice/tool').send({ name: 'respond_event', arguments: { eventId: invite.id, status: 'accepted' } }).expect(200)).body.result;
+  assert.deepEqual([spoken.responded, spoken.title], ['accepted', 'Монетизация ZB']);
+  const listed = (await api.post('/api/voice/tool').send({ name: 'list_calendar', arguments: { from: '2026-09-10', to: '2026-09-10' } }).expect(200)).body.result;
+  const item = listed.items.find(entry => entry.title === 'Монетизация ZB');
+  assert.deepEqual([item.myStatus, item.organizer, item.repeat], ['accepted', 'Стас Косухин', 'Повторяется каждую неделю по чт']);
 });

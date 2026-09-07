@@ -116,3 +116,46 @@ test("настройки: раздел «Календари» с формами 
   await expect(page.locator("#setting-googleClientId")).toBeVisible();
   await expect(page.locator("#state-googleClientSecret")).toHaveText("не настроен");
 });
+
+// Плашка чужого события как в Календаре macOS: календарь, откуда, когда и
+// повтор, участники с ответами, ссылки, мой ответ. Событие кладётся прямо в
+// базу прогона: CalDAV-сервера у e2e нет, а плашка читает только кэш.
+test("плашка чужого события: участники с ответами, повтор, ссылки и мой ответ организатору", async ({ page }) => {
+  const { default: Database } = await import("better-sqlite3");
+  const db = new Database("/tmp/pagent-e2e.sqlite");
+  const user = db.prepare("SELECT id FROM users LIMIT 1").get();
+  db.prepare("DELETE FROM calendar_events").run();
+  db.prepare("DELETE FROM calendar_accounts").run();
+  db.prepare("INSERT INTO calendar_accounts(id,user_id,provider,preset,label,color,mode,server_url,username,credentials_enc,calendars_json,synced_at,created_at,auto_export) VALUES('acc1',?,'caldav','yandex','Яндекс','#3b82f6','full','https://caldav.yandex.ru','me@itfinance.tech','v1.x',?,datetime('now'),datetime('now'),'off')")
+    .run(user.id, JSON.stringify([{ id: "c1", url: "https://caldav.yandex.ru/c1/", name: "Itfinance", color: "#3b82f6", selected: true, writable: true }, { id: "c2", url: "https://caldav.yandex.ru/c2/", name: "Личное", color: "#ff8a00", selected: true, writable: true }]));
+  const attendees = [
+    { email: "stas@itfinance.tech", name: "Станислав Косухин", status: "accepted", optional: false, organizer: true },
+    { email: "a.m@itfinance.tech", name: "Анастасия Мжельская", status: "declined", optional: false, organizer: false },
+    { email: "g@itfinance.tech", name: "Гончар Александр", status: "needs-action", optional: false, organizer: false },
+    { email: "me@itfinance.tech", name: "Александр Марченков", status: "accepted", optional: true, organizer: false },
+  ];
+  const today = new Date().toISOString().slice(0, 10);
+  db.prepare("INSERT INTO calendar_events(id,account_id,calendar_id,uid,instance_key,title,description,location,start_at,end_at,all_day,busy,join_url,etag,href,updated_at,attendees_json,organizer_json,repeat,url,sequence) VALUES('e1','acc1','c1','u1',NULL,'Монетизация ZB по понедельникам',NULL,NULL,?,?,0,1,'https://telemost.360.yandex.ru/j/0319350436','\"e\"','https://calendar.yandex.ru/event?event_id=2916085540',datetime('now'),?,?,'Повторяется каждую неделю по пн','https://calendar.yandex.ru/event?event_id=2916085540',3)")
+    .run(`${today}T13:30:00.000Z`, `${today}T14:30:00.000Z`, JSON.stringify(attendees), JSON.stringify({ email: "stas@itfinance.tech", name: "Станислав Косухин" }));
+  db.close();
+  await page.goto("/#calendar");
+  await page.evaluate(() => { localStorage.setItem("kizuna-calendar-mode", "day"); });
+  await page.reload();
+  await page.locator(".cal-ev.external", { hasText: "Монетизация" }).first().click();
+  const pop = page.locator(".cal-pop.rich");
+  await expect(pop).toBeVisible();
+  await expect(pop.locator(".cal-pop-title")).toHaveText("Монетизация ZB по понедельникам");
+  await expect(pop.locator(".pop-cal select")).toHaveValue("c1");
+  await expect(pop.locator(".pop-src")).toHaveText("Яндекс · calendar.yandex.ru");
+  await expect(pop.locator(".pop-when")).toContainText("17:30 – 18:30");
+  await expect(pop.locator(".pop-repeat")).toContainText("Повторяется каждую неделю по пн");
+  await expect(pop.locator(".pop-person")).toHaveCount(4);
+  await expect(pop.locator(".pop-person").nth(0)).toContainText(/Станислав Косухин\s*\(организатор\)/);
+  await expect(pop.locator(".pop-person").nth(1).locator(".pop-st")).toHaveClass(/declined/);
+  await expect(pop.locator(".pop-person").nth(3)).toContainText("(вы, необязательно)");
+  await expect(pop.locator(".pop-link a").first()).toHaveAttribute("href", "https://telemost.360.yandex.ru/j/0319350436");
+  await expect(pop.locator(".pop-me-line")).toContainText("принято");
+  await expect(pop.locator(".pop-me-buttons button[aria-pressed='true']")).toHaveText("Принять");
+  await expect(pop.locator(".pop-comment")).toHaveAttribute("placeholder", "Комментарий организатору");
+  await expect(pop.locator(".cal-pop-btn", { hasText: "Удалить" })).toBeVisible();
+});

@@ -4550,21 +4550,51 @@ function calPopAt(anchorElement) {
   }, 0);
   return pop;
 }
+// Плашка чужого события — как в Календаре macOS: заголовок и календарь,
+// откуда событие, когда и как повторяется, участники с ответами, ссылка на
+// видеовстречу и на само событие, мой ответ организатору с комментарием.
+const POP_STATUS = { accepted: ["✓", "принято"], declined: ["✕", "отклонено"], tentative: ["?", "под вопросом"], "needs-action": ["·", "без ответа"], delegated: ["→", "передано"] };
+function popStatusIcon(status) {
+  const [glyph, label] = POP_STATUS[status] || POP_STATUS["needs-action"];
+  const icon = node("i", glyph, `pop-st ${status}`);
+  icon.title = label;
+  return icon;
+}
+function popSection(cls = "") { return node("section", undefined, `pop-sec${cls ? ` ${cls}` : ""}`); }
+function popHost(href) { try { return new URL(href).host; } catch { return null; } }
 function showExternalEvent(item) {
   const anchorElement = $("#calendar-view").querySelector(`[data-id="${CSS.escape(item.id)}"]`);
   if (!anchorElement) return;
   const pop = calPopAt(anchorElement);
-  pop.append(node("b", item.title, "cal-pop-title"));
-  const when = item.allDay ? `${calHuman(item.date)} · весь день${item.days > 1 ? ` · ${item.days} дн.` : ""}` : `${calHuman(item.date)}, ${item.time}–${item.end}`;
-  pop.append(node("p", when, "cal-pop-when"));
-  pop.append(node("p", `${item.source}${item.calendarName && item.calendarName !== item.source ? ` · ${item.calendarName}` : ""}${item.editable ? "" : item.recurring ? " · повтор, правится в календаре" : " · только чтение"}`, "cal-pop-src"));
-  if (item.location) pop.append(node("p", item.location, "cal-pop-src"));
-  const actions = node("div", undefined, "cal-pop-actions");
+  pop.classList.add("rich");
+  const patch = async (body, done) => {
+    try { await request(`/api/calendar/external/${encodeURIComponent(item.id)}`, { method: "PATCH", body: JSON.stringify(body) }); toast(done); closeCalendarPop(); await loadCalendar(); }
+    catch (error) { toast(error.message); throw error; }
+  };
+  // ── заголовок и календарь ──
+  const head = popSection("pop-head");
+  const title = node("b", item.title, "cal-pop-title");
+  head.append(title);
+  const account = calState.data?.accounts?.find((candidate) => candidate.id === item.accountId);
+  const writable = (account?.calendars || []).filter((calendar) => calendar.writable);
+  const calPick = node("span", undefined, "pop-cal");
+  const dot = node("i", undefined, "cal-dot");
+  dot.style.background = item.color || account?.color || "var(--n-72)";
+  calPick.append(dot);
+  if (item.editable && writable.length > 1) {
+    const select = node("select");
+    select.setAttribute("aria-label", "Календарь события");
+    for (const calendar of writable) { const option = node("option", calendar.name); option.value = calendar.id; option.selected = calendar.id === item.calendarId; select.append(option); }
+    select.addEventListener("change", async () => {
+      select.disabled = true;
+      try { await request(`/api/calendar/external/${encodeURIComponent(item.id)}/move`, { method: "POST", body: JSON.stringify({ calendarId: select.value }) }); toast(`Перенесено в календарь «${select.selectedOptions[0].textContent}»`); closeCalendarPop(); await loadCalendar(); }
+      catch (error) { toast(error.message); select.disabled = false; }
+    });
+    calPick.append(select);
+  } else calPick.append(node("span", item.calendarName || item.source));
+  head.append(calPick);
   if (item.editable) {
-    // Название правится по месту: Enter — отправить в календарь, Esc — отмена.
-    const title = pop.querySelector(".cal-pop-title");
-    title.title = "Переименовать";
-    title.tabIndex = 0;
+    title.title = "Переименовать"; title.tabIndex = 0;
     const rename = () => {
       const input = node("input", undefined, "cal-pop-rename");
       input.type = "text"; input.value = item.title; input.maxLength = 300; input.setAttribute("aria-label", "Название события");
@@ -4575,8 +4605,7 @@ function showExternalEvent(item) {
         const next = input.value.trim();
         if (!save || !next || next === item.title) { input.replaceWith(title); return; }
         input.disabled = true;
-        try { await request(`/api/calendar/external/${encodeURIComponent(item.id)}`, { method: "PATCH", body: JSON.stringify({ title: next }) }); toast(`Переименовано в ${item.source}`); closeCalendarPop(); await loadCalendar(); }
-        catch (error) { toast(error.message); input.replaceWith(title); }
+        try { await patch({ title: next }, `Переименовано в ${item.source}`); } catch { input.replaceWith(title); }
       };
       input.addEventListener("keydown", (keyEvent) => { if (keyEvent.key === "Enter") { keyEvent.preventDefault(); finish(true); } else if (keyEvent.key === "Escape") { keyEvent.preventDefault(); finish(false); } });
       input.addEventListener("blur", () => finish(true));
@@ -4584,6 +4613,77 @@ function showExternalEvent(item) {
     title.addEventListener("click", rename);
     title.addEventListener("keydown", (keyEvent) => { if (keyEvent.key === "Enter") rename(); });
   }
+  pop.append(head);
+  // ── откуда ──
+  const host = popHost(item.href);
+  const source = popSection("pop-row");
+  source.append(node("span", `${item.source}${host ? ` · ${host}` : ""}`, "pop-src"));
+  if (item.href) { const open = node("a", "Открыть", "cal-pop-btn small"); open.href = item.href; open.target = "_blank"; open.rel = "noopener"; source.append(open); }
+  pop.append(source);
+  // ── когда ──
+  const when = popSection();
+  const year = calParse(item.date).getUTCFullYear();
+  const whenText = item.allDay ? `${calHuman(item.date)} ${year} · весь день${item.days > 1 ? ` · ${item.days} дн.` : ""}` : `${calHuman(item.date)} ${year}  ${item.time} – ${item.end}`;
+  when.append(node("div", whenText, "pop-when"));
+  if (item.repeat) { const repeat = node("div", undefined, "pop-repeat"); repeat.append(node("span", item.repeat), node("i", "⟳", "pop-repeat-icon")); when.append(repeat); }
+  if (item.location) when.append(node("div", item.location, "pop-loc"));
+  pop.append(when);
+  // ── участники ──
+  if (item.attendees?.length) {
+    const people = popSection("pop-people");
+    for (const attendee of item.attendees) {
+      const row = node("div", undefined, "pop-person");
+      row.append(popStatusIcon(attendee.status));
+      const name = node("span", attendee.name || attendee.email);
+      name.title = attendee.email;
+      row.append(name);
+      const marks = [attendee.organizer ? "организатор" : null, attendee.self ? "вы" : null, attendee.optional ? "необязательно" : null].filter(Boolean);
+      if (marks.length) row.append(node("small", `(${marks.join(", ")})`));
+      people.append(row);
+    }
+    pop.append(people);
+  }
+  // ── ссылки ──
+  if (item.joinUrl) {
+    const video = popSection("pop-link");
+    const link = node("a", item.joinUrl.replace(/^https?:\/\//, ""));
+    link.href = item.joinUrl; link.target = "_blank"; link.rel = "noopener";
+    video.append(node("span", "Ссылка на видеовстречу: "), link);
+    pop.append(video);
+  }
+  const eventUrl = item.url && item.url !== item.joinUrl ? item.url : null;
+  if (eventUrl) { const urlSec = popSection("pop-link"); const link = node("a", eventUrl.replace(/^https?:\/\//, "")); link.href = eventUrl; link.target = "_blank"; link.rel = "noopener"; urlSec.append(link); pop.append(urlSec); }
+  // ── мой ответ ──
+  if (item.me) {
+    const me = popSection("pop-me");
+    const line = node("div", undefined, "pop-me-line");
+    line.append(node("span", "Мой ответ:", "pop-me-label"), popStatusIcon(item.me.status), node("b", POP_STATUS[item.me.status]?.[1] || "без ответа"));
+    me.append(line);
+    const comment = node("input", undefined, "pop-comment");
+    comment.type = "text"; comment.placeholder = "Комментарий организатору"; comment.maxLength = 500; comment.value = item.me.comment || "";
+    comment.setAttribute("aria-label", "Комментарий организатору");
+    const respond = async (status) => {
+      for (const button of buttons.children) button.disabled = true;
+      try {
+        const body = { status, ...(comment.value.trim() !== (item.me.comment || "") ? { comment: comment.value.trim() } : {}) };
+        await request(`/api/calendar/external/${encodeURIComponent(item.id)}/respond`, { method: "POST", body: JSON.stringify(body) });
+        toast(`Ответ отправлен: ${POP_STATUS[status][1]}`);
+        closeCalendarPop();
+        await loadCalendar();
+      } catch (error) { toast(error.message); for (const button of buttons.children) button.disabled = false; }
+    };
+    const buttons = node("div", undefined, "pop-me-buttons");
+    for (const [status, label] of [["accepted", "Принять"], ["tentative", "Под вопросом"], ["declined", "Отклонить"]]) {
+      const button = calButton(label, `cal-pop-btn small${item.me.status === status ? " is-current" : ""}`, () => respond(status));
+      button.setAttribute("aria-pressed", String(item.me.status === status));
+      buttons.append(button);
+    }
+    comment.addEventListener("keydown", (keyEvent) => { if (keyEvent.key === "Enter") { keyEvent.preventDefault(); respond(item.me.status === "needs-action" ? "accepted" : item.me.status); } });
+    me.append(buttons, comment);
+    pop.append(me);
+  }
+  // ── действия ──
+  const actions = node("div", undefined, "cal-pop-actions");
   if (item.joinUrl) { const join = node("a", "Присоединиться", "cal-pop-btn primary"); join.href = item.joinUrl; join.target = "_blank"; join.rel = "noopener"; actions.append(join); }
   const take = calButton("Взять в память", `cal-pop-btn${item.joinUrl ? "" : " primary"}`, async () => {
     take.disabled = true;
@@ -4599,7 +4699,6 @@ function showExternalEvent(item) {
     } catch (error) { toast(error.message); take.disabled = false; }
   });
   actions.append(take);
-  if (item.href) { const open = node("a", "Открыть", "cal-pop-btn"); open.href = item.href; open.target = "_blank"; open.rel = "noopener"; actions.append(open); }
   if (item.editable) {
     const remove = calButton("Удалить", "cal-pop-btn danger", async () => {
       if (!confirm(`Удалить «${item.title}» из календаря ${item.source}? Это не вернуть.`)) return;
@@ -4610,7 +4709,11 @@ function showExternalEvent(item) {
     actions.append(remove);
   }
   pop.append(actions);
-  pop.append(node("p", item.editable ? "Чужое событие не запись: его нет в поиске и отчётах, пока вы не возьмёте его в память. Название правится по клику, перенос — мышкой, изменения уходят в календарь сразу." : "Чужое событие не запись: его нет в поиске и отчётах, пока вы не возьмёте его в память.", "cal-pop-note"));
+  pop.append(node("p", item.editable ? "Чужое событие не запись: его нет в поиске и отчётах, пока вы не возьмёте его в память. Название правится по клику, перенос — мышкой, изменения уходят в календарь сразу." : item.recurring ? "Экземпляр повтора: время и название правятся в самом календаре, ответ организатору — здесь." : "Чужое событие не запись: его нет в поиске и отчётах, пока вы не возьмёте его в память.", "cal-pop-note"));
+  // Плашка стала высокой — не даём ей уехать за нижний край окна.
+  const rect = pop.getBoundingClientRect();
+  const overflow = rect.bottom - (window.innerHeight - 8);
+  if (overflow > 0) pop.style.top = `${Math.max(8, parseFloat(pop.style.top) - overflow)}px`;
 }
 // Клик по пустому месту сетки — новая запись с уже подставленным временем.
 function openCalendarQuickAdd(target, event) {

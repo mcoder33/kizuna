@@ -51,6 +51,7 @@ test('voice tools are declared once and shared by both modes', () => {
     'list_calendar',
     'update_event',
     'delete_event',
+    'respond_event',
     'take_event',
   ]);
   for (const tool of VOICE_TOOLS) {

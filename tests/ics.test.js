@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseCalendar, buildEvent, findJoinUrl, zonedToUtc, localDateTime, expandRrule } from '../server/ics.js';
+import { describeRrule, setPartstat, parseCalendar, buildEvent, findJoinUrl, zonedToUtc, localDateTime, expandRrule } from '../server/ics.js';
 
 const sample = `BEGIN:VCALENDAR
 VERSION:2.0
@@ -100,4 +100,19 @@ test('пояса: стеновое время в UTC и обратно, ссыл
   assert.deepEqual(localDateTime(at, 'Europe/Samara'), { date: '2026-09-07', time: '11:00' });
   assert.equal(findJoinUrl('созвон https://meet.google.com/abc-defg-hij в 11'), 'https://meet.google.com/abc-defg-hij');
   assert.equal(findJoinUrl('без ссылки', null), null);
+});
+
+
+test('повтор словами и ответ на приглашение прямо в файле события', () => {
+  assert.equal(describeRrule('FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE'), 'Повторяется каждые 2 недели по пн, ср');
+  assert.equal(describeRrule('FREQ=MONTHLY;BYMONTHDAY=15;COUNT=6'), 'Повторяется каждый месяц 15-го, 6 раз');
+  assert.equal(describeRrule('FREQ=YEARLY;UNTIL=20301231T000000Z'), 'Повторяется каждый год до 31 дек 2030');
+  assert.equal(describeRrule('FREQ=HOURLY'), null);
+  const ics = 'BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:x\r\nATTENDEE;CN=Я;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:Me@Example.com\r\nATTENDEE;CN=Он:mailto:him@example.com\r\nCOMMENT:старый\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n';
+  const replied = setPartstat(ics, { email: 'me@example.com', status: 'declined', comment: 'не смогу' });
+  assert.ok(replied.includes('ATTENDEE;CN=Я;PARTSTAT=DECLINED:mailto:Me@Example.com'));
+  assert.ok(replied.includes('ATTENDEE;CN=Он:mailto:him@example.com'), 'чужие строки не тронуты');
+  assert.equal((replied.match(/COMMENT:/g) || []).length, 1);
+  assert.ok(replied.includes('COMMENT:не смогу'));
+  assert.equal(setPartstat(ics, { email: 'nobody@example.com', status: 'accepted' }), null);
 });

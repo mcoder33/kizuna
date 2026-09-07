@@ -214,7 +214,7 @@ export function expandRrule(rule, start, { rangeStart, rangeEnd, limit = 1000, e
 
 // Ссылка на звонок — первая ссылка на известный сервис в описании, месте или
 // свойстве URL: кнопка «Присоединиться» ведёт прямо туда.
-const JOIN_PATTERN = /https?:\/\/(?:[\w.-]*\.)?(?:zoom\.us|meet\.google\.com|teams\.microsoft\.com|telemost\.yandex\.ru|telemost\.yandex\.\w+|meet\.jit\.si|whereby\.com|webex\.com|yandex\.ru\/telemost|salutejazz\.ru|jazz\.sber\.ru|kontur\.ru\/talk|talk\.kontur\.ru)[^\s<>"']*/i;
+const JOIN_PATTERN = /https?:\/\/(?:[\w.-]*\.)?(?:zoom\.us|meet\.google\.com|teams\.microsoft\.com|telemost\.yandex\.ru|telemost\.yandex\.\w+|telemost\.360\.yandex\.\w+|meet\.jit\.si|whereby\.com|webex\.com|yandex\.ru\/telemost|salutejazz\.ru|jazz\.sber\.ru|kontur\.ru\/talk|talk\.kontur\.ru)[^\s<>"']*/i;
 export function findJoinUrl(...texts) {
   for (const text of texts) { const match = String(text || '').match(JOIN_PATTERN); if (match) return match[0]; }
   return null;
@@ -223,6 +223,75 @@ export function findJoinUrl(...texts) {
 // Разбор одного файла календаря. Вернёт экземпляры событий в окне [from, to):
 // одиночные — как есть, повторяющиеся — развёрнутыми, с учётом EXDATE и
 // переопределённых экземпляров (RECURRENCE-ID).
+// Участники встречи: адрес из mailto:, имя из CN, ответ из PARTSTAT,
+// «необязательный» из ROLE. Организатор — отдельным свойством, но в списке он
+// тоже участник, поэтому помечается, а не дублируется.
+export const PARTSTAT = { ACCEPTED: 'accepted', DECLINED: 'declined', TENTATIVE: 'tentative', 'NEEDS-ACTION': 'needs-action', DELEGATED: 'delegated' };
+const mailOf = value => String(value || '').trim().replace(/^mailto:/i, '').toLowerCase();
+function parseOrganizer(event) {
+  const prop = firstProp(event, 'ORGANIZER');
+  if (!prop) return null;
+  return { email: mailOf(prop.value), name: unescapeText(prop.params.CN || '').trim() || null };
+}
+function parseAttendees(event) {
+  const organizer = parseOrganizer(event);
+  const out = allProps(event, 'ATTENDEE').map(prop => ({
+    email: mailOf(prop.value),
+    name: unescapeText(prop.params.CN || '').trim() || null,
+    status: PARTSTAT[(prop.params.PARTSTAT || 'NEEDS-ACTION').toUpperCase()] || 'needs-action',
+    optional: (prop.params.ROLE || '').toUpperCase() === 'OPT-PARTICIPANT',
+    organizer: Boolean(organizer && organizer.email && organizer.email === mailOf(prop.value)),
+  })).filter(attendee => attendee.email);
+  if (organizer?.email && !out.some(attendee => attendee.organizer)) out.unshift({ email: organizer.email, name: organizer.name, status: 'accepted', optional: false, organizer: true });
+  return out.slice(0, 60);
+}
+// Правило повтора человеческим языком — для плашки события, не для разбора.
+const DAY_NAMES = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+const MONTH_NAMES = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+export function describeRrule(value) {
+  const rule = parseRrule(value);
+  if (!rule) return null;
+  const every = (one, few, many) => rule.interval === 1 ? one : `каждые ${rule.interval} ${rule.interval < 5 ? few : many}`;
+  let text = { DAILY: every('каждый день', 'дня', 'дней'), WEEKLY: every('каждую неделю', 'недели', 'недель'), MONTHLY: every('каждый месяц', 'месяца', 'месяцев'), YEARLY: every('каждый год', 'года', 'лет') }[rule.freq];
+  if (rule.freq === 'WEEKLY' && rule.byDay?.length) text += ` по ${rule.byDay.map(item => DAY_NAMES[item.day]).join(', ')}`;
+  if (rule.freq === 'MONTHLY' && rule.byDay?.length && rule.byDay[0].ordinal) text += ` (${rule.byDay[0].ordinal}-й ${DAY_NAMES[rule.byDay[0].day]})`;
+  if (rule.freq === 'MONTHLY' && rule.byMonthDay?.length) text += ` ${rule.byMonthDay.join(', ')}-го`;
+  if (rule.until) text += ` до ${rule.until.getUTCDate()} ${MONTH_NAMES[rule.until.getUTCMonth()]} ${rule.until.getUTCFullYear()}`;
+  else if (rule.count) text += `, ${rule.count} раз`;
+  return `Повторяется ${text}`;
+}
+// Ответ на приглашение: у своей строки ATTENDEE меняется PARTSTAT — во всех
+// VEVENT файла, чтобы экземпляры-исключения не остались с прежним ответом.
+// Комментарий организатору — свойство COMMENT: серверы, которые шлют iTIP,
+// его прикладывают к ответу, остальные просто хранят.
+export function setPartstat(text, { email, status, comment }) {
+  const wanted = Object.entries(PARTSTAT).find(([, value]) => value === status)?.[0];
+  if (!wanted) throw new Error('unknown partstat');
+  const target = mailOf(email);
+  const lines = unfold(text);
+  const out = [];
+  let found = false, inEvent = false;
+  for (const line of lines) {
+    if (/^BEGIN:VEVENT/i.test(line)) inEvent = true;
+    if (/^END:VEVENT/i.test(line)) {
+      if (comment !== undefined && inEvent) out.push(`COMMENT:${escapeText(comment)}`);
+      inEvent = false;
+    }
+    if (inEvent && comment !== undefined && /^COMMENT(;|:)/i.test(line)) continue;
+    const prop = inEvent && /^ATTENDEE(;|:)/i.test(line) ? parseLine(line) : null;
+    if (prop && mailOf(prop.value) === target) {
+      found = true;
+      const head = line.slice(0, line.length - prop.value.length - 1);
+      const withStatus = /;PARTSTAT=[^;:]*/i.test(head) ? head.replace(/;PARTSTAT=[^;:]*/i, `;PARTSTAT=${wanted}`) : `${head};PARTSTAT=${wanted}`;
+      out.push(`${withStatus.replace(/;RSVP=[^;:]*/i, '')}:${prop.value}`);
+      continue;
+    }
+    out.push(line);
+  }
+  if (!found) return null;
+  return out.filter(line => line !== '').map(fold).join('\r\n') + '\r\n';
+}
+
 export function parseCalendar(text, { from, to, timeZone = 'UTC' } = {}) {
   const rangeStart = from instanceof Date ? from : new Date(from || 0);
   const rangeEnd = to instanceof Date ? to : new Date(to || 8640000000000000);
@@ -249,6 +318,7 @@ export function parseCalendar(text, { from, to, timeZone = 'UTC' } = {}) {
     const url = firstProp(event, 'URL')?.value?.trim() || '';
     const status = (firstProp(event, 'STATUS')?.value || '').trim().toUpperCase();
     const transparency = (firstProp(event, 'TRANSP')?.value || '').trim().toUpperCase();
+    const rruleProp = firstProp(event, 'RRULE');
     return {
       uid: firstProp(event, 'UID').value.trim(),
       instanceKey,
@@ -259,6 +329,11 @@ export function parseCalendar(text, { from, to, timeZone = 'UTC' } = {}) {
       busy: transparency !== 'TRANSPARENT' && status !== 'CANCELLED',
       cancelled: status === 'CANCELLED',
       joinUrl: findJoinUrl(url, location, description),
+      url: /^https?:\/\//i.test(url) ? url.slice(0, 500) : null,
+      attendees: parseAttendees(event),
+      organizer: parseOrganizer(event),
+      repeat: rruleProp ? describeRrule(rruleProp.value) : null,
+      sequence: Number(firstProp(event, 'SEQUENCE')?.value) || 0,
       lastModified: parseDateValue(firstProp(event, 'LAST-MODIFIED') || firstProp(event, 'DTSTAMP'), { timeZone: 'UTC' })?.at?.toISOString() || null,
     };
   };

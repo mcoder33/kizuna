@@ -35,7 +35,7 @@ export const VOICE_INSTRUCTIONS = [
   'Не уверен, о какой записи речь, — найди search_memory или list_today и переспроси, а не угадывай.',
   'Не читай длинные списки целиком: назови сколько нашлось и самое важное.',
   'Если человек размышляет вслух и обращается к тебе, помоги подумать: уточняющий вопрос или следующий шаг.',
-  'Календарь — тоже твоя часть: list_calendar показывает свои дела и встречи вместе с событиями внешних календарей (Яндекс, Apple, Google). Своё дело или встречу двигай update_capture, чужое событие — update_event, удаление чужого события подтверждай вслух и вызывай delete_event только после согласия. Чтобы чужое событие стало записью в памяти — take_event.',
+  'Календарь — тоже твоя часть: list_calendar показывает свои дела и встречи вместе с событиями внешних календарей (Яндекс, Apple, Google). Своё дело или встречу двигай update_capture, чужое событие — update_event, удаление чужого события подтверждай вслух и вызывай delete_event только после согласия. Чтобы чужое событие стало записью в памяти — take_event. На приглашение отвечай respond_event, когда человек сказал, принимает он встречу или нет.',
 ].join(' ');
 
 // Характер Кизуны по умолчанию — значение настройки «Системный промпт», пока
@@ -228,6 +228,16 @@ export const VOICE_TOOLS = [
       type: 'object',
       properties: { eventId: { type: 'string' } },
       required: ['eventId'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'respond_event',
+    description: 'Ответить на приглашение из внешнего календаря: принять, отклонить или «под вопросом», при желании с комментарием организатору. Ответ уходит организатору сразу.',
+    parameters: {
+      type: 'object',
+      properties: { eventId: { type: 'string' }, status: { type: 'string', enum: ['accepted', 'declined', 'tentative'] }, comment: { type: 'string' } },
+      required: ['eventId', 'status'],
     },
   },
   {
@@ -458,11 +468,11 @@ export function runVoiceTool(db, name, args = {}, { now = () => new Date(), time
 // Те же операции, что и в сетке: посмотреть окно, подвинуть или переименовать
 // чужое событие, удалить его, взять в память. Свои дела и встречи правятся
 // update_capture — это запись, а не событие.
-const CALENDAR_TOOLS = new Set(['list_calendar', 'update_event', 'delete_event', 'take_event']);
+const CALENDAR_TOOLS = new Set(['list_calendar', 'update_event', 'delete_event', 'respond_event', 'take_event']);
 const isoDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
 function calendarItem(item) {
   return item.kind === 'external'
-    ? { eventId: item.id, kind: 'событие', source: item.source, title: item.title, date: item.date, time: item.time, end: item.end, location: item.location || null, joinUrl: item.joinUrl || null, editable: Boolean(item.editable) }
+    ? { eventId: item.id, kind: 'событие', source: item.source, title: item.title, date: item.date, time: item.time, end: item.end, location: item.location || null, joinUrl: item.joinUrl || null, editable: Boolean(item.editable), repeat: item.repeat || null, organizer: item.organizer?.name || item.organizer?.email || null, attendees: (item.attendees || []).map(attendee => `${attendee.name || attendee.email}${attendee.self ? ' (я)' : ''}: ${attendee.status}`), myStatus: item.me?.status || null }
     : { captureId: item.id, kind: item.kind === 'meeting' ? 'встреча' : 'задача', title: item.title, date: item.date, time: item.time, end: item.end, done: item.done, overdue: Boolean(item.overdue), project: item.project || null };
 }
 function runCalendarTool(db, name, args, { now, timeZone, provider, userId, calendar }) {
@@ -487,6 +497,10 @@ function runCalendarTool(db, name, args, { now, timeZone, provider, userId, cale
     if (args.end !== undefined) patch.end = args.end === '' ? null : args.end;
     if (!Object.keys(patch).length) return { error: 'Нечего менять: назовите новое время, дату или название.' };
     return calendar.updateExternalEvent({ userId, id: eventId, ...patch }).then(result => (result.error ? failed(result) : { eventId, updated: true, event: result.event }));
+  }
+  if (name === 'respond_event') {
+    const messages2 = { ...messages, not_invited: 'Вас нет среди участников — отвечать некому.', invalid_status: 'Ответ — accepted, declined или tentative.' };
+    return calendar.respondExternalEvent({ userId, id: eventId, status: args.status, comment: typeof args.comment === 'string' ? args.comment : undefined }).then(result => (result.error ? { error: `${messages2[result.error] || 'Календарь не принял ответ.'}${result.message ? ` ${result.message}` : ''}` } : { eventId, responded: args.status, title: result.event.title }));
   }
   if (name === 'delete_event') return calendar.deleteExternalEvent({ userId, id: eventId }).then(result => (result.error ? failed(result) : { eventId, removed: true, title: result.title }));
   if (name === 'take_event') {

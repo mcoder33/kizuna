@@ -272,6 +272,12 @@ function migrate(db) {
       if (!db.prepare(`PRAGMA table_info(${table})`).all().some(entry => entry.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     }
     db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(13, now());
+    // Миграция 14: плашка события как в Календаре macOS — участники с
+    // ответами, организатор, правило повтора словами, ссылка на событие.
+    for (const [column, definition] of [['attendees_json', 'TEXT'], ['organizer_json', 'TEXT'], ['repeat', 'TEXT'], ['url', 'TEXT'], ['sequence', 'INTEGER NOT NULL DEFAULT 0']]) {
+      if (!db.prepare('PRAGMA table_info(calendar_events)').all().some(entry => entry.name === column)) db.exec(`ALTER TABLE calendar_events ADD COLUMN ${column} ${definition}`);
+    }
+    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(14, now());
 }
 // Ограничение переписывается из собственного определения таблицы, а не из
 // зашитой здесь копии: копия разошлась бы с настоящей схемой на первой же новой

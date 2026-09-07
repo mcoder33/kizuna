@@ -2,6 +2,8 @@
 // приложений, только OAuth, зато API отдаёт развёрнутые повторы, ссылку Meet и
 // цвет календаря. Токен обновления хранится шифрованно вместе с учётной
 // записью; access-токен живёт час и перевыпускается по мере надобности.
+import { describeRrule } from './ics.js';
+
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const API_URL = 'https://www.googleapis.com/calendar/v3';
@@ -74,8 +76,35 @@ export function createGoogleCalendarClient({ fetch = globalThis.fetch, timeoutMs
     return video?.uri || null;
   }
 
+  const STATUS = { accepted: 'accepted', declined: 'declined', tentative: 'tentative', needsAction: 'needs-action' };
+  function attendeesOf(item) {
+    return (item.attendees || []).slice(0, 60).map(attendee => ({
+      email: String(attendee.email || '').toLowerCase(), name: attendee.displayName || null,
+      status: STATUS[attendee.responseStatus] || 'needs-action', optional: Boolean(attendee.optional), organizer: Boolean(attendee.organizer), self: Boolean(attendee.self),
+      comment: attendee.comment || null,
+    })).filter(attendee => attendee.email);
+  }
+  // Экземпляры повторов приходят без правила: оно у серии. Серия читается
+  // один раз на синхронизацию, не больше сорока штук — больше в окне не бывает.
+  async function repeatOf(accessToken, calendarId, item, cache) {
+    if (!item.recurringEventId) return null;
+    if (!cache.has(item.recurringEventId)) {
+      let text = 'Повторяется';
+      if (cache.size < 40) {
+        try {
+          const master = await call(`${API_URL}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(item.recurringEventId)}`, { accessToken });
+          const rrule = (master?.recurrence || []).find(line => /^RRULE:/i.test(line));
+          text = rrule ? describeRrule(rrule.slice(6)) || text : text;
+        } catch {}
+      }
+      cache.set(item.recurringEventId, text);
+    }
+    return cache.get(item.recurringEventId);
+  }
+
   async function listEvents({ accessToken, calendarId, from, to }) {
     const out = [];
+    const series = new Map();
     let pageToken = null;
     do {
       const params = new URLSearchParams({ singleEvents: 'true', orderBy: 'startTime', maxResults: '250', timeMin: from.toISOString(), timeMax: to.toISOString(), ...(pageToken ? { pageToken } : {}) });
@@ -92,6 +121,11 @@ export function createGoogleCalendarClient({ fetch = globalThis.fetch, timeoutMs
           busy: item.transparency !== 'transparent' && item.status !== 'cancelled',
           cancelled: item.status === 'cancelled',
           joinUrl: joinUrlOf(item),
+          url: item.htmlLink || null,
+          attendees: attendeesOf(item),
+          organizer: item.organizer ? { email: String(item.organizer.email || '').toLowerCase(), name: item.organizer.displayName || null } : null,
+          repeat: await repeatOf(accessToken, calendarId, item, series),
+          sequence: Number(item.sequence) || 0,
           lastModified: item.updated || null,
           etag: item.etag || null, href: item.htmlLink || null,
         });
@@ -136,11 +170,26 @@ export function createGoogleCalendarClient({ fetch = globalThis.fetch, timeoutMs
     const data = await call(`${API_URL}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, { method: 'PATCH', accessToken, body });
     return { id: data.id, href: data.htmlLink || null, etag: data.etag || null };
   }
+  // Ответ на приглашение: свой участник получает responseStatus и комментарий.
+  async function respond({ accessToken, calendarId, eventId, status, comment }) {
+    const event = await call(`${API_URL}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, { accessToken });
+    const attendees = event?.attendees || [];
+    const mine = attendees.find(attendee => attendee.self);
+    if (!mine) return { missing: true };
+    const responseStatus = Object.entries(STATUS).find(([, value]) => value === status)?.[0];
+    const next = attendees.map(attendee => (attendee === mine ? { ...attendee, responseStatus, ...(comment !== undefined ? { comment: comment || undefined } : {}) } : attendee));
+    const data = await call(`${API_URL}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}?sendUpdates=all`, { method: 'PATCH', accessToken, body: { attendees: next } });
+    return { etag: data?.etag || null, attendees: attendeesOf(data || { attendees: next }) };
+  }
+  async function moveEvent({ accessToken, calendarId, eventId, destination }) {
+    const data = await call(`${API_URL}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}/move?destination=${encodeURIComponent(destination)}`, { method: 'POST', accessToken });
+    return { id: data?.id || eventId, href: data?.htmlLink || null, etag: data?.etag || null };
+  }
   async function deleteEvent({ accessToken, calendarId, eventId }) {
     try { await call(`${API_URL}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, { method: 'DELETE', accessToken }); }
     catch (error) { if (error.status !== 404 && error.status !== 410) throw error; }
     return true;
   }
 
-  return { authorizeUrl, exchangeCode, refreshAccessToken, listCalendars, listEvents, insertEvent, updateEvent, patchEvent, deleteEvent };
+  return { authorizeUrl, exchangeCode, refreshAccessToken, listCalendars, listEvents, insertEvent, updateEvent, patchEvent, respond, moveEvent, deleteEvent };
 }
