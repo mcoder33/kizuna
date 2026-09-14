@@ -1353,3 +1353,38 @@ test("высота поля ввода меняется стрелками и з
   expect(await height()).toBeLessThan(taller);
   expect(await page.evaluate(() => localStorage.getItem("kizuna-capture-height"))).toMatch(/^\d+$/);
 });
+
+// Края карточки ввода тянутся, как у окна: нижний — высота, боковые — ширина.
+// Карточка стоит по центру, поэтому правый край идёт за курсором, а ширина
+// растёт на удвоенный сдвиг. Размер переживает перезагрузку, двойной клик по
+// краю возвращает его.
+test("карточка ввода тянется за края и помнит размер", async ({ page }) => {
+  await page.goto("/");
+  const form = page.locator("#capture-form");
+  const field = page.getByLabel("Новая запись");
+  const width = async () => (await form.boundingBox()).width;
+  const height = async () => field.evaluate((element) => parseFloat(getComputedStyle(element).minHeight));
+  const drag = async (dir, dx, dy) => {
+    const box = await page.locator(`#capture-form .capture-resize[data-dir="${dir}"]`).boundingBox();
+    const x = box.x + box.width / 2, y = box.y + box.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + dx / 2, y + dy / 2);
+    await page.mouse.move(x + dx, y + dy);
+    await page.mouse.up();
+  };
+  const startWidth = await width(), startHeight = await height();
+  await drag("e", 60, 0);
+  expect(Math.round(await width())).toBe(Math.round(startWidth + 120));
+  await drag("s", 0, 40);
+  expect(Math.round(await height())).toBe(Math.round(startHeight + 40));
+  await page.reload();
+  expect(Math.round(await width())).toBe(Math.round(startWidth + 120));
+  expect(Math.round(await height())).toBe(Math.round(startHeight + 40));
+  // Левый край уменьшает ширину, если тянуть внутрь.
+  await drag("w", 30, 0);
+  expect(Math.round(await width())).toBe(Math.round(startWidth + 60));
+  await page.locator('#capture-form .capture-resize[data-dir="se"]').dblclick();
+  expect(Math.round(await width())).toBe(Math.round(startWidth));
+  expect(Math.round(await height())).toBe(Math.round(startHeight));
+});

@@ -2356,6 +2356,76 @@ function stepCaptureHeight(delta) {
 $("#capture-taller").addEventListener("click", () => stepCaptureHeight(CAPTURE_HEIGHT.step));
 $("#capture-shorter").addEventListener("click", () => stepCaptureHeight(-CAPTURE_HEIGHT.step));
 paintCaptureHeight();
+// Края карточки тянутся, как у окна: нижний — высота, боковые — ширина, углы —
+// обе. Карточка стоит по центру, поэтому сдвиг бокового края удваивается: край
+// идёт за курсором, а карточка остаётся на оси. Двойной клик по краю
+// возвращает размер по умолчанию.
+const CAPTURE_WIDTH = { min: 480, key: "kizuna-capture-width" };
+function readCaptureWidth() {
+  try {
+    const value = Number(localStorage.getItem(CAPTURE_WIDTH.key));
+    return Number.isFinite(value) && value >= CAPTURE_WIDTH.min ? value : null;
+  } catch {
+    return null;
+  }
+}
+function paintCaptureWidth() {
+  const width = readCaptureWidth();
+  const page = $("#today");
+  if (width) page.style.setProperty("--capture-width", `${width}px`);
+  else page.style.removeProperty("--capture-width");
+}
+paintCaptureWidth();
+for (const grip of document.querySelectorAll("#capture-form .capture-resize")) {
+  const dir = grip.dataset.dir;
+  grip.addEventListener("dblclick", () => {
+    try {
+      if (/[ew]/.test(dir)) localStorage.removeItem(CAPTURE_WIDTH.key);
+      if (dir.includes("s")) localStorage.removeItem(CAPTURE_HEIGHT.key);
+    } catch {}
+    paintCaptureWidth();
+    paintCaptureHeight();
+  });
+  grip.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || captureLarge()) return;
+    const form = $("#capture-form");
+    const startX = event.clientX, startY = event.clientY;
+    const startWidth = form.getBoundingClientRect().width;
+    const startHeight = parseFloat(getComputedStyle(captureField.element).minHeight) || CAPTURE_HEIGHT.min;
+    const sx = dir.includes("e") ? 2 : dir.includes("w") ? -2 : 0;
+    const sy = dir.includes("s") ? 1 : 0;
+    const maxWidth = Math.min(1120, window.innerWidth) - 48;
+    let width = startWidth, height = startHeight;
+    grip.setPointerCapture(event.pointerId);
+    form.classList.add("resizing");
+    event.preventDefault();
+    const move = (e) => {
+      if (sx) {
+        width = Math.min(maxWidth, Math.max(CAPTURE_WIDTH.min, startWidth + sx * (e.clientX - startX)));
+        $("#today").style.setProperty("--capture-width", `${Math.round(width)}px`);
+      }
+      if (sy) {
+        height = Math.min(CAPTURE_HEIGHT.max, Math.max(CAPTURE_HEIGHT.min, startHeight + sy * (e.clientY - startY)));
+        form.style.setProperty("--capture-height", `${Math.round(height)}px`);
+      }
+    };
+    const stop = () => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", stop);
+      grip.removeEventListener("pointercancel", stop);
+      form.classList.remove("resizing");
+      try {
+        if (sx) localStorage.setItem(CAPTURE_WIDTH.key, String(Math.round(width)));
+        if (sy) localStorage.setItem(CAPTURE_HEIGHT.key, String(Math.round(height)));
+      } catch {}
+      paintCaptureWidth();
+      paintCaptureHeight();
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", stop);
+    grip.addEventListener("pointercancel", stop);
+  });
+}
 // Esc возвращает обычный размер. Слушатель на самом поле: там же живут
 // остальные клавиши ввода, и поповеры шапки перехватывать не приходится.
 captureField.element.addEventListener("keydown", (event) => {

@@ -201,6 +201,13 @@
                 →
               </button>
             </div>
+            <!-- Края карточки тянутся, как у окна: нижний — высота, боковые —
+                 ширина, углы — обе. Двойной клик по краю возвращает размер. -->
+            <div class="capture-resize" data-dir="s" aria-hidden="true"></div>
+            <div class="capture-resize" data-dir="e" aria-hidden="true"></div>
+            <div class="capture-resize" data-dir="w" aria-hidden="true"></div>
+            <div class="capture-resize" data-dir="se" aria-hidden="true"></div>
+            <div class="capture-resize" data-dir="sw" aria-hidden="true"></div>
           </form>
         </section>
         <!-- Под полем — два ящика: «Что делал» и «День», где дела лежат вместе
