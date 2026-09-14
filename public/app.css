@@ -499,6 +499,20 @@ nav {
   flex: 1;
   justify-content: center;
 }
+/* На широком экране разделы стоят по центру окна, а не между логотипом и
+   правой группой: иначе они съезжали влево от содержимого страницы, у
+   которого центр — центр окна. */
+@media (min-width: 1024px) {
+  nav {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    flex: none;
+  }
+  header > .header-tail {
+    margin-left: auto;
+  }
+}
 nav > a {
   font-size: 13px;
   color: var(--n-63);
