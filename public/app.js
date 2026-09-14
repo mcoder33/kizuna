@@ -182,6 +182,9 @@ function updatePageFromHash() {
   const params = new URLSearchParams(separator >= 0 ? hash.slice(separator + 1) : "");
   const page = document.getElementById(pageId);
   const activePage = page?.classList.contains("app-page") ? pageId : "today";
+  // Ссылка из уведомления: открыть карточку записи и убрать параметр из адреса.
+  const openId = params.get("open");
+  if (openId) { params.delete("open"); history.replaceState(null, "", `#${activePage}${params.size ? `?${params}` : ""}`); openCaptureById(openId); }
   for (const section of document.querySelectorAll(".app-page"))
     section.hidden = section.id !== activePage;
   for (const link of document.querySelectorAll("nav a"))
@@ -196,6 +199,8 @@ function updatePageFromHash() {
   // Открыли настройки — перечитываем расход: он меняется от каждой записи, а
   // страница может висеть открытой долго.
   if (activePage === "settings") {
+    paintPush();
+    paintUpcomingReminders();
     loadUsage();
     loadCalendarAccounts();
     // Google возвращает сюда после согласия с итогом в адресе: без слова
@@ -1136,6 +1141,26 @@ function showReview(entry, review, undoGroupId, provenance) {
   const paintEnd = () => { end.hidden = !time.value; if (!time.value) end.value = ""; };
   time.addEventListener("input", paintEnd);
   paintEnd();
+  // Напоминание — свойство срока: за сколько до начала у дела со временем,
+  // в час напоминаний у дела без времени. Пусто — как в настройках.
+  const remind = node("select", undefined, "review-remind");
+  remind.id = "review-remind";
+  remind.setAttribute("aria-label", "Напомнить");
+  const storedRemind = c.entities.schedule?.remind;
+  let remindChoice = storedRemind === undefined || storedRemind === null ? "" : String(storedRemind);
+  const paintRemind = () => {
+    const timed = Boolean(time.value);
+    const current = !timed && /^\d+$/.test(remindChoice) ? "0" : remindChoice;
+    clear(remind);
+    const options = timed
+      ? [["", `как в настройках (${remindDefaultLabel()})`], ["off", "не напоминать"], ["0", "в момент начала"], ["5", "за 5 минут"], ["15", "за 15 минут"], ["30", "за 30 минут"], ["60", "за час"], ["120", "за 2 часа"], ["1440", "за день"]]
+      : [["", `как в настройках (${remindHourLabel()})`], ["off", "не напоминать"], ["0", `в ${remindHourValue()}`]];
+    if (current && !options.some(([value]) => value === current)) options.push([current, `за ${current} мин`]);
+    for (const [value, label] of options) { const option = node("option", label); option.value = value; option.selected = value === current; remind.append(option); }
+  };
+  remind.addEventListener("change", () => { remindChoice = remind.value; });
+  time.addEventListener("input", paintRemind);
+  paintRemind();
   project.id = "review-project";
   project.setAttribute("list", "known-projects");
   project.value = c.entities.projects[0] || "";
@@ -1163,12 +1188,12 @@ function showReview(entry, review, undoGroupId, provenance) {
   const scheduleRow = node("div", undefined, "review-schedule");
   const endWrap = node("span", undefined, "review-end");
   endWrap.append(node("span", "до", "review-end-label"), end);
-  scheduleRow.append(date, time, endWrap);
+  scheduleRow.append(date, time, endWrap, remind);
   // Сброс уходит на сервер сразу: «без даты» — это решение, а не правка на
   // полпути, и ждать закрытия карточки ему незачем.
   let saveProps = () => {};
   const clearAndSave = (apply) => { apply(); saveProps(); };
-  const scheduleWrap = propertyRow("Срок", scheduleRow, "schedule", { clear: () => clearAndSave(() => { date.value = ""; time.value = ""; end.value = ""; paintEnd(); }), filled: () => Boolean(date.value || time.value) }),
+  const scheduleWrap = propertyRow("Срок", scheduleRow, "schedule", { clear: () => clearAndSave(() => { date.value = ""; time.value = ""; end.value = ""; remindChoice = ""; paintEnd(); paintRemind(); }), filled: () => Boolean(date.value || time.value) }),
     peopleWrap = propertyRow("Участники", people, "people", { clear: () => clearAndSave(() => { people.value = ""; }), filled: () => Boolean(people.value.trim()) }),
     followUpWrap = propertyRow("Далее", followUp, "next", { clear: () => clearAndSave(() => { followUp.value = ""; }), filled: () => Boolean(followUp.value.trim()) });
   const props = node("div", undefined, "props");
@@ -1205,6 +1230,7 @@ function showReview(entry, review, undoGroupId, provenance) {
     if (project.value.trim()) parts.push(project.value.trim());
     const due = scheduleLabel({ state: "ok", date: date.value || null, time: time.value || null });
     if (!scheduleWrap.hidden && due) parts.push(`срок: ${due}${time.value && end.value ? `–${end.value}` : ""}`);
+    if (!scheduleWrap.hidden && due && remind.value) parts.push(remind.value === "off" ? "без напоминания" : `напомнить ${remind.selectedOptions[0]?.textContent || ""}`);
     if (!peopleWrap.hidden && people.value.trim()) parts.push(people.value.trim());
     if (!followUpWrap.hidden && followUp.value.trim()) parts.push(`далее: ${followUp.value.trim()}`);
     return parts.join("   ·   ");
@@ -1244,7 +1270,7 @@ function showReview(entry, review, undoGroupId, provenance) {
       completed: done,
     };
     if (!scheduleWrap.hidden)
-      patch.schedule = { date: date.value || null, time: time.value || null, ...(time.value && end.value && end.value > time.value ? { end: end.value } : {}) };
+      patch.schedule = { date: date.value || null, time: time.value || null, ...(time.value && end.value && end.value > time.value ? { end: end.value } : {}), remind: remind.value === "" ? null : remind.value === "off" ? "off" : Number(remind.value) };
     return patch;
   };
   const untouched = JSON.stringify(propsPatch());
@@ -2153,6 +2179,7 @@ async function bootstrap() {
     try {
       await Promise.all([status(), load(), loadSettings()]);
       resumeCapture();
+      syncPushSubscription();
     } catch {
       toast("Не удалось загрузить данные. Повторим при восстановлении сети.");
     } finally {
@@ -2181,6 +2208,8 @@ const SETTING_FIELDS = [
   "aiProvider",
   "timeZone",
   "previewLimit",
+  "remindDefault",
+  "remindHour",
   "theme",
   "voiceEnabled",
   "voiceLimitWindow",
@@ -2591,6 +2620,14 @@ function listenToJournal() {
     return;
   }
   journalStream.addEventListener("journal", reloadJournalSoon);
+  // Напоминание в открытую вкладку: тост с «Открыть». Системное уведомление
+  // сюда не дублируется — на закрытую вкладку и телефон его несёт push.
+  journalStream.addEventListener("reminder", (event) => {
+    try {
+      const reminder = JSON.parse(event.data);
+      toast(`${reminder.title} — ${reminder.body}`, { label: "Открыть", run: () => openCaptureById(reminder.captureId) });
+    } catch {}
+  });
   // Между загрузкой страницы и подключением к потоку журнал мог измениться:
   // запись пришла голосом, разбор закончился в фоне, правку сделали в другом
   // окне. Сервер здоровается сообщением «поток жив» — по нему и перечитываем,
@@ -5072,3 +5109,95 @@ function calendarExportEl(entry) {
   })();
   return wrap;
 }
+
+// ── напоминания и push ───────────────────────────────────────────────────
+// Напоминание считает сервер; страница только показывает, что настроено, и
+// подписывает устройство на Web Push. Подписка — на каждом устройстве своя.
+const REMIND_LABELS = { off: "не напоминать", 0: "в момент начала", 5: "за 5 минут", 15: "за 15 минут", 30: "за 30 минут", 60: "за час", 120: "за 2 часа", 1440: "за день" };
+function remindMinutesLabel(value) { return REMIND_LABELS[String(value)] || `за ${value} мин`; }
+function remindDefaultLabel() { return remindMinutesLabel(appSettings.remindDefault ?? "15"); }
+function remindHourValue() { const value = appSettings.remindHour; return value && value !== "off" ? value : "09:00"; }
+function remindHourLabel() { return appSettings.remindHour === "off" ? "не напоминать" : `в ${remindHourValue()}`; }
+const IOS_DEVICE = /iPhone|iPad|iPod/.test(navigator.userAgent);
+function pushSupported() { return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window; }
+function urlBase64ToUint8Array(base64) {
+  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
+  const raw = atob((base64 + padding).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(raw, (char) => char.charCodeAt(0));
+}
+async function currentPushSubscription() {
+  if (!pushSupported()) return null;
+  try { const registration = await navigator.serviceWorker.getRegistration("/"); return registration ? await registration.pushManager.getSubscription() : null; } catch { return null; }
+}
+async function paintPush() {
+  const state = $("#push-state");
+  if (!state) return;
+  const enable = $("#push-enable"), disable = $("#push-disable"), test = $("#push-test");
+  if (!pushSupported()) {
+    state.textContent = IOS_DEVICE
+      ? "На iPhone уведомления работают, если добавить Кизуну на экран «Домой» (Поделиться → На экран «Домой») и открывать оттуда."
+      : "Этот браузер не умеет уведомления на закрытую вкладку.";
+    enable.hidden = disable.hidden = test.hidden = true;
+    return;
+  }
+  const subscription = await currentPushSubscription();
+  let others = 0;
+  try { const info = await request("/api/push/key"); others = info.subscriptions.filter((item) => item.endpoint !== subscription?.endpoint).length; } catch {}
+  const denied = Notification.permission === "denied";
+  if (subscription) state.textContent = `На этом устройстве включены${others ? `, ещё устройств: ${others}` : ""}.`;
+  else if (denied) state.textContent = "Уведомления для этого сайта запрещены в браузере — разрешите их в настройках сайта.";
+  else state.textContent = others ? `На этом устройстве выключены, других устройств: ${others}.` : "Уведомления приходят на закрытую вкладку и на телефон. Включаются на каждом устройстве отдельно.";
+  enable.hidden = Boolean(subscription) || denied;
+  disable.hidden = !subscription;
+  test.hidden = !subscription && !others;
+}
+async function enablePush() {
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") { toast("Без разрешения браузера уведомления не придут"); paintPush(); return; }
+  const registration = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+  await navigator.serviceWorker.ready;
+  const { publicKey } = await request("/api/push/key");
+  const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
+  await request("/api/push/subscriptions", { method: "POST", body: JSON.stringify({ subscription: subscription.toJSON() }) });
+  toast("Уведомления включены на этом устройстве");
+  paintPush();
+}
+async function disablePush() {
+  const subscription = await currentPushSubscription();
+  if (subscription) {
+    await request("/api/push/subscriptions", { method: "DELETE", body: JSON.stringify({ endpoint: subscription.endpoint }) });
+    try { await subscription.unsubscribe(); } catch {}
+  }
+  toast("Уведомления выключены на этом устройстве");
+  paintPush();
+}
+async function testPush() {
+  try {
+    const summary = await request("/api/push/test", { method: "POST", body: "{}" });
+    toast(summary.sent ? "Пробное уведомление отправлено" : "Устройство не приняло уведомление — включите заново");
+  } catch (error) { toast(error.message); }
+}
+// Браузер может сменить адрес подписки: при каждой загрузке она уходит на
+// сервер заново, если на устройстве есть.
+async function syncPushSubscription() {
+  const subscription = await currentPushSubscription();
+  if (!subscription) return;
+  try { await request("/api/push/subscriptions", { method: "POST", body: JSON.stringify({ subscription: subscription.toJSON() }) }); } catch {}
+}
+async function paintUpcomingReminders() {
+  const element = $("#reminders-upcoming");
+  if (!element) return;
+  try {
+    const { reminders } = await request("/api/reminders/upcoming");
+    element.textContent = reminders.length
+      ? `Ближайшие: ${reminders.slice(0, 3).map((item) => `«${item.title}» — ${item.when}${item.lead ? `, ${item.lead.replace("через", "за")} до` : ""}`).join("; ")}.`
+      : "Впереди напоминаний нет: у открытых дел со сроком они появятся сами.";
+  } catch { element.textContent = ""; }
+}
+async function openCaptureById(id) {
+  try { const { entry } = await request(`/api/captures/${encodeURIComponent(id)}`); showCorrection(entry); }
+  catch (error) { toast(error.message); }
+}
+$("#push-enable")?.addEventListener("click", () => enablePush().catch((error) => { toast(error.message || "Не удалось включить уведомления"); paintPush(); }));
+$("#push-disable")?.addEventListener("click", () => disablePush().catch((error) => toast(error.message)));
+$("#push-test")?.addEventListener("click", testPush);

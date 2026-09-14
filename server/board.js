@@ -13,7 +13,7 @@ export const COLUMNS_LIMIT = 12;
 // и цвета в заметках: одна гамма на всё приложение.
 export const COLUMN_COLORS = ['gray', 'brown', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'red'];
 
-function completionEvents(db) {
+export function completionEvents(db) {
   const map = new Map();
   for (const row of db.prepare("SELECT projection_id, event_type, occurred_at FROM ledger_events WHERE projection_id IS NOT NULL AND event_type IN ('completed','completion_undone') ORDER BY rowid").iterate())
     map.set(row.projection_id, { type: row.event_type, at: row.occurred_at });

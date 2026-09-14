@@ -446,7 +446,9 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     if (!active) return null;
     const original = JSON.parse(active.classification_json);
     const end = schedule.time && schedule.end && minutesOf(schedule.end) > minutesOf(schedule.time) ? schedule.end : null;
-    const next = { state: schedule.date && schedule.time ? 'ok' : 'ambiguous', date: schedule.date || null, time: schedule.time || null, ...(end ? { end } : {}), sortAt: schedule.date ? `${schedule.date}T${schedule.time || '23:59'}:00` : null, display: [schedule.date, schedule.time].filter(Boolean).join(', ') + (end ? `–${end}` : '') };
+    // Напоминание — свойство срока, и перенос его не сбрасывает.
+    const remind = original.entities?.schedule?.remind;
+    const next = { state: schedule.date && schedule.time ? 'ok' : 'ambiguous', date: schedule.date || null, time: schedule.time || null, ...(end ? { end } : {}), ...(remind !== undefined && remind !== null ? { remind } : {}), sortAt: schedule.date ? `${schedule.date}T${schedule.time || '23:59'}:00` : null, display: [schedule.date, schedule.time].filter(Boolean).join(', ') + (end ? `–${end}` : '') };
     const classification = { ...original, entities: { ...original.entities, schedule: next } };
     return replaceInterpretation(db, captureId, classification, 'manual', { patch: { schedule: { date: next.date, time: next.time, ...(end ? { end } : {}) } }, note }, shouldMaterializeProjections(classification));
   }

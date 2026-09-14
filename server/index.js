@@ -15,6 +15,8 @@ import { periodReport, dayReport, shiftDate as reportShiftDate } from './reports
 import { boardView, createColumn, renameColumn, colorColumn, moveColumn, deleteColumn, moveCard } from './board.js';
 import { createCalendarService, CalendarSyncWorker } from './calendar.js';
 import { createSecretBox } from './secrets.js';
+import { createReminderService, ReminderWorker, validRemind, validRemindHour, REMIND_MAX_MINUTES } from './reminders.js';
+import { createPushService } from './push.js';
 import { captureOwner, attachmentOwner, projectionOwner, undoGroupOwner, openVoiceSession, closeVoiceSession, closeStaleVoiceSessions, voiceSpend, monthlySpend, findUserById, countUsers } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -30,6 +32,8 @@ function dateInTimeZone(date, timeZone) {
 function validSchedule(schedule) {
   if (!schedule || typeof schedule !== 'object') return false;
   const { date = null, time = null, end = null } = schedule;
+  // Напоминание: минуты до начала или «off»; null снимает явное значение.
+  if (schedule.remind !== undefined && schedule.remind !== null && !validRemind(schedule.remind)) return false;
   // Конец события — только при времени начала и строго после него.
   if (end !== null && (time === null || !/^\d{2}:\d{2}$/.test(end) || Number(end.slice(0,2)) > 23 || Number(end.slice(3)) > 59 || end <= time)) return false;
   if (date !== null) { if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false; const [year, month, day] = date.split('-').map(Number); const parsed = new Date(Date.UTC(year, month - 1, day)); if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) return false; }
@@ -90,6 +94,10 @@ const SETTINGS = {
   // Тема оформления. Хранится у человека, а не во вкладке: со сменой браузера
   // светлая тема не должна возвращаться сама.
   theme: { personal:true, check:value => ['system','light','dark'].includes(value) },
+  // Напоминания: за сколько минут напоминать о деле со временем («off» —
+  // не напоминать) и в какой час — о деле без времени.
+  remindDefault: { personal:true, check:value => value === 'off' || (/^\d+$/.test(String(value)) && Number(value) <= REMIND_MAX_MINUTES) },
+  remindHour: { personal:true, check:value => validRemindHour(String(value)) },
   // ── предел расхода на разговор ──
   // Звук идёт мимо сервера, поэтому денег мы не видим: считаем минуты и
   // умножаем на заданную цену. Предел по минутам работает и без цены — это
@@ -108,7 +116,7 @@ const SETTINGS = {
 };
 // Голоса по умолчанию те же, что и у самой службы: без них выпадающий список
 // открывался бы пустым, хотя разговор уже идёт каким-то голосом.
-const SETTING_DEFAULTS = { sleepAfterSeconds:'25', wakeWord:'кизуна', previewLimit:'3', voiceName:'coral', geminiVoiceName:'Leda', systemPrompt:DEFAULT_VOICE_CHARACTER, voiceModel:'gpt-realtime', geminiVoiceModel:'models/gemini-3.1-flash-live-preview', theme:'system',
+const SETTING_DEFAULTS = { sleepAfterSeconds:'25', remindDefault:'15', remindHour:'09:00', wakeWord:'кизуна', previewLimit:'3', voiceName:'coral', geminiVoiceName:'Leda', systemPrompt:DEFAULT_VOICE_CHARACTER, voiceModel:'gpt-realtime', geminiVoiceModel:'models/gemini-3.1-flash-live-preview', theme:'system',
   // Цены по умолчанию нет намеренно: выдумать её значит показать человеку
   // сумму, которой он не платил. Пока цену не задали, работает предел по
   // минутам, а деньги честно показываются как неизвестные.
@@ -183,10 +191,13 @@ function noteUsage(db, result, kind, userId = null) {
     recordUsage(db, { provider:result.usedProvider, model:result.model || null, kind, inputTokens:result.usage.inputTokens, outputTokens:result.usage.outputTokens, costUsd:result.usage.costUsd, userId });
   } catch {}
 }
-function correctedClassification(original,patch){const entities={...original.entities,projects:patch.project===undefined?original.entities.projects:(patch.project?[patch.project.trim()]:[]),people:patch.people===undefined?original.entities.people:patch.people.map(person=>person.trim()).filter(Boolean),followUp:patch.followUp===undefined?original.entities.followUp:(patch.followUp?.trim()||null),schedule:patch.schedule===undefined?original.entities.schedule:{state:patch.schedule.date&&patch.schedule.time?'ok':'ambiguous',date:patch.schedule.date||null,time:patch.schedule.time||null,...(patch.schedule.time&&patch.schedule.end?{end:patch.schedule.end}:{}),sortAt:patch.schedule.date?`${patch.schedule.date}T${patch.schedule.time||'23:59'}:00`:null,display:[patch.schedule.date,patch.schedule.time].filter(Boolean).join(', ')+(patch.schedule.time&&patch.schedule.end?`–${patch.schedule.end}`:'')}};const clearsAmbiguity=Boolean(original.ambiguity)&&patch[{type:'primaryType',schedule:'schedule',projects:'project',people:'people',followUp:'followUp'}[original.ambiguity.field]||'primaryType']!==undefined;const classification={...original,primaryType:patch.primaryType||original.primaryType,summary:patch.summary===undefined?original.summary:patch.summary.trim(),entities,completed:patch.completed!==undefined?patch.completed:(patch.primaryType!==undefined?patch.primaryType==='outcome_decision':Boolean(original.completed)),unclassified:original.unclassified&&patch.primaryType===undefined?true:undefined,ambiguity:clearsAmbiguity?null:(original.ambiguity??null),conflicts:{projects:patch.project!==undefined?false:original.conflicts?.projects,schedule:patch.schedule!==undefined?false:original.conflicts?.schedule},claims:(original.claims||[]).map(claim=>{const map={type:'primaryType',projects:'project',people:'people',followUp:'followUp',schedule:'schedule'};return patch[map[claim.field]]!==undefined?{...claim,value:claim.field==='type'?(patch.primaryType||original.primaryType):entities[claim.field],confidence:1,kind:'fact',provenance:{source:'raw',evidence:'manual correction'}}:claim})};classification.confidence=Object.fromEntries(classification.claims.map(claim=>[claim.field,claim.confidence]));return classification;}
+// Напоминание в уточнении срока: не упомянуто — остаётся прежнее, null —
+// снимается (вернуться к настройке по умолчанию), иначе — новое.
+function remindPatch(next,original){const value=next.remind===undefined?original?.remind:next.remind;return value===undefined||value===null?{}:{remind:value};}
+function correctedClassification(original,patch){const entities={...original.entities,projects:patch.project===undefined?original.entities.projects:(patch.project?[patch.project.trim()]:[]),people:patch.people===undefined?original.entities.people:patch.people.map(person=>person.trim()).filter(Boolean),followUp:patch.followUp===undefined?original.entities.followUp:(patch.followUp?.trim()||null),schedule:patch.schedule===undefined?original.entities.schedule:{state:patch.schedule.date&&patch.schedule.time?'ok':'ambiguous',date:patch.schedule.date||null,time:patch.schedule.time||null,...(patch.schedule.time&&patch.schedule.end?{end:patch.schedule.end}:{}),...remindPatch(patch.schedule,original.entities.schedule),sortAt:patch.schedule.date?`${patch.schedule.date}T${patch.schedule.time||'23:59'}:00`:null,display:[patch.schedule.date,patch.schedule.time].filter(Boolean).join(', ')+(patch.schedule.time&&patch.schedule.end?`–${patch.schedule.end}`:'')}};const clearsAmbiguity=Boolean(original.ambiguity)&&patch[{type:'primaryType',schedule:'schedule',projects:'project',people:'people',followUp:'followUp'}[original.ambiguity.field]||'primaryType']!==undefined;const classification={...original,primaryType:patch.primaryType||original.primaryType,summary:patch.summary===undefined?original.summary:patch.summary.trim(),entities,completed:patch.completed!==undefined?patch.completed:(patch.primaryType!==undefined?patch.primaryType==='outcome_decision':Boolean(original.completed)),unclassified:original.unclassified&&patch.primaryType===undefined?true:undefined,ambiguity:clearsAmbiguity?null:(original.ambiguity??null),conflicts:{projects:patch.project!==undefined?false:original.conflicts?.projects,schedule:patch.schedule!==undefined?false:original.conflicts?.schedule},claims:(original.claims||[]).map(claim=>{const map={type:'primaryType',projects:'project',people:'people',followUp:'followUp',schedule:'schedule'};return patch[map[claim.field]]!==undefined?{...claim,value:claim.field==='type'?(patch.primaryType||original.primaryType):entities[claim.field],confidence:1,kind:'fact',provenance:{source:'raw',evidence:'manual correction'}}:claim})};classification.confidence=Object.fromEntries(classification.claims.map(claim=>[claim.field,claim.confidence]));return classification;}
 function applyCorrection(db,req,res,next,notify=()=>{}){try{const active=getAggregate(db,req.params.id);if(!active)return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}});const body=req.body||{},patch=body.patch||body,providedKey=req.get('Idempotency-Key');if(providedKey!==undefined&&!validIdempotencyKey(providedKey))return res.status(400).json({error:{code:'invalid_idempotency_key',message:'Некорректный ключ идемпотентности.'}});if(patch.primaryType!==undefined&&!['meeting_event','task','note','outcome_decision','idea_question'].includes(patch.primaryType))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректный тип записи.'}});if(patch.schedule!==undefined&&!validSchedule(patch.schedule))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректная дата или время.'}});if(patch.project!==undefined&&patch.project!==null&&(typeof patch.project!=='string'||patch.project.length>120))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректный проект.'}});if(patch.people!==undefined&&(!Array.isArray(patch.people)||patch.people.length>8||patch.people.some(person=>typeof person!=='string'||person.length>120)))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректные участники.'}});if(patch.followUp!==undefined&&patch.followUp!==null&&(typeof patch.followUp!=='string'||patch.followUp.length>500))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректное действие.'}}); if(patch.completed!==undefined&&typeof patch.completed!=='boolean')return res.status(400).json({error:{code:'invalid_patch',message:'Некорректный признак выполнения.'}});if(patch.summary!==undefined&&(typeof patch.summary!=='string'||!patch.summary.trim()||patch.summary.trim().length>500))return res.status(400).json({error:{code:'invalid_patch',message:'Заголовок — от 1 до 500 символов.'}});const requestFingerprint=correctionRequestFingerprint(patch),operationKey=providedKey||`correction-${requestFingerprint}`,classification=correctedClassification(JSON.parse(active.classification_json),patch),review=gateClassification(classification),replacement=replaceInterpretation(db,req.params.id,classification,'manual',{...patch,patch,operationKey,requestFingerprint},shouldMaterializeProjections(classification));if(replacement?.conflict)return res.status(409).json({error:{code:'idempotency_conflict',message:'Ключ уже использован для другого уточнения.'}});const row=getAggregate(db,req.params.id);notify();res.json({entry:fullEntry(db,row),undoGroupId:replacement.undoGroupId,review,replayed:Boolean(replacement.replayed)});}catch(error){next(error);}}
 async function snapshotProvider(ai, requested) { if (requested) return requested; const status = await ai.status(); return providerIds.has(status?.selectedProvider) ? status.selectedProvider : providerIds.has(status?.defaultProvider) ? status.defaultProvider : 'fallback'; }
-export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.join(__dirname, '..', 'data', 'pagent.sqlite'), aiService, voiceService, timeZone = process.env.PAGENT_TIMEZONE || 'Europe/Samara', now = () => new Date(), workerOptions, audit = () => {}, secureCookies = process.env.PAGENT_SECURE_COOKIES === 'on', calendarService = null, calendarFetch = globalThis.fetch, calendarWorkerOptions = {}, calendarKey = null } = {}) {
+export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.join(__dirname, '..', 'data', 'pagent.sqlite'), aiService, voiceService, timeZone = process.env.PAGENT_TIMEZONE || 'Europe/Samara', now = () => new Date(), workerOptions, audit = () => {}, secureCookies = process.env.PAGENT_SECURE_COOKIES === 'on', calendarService = null, calendarFetch = globalThis.fetch, calendarWorkerOptions = {}, calendarKey = null, pushTransport = null, reminderWorkerOptions = {} } = {}) {
   const db = openDatabase(databasePath);
   const accounts = createAccounts({ db, now, secureCookies, audit, timeZone: () => configuredTimeZone });
   // Настройки читаются из базы поверх окружения: то, что человек поменял в
@@ -211,6 +222,12 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     // дело со сроком, перенос, «сделано», удаление. Сам календарь себя не будит.
     if (reason !== 'calendar' && reason !== 'queued') { try { calendar.wakeAutoExport?.(); } catch {} }
   };
+  // Личное сообщение в открытые вкладки одного человека: напоминание не
+  // должно всплыть у соседа по серверу.
+  const notifyUser = (userId, event, payload) => {
+    const line = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+    for (const listener of journalListeners) { if (listener.userId === userId) { try { listener.write(line); } catch {} } }
+  };
   // Разбор заканчивается в воркере, а не в запросе: там журнал и меняется.
   const workerAudit = (event) => { try { audit(event); } finally { if (event?.event === 'capture_job_succeeded' || event?.event === 'capture_job_failed') notifyJournal('job'); } };
   const captureJobWorker = new CaptureJobWorker({ db, ai, now, audit: workerAudit, ...workerOptions });
@@ -234,6 +251,17 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   const calendarSyncWorker = new CalendarSyncWorker({ service: calendar, audit, ...calendarWorkerOptions });
   app.calendar = calendar;
   app.calendarSyncWorker = calendarSyncWorker;
+  // Напоминания: доставка — в открытые вкладки потоком и на устройства
+  // push-ем; что и когда — считает служба напоминаний по настройкам человека.
+  const push = createPushService({ db, now, audit, ...(pushTransport ? { transport: pushTransport } : {}), subject: process.env.PAGENT_PUSH_SUBJECT || (process.env.PAGENT_PUBLIC_URL && /^https:/.test(process.env.PAGENT_PUBLIC_URL) ? process.env.PAGENT_PUBLIC_URL : 'mailto:kizuna@example.com') });
+  const reminders = createReminderService({ db, now, audit, timeZone: () => configuredTimeZone,
+    settingsFor: userId => { const env = environment(); return { minutes: settingValue(stored, env, 'remindDefault', userId), hour: settingValue(stored, env, 'remindHour', userId) }; },
+    deliver: async ({ userId, reminder }) => {
+      notifyUser(userId, 'reminder', reminder);
+      await push.send(userId, { kind: 'reminder', title: reminder.title, body: reminder.body, tag: `reminder:${reminder.captureId}`, url: `/#today?open=${reminder.captureId}` });
+    } });
+  const reminderWorker = new ReminderWorker({ service: reminders, audit, ...reminderWorkerOptions });
+  app.push = push; app.reminders = reminders; app.reminderWorker = reminderWorker;
   // Внутренние ручки для тестов и для запуска: наружу по HTTP они не выходят.
   app.accounts = accounts;
   app.database = db;
@@ -258,6 +286,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     res.flushHeaders?.();
     // Первое сообщение сразу: клиент понимает, что поток жив, и не ждёт таймаута.
     res.write(`event: ready\ndata: ${JSON.stringify({ at: now().toISOString() })}\n\n`);
+    res.userId = req.user?.id || null;
     journalListeners.add(res);
     // Комментарий раз в 25 секунд держит соединение открытым через прокси.
     const beat = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 25000);
@@ -274,6 +303,29 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     journalListeners.clear();
     return count;
   };
+  // ── напоминания и push ──
+  app.get('/api/reminders/upcoming',(req,res)=>{ res.json({ reminders: reminders.upcoming(req.user.id, { limit: 20 }) }); });
+  app.get('/api/push/key',(req,res)=>{ res.json({ publicKey: push.publicKey(), subscriptions: push.list(req.user.id) }); });
+  app.post('/api/push/subscriptions',(req,res)=>{
+    const result = push.subscribe({ userId: req.user.id, subscription: req.body?.subscription, userAgent: req.get('user-agent') });
+    if (result.error) return res.status(400).json({ error: { code: result.error, message: 'Некорректная подписка на уведомления.' } });
+    res.status(result.created ? 201 : 200).json({ subscription: { id: result.id }, subscriptions: push.list(req.user.id) });
+  });
+  app.delete('/api/push/subscriptions',(req,res)=>{
+    const result = push.unsubscribe({ userId: req.user.id, endpoint: req.body?.endpoint });
+    if (result.error) return res.status(400).json({ error: { code: result.error, message: 'Некорректная подписка на уведомления.' } });
+    res.json({ removed: result.removed, subscriptions: push.list(req.user.id) });
+  });
+  // Пробное уведомление: единственный способ убедиться, что телефон получает.
+  app.post('/api/push/test',async(req,res,next)=>{
+    try {
+      const summary = await push.send(req.user.id, { kind: 'test', title: 'Кизуна', body: 'Уведомления работают: так придёт напоминание о деле.', tag: 'test', url: '/#settings' });
+      if (!summary.sent && !summary.failed && !summary.dropped) return res.status(409).json({ error: { code: 'no_subscriptions', message: 'На этом счёте нет устройств с включёнными уведомлениями.' } });
+      res.json(summary);
+    } catch (error) { next(error); }
+  });
+  // Одна запись целиком: карточка открывается по ссылке из уведомления.
+  app.get('/api/captures/:id',(req,res)=>{ if(!ownsCapture(req,res,req.params.id))return; const row=getAggregate(db,req.params.id); if(!row)return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}}); res.json({ entry: fullEntry(db,row) }); });
   // ── настройки ──
   app.get('/api/settings',(req,res)=>{
     res.json({ settings: publicSettings(stored, process.env, req.user), editable: editableSettings(req.user), voice: voice.status(), voices: VOICE_CHOICES, timeZone: configuredTimeZone, quota: voiceQuota(req.user), spend: spendState(req.user) });
@@ -543,6 +595,10 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   app.use('/public',express.static(path.join(__dirname,'..','public'),{index:false,dotfiles:'deny'}));
   // Без учётной записи открывается только вход: приложение целиком, включая
   // журнал, живёт за ним.
+  // Сервис-воркер живёт в корне: его область действия — весь адрес, а из
+  // /public/ он видел бы только /public/. Манифест — рядом, ради «Домой» на iPhone.
+  app.get('/sw.js',(req,res)=>{ res.set({ 'Cache-Control':'no-store', 'Content-Type':'text/javascript; charset=utf-8' }); res.sendFile(path.join(__dirname,'..','public','sw.js')); });
+  app.get('/manifest.webmanifest',(req,res)=>{ res.set({ 'Content-Type':'application/manifest+json; charset=utf-8' }); res.sendFile(path.join(__dirname,'..','public','manifest.webmanifest')); });
   app.get('/login',(req,res)=>res.sendFile(path.join(__dirname,'..','public','auth.html')));
   app.get('/',(req,res)=>req.user?res.sendFile(path.join(__dirname,'..','public','app.html')):res.redirect('/login'));
   // Черновики и студии макетов — часть той же двери: снаружи у приложения
@@ -558,11 +614,11 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   app.use((error,req,res,next)=>{if(res.headersSent)return next(error);const status=Number(error?.status||error?.statusCode);if(typeof error?.type==='string'&&(error.type.startsWith('entity.')||error.type.startsWith('encoding.'))&&status>=400&&status<500)return res.status(status).json({error:{code:bodyErrorCodes[status]||'invalid_request',message:bodyErrorMessages[status]||'Некорректный запрос.'}});res.status(500).json({error:{code:'internal_error',message:'Не удалось обработать запрос.'}});});
   return app;
 }
-if(process.argv[1]===fileURLToPath(import.meta.url)){const app=createApp();const server=app.listen(Number(process.env.PORT||3000),process.env.HOST||'127.0.0.1',()=>{app.captureJobWorker.start();app.calendarSyncWorker.start();console.log('Kizuna server started.');});let shuttingDown=false;const shutdown=()=>{if(shuttingDown)return;shuttingDown=true;
+if(process.argv[1]===fileURLToPath(import.meta.url)){const app=createApp();const server=app.listen(Number(process.env.PORT||3000),process.env.HOST||'127.0.0.1',()=>{app.captureJobWorker.start();app.calendarSyncWorker.start();app.reminderWorker.start();console.log('Kizuna server started.');});let shuttingDown=false;const shutdown=()=>{if(shuttingDown)return;shuttingDown=true;
   // Потоки событий держали ответы открытыми, и server.close ждал их вечно:
   // systemd убивал процесс по таймауту через 90 с — каждый деплой давал
   // полторы минуты простоя. Потоки закрываем сами, простаивающие соединения
   // тоже, а на всё выключение — жёсткий срок.
   const deadline=setTimeout(()=>process.exit(0),10000);deadline.unref();
   app.closeEventStreams();
-  Promise.allSettled([app.captureJobWorker.stop(),app.calendarSyncWorker.stop()]).finally(()=>{server.close(()=>process.exit(0));server.closeIdleConnections?.();});};process.once('SIGTERM',shutdown);process.once('SIGINT',shutdown);}
+  Promise.allSettled([app.captureJobWorker.stop(),app.calendarSyncWorker.stop(),app.reminderWorker.stop()]).finally(()=>{server.close(()=>process.exit(0));server.closeIdleConnections?.();});};process.once('SIGTERM',shutdown);process.once('SIGINT',shutdown);}

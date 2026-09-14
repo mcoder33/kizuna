@@ -8,6 +8,10 @@
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='2' y='2' width='60' height='60' rx='14' fill='%23c73e3a'/%3E%3Cg fill='none' stroke='white' stroke-linecap='round' stroke-width='6'%3E%3Cpath d='M8 17q24 -6 48 0'/%3E%3Cline x1='14' y1='27' x2='50' y2='27'/%3E%3Cline x1='19' y1='22' x2='21' y2='54'/%3E%3Cline x1='45' y1='22' x2='43' y2='54'/%3E%3C/g%3E%3C/svg%3E"
     />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Кизуна" />
+    <meta name="theme-color" content="#c73e3a" />
     <script src="/public/theme.js"></script>
     <link rel="stylesheet" href="/public/app.css" />
   </head>
@@ -585,6 +589,48 @@
               ><span class="setting-name">Записей в колонке</span
               ><input id="setting-previewLimit" type="number" min="1" max="20" /></label
             >
+          </fieldset>
+
+          <fieldset class="settings-group">
+            <legend>Напоминания</legend>
+            <p class="setting-hint">
+              Напоминание — свойство срока: у дела со временем — за сколько до
+              начала, у дела без времени — в какой час дня. В карточке записи
+              можно задать своё.
+            </p>
+            <label class="setting" for="setting-remindDefault"
+              ><span class="setting-name">О деле со временем</span
+              ><select id="setting-remindDefault">
+                <option value="off">не напоминать</option>
+                <option value="0">в момент начала</option>
+                <option value="5">за 5 минут</option>
+                <option value="15">за 15 минут</option>
+                <option value="30">за 30 минут</option>
+                <option value="60">за час</option>
+                <option value="120">за 2 часа</option>
+                <option value="1440">за день</option>
+              </select></label
+            >
+            <label class="setting" for="setting-remindHour"
+              ><span class="setting-name">О деле без времени</span
+              ><select id="setting-remindHour">
+                <option value="off">не напоминать</option>
+                <option value="07:00">в 07:00</option>
+                <option value="08:00">в 08:00</option>
+                <option value="09:00">в 09:00</option>
+                <option value="10:00">в 10:00</option>
+                <option value="12:00">в 12:00</option>
+                <option value="18:00">в 18:00</option>
+                <option value="20:00">в 20:00</option>
+              </select></label
+            >
+            <p class="setting-hint" id="push-state">Проверяем…</p>
+            <div class="setting-actions">
+              <button id="push-enable" class="secondary" type="button">Включить на этом устройстве</button>
+              <button id="push-disable" class="secondary" type="button" hidden>Выключить на этом устройстве</button>
+              <button id="push-test" class="secondary" type="button" hidden>Проверить</button>
+            </div>
+            <p class="setting-hint" id="reminders-upcoming"></p>
           </fieldset>
 
           <fieldset class="settings-group">

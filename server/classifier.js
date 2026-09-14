@@ -125,7 +125,9 @@ export function parseCaptureOverrides(body,now=new Date(),timeZone='Europe/Samar
     const date=src.due.date,time=src.due.time??null;
     if(typeof date!=='string'||(time!==null&&typeof time!=='string'))return{error:'invalid_due'};
     if(!scheduleFromModel({date,time},now,timeZone))return{error:'invalid_due'};
-    out.due={date,time};
+    const remind=src.due.remind;
+    if(remind!==undefined&&remind!==null&&!(remind==='off'||(Number.isInteger(remind)&&remind>=0&&remind<=7*24*60)))return{error:'invalid_due'};
+    out.due={date,time,...(remind!==undefined&&remind!==null?{remind}:{})};
   }
   if(src.priority!==undefined&&src.priority!==null){
     if(!['low','high'].includes(src.priority))return{error:'invalid_priority'};
@@ -173,6 +175,7 @@ export function applyUserOverrides(classification,overrides,now=new Date(),timeZ
   if(overrides.due&&scheduleAllowed){
     const schedule=scheduleFromModel(overrides.due,now,timeZone);
     if(schedule){
+      if(overrides.due.remind!==undefined&&overrides.due.remind!==null)schedule.remind=overrides.due.remind;
       out.entities.schedule=schedule;
       setClaim('schedule',schedule);
       out.conflicts.schedule=false;

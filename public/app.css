@@ -6208,3 +6208,7 @@ body {
 .calendar-connect { margin-top: 12px; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
 .calendar-connect-title { margin: 0; font-weight: 600; }
 .calendar-connect-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* Карточка: «Напомнить» — своей строкой под сроком */
+.review-schedule { flex-wrap: wrap; }
+.review-remind { flex: 1 1 100%; min-width: 0; }

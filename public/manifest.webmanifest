@@ -1,0 +1,14 @@
+{
+  "name": "Кизуна",
+  "short_name": "Кизуна",
+  "description": "Личный журнал: дела, встречи, заметки и календарь",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f7f4ef",
+  "theme_color": "#c73e3a",
+  "lang": "ru",
+  "icons": [
+    { "src": "/public/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

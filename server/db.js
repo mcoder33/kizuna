@@ -278,6 +278,31 @@ function migrate(db) {
       if (!db.prepare('PRAGMA table_info(calendar_events)').all().some(entry => entry.name === column)) db.exec(`ALTER TABLE calendar_events ADD COLUMN ${column} ${definition}`);
     }
     db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(14, now());
+    // Миграция 15: напоминания по делам. Подписки Web Push — по устройствам
+    // человека (адрес у подписки уникален: одно устройство — одна строка);
+    // журнал отправок — чтобы одно напоминание не ушло дважды и чтобы
+    // пропущенное за простоем не догоняло человека через сутки.
+    db.exec(`CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      endpoint TEXT NOT NULL UNIQUE,
+      keys_json TEXT NOT NULL,
+      user_agent TEXT,
+      created_at TEXT NOT NULL,
+      last_used_at TEXT,
+      failed_at TEXT,
+      fail_reason TEXT
+    );
+    CREATE TABLE IF NOT EXISTS reminder_sends (
+      capture_id TEXT NOT NULL REFERENCES captures(id),
+      remind_at TEXT NOT NULL,
+      user_id TEXT,
+      status TEXT NOT NULL CHECK(status IN ('sent','missed')),
+      title TEXT,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY(capture_id, remind_at)
+    )`);
+    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(15, now());
 }
 // Ограничение переписывается из собственного определения таблицы, а не из
 // зашитой здесь копии: копия разошлась бы с настоящей схемой на первой же новой
@@ -1010,6 +1035,8 @@ const ownedRows = {
   calendar_events: ['account_id IN (SELECT id FROM calendar_accounts WHERE user_id IS ?)', 1],
   calendar_accounts: ['user_id IS ?', 1],
   activity_events: ["json_extract(payload_json,'$.captureId') IN (SELECT id FROM captures WHERE user_id IS ?)", 1],
+  // Журнал отправленных напоминаний ссылается на записи — уходит вместе с ними.
+  reminder_sends: [MINE, 1],
 };
 const mineWhere = table => 'WHERE ' + ownedRows[table][0];
 function exportRowCount(db, userId) { return exportTables.reduce((total, table) => total + db.prepare(`SELECT COUNT(*) AS count FROM ${table} ${mineWhere(table)}`).get(userId).count, 0); }
@@ -1039,7 +1066,7 @@ export function resetLedger(db, userId = null) {
     db.exec('DROP TRIGGER IF EXISTS ledger_events_no_update; DROP TRIGGER IF EXISTS ledger_events_no_delete;');
     try {
       // Порядок важен: сначала то, что ссылается, потом то, на что ссылаются.
-      for (const table of ['activity_events','daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','interpretations','capture_attachments','capture_notes','usage_events','board_placements','board_columns','calendar_links','calendar_events','calendar_accounts','captures']) db.prepare(`DELETE FROM ${table} ${mineWhere(table)}`).run(userId);
+      for (const table of ['activity_events','reminder_sends','daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','interpretations','capture_attachments','capture_notes','usage_events','board_placements','board_columns','calendar_links','calendar_events','calendar_accounts','captures']) db.prepare(`DELETE FROM ${table} ${mineWhere(table)}`).run(userId);
     } finally { createLedgerEventGuards(db); }
   });
 }
