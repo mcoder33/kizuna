@@ -514,7 +514,8 @@ let previewLimit = 3;
 // Заметок на главной нет: они живут в «Обзоре», поиске и карточке записи.
 const TODAY_ZONE = "Europe/Samara";
 const todayState = {
-  view: 0,            // смещение показанного дня от сегодняшнего
+  view: 0,            // смещение дня, показанного в «Дне», от сегодняшнего
+  journalView: 0,     // то же для «Что делал»: у ящиков свои дни
   tab: null,          // открытый ящик: "journal" | "day" | null
   manual: false,      // ящик выбран рукой — фаза его не трогает
   phase: null,
@@ -650,8 +651,9 @@ function renderToday() {
   applyCoverComposer(cover);
   paintCover(cover, currentDayDate);
   const viewDate = shiftDate(currentDayDate, todayState.view);
-  paintTabs(viewDate);
-  paintJournal();
+  const journalDate = shiftDate(currentDayDate, todayState.journalView);
+  paintTabs(viewDate, journalDate);
+  paintJournal(journalDate);
   paintDayList(viewDate);
 }
 // Вопрос в поле и тип записи — по фазе, но только пока поле пустое и тип не
@@ -691,9 +693,9 @@ function paintCover(cover, date) {
     }
   }
 }
-// Стрелки по дням живут внутри «Дня»: слева предыдущий день, справа
-// следующий, по центру показанный. Листается только этот ящик: обложка и
-// «Что делал» всегда про сегодня.
+// Стрелки по дням живут внутри каждого ящика: слева предыдущий день, справа
+// следующий, по центру показанный. У «Дня» и «Что делал» свои дни; обложка
+// всегда про сегодня.
 function ownEntriesFor(date) {
   return todayState.entries.filter((entry) =>
     scheduleOf(entry)?.date === date && !isReportedWork(entry)
@@ -709,7 +711,12 @@ function setView(offset) {
   todayState.tab = "day";
   renderToday();
 }
-function dayNavNode(date) {
+function setJournalView(offset) {
+  todayState.journalView = offset;
+  todayState.tab = "journal";
+  renderToday();
+}
+function dayNavNode(date, { view, onView }) {
   const nav = node("div", undefined, "daynav");
   const step = (delta) => {
     const target = shiftDate(date, delta);
@@ -721,7 +728,7 @@ function dayNavNode(date) {
     const parts = [node("i", delta < 0 ? "‹" : "›", "daynav-arrow"), node("span", shortDate(target), "daynav-date")];
     if (delta > 0) parts.reverse();
     button.append(...parts);
-    button.addEventListener("click", () => setView(todayState.view + delta));
+    button.addEventListener("click", () => onView(view + delta));
     return button;
   };
   const current = node("div", undefined, "daynav-current");
@@ -731,7 +738,7 @@ function dayNavNode(date) {
     const back = node("button", "сегодня", "daynav-today");
     back.type = "button";
     back.dataset.view = "0";
-    back.addEventListener("click", () => setView(0));
+    back.addEventListener("click", () => onView(0));
     current.append(back);
   }
   nav.append(step(-1), current, step(1));
@@ -760,12 +767,14 @@ function dayCountNode(date) {
   wrap.append(document.createTextNode(parts.join(" · ")));
   return wrap;
 }
-function paintTabs(date) {
+function paintTabs(date, journalDate) {
   const host = $("#today-tabs");
   clear(host);
-  const today = date === currentDayDate;
+  const today = date === currentDayDate, journalToday = journalDate === currentDayDate;
+  const report = todayState.cache.get(journalDate)?.report;
+  const doneCount = journalToday ? String(todayState.done.length) : report ? String((report.done || []).length) : "…";
   const tabs = [
-    ["journal", "Что делал", node("b", String(todayState.done.length))],
+    ["journal", journalToday ? "Что делал" : `Что делал ${shortDate(journalDate)}`, node("b", doneCount)],
     ["day", today ? "День" : `День ${shortDate(date)}`, dayCountNode(date)],
   ];
   for (const [key, label, count] of tabs) {
@@ -866,7 +875,7 @@ function appendMore(container, hidden) {
 function paintDayList(date) {
   const container = $("#todo");
   clear(container);
-  container.append(dayNavNode(date));
+  container.append(dayNavNode(date, { view: todayState.view, onView: setView }));
   if (date === currentDayDate) { paintTodayList(container); return; }
   const data = todayState.cache.get(date);
   if (!data) {
@@ -944,21 +953,51 @@ function paintOtherDayList(container, date, data) {
     for (const slot of hours) container.append(slot.entry ? rowWithTime(scheduleOf(slot.entry).time, card(slot.entry)) : eventRow(slot.item, { pastDay }));
   }
 }
-function paintJournal() {
-  appendEntries($("#journal"), todayState.done, "Пока нет зафиксированной работы за сегодня.", { entryOptions: () => ({ compact: true }) });
+function paintJournal(date) {
+  const container = $("#journal");
+  const nav = () => dayNavNode(date, { view: todayState.journalView, onView: setJournalView });
+  if (date === currentDayDate) {
+    appendEntries(container, todayState.done, "Пока нет зафиксированной работы за сегодня.", { entryOptions: () => ({ compact: true }) });
+    container.prepend(nav());
+    return;
+  }
+  clear(container);
+  container.append(nav());
+  const data = todayState.cache.get(date);
+  if (!data) { container.append(node("p", "Загружаю…", "empty")); ensureDayData(date); return; }
+  // Сделанное другого дня — из отчёта «Обзора»; карточка записи, если она
+  // ещё среди загруженных, иначе строка с названием и временем.
+  const done = data.report?.done || [];
+  if (!done.length) { container.append(node("p", date < currentDayDate ? "В этот день ничего не записано." : "День ещё не наступил.", "empty")); return; }
+  const entriesById = new Map(todayState.entries.map((entry) => [entry.id, entry]));
+  for (const record of done) {
+    const entry = entriesById.get(record.captureId);
+    if (entry) { container.append(entryCard(entry, { compact: true })); continue; }
+    const box = node("div", undefined, "day-own");
+    box.append(node("span", record.title, "day-own-title"));
+    const meta = node("span", undefined, "day-event-meta");
+    meta.append(node("span", typeNames[record.type] || record.type, "tag"), node("span", hm(zoneMinutes(new Date(record.at))), "tag"));
+    box.append(meta);
+    container.append(box);
+  }
 }
-// Чужие события другого дня грузятся, когда его открыли, и помнятся до
-// следующего изменения журнала; свои дела берутся из уже загруженных записей.
+// Другой день грузится, когда его открыли, и помнится до следующего изменения
+// журнала: чужие события — из календаря, сделанное — из отчёта «Обзора»;
+// свои дела берутся из уже загруженных записей.
 async function ensureDayData(date) {
   if (todayState.cache.has(date) || todayState.loading.has(date)) return;
   todayState.loading.add(date);
   try {
-    const calendar = await request(`/api/calendar?from=${date}&to=${date}`).catch(() => null);
-    todayState.cache.set(date, { calendar });
+    const [calendar, report] = await Promise.all([
+      request(`/api/calendar?from=${date}&to=${date}`).catch(() => null),
+      request(`/api/reports/day?date=${date}`).catch(() => null),
+    ]);
+    todayState.cache.set(date, { calendar, report });
   } finally {
     todayState.loading.delete(date);
   }
-  if (currentDayDate && shiftDate(currentDayDate, todayState.view) === date) renderToday();
+  if (!currentDayDate) return;
+  if ([todayState.view, todayState.journalView].some((offset) => shiftDate(currentDayDate, offset) === date)) renderToday();
 }
 // Раз в минуту обложка и строка «сейчас» пересчитываются — но не под руками:
 // с текстом в поле страница ждёт.
