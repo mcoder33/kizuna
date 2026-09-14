@@ -6212,3 +6212,73 @@ body {
 /* Карточка: «Напомнить» — своей строкой под сроком */
 .review-schedule { flex-wrap: wrap; }
 .review-remind { flex: 1 1 100%; min-width: 0; }
+
+/* ── «Сегодня»: обложка по часам, полоса дней, два ящика ─────────────────────
+   Дата с фазой суток, бриф и вопрос в поле меняются утром, днём, вечером и
+   ночью. Под полем — полоса дней и два ящика: «Что делал» и «День», где дела
+   лежат вместе с календарём. Колонок и заметок на главной больше нет. */
+.today-page .hero { max-width: 800px; margin: 0 auto 8px; }
+.today-date { margin: 0 0 8px; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--n-66); }
+.today-phase.morning { color: var(--yellow-51); }
+.today-phase.day { color: var(--blue-61); }
+.today-phase.evening { color: var(--violet-54); }
+.today-phase.night, .today-phase.weekend { color: var(--n-62); }
+.today-phase.after { color: var(--red-66); }
+.today-brief { margin: 0 auto 22px; max-width: 560px; font-size: 15px; line-height: 1.55; color: var(--n-52); text-wrap: balance; }
+.today-brief b { color: var(--ink); font-weight: 650; }
+.today-brief a { color: var(--red-66); font-weight: 650; text-decoration: none; border-bottom: 1px solid var(--red-83); }
+.daybar { display: flex; justify-content: center; align-items: center; gap: 2px; margin: 22px auto 6px; max-width: 800px; flex-wrap: wrap; }
+.daybar-arrow { border: 0; background: none; color: var(--n-72); font: inherit; font-size: 18px; font-weight: 600; line-height: 1; cursor: pointer; padding: 6px 10px; border-radius: 99px; }
+.daybar-arrow:hover { background: var(--n-96); color: var(--ink); }
+.daybar-day { border: 1px solid transparent; background: none; font: inherit; color: var(--n-52); padding: 5px 9px 3px; border-radius: 10px; cursor: pointer; display: inline-flex; flex-direction: column; align-items: center; gap: 2px; min-width: 50px; }
+.daybar-label { display: inline-flex; gap: 4px; align-items: baseline; }
+.daybar-label small { font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--n-66); }
+.daybar-label b { font-weight: 700; color: var(--ink); font-size: 13px; }
+.daybar-day.weekend small { opacity: 0.75; }
+.daybar-day.today .daybar-label b { color: var(--red-66); }
+.daybar-day.selected { background: var(--n-100); border-color: var(--n-92); }
+.daybar-day:hover { background: var(--n-96); }
+.daybar-dot { width: 4px; height: 4px; border-radius: 50%; background: transparent; }
+.daybar-dot.has { background: var(--blue-61); }
+.daybar-today { margin-left: 6px; border: 0; background: none; font: inherit; font-size: 11.5px; font-weight: 600; color: var(--red-66); cursor: pointer; padding: 6px 8px; border-radius: 99px; }
+.daybar-today:hover { background: var(--red-97); }
+.drawers { max-width: 800px; margin: 0 auto; }
+.drawer-tabs { display: flex; justify-content: center; gap: 6px; margin: 10px 0 0; flex-wrap: wrap; }
+.drawer-tab { border: 1px solid transparent; background: none; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--n-52); padding: 7px 12px; border-radius: 99px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.drawer-tab b { color: var(--ink); font-weight: 700; }
+.drawer-tab em { font-style: normal; color: var(--red-50); font-weight: 600; }
+.drawer-tab[aria-selected="true"] { border-color: var(--n-92); background: var(--n-100); color: var(--ink); }
+.drawer { margin-top: 16px; text-align: left; gap: 6px; }
+.drawer .entry, .drawer .entry:first-child { padding: 11px 12px; border-top: 0; border-radius: 12px; background: var(--n-98-4); font-size: 12px; }
+.drawer .entry-meta { font-size: 10px; }
+.drawer .entry-actions { gap: 7px; margin-top: 7px; }
+.day-group { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--n-66); padding: 8px 4px 0; }
+.day-group:first-child { padding-top: 0; }
+.day-row { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; align-items: start; }
+.day-time { font-size: 12px; font-weight: 600; color: var(--n-52); padding-top: 12px; text-align: right; }
+.day-row.now-mark .day-time { color: var(--red-66); padding-top: 9px; }
+.day-now-text { display: block; font-size: 12px; color: var(--n-52); padding: 8px 12px; border-radius: 12px; background: var(--red-97); box-shadow: inset 0 0 0 1px var(--red-83); }
+.day-event { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; border-radius: 12px; background: var(--n-98-4); font-size: 12px; min-width: 0; }
+.day-row.now .day-event { background: var(--red-97); box-shadow: inset 0 0 0 1px var(--red-83); }
+.day-row.past .day-event { opacity: 0.6; }
+.day-event-title { font-weight: 650; min-width: 0; overflow-wrap: anywhere; }
+.day-event-meta { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 10px; color: var(--n-63); }
+.day-event-cal { color: var(--n-66); }
+.day-event-actions { margin-left: auto; display: inline-flex; gap: 6px; }
+.day-join { display: inline-block; background: var(--red-66); color: #fff; border-radius: 99px; padding: 3px 10px; font-size: 10.5px; font-weight: 650; text-decoration: none; }
+.day-ghost { border: 0; background: var(--n-96); color: var(--n-52); border-radius: 99px; padding: 3px 9px; font: inherit; font-size: 10.5px; font-weight: 650; cursor: pointer; }
+.day-ghost:hover { color: var(--ink); }
+.day-event-meta .tag.now { background: var(--red-66); color: #fff; }
+.day-event-meta .tag.soon, .day-event-meta .tag.warm { background: var(--tint-wait); color: var(--yellow-51); text-decoration: none; }
+.day-event-meta .tag.late { background: var(--tint-late); color: var(--red-50); font-weight: 600; }
+.day-event-meta .tag.done { color: var(--green); }
+.day-own { padding: 10px 12px; border-radius: 12px; background: var(--n-98-4); font-size: 12px; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.day-own-title { font-weight: 650; }
+.day-own.done .day-own-title { color: var(--n-62); text-decoration: line-through; }
+.drawer .preview-more { display: inline-block; margin-top: 6px; font-size: 12px; color: var(--muted); text-decoration: none; }
+.drawer .preview-more:hover { color: var(--ink); }
+@media (max-width: 480px) {
+  .daybar-day.edge { display: none; }
+  .daybar-day { min-width: 40px; padding: 4px 5px 2px; }
+  .day-row { grid-template-columns: 38px minmax(0, 1fr); gap: 6px; }
+}

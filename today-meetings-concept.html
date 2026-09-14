@@ -1,0 +1,766 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Встречи дня на «Сегодня»</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='2' y='2' width='60' height='60' rx='14' fill='%23c73e3a'/%3E%3Cg fill='none' stroke='white' stroke-linecap='round' stroke-width='6'%3E%3Cpath d='M8 17q24 -6 48 0'/%3E%3Cline x1='14' y1='27' x2='50' y2='27'/%3E%3Cline x1='19' y1='22' x2='21' y2='54'/%3E%3Cline x1='45' y1='22' x2='43' y2='54'/%3E%3C/g%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #222;
+        --muted: #6a6a6a;
+        --faint: #96918e;
+        --line: #e9e9e7;
+        --hairline: #f2f0ee;
+        --wash: #fbfaf9;
+        --paper: #fff;
+        --plate: rgba(34, 34, 34, 0.045);
+        --hover: rgba(55, 53, 47, 0.06);
+        --coral: #ff385c;
+        --coral-bg: rgba(255, 56, 92, 0.1);
+        --now-ring: rgba(255, 56, 92, 0.45);
+        --warm: #b45309;    --warm-bg: #fbf1e6;
+        --late: #c0392b;    --late-bg: #fceceb;
+        --ok: #0f7a5f;      --ok-bg: #e9f5ef;
+        --proj: #4a5b6b;    --proj-bg: #f1f4f7;
+        --type: #0e7490;    --type-bg: #e7f4f7;
+        --g: #3f6fd1;       --g-bg: rgba(63, 111, 209, 0.13);
+        --y: #d2691e;       --y-bg: rgba(210, 105, 30, 0.13);
+        --busy: #8a8681;    --busy-bg: rgba(138, 134, 129, 0.16);
+        --day: #0e7490;     --day-bg: rgba(14, 116, 144, 0.12);
+        --entry: #fbf2ee;
+        --entry-late: #fdf0ee;
+        --shadow: 0 18px 42px rgba(34, 34, 34, 0.08);
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --ink: rgba(255, 255, 255, 0.88);
+        --muted: rgba(255, 255, 255, 0.52);
+        --faint: rgba(255, 255, 255, 0.36);
+        --line: #2e2d2b;
+        --hairline: #262523;
+        --wash: #181818;
+        --paper: #1f1f1f;
+        --plate: rgba(255, 255, 255, 0.045);
+        --hover: rgba(255, 255, 255, 0.06);
+        --coral: #ff4d6d;
+        --coral-bg: rgba(255, 77, 109, 0.14);
+        --now-ring: rgba(255, 77, 109, 0.55);
+        --warm: #e2a15a;    --warm-bg: rgba(226, 130, 74, 0.16);
+        --late: #ff8a80;    --late-bg: rgba(255, 138, 128, 0.16);
+        --ok: #4dc79f;      --ok-bg: rgba(77, 199, 159, 0.14);
+        --proj: #b6c8e6;    --proj-bg: rgba(182, 200, 230, 0.12);
+        --type: #56c4d8;    --type-bg: rgba(86, 196, 216, 0.14);
+        --g: #7fa6ff;       --g-bg: rgba(127, 166, 255, 0.16);
+        --y: #e2824a;       --y-bg: rgba(226, 130, 74, 0.18);
+        --busy: #a8a5a2;    --busy-bg: rgba(255, 255, 255, 0.07);
+        --day: #56c4d8;     --day-bg: rgba(86, 196, 216, 0.14);
+        --entry: #2a2624;
+        --entry-late: #2e2224;
+        --shadow: 0 18px 42px rgba(0, 0, 0, 0.4);
+      }
+      * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
+      body {
+        margin: 0; background: var(--wash); color: var(--ink); line-height: 1.45;
+        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-variant-numeric: tabular-nums;
+      }
+      main { max-width: 1180px; margin: auto; padding: 52px 24px 120px; }
+      .page-head { max-width: 800px; }
+      .page-head p { font-size: 15px; color: var(--muted); max-width: 66ch; }
+      .eyebrow { margin: 0 0 8px; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
+      h1 { margin: 0 0 12px; font-size: 40px; letter-spacing: -1.4px; line-height: 1.05; text-wrap: balance; }
+      h2.sec { font-size: 24px; letter-spacing: -0.6px; margin: 64px 0 10px; }
+      .sec-note { margin: 0 0 20px; color: var(--muted); font-size: 14px; max-width: 72ch; }
+      kbd { font: 600 11px/1 Inter, sans-serif; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 3px 6px; background: var(--paper); }
+      code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--plate); padding: 1px 5px; border-radius: 5px; }
+
+      /* ── тулбар концепта ─────────────────────────────────── */
+      .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 22px; margin: 28px 0 18px; position: sticky; top: 0; z-index: 5; padding: 12px 0; background: color-mix(in srgb, var(--wash) 88%, transparent); backdrop-filter: blur(8px); }
+      .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 99px; background: var(--paper); padding: 3px; gap: 2px; }
+      .seg button { border: 0; background: none; font: 600 12.5px Inter, sans-serif; color: var(--muted); padding: 6px 12px; border-radius: 99px; cursor: pointer; }
+      .seg button[aria-pressed="true"] { background: var(--ink); color: var(--wash); }
+      .seg button:focus-visible { outline: 2px solid var(--coral); outline-offset: 1px; }
+      .seg.variants button b { display: inline-block; width: 16px; height: 16px; border-radius: 50%; background: var(--plate); font-size: 10px; line-height: 16px; text-align: center; margin-right: 6px; color: var(--ink); }
+      .seg.variants button[aria-pressed="true"] b { background: var(--coral); color: #fff; }
+      .tool-label { font-size: 12px; color: var(--faint); }
+      .clock { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+      .clock input[type="range"] { width: 150px; accent-color: var(--coral); }
+      .clock output { font-weight: 650; color: var(--ink); min-width: 40px; }
+
+      /* ── рама макета ─────────────────────────────────────── */
+      .frame { border: 1px solid var(--line); border-radius: 18px; background: var(--wash); overflow: hidden; box-shadow: var(--shadow); }
+      .frame.narrow { width: 390px; margin: 0 auto; }
+      .frame-cap { margin: 14px 0 0; font-size: 13px; color: var(--muted); max-width: 72ch; }
+      .frame-cap strong { color: var(--ink); }
+
+      /* ── приложение: шапка ───────────────────────────────── */
+      .mock { --pad: 40px; font-size: 13px; }
+      .narrow .mock { --pad: 16px; }
+      .mock .top { display: flex; align-items: center; gap: 24px; padding: 0 var(--pad); height: 64px; border-bottom: 1px solid var(--hairline); }
+      .mock .logo { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 16px; }
+      .mock .logo i { display: block; width: 26px; height: 26px; border-radius: 7px; background: #c73e3a; position: relative; }
+      .mock .logo i::before { content: ""; position: absolute; left: 6px; right: 6px; top: 7px; height: 2px; background: #fff; border-radius: 2px; box-shadow: 0 5px 0 #fff; }
+      .mock .logo i::after { content: ""; position: absolute; left: 9px; top: 9px; width: 2px; height: 11px; background: #fff; box-shadow: 6px 0 0 #fff; }
+      .mock nav { margin: 0 auto; display: flex; gap: 22px; font-size: 13px; color: var(--muted); }
+      .mock nav span.on { color: var(--ink); font-weight: 650; }
+      .mock .top .right { display: flex; align-items: center; gap: 8px; }
+      .mock .pill-btn { border: 1px solid var(--line); border-radius: 99px; padding: 5px 10px; font-size: 11.5px; color: var(--muted); }
+      .mock .icon-btn { width: 28px; height: 28px; border-radius: 50%; background: var(--plate); display: grid; place-items: center; font-size: 11px; color: var(--muted); font-weight: 700; }
+      .narrow .mock nav { gap: 12px; font-size: 12px; }
+      .narrow .mock .pill-btn, .narrow .mock .icon-btn.hide-n { display: none; }
+
+      /* ── герой и ввод ────────────────────────────────────── */
+      .mock .hero { max-width: 800px; margin: 44px auto 40px; padding: 0 var(--pad); }
+      .narrow .mock .hero { margin: 28px auto 24px; }
+      .mock h1.big { text-align: center; font-size: 34px; letter-spacing: -1.3px; margin: 0 0 32px; }
+      .narrow .mock h1.big { font-size: 28px; margin-bottom: 20px; }
+      .mock .capture { border: 1px solid var(--line); border-radius: 16px; padding: 16px; background: var(--paper); }
+      .mock .field { min-height: 112px; color: var(--faint); font-size: 16px; padding: 4px 4px 12px; }
+      .narrow .mock .field { min-height: 88px; font-size: 15px; }
+      .mock .foot { display: flex; align-items: center; gap: 10px; border-top: 1px solid var(--hairline); padding-top: 12px; }
+      .mock .dots { display: flex; align-items: center; gap: 12px; }
+      .mock .dots i { width: 9px; height: 9px; border-radius: 50%; display: block; }
+      .mock .dots .auto { display: inline-flex; align-items: center; gap: 6px; background: var(--coral-bg); color: var(--coral); border-radius: 99px; padding: 4px 10px 4px 8px; font-weight: 700; font-size: 12px; }
+      .mock .dots .auto i { background: var(--coral); }
+      .mock .sep { width: 1px; height: 18px; background: var(--line); }
+      .mock .tags { color: var(--faint); font-size: 12px; flex: 1; }
+      .mock .send { width: 38px; height: 38px; border-radius: 50%; background: var(--coral); margin-left: auto; display: grid; place-items: center; color: #fff; font-size: 20px; line-height: 1; }
+
+      /* ── колонки ─────────────────────────────────────────── */
+      .mock .dash { display: grid; grid-template-columns: 1.1fr 1fr 1fr; gap: 24px; padding: 0 var(--pad) 48px; }
+      .mock .dash.four { grid-template-columns: 1fr 1fr 1fr 1fr; gap: 18px; }
+      .narrow .mock .dash, .narrow .mock .dash.four { grid-template-columns: 1fr; gap: 16px; }
+      .mock .card { background: var(--paper); border: 1px solid var(--line); border-radius: 16px; padding: 26px; min-width: 0; }
+      .mock .dash.four .card { padding: 20px; }
+      .narrow .mock .card { padding: 18px; }
+      .mock .card h2 { margin: 0 0 13px; font-size: 16px; display: flex; align-items: baseline; gap: 8px; }
+      .mock .card h2 .arr { color: var(--faint); font-weight: 400; }
+      .mock .card h2 .cnt { margin-left: auto; font-size: 11px; color: var(--faint); font-weight: 500; }
+      .mock .stack { display: grid; gap: 6px; }
+      .mock .entry { padding: 11px 12px; border-radius: 12px; background: var(--entry); font-size: 12px; }
+      .mock .entry.late { background: var(--entry-late); }
+      .mock .entry.late .t, .mock .entry.late .meta { color: var(--late); }
+      .mock .entry .t { font-weight: 650; display: flex; align-items: flex-start; gap: 8px; }
+      .mock .circle { flex: none; width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--faint); margin-top: 1px; }
+      .mock .meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 10px; color: var(--muted); margin-top: 5px; }
+      .mock .tag { display: inline-block; border-radius: 99px; padding: 2px 7px; font-size: 10px; font-weight: 600; background: var(--plate); color: var(--muted); }
+      .mock .tag.type { background: var(--type-bg); color: var(--type); }
+      .mock .tag.proj { background: var(--proj-bg); color: var(--proj); }
+      .mock .tag.late { background: var(--late-bg); color: var(--late); }
+      .mock .tag.ok { background: var(--ok-bg); color: var(--ok); }
+      .mock .tag.warm { background: var(--warm-bg); color: var(--warm); }
+      .mock .tag.now { background: var(--coral); color: #fff; }
+      .mock .tag.g { background: var(--g-bg); color: var(--g); }
+      .mock .tag.y { background: var(--y-bg); color: var(--y); }
+      .mock .tag.busy { background: var(--busy-bg); color: var(--busy); }
+      .mock .tag.day { background: var(--day-bg); color: var(--day); }
+      .mock .more { margin-top: 10px; font-size: 12px; color: var(--muted); }
+      .mock .empty { color: var(--faint); font-size: 13px; }
+
+      /* ── встречи: общие элементы ─────────────────────────── */
+      .mock .cdot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex: none; }
+      .mock .cdot.g { background: var(--g); } .mock .cdot.y { background: var(--y); } .mock .cdot.busy { background: var(--busy); } .mock .cdot.day { background: var(--day); }
+      .mock .btn { display: inline-flex; align-items: center; gap: 5px; border-radius: 99px; padding: 3px 9px; font-size: 10.5px; font-weight: 650; border: 1px solid var(--line); color: var(--ink); background: var(--paper); cursor: pointer; }
+      .mock .btn.join { background: var(--coral); border-color: var(--coral); color: #fff; }
+      .mock .btn.ghost { border-color: transparent; background: var(--plate); color: var(--muted); }
+      .mock .past { opacity: 0.55; }
+      .mock .past .t { text-decoration: none; }
+      .mock .note-ok { color: var(--ok); font-weight: 600; }
+
+      /* meeting entry (A, C) */
+      .mock .entry.mt { background: var(--plate); }
+      .mock .entry.mt.now { background: var(--coral-bg); box-shadow: inset 0 0 0 1px var(--now-ring); }
+      .mock .entry.mt .t { align-items: baseline; }
+      .mock .entry.mt .tm { flex: none; width: 38px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+      .mock .entry.mt.now .tm { color: var(--coral); }
+      .mock .entry.mt .acts { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+
+      /* B: лента дня */
+      .mock .agenda { padding: 0 var(--pad); margin: -8px 0 28px; }
+      .mock .agenda-in { max-width: 800px; margin: 0 auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .mock .agenda .lbl { font-size: 11.5px; color: var(--faint); font-weight: 600; margin-right: 4px; white-space: nowrap; }
+      .mock .agenda .lbl b { color: var(--muted); font-weight: 600; }
+      .mock .chip { display: inline-flex; align-items: center; gap: 7px; border-radius: 99px; padding: 6px 11px 6px 9px; background: var(--plate); font-size: 12px; font-weight: 600; white-space: nowrap; max-width: 100%; }
+      .mock .chip .tm { color: var(--muted); font-weight: 600; }
+      .mock .chip .ttl { overflow: hidden; text-overflow: ellipsis; }
+      .mock .chip.now { background: var(--coral-bg); box-shadow: inset 0 0 0 1px var(--now-ring); }
+      .mock .chip.now .tm { color: var(--coral); }
+      .mock .chip.past { opacity: 0.5; }
+      .mock .chip .btn.join { padding: 2px 8px; margin-left: 2px; }
+      .mock .chip .ask { color: var(--warm); font-weight: 700; }
+      .mock .chip.busy { color: var(--busy); }
+      .mock .chip.day { background: var(--day-bg); color: var(--day); }
+      .mock .agenda .gap { font-size: 11.5px; color: var(--faint); white-space: nowrap; }
+      .mock .agenda .gap::before { content: "· "; }
+      .narrow .mock .agenda-in { flex-direction: column; align-items: stretch; gap: 6px; }
+      .narrow .mock .chip { justify-content: flex-start; }
+      .narrow .mock .chip .ttl { flex: 1; }
+      .narrow .mock .agenda .gap { padding-left: 10px; }
+      .narrow .mock .agenda .gap::before { content: ""; }
+
+      /* D: рельс времени у ввода */
+      .mock .hero.rail { max-width: 1040px; display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 24px; align-items: start; }
+      .mock .hero.rail h1.big { grid-column: 1 / -1; }
+      .narrow .mock .hero.rail { grid-template-columns: 1fr; }
+      .mock .tl { border: 1px solid var(--line); border-radius: 16px; background: var(--paper); padding: 14px 14px 12px; }
+      .mock .tl .th { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+      .mock .tl .th b { color: var(--ink); font-size: 13px; }
+      .mock .tl .grid { position: relative; height: 400px; }
+      .mock .tl .hr { position: absolute; left: 0; right: 0; border-top: 1px solid var(--hairline); font-size: 9.5px; color: var(--faint); padding-left: 0; }
+      .mock .tl .hr span { position: absolute; left: 0; top: -7px; background: var(--paper); padding-right: 4px; }
+      .mock .tl .ev { position: absolute; left: 30px; right: 4px; border-radius: 8px; padding: 2px 8px; font-size: 11px; font-weight: 600; overflow: hidden; line-height: 1.25; }
+      .mock .tl .ev small { display: block; font-weight: 500; opacity: 0.8; font-size: 10px; }
+      .mock .tl .ev.g { background: var(--g-bg); color: var(--g); }
+      .mock .tl .ev.y { background: var(--y-bg); color: var(--y); }
+      .mock .tl .ev.busy { background: var(--busy-bg); color: var(--busy); background-image: repeating-linear-gradient(135deg, transparent 0 5px, rgba(128,128,128,0.12) 5px 6px); }
+      .mock .tl .ev.now { box-shadow: inset 0 0 0 1.5px var(--now-ring); }
+      .mock .tl .ev.past { opacity: 0.5; }
+      .mock .tl .nowline { position: absolute; left: 30px; right: 0; border-top: 1.5px solid var(--coral); z-index: 2; }
+      .mock .tl .nowline::before { content: ""; position: absolute; left: -5px; top: -4px; width: 7px; height: 7px; border-radius: 50%; background: var(--coral); }
+      .mock .tl .allday { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+      .mock .tl .allday .tag { font-size: 10px; }
+      .mock .tl .foot { border-top: 0; padding-top: 8px; margin-top: 4px; font-size: 11px; color: var(--muted); }
+
+      /* E: строка «сейчас» */
+      .mock .nowbar { padding: 0 var(--pad); margin: -10px 0 26px; }
+      .mock .nowbar-in { border: 1px solid var(--line); border-radius: 14px; background: var(--paper); }
+      .mock .nowbar .row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; font-size: 12.5px; flex-wrap: wrap; }
+      .mock .nowbar .row .lbl { font-weight: 700; color: var(--coral); font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; }
+      .mock .nowbar .row .ttl { font-weight: 650; }
+      .mock .nowbar .row .tm { color: var(--muted); }
+      .mock .nowbar .row .next { margin-left: auto; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+      .mock .nowbar .row .next .cdot { margin-left: 4px; }
+      .mock .nowbar .row .tog { color: var(--faint); font-size: 11.5px; cursor: pointer; border: 0; background: none; font-family: inherit; }
+      .mock .nowbar .row .tog:hover { color: var(--ink); }
+      .mock .nowbar .list { border-top: 1px solid var(--hairline); padding: 8px 14px 10px; display: grid; gap: 4px; }
+      .mock .nowbar .list .ln { display: flex; align-items: center; gap: 10px; font-size: 12px; padding: 4px 0; }
+      .mock .nowbar .list .ln .tm { width: 84px; color: var(--muted); }
+      .mock .nowbar .list .ln.past { opacity: 0.5; }
+      .mock .nowbar .list .ln .r { margin-left: auto; display: flex; gap: 6px; }
+      .narrow .mock .nowbar .row .next { margin-left: 0; width: 100%; }
+
+      /* E1–E6: полоска легче */
+      .mock .nowline { padding: 0 var(--pad); margin: -14px 0 18px; }
+      .mock .nowline .row { display: flex; align-items: center; gap: 10px; font-size: 12.5px; flex-wrap: wrap; color: var(--muted); padding: 6px 4px; }
+      .mock .nowline .row .lbl { font-weight: 700; color: var(--coral); font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; }
+      .mock .nowline .row .lbl.quiet { color: var(--faint); }
+      .mock .nowline .row .ttl { font-weight: 650; color: var(--ink); }
+      .mock .nowline .row .next { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+      .mock .nowline .row .next b { color: var(--ink); font-weight: 650; }
+      .mock .nowline .row .tog { color: var(--faint); font-size: 11.5px; cursor: pointer; border: 0; background: none; font-family: inherit; }
+      .mock .nowline .row .btn.join { padding: 2px 8px; }
+      .mock .nowline.hair .row { border-top: 1px solid var(--hairline); padding-top: 10px; }
+      .narrow .mock .nowline .row .next { margin-left: 0; width: 100%; }
+      .mock .capture.tray-host { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+      .mock .tray { border: 1px solid var(--line); border-top: 0; border-radius: 0 0 16px 16px; background: var(--plate); padding: 8px 16px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); }
+      .mock .tray .lbl { font-weight: 700; color: var(--coral); font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; }
+      .mock .tray .lbl.quiet { color: var(--faint); }
+      .mock .tray .ttl { font-weight: 650; color: var(--ink); }
+      .mock .tray .next { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+      .mock .tray .next b { color: var(--ink); font-weight: 650; }
+      .mock .tray .tog { color: var(--faint); font-size: 11.5px; cursor: pointer; border: 0; background: none; font-family: inherit; }
+      .mock .tray .btn.join { padding: 2px 8px; }
+      .narrow .mock .tray .next { margin-left: 0; width: 100%; }
+      .mock .sub { text-align: center; margin: -22px 0 26px; font-size: 13px; color: var(--muted); display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; align-items: center; }
+      .mock .sub .ttl { color: var(--ink); font-weight: 650; }
+      .mock .sub .now { color: var(--coral); font-weight: 700; }
+      .mock .sub .dotsep { color: var(--faint); }
+      .narrow .mock .sub { margin-top: -12px; }
+      .mock .top .agenda-pill { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 99px; padding: 5px 10px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+      .mock .top .agenda-pill.live { border-color: var(--now-ring); background: var(--coral-bg); color: var(--ink); }
+      .mock .top .agenda-pill b { font-weight: 650; color: var(--ink); }
+      .mock .top .agenda-pill .cdot.now { background: var(--coral); }
+      .narrow .mock .top .agenda-pill .ttl-full { display: none; }
+      .mock .phrase { text-align: center; margin: -12px auto 26px; max-width: 560px; padding: 0 var(--pad); font-size: 14px; color: var(--muted); line-height: 1.5; }
+      .mock .phrase b { color: var(--ink); font-weight: 650; }
+      .mock .phrase a { color: var(--coral); font-weight: 650; text-decoration: none; border-bottom: 1px solid var(--now-ring); }
+      .mock .phrase .more { display: inline; margin: 0; color: var(--faint); font-size: 13px; }
+      .bar-tools { margin: -6px 0 18px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .bar-tools .tool-label { white-space: nowrap; }
+
+      /* ── сравнение вариантов ─────────────────────────────── */
+      .places { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+      .place { border: 1px solid var(--line); border-radius: 16px; background: var(--paper); padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+      .place .cap { display: flex; align-items: center; gap: 10px; }
+      .place .n { width: 24px; height: 24px; border-radius: 50%; background: var(--plate); display: grid; place-items: center; font-size: 12px; font-weight: 700; flex: none; }
+      .place h3 { margin: 0; font-size: 15px; letter-spacing: -0.2px; }
+      .place .rec { margin-left: auto; font-size: 10.5px; font-weight: 700; color: var(--ok); background: var(--ok-bg); border-radius: 99px; padding: 3px 8px; white-space: nowrap; }
+      .place .rec.alt { color: var(--warm); background: var(--warm-bg); }
+      .place p { margin: 0; font-size: 13px; color: var(--muted); }
+      .place p b { color: var(--ink); font-weight: 650; }
+      .place .pm { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 12.5px; }
+      .place .pm div::before { display: block; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); margin-bottom: 3px; }
+      .place .pm .plus::before { content: "за"; } .place .pm .minus::before { content: "против"; }
+      .place .pm div { color: var(--muted); }
+      .place .open { margin-top: auto; align-self: flex-start; border: 1px solid var(--line); background: none; color: var(--ink); font: 600 12px Inter, sans-serif; border-radius: 99px; padding: 6px 12px; cursor: pointer; }
+      .place .open:hover { background: var(--hover); }
+
+      /* ── анатомия плашки ─────────────────────────────────── */
+      .anat { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+      .anat .st { border: 1px solid var(--line); border-radius: 14px; background: var(--paper); padding: 14px; }
+      .anat .st h4 { margin: 0 0 8px; font-size: 13px; }
+      .anat .st p { margin: 8px 0 0; font-size: 12.5px; color: var(--muted); }
+      .anat .st .mock { --pad: 0; }
+      .rules { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; max-width: 76ch; }
+      .rules li { display: grid; grid-template-columns: 150px 1fr; gap: 14px; font-size: 13.5px; padding: 10px 0; border-top: 1px solid var(--hairline); }
+      .rules li b { font-weight: 650; }
+      .rules li span { color: var(--muted); }
+      .stages { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+      .stage { border: 1px solid var(--line); border-radius: 14px; background: var(--paper); padding: 14px; font-size: 13px; }
+      .stage b { display: block; margin-bottom: 4px; }
+      .stage p { margin: 0; color: var(--muted); font-size: 12.5px; }
+      .stage .gain { display: block; margin-top: 8px; font-size: 11.5px; color: var(--ok); }
+      table.take { width: 100%; border-collapse: collapse; font-size: 13px; }
+      table.take th { text-align: left; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); padding: 8px 10px; border-bottom: 1px solid var(--line); }
+      table.take td { padding: 10px; border-bottom: 1px solid var(--hairline); vertical-align: top; color: var(--muted); }
+      table.take td:first-child { color: var(--ink); font-weight: 600; width: 34%; }
+      .tbl-wrap { overflow-x: auto; }
+      @media (prefers-reduced-motion: no-preference) { .mock .tag.now { animation: none; } }
+      @media (max-width: 760px) { main { padding: 32px 14px 80px; } h1 { font-size: 30px; } .frame.narrow { width: 100%; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="page-head">
+        <p class="eyebrow">Кизуна · концепт · «Сегодня»</p>
+        <h1>Встречи дня на «Сегодня»</h1>
+        <p>
+          Календарь уже подключён и живёт на «Доске» как вид с неделей. Но утро начинается на «Сегодня»,
+          и первый вопрос дня — <strong>«что у меня сейчас и что дальше»</strong>. Ниже пять способов положить
+          сегодняшние события из Google и Яндекса на эту страницу, не ломая её устройства:
+          ввод сверху, три колонки памяти снизу.
+        </p>
+        <p>
+          Макет живой: переключайте варианты, тему и ширину, двигайте «сейчас» — плашки меняют состояние
+          (идёт, скоро, прошла). Данные — из того же <code>GET /api/calendar?from=…&amp;to=…</code>, что кормит «Доску».
+          Решение не принято: страница для выбора.
+        </p>
+      </div>
+
+      <div class="toolbar">
+        <div class="seg variants" role="tablist" aria-label="Вариант размещения">
+          <button type="button" data-variant="B" aria-pressed="true"><b>B</b>Лента дня</button>
+          <button type="button" data-variant="A" aria-pressed="false"><b>A</b>Колонка</button>
+          <button type="button" data-variant="C" aria-pressed="false"><b>C</b>В TODO</button>
+          <button type="button" data-variant="D" aria-pressed="false"><b>D</b>Рельс у ввода</button>
+          <button type="button" data-variant="E" aria-pressed="false"><b>E</b>Строка «сейчас»</button>
+        </div>
+        <div class="seg" role="group" aria-label="Тема">
+          <button type="button" data-theme-btn="dark" aria-pressed="true">Тёмная</button>
+          <button type="button" data-theme-btn="light" aria-pressed="false">Светлая</button>
+        </div>
+        <div class="seg" role="group" aria-label="Ширина">
+          <button type="button" data-width="wide" aria-pressed="true">Десктоп</button>
+          <button type="button" data-width="narrow" aria-pressed="false">390px</button>
+        </div>
+        <label class="clock">
+          <span class="tool-label">сейчас</span>
+          <input id="now" type="range" min="540" max="1140" step="5" value="822" />
+          <output id="now-out">13:42</output>
+        </label>
+      </div>
+
+      <div class="bar-tools" id="bar-tools" hidden>
+        <span class="tool-label">полоска</span>
+        <div class="seg bars" role="group" aria-label="Прочтение полоски">
+          <button type="button" data-bar="box" aria-pressed="true">В рамке</button>
+          <button type="button" data-bar="plain" aria-pressed="false">Без рамки</button>
+          <button type="button" data-bar="tray" aria-pressed="false">Лоток под вводом</button>
+          <button type="button" data-bar="sub" aria-pressed="false">Под заголовком</button>
+          <button type="button" data-bar="head" aria-pressed="false">В шапке</button>
+          <button type="button" data-bar="phrase" aria-pressed="false">Фразой</button>
+          <button type="button" data-bar="only" aria-pressed="false">Только по делу</button>
+        </div>
+      </div>
+      <div class="frame" id="frame"><div class="mock" id="mock"></div></div>
+      <p class="frame-cap" id="frame-cap"></p>
+
+      <h2 class="sec">Пять мест для встреч</h2>
+      <p class="sec-note">Ось выбора одна: <strong>сколько места отдать календарю на странице, которая про память</strong>. Слева направо — от «встречи как ещё одна колонка» до «одна строка про ближайшее».</p>
+      <div class="places">
+        <div class="place">
+          <div class="cap"><span class="n">B</span><h3>Лента дня под вводом</h3><span class="rec">рекомендую</span></div>
+          <p>Одна строка чипов между карточкой ввода и колонками: <b>время · название · календарь</b>. Идущая встреча подсвечена, прошедшие притушены, между чипами — «свободно 1 ч». Весь день — чипом в конце. На телефоне строка складывается в список.</p>
+          <div class="pm"><div class="plus">Колонки не трогаем, шапка не растёт. Читается как повестка дня одним взглядом. Ровно то, чего не хватает утром.</div><div class="minus">В день с восемью встречами строка станет двумя. Деталей (люди, ссылка) в чипе почти нет — они в наведении и на «Доске».</div></div>
+          <button type="button" class="open" data-open="B">Показать в макете</button>
+        </div>
+        <div class="place">
+          <div class="cap"><span class="n">A</span><h3>Четвёртая колонка «Встречи»</h3><span class="rec alt">если встреч много</span></div>
+          <p>Колонка между «Что делал» и «TODO буфером»: те же плашки, что у записей, но с временем впереди и точкой календаря. Внизу «Ещё N → Календарь». Заголовок ведёт на «Доску» в вид «Календарь».</p>
+          <div class="pm"><div class="plus">Самая честная: встречи — ещё один список дня, как дела и заметки. Место под людей и «Присоединиться». Ничего нового в языке интерфейса.</div><div class="minus">Четыре колонки на 1180px тесно, «Что делал» ужимается. Пустая колонка в день без встреч — дыра посреди страницы.</div></div>
+          <button type="button" class="open" data-open="A">Показать в макете</button>
+        </div>
+        <div class="place">
+          <div class="cap"><span class="n">C</span><h3>Внутри «TODO буфера»</h3></div>
+          <p>Встречи ложатся в тот же список, что дела: сверху по часам, потом просроченное и остальное. Чужое событие отличается точкой календаря и отсутствием кружка «готово» — закрыть его нельзя, можно только «взять в память».</p>
+          <div class="pm"><div class="plus">Ноль новых блоков. Свои встречи из памяти там и так лежат — чужие рядом логичны.</div><div class="minus">Смешивает память и чужой календарь в одной колонке: контракт памяти держит их порознь. Просроченные дела уезжают вниз за встречами.</div></div>
+          <button type="button" class="open" data-open="C">Показать в макете</button>
+        </div>
+        <div class="place">
+          <div class="cap"><span class="n">D</span><h3>Рельс времени рядом с вводом</h3></div>
+          <p>Карточка ввода становится уже, справа — вертикальная шкала 9–19 с блоками событий и линией «сейчас». Тот самый «таймлайн дня» из концепта календаря (вариант C там).</p>
+          <div class="pm"><div class="plus">Видно окна между встречами и длительность. Единственный вариант, где «свободно до 15:00» читается формой, а не словами.</div><div class="minus">Герой перестаёт быть про ввод: поле уже, заголовок сдвинут. Дублирует вид «День» с «Доски». На 390px рельс проваливается под ввод и теряет смысл.</div></div>
+          <button type="button" class="open" data-open="D">Показать в макете</button>
+        </div>
+        <div class="place">
+          <div class="cap"><span class="n">E</span><h3>Одна строка «Сейчас / Дальше»</h3></div>
+          <p>Тонкая полоска над колонками: <b>идёт</b> · название · до 14:00 · «Присоединиться», справа <b>дальше</b> · 15:00 Демо ZB и «ещё 3 ▾», раскрывающее список дня. Ничего лишнего, пока не спросишь.</p>
+          <div class="pm"><div class="plus">Минимальная плата за место. Отвечает ровно на два вопроса: что сейчас, что следующее.</div><div class="minus">Повестка дня целиком спрятана за кликом. Когда ничего не идёт и ничего не скоро — строка почти пустая.</div></div>
+          <button type="button" class="open" data-open="E">Показать в макете</button>
+        </div>
+      </div>
+      <p class="sec-note" style="margin-top:16px"><strong>Рекомендация:</strong> B — лента дня под вводом. Первый чип в ней и есть строка «сейчас» из E, поэтому E отдельно не нужен. Если встреч в дне регулярно больше пяти, лента превращается в колонку A, а не в две строки: это переключение раскладки, не переделка. D остаётся видом «День» на «Доске» и на телефоне, где ему место.</p>
+
+      <h2 class="sec">Полоска, но легче</h2>
+      <p class="sec-note">Полоска E хороша содержанием: два ответа — что сейчас, что дальше. Тяжёлой её делает <strong>третья рамка</strong> между карточкой ввода и рамками колонок: три коробки подряд. Ниже шесть прочтений той же строки, где коробки нет или она слита с соседней. Все — в макете выше, переключатель «полоска» появляется при варианте E.</p>
+      <div class="places">
+        <div class="place">
+          <div class="cap"><span class="n">E1</span><h3>Без рамки</h3></div>
+          <p>Та же строка, но текстом по левому краю колонок: <b>идёт · название · до 14:00</b>, справа «дальше». Никакой коробки — читается как подпись к ряду карточек.</p>
+          <div class="pm"><div class="plus">Ничего не добавляет к силуэту страницы. Выравнивание по колонкам делает строку частью ряда.</div><div class="minus">Без рамки «Присоединиться» висит в воздухе — нужна тихая кнопка, не сплошная.</div></div>
+          <button type="button" class="open" data-open-bar="plain">Показать в макете</button>
+        </div>
+        <div class="place">
+          <div class="cap"><span class="n">E2</span><h3>Лоток под вводом</h3><span class="rec">рекомендую</span></div>
+          <p>Полоска приклеена к нижней кромке карточки ввода: общий контур, чуть темнее заливка, скруглены только нижние углы. Карточка ввода становится «пультом дня»: сверху пишешь, снизу видишь, что сейчас.</p>
+          <div class="pm"><div class="plus">Коробок по-прежнему две: ввод и колонки. Ширина совпадает с полем — глаз не прыгает. Есть куда положить «Присоединиться».</div><div class="minus">Карточка ввода подрастает на строку. В день без встреч лоток надо прятать, иначе он пустой.</div></div>
+          <button type="button" class="open" data-open-bar="tray">Показать в макете</button>
+        </div>
+        <div class="place">
+          <div class="cap"><span class="n">E3</span><h3>Под заголовком</h3></div>
+          <p>Строка становится подзаголовком «Освободи память»: по центру, мелко, приглушённо. Заголовок задаёт настроение, подзаголовок — обстоятельства: <b>идёт 1:1 с Лёшей до 14:00 · дальше 15:00 Демо ZB</b>.</p>
+          <div class="pm"><div class="plus">Самое тихое место на странице и самое первое, куда падает взгляд. Ничего между вводом и колонками.</div><div class="minus">Подзаголовок не место для кнопки — «Присоединиться» превращается в ссылку. Длинные названия ломают центровку.</div></div>
+          <button type="button" class="open" data-open-bar="sub">Показать в макете</button>
+        </div>
+        <div class="place">
+          <div class="cap"><span class="n">E4</span><h3>В шапке</h3></div>
+          <p>Пилюля рядом с меткой модели: <b>● 1:1 с Лёшей · до 14:00</b>, а когда ничего не идёт — <b>15:00 Демо ZB · через 1 ч 18</b>. Клик раскрывает список дня, как метка модели раскрывает выбор.</p>
+          <div class="pm"><div class="plus">Видна на любой странице, не только на «Сегодня». Место уже есть — шапка рассчитана на пилюли.</div><div class="minus">Шапка — про приложение, не про день; она начнёт спорить с меткой модели. На 390px места нет.</div></div>
+          <button type="button" class="open" data-open-bar="head">Показать в макете</button>
+        </div>
+        <div class="place">
+          <div class="cap"><span class="n">E5</span><h3>Фразой</h3></div>
+          <p>Не строка свойств, а предложение: «Сейчас <b>1:1 с Лёшей</b>, до 14:00 — присоединиться. В 15:00 <b>Демо ZB заказчику</b>, потом ещё три». Как подпись под фото, а не панель.</p>
+          <div class="pm"><div class="plus">В интонации Кизуны: человеку говорят, а не показывают таблицу. Нет ни одной коробки и ни одной пилюли.</div><div class="minus">Не сканируется — надо прочитать. Русские склонения в шаблонах фразы придётся аккуратно собирать.</div></div>
+          <button type="button" class="open" data-open-bar="phrase">Показать в макете</button>
+        </div>
+        <div class="place">
+          <div class="cap"><span class="n">E6</span><h3>Только по делу</h3></div>
+          <p>Строка без рамки появляется, только когда есть что сказать: встреча идёт или начнётся в ближайшие полчаса. Остальное время страница такая, как сейчас. Сдвиньте «сейчас» на 14:20 — строка исчезнет, на 14:35 — вернётся.</p>
+          <div class="pm"><div class="plus">Нулевая плата за место в спокойное время. Появление само по себе — сигнал.</div><div class="minus">Повестку дня целиком не увидеть нигде, кроме «Доски». Страница «прыгает», когда строка появляется.</div></div>
+          <button type="button" class="open" data-open-bar="only">Показать в макете</button>
+        </div>
+      </div>
+      <p class="sec-note" style="margin-top:16px"><strong>Рекомендация:</strong> E2 — лоток под вводом. Он снимает главную претензию (три коробки подряд), сохраняет содержание полоски целиком и даёт кнопке «Присоединиться» законное место. Правило E6 (прятать, когда нечего сказать) стоит применить к любому из прочтений: в день без встреч лоток не рисуется, и карточка ввода выглядит как сегодня.</p>
+
+      <h2 class="sec">Плашка встречи: состояния и действия</h2>
+      <p class="sec-note">Одна плашка на все варианты — как плашка записи, но с временем впереди. Цвет заливки — не «встреча», а состояние относительно «сейчас»; календарь узнаётся по точке и подписи, как на «Доске».</p>
+      <div class="anat" id="anat"></div>
+      <ul class="rules" style="margin-top:18px">
+        <li><b>Присоединиться</b><span>Появляется за 10 минут до начала и пока встреча идёт, только у событий со ссылкой Meet/Zoom/Телемост. Открывает ссылку в новой вкладке — без промежуточной карточки.</span></li>
+        <li><b>Записать итог</b><span>У прошедшей встречи без следа в памяти. Ставит в поле ввода «Встреча «Демо ZB» — » с типом «Результат» и курсором в конце: итог сразу попадает в «Что делал». Записанный итог показывается ссылкой «итог ✓».</span></li>
+        <li><b>Ответить</b><span>Приглашение без ответа — тёплая метка «ответить?» и Да / Нет прямо в плашке, как на «Доске» (существующий <code>POST …/respond</code>).</span></li>
+        <li><b>Взять в память</b><span>Чужое событие остаётся чужим, пока человек не заберёт его: тогда создаётся запись-встреча со ссылкой на событие, и она появляется в TODO. Так велит контракт памяти — внешний календарь только чтение.</span></li>
+        <li><b>«Занято»</b><span>Календарь в режиме «только занятость» даёт плашку без названия, серым штрихом. Действий нет, кроме «Открыть в календаре».</span></li>
+      </ul>
+
+      <h2 class="sec">Что потребуется в коде</h2>
+      <p class="sec-note">Почти ничего серверного: события за день уже отдаёт календарь, живое обновление уже идёт через <code>notifyJournal('calendar')</code>. Работа — на клиенте.</p>
+      <div class="tbl-wrap"><table class="take">
+        <thead><tr><th>Слой</th><th>Что сделать</th><th>Замечание</th></tr></thead>
+        <tbody>
+          <tr><td>Загрузка</td><td><code>load()</code> на «Сегодня» вместе с записями дня запрашивает <code>/api/calendar?from=D&amp;to=D</code> и берёт <code>kind === 'external'</code>.</td><td>Свои встречи из памяти в календарь не дублируются — они уже в TODO. Ответ уже фильтрует их через <code>calendar_links</code>.</td></tr>
+          <tr><td>Состояние</td><td>«прошла / идёт / скоро / позже» считается на клиенте от <code>time</code> и <code>end</code>; таймер раз в минуту пересчитывает и обновляет «Присоединиться».</td><td>Никаких новых полей в БД. Часовой пояс — тот же, что у «Доски».</td></tr>
+          <tr><td>Итог встречи</td><td>Сопоставить событие с записью «Что делал» по <code>calendar_links</code> или совпадению названия за день — показать «итог ✓».</td><td>Совпадение по названию — эвристика; честный путь — ссылка при «Записать итог».</td></tr>
+          <tr><td>Ввод</td><td>«Записать итог» подставляет текст и тип в карточку ввода через существующий API поля <code>markdown-live</code>.</td><td>Ничего не отправляет само: человек дописывает и жмёт →.</td></tr>
+          <tr><td>Пусто</td><td>Без подключённого календаря лента не рисуется вовсе; с календарём и без встреч — одна тихая строка «Встреч сегодня нет».</td><td>Пустой блок не должен звать в настройки — это делает «Доска».</td></tr>
+        </tbody>
+      </table></div>
+
+      <h2 class="sec">Этапы</h2>
+      <div class="stages">
+        <div class="stage"><b>1 · Лента дня</b><p>Чипы с временем и названием, «идёт» и «прошла», «свободно N» между чипами, «весь день» в конце. На 390px — список.</p><span class="gain">Утро начинается с повестки, а не с «Доски».</span></div>
+        <div class="stage"><b>2 · Действия</b><p>«Присоединиться» по времени, «ответить?» с Да/Нет, «Занято» серым.</p><span class="gain">На встречу заходят со страницы, где пишут итог.</span></div>
+        <div class="stage"><b>3 · След в памяти</b><p>«Записать итог» в поле ввода, «итог ✓» у прошедшей, «взять в память» у чужой.</p><span class="gain">Хвост «Встречи без следа» в «Обзоре» пустеет сам.</span></div>
+        <div class="stage"><b>4 · Раскладка по объёму</b><p>Больше пяти встреч — лента становится колонкой A. Порог хранится в браузере, как виды «Доски».</p><span class="gain">Страница не ломается в плотный день.</span></div>
+      </div>
+    </main>
+
+    <script>
+      const $ = (s, r = document) => r.querySelector(s);
+      const state = { variant: "B", now: 822, width: "wide", open: false, bar: "box" };
+
+      const EVENTS = [
+        { id: 1, s: 570, e: 585, title: "Стендап Hub", cal: "g", calName: "Работа · Google", join: true, outcome: null },
+        { id: 2, s: 660, e: 720, title: "Монетизация: синк с продуктом", cal: "y", calName: "Яндекс", people: "Катя, Илья +3", outcome: "Участие во встрече Монетизация" },
+        { id: 3, s: 810, e: 840, title: "1:1 с Лёшей", cal: "g", calName: "Работа · Google", join: true, people: "Лёша" },
+        { id: 4, s: 900, e: 960, title: "Демо ZB заказчику", cal: "g", calName: "Работа · Google", join: true, people: "5 человек", proj: "ZB" },
+        { id: 5, s: 990, e: 1020, title: "Ретро TCAM", cal: "y", calName: "Яндекс", rsvp: true, proj: "TCAM" },
+        { id: 6, s: 1050, e: 1110, title: "Занято", cal: "busy", calName: "Личный · только занятость", busy: true },
+      ];
+      const ALLDAY = [{ title: "Маша в отпуске", cal: "day", calName: "Команда" }];
+
+      const hm = m => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+      const dur = m => (m >= 60 ? `${Math.floor(m / 60)} ч${m % 60 ? ` ${m % 60} мин` : ""}` : `${m} мин`);
+      function st(ev) {
+        const n = state.now;
+        if (n >= ev.e) return "past";
+        if (n >= ev.s) return "now";
+        if (ev.s - n <= 10) return "soon";
+        return "later";
+      }
+      const canJoin = ev => ev.join && (st(ev) === "now" || st(ev) === "soon");
+      const stateTag = ev => {
+        const s = st(ev);
+        if (s === "now") return `<span class="tag now">идёт · до ${hm(ev.e)}</span>`;
+        if (s === "soon") return `<span class="tag warm">через ${ev.s - state.now} мин</span>`;
+        if (s === "past") return ev.outcome ? `<span class="note-ok">итог ✓</span>` : `<span class="tag">прошла</span>`;
+        const d = ev.s - state.now;
+        return `<span class="tag">через ${dur(d)}</span>`;
+      };
+      const calTag = ev => `<span class="tag ${ev.cal}"><span class="cdot ${ev.cal}"></span> ${ev.calName}</span>`;
+
+      // ── плашка встречи (A, C, анатомия) ─────────────────────
+      function meetingEntry(ev, { compact = false } = {}) {
+        const s = st(ev);
+        const acts = [];
+        if (canJoin(ev)) acts.push(`<span class="btn join">Присоединиться</span>`);
+        if (ev.rsvp && s !== "past") acts.push(`<span class="btn">Да</span><span class="btn ghost">Нет</span>`);
+        if (s === "past" && !ev.outcome && !ev.busy) acts.push(`<span class="btn ghost">Записать итог</span>`);
+        if (!ev.busy && s !== "past" && !ev.rsvp) acts.push(`<span class="btn ghost">Взять в память</span>`);
+        return `<div class="entry mt ${s === "now" ? "now" : ""} ${s === "past" ? "past" : ""}">
+          <div class="t"><span class="tm">${hm(ev.s)}</span><span>${ev.title}</span></div>
+          <div class="meta">${stateTag(ev)}${ev.rsvp && s !== "past" ? `<span class="tag warm">ответить?</span>` : ""}${calTag(ev)}${ev.people && !compact ? `<span class="tag">${ev.people}</span>` : ""}${ev.proj ? `<span class="tag proj">${ev.proj}</span>` : ""}</div>
+          ${acts.length && !compact ? `<div class="acts">${acts.join("")}</div>` : ""}
+        </div>`;
+      }
+      const alldayEntry = ev => `<div class="entry mt"><div class="t"><span class="tm" style="font-size:10px">день</span><span>${ev.title}</span></div><div class="meta"><span class="tag day"><span class="cdot day"></span> ${ev.calName}</span></div></div>`;
+
+      // ── B: лента ───────────────────────────────────────────
+      function agenda() {
+        const chips = [];
+        EVENTS.forEach((ev, i) => {
+          const s = st(ev);
+          const cls = ["chip", s === "now" ? "now" : "", s === "past" ? "past" : "", ev.busy ? "busy" : ""].join(" ");
+          const extra = canJoin(ev) ? `<span class="btn join">Присоединиться</span>` : ev.rsvp && s !== "past" ? `<span class="ask">ответить?</span>` : s === "past" && ev.outcome ? `<span class="note-ok">✓</span>` : "";
+          chips.push(`<span class="${cls}" title="${ev.calName}${ev.people ? " · " + ev.people : ""}"><span class="cdot ${ev.cal}"></span><span class="tm">${hm(ev.s)}</span><span class="ttl">${ev.title}</span>${extra}</span>`);
+          const next = EVENTS[i + 1];
+          if (next && next.s - ev.e >= 45 && next.s > state.now) chips.push(`<span class="gap">свободно ${dur(next.s - Math.max(ev.e, state.now))}</span>`);
+        });
+        for (const ev of ALLDAY) chips.push(`<span class="chip day"><span class="cdot day"></span><span class="ttl">${ev.title}</span></span>`);
+        const nowEv = EVENTS.find(ev => st(ev) === "now");
+        const nextEv = EVENTS.find(ev => ev.s > state.now);
+        const lbl = nowEv ? `сейчас <b>${nowEv.title}</b>` : nextEv ? `дальше в <b>${hm(nextEv.s)}</b>` : `встречи <b>закончились</b>`;
+        return `<section class="agenda"><div class="agenda-in"><span class="lbl">${lbl}</span>${chips.join("")}</div></section>`;
+      }
+
+      // ── D: рельс ───────────────────────────────────────────
+      function rail() {
+        const top = 540, bottom = 1140, H = 400, y = m => ((m - top) / (bottom - top)) * H;
+        const hours = [];
+        for (let h = 9; h <= 19; h += 1) hours.push(`<div class="hr" style="top:${y(h * 60)}px"><span>${h}</span></div>`);
+        const evs = EVENTS.map(ev => `<div class="ev ${ev.cal} ${st(ev) === "now" ? "now" : ""} ${st(ev) === "past" ? "past" : ""}" style="top:${y(ev.s) + 1}px;height:${Math.max(17, y(ev.e) - y(ev.s) - 2)}px">${ev.title}${ev.e - ev.s >= 45 ? `<small>${hm(ev.s)}–${hm(ev.e)}</small>` : ""}</div>`);
+        const nextEv = EVENTS.find(ev => ev.s > state.now);
+        const nowEv = EVENTS.find(ev => st(ev) === "now");
+        return `<aside class="tl">
+          <div class="th"><b>Понедельник, 14 сентября</b><span>${EVENTS.length} встреч</span></div>
+          <div class="allday">${ALLDAY.map(ev => `<span class="tag day"><span class="cdot day"></span> ${ev.title}</span>`).join("")}</div>
+          <div class="grid">${hours.join("")}${evs.join("")}<div class="nowline" style="top:${y(state.now)}px"></div></div>
+          <div class="foot">${nowEv ? `Идёт <b>${nowEv.title}</b> до ${hm(nowEv.e)}${canJoin(nowEv) ? ` · <span class="btn join">Присоединиться</span>` : ""}` : nextEv ? `Свободно ${dur(nextEv.s - state.now)} — дальше <b>${nextEv.title}</b>` : "На сегодня всё"}</div>
+        </aside>`;
+      }
+
+      // ── E: строка ──────────────────────────────────────────
+      function nowbar() {
+        const nowEv = EVENTS.find(ev => st(ev) === "now");
+        const nextEv = EVENTS.find(ev => ev.s > state.now);
+        const left = nowEv
+          ? `<span class="lbl">Идёт</span><span class="ttl">${nowEv.title}</span><span class="tm">до ${hm(nowEv.e)}</span>${canJoin(nowEv) ? `<span class="btn join">Присоединиться</span>` : ""}`
+          : nextEv && st(nextEv) === "soon"
+            ? `<span class="lbl">Через ${nextEv.s - state.now} мин</span><span class="ttl">${nextEv.title}</span><span class="tm">${hm(nextEv.s)}–${hm(nextEv.e)}</span>${canJoin(nextEv) ? `<span class="btn join">Присоединиться</span>` : ""}`
+            : nextEv
+              ? `<span class="lbl" style="color:var(--muted)">Свободно</span><span class="ttl">${dur(nextEv.s - state.now)}</span>`
+              : `<span class="lbl" style="color:var(--muted)">На сегодня всё</span>`;
+        const after = nowEv ? EVENTS.find(ev => ev.s >= nowEv.e) : nextEv && st(nextEv) === "soon" ? EVENTS.find(ev => ev.s >= nextEv.e) : nextEv;
+        const rest = EVENTS.filter(ev => ev.s > state.now).length;
+        const right = `<span class="next">${after ? `дальше <span class="cdot ${after.cal}"></span> ${hm(after.s)} <b>${after.title}</b>` : ""}<button type="button" class="tog" data-toggle>ещё ${rest} сегодня ${state.open ? "▴" : "▾"}</button></span>`;
+        const list = state.open
+          ? `<div class="list">${EVENTS.map(ev => `<div class="ln ${st(ev) === "past" ? "past" : ""}"><span class="tm">${hm(ev.s)}–${hm(ev.e)}</span><span class="cdot ${ev.cal}"></span><span>${ev.title}</span><span class="r">${stateTag(ev)}${ev.rsvp && st(ev) !== "past" ? `<span class="tag warm">ответить?</span>` : ""}</span></div>`).join("")}${ALLDAY.map(ev => `<div class="ln"><span class="tm">весь день</span><span class="cdot day"></span><span>${ev.title}</span></div>`).join("")}</div>`
+          : "";
+        return `<section class="nowbar"><div class="nowbar-in"><div class="row">${left}${right}</div>${list}</div></section>`;
+      }
+
+      // ── E1–E6: та же строка без коробки ────────────────────
+      function barParts() {
+        const nowEv = EVENTS.find(ev => st(ev) === "now");
+        const nextEv = EVENTS.find(ev => ev.s > state.now);
+        const soon = nextEv && st(nextEv) === "soon" ? nextEv : null;
+        const focus = nowEv || soon;
+        const after = focus ? EVENTS.find(ev => ev.s >= focus.e) : nextEv;
+        const rest = EVENTS.filter(ev => ev.s > state.now).length;
+        return { nowEv, nextEv, soon, focus, after, rest };
+      }
+      function lineRow({ joinGhost = false } = {}) {
+        const { nowEv, nextEv, soon, after, rest } = barParts();
+        const join = ev => canJoin(ev) ? `<span class="btn join ${joinGhost ? "" : ""}">Присоединиться</span>` : "";
+        const left = nowEv
+          ? `<span class="lbl">Идёт</span><span class="ttl">${nowEv.title}</span><span>до ${hm(nowEv.e)}</span>${join(nowEv)}`
+          : soon
+            ? `<span class="lbl">Через ${soon.s - state.now} мин</span><span class="ttl">${soon.title}</span><span>${hm(soon.s)}–${hm(soon.e)}</span>${join(soon)}`
+            : nextEv
+              ? `<span class="lbl quiet">Свободно</span><span class="ttl">${dur(nextEv.s - state.now)}</span>`
+              : `<span class="lbl quiet">На сегодня всё</span>`;
+        const right = `<span class="next">${after ? `дальше <span class="cdot ${after.cal}"></span> ${hm(after.s)} <b>${after.title}</b>` : ""}${rest ? `<button type="button" class="tog" data-toggle>ещё ${rest} сегодня ${state.open ? "▴" : "▾"}</button>` : ""}</span>`;
+        return left + right;
+      }
+      const dayList = () => state.open ? `<div class="nowbar"><div class="nowbar-in" style="margin-top:8px"><div class="list">${EVENTS.map(ev => `<div class="ln ${st(ev) === "past" ? "past" : ""}"><span class="tm">${hm(ev.s)}–${hm(ev.e)}</span><span class="cdot ${ev.cal}"></span><span>${ev.title}</span><span class="r">${stateTag(ev)}</span></div>`).join("")}</div></div></div>` : "";
+      const plainLine = (cls = "") => `<section class="nowline ${cls}"><div class="row">${lineRow()}</div>${dayList()}</section>`;
+      const tray = () => `<div class="tray">${lineRow()}</div>`;
+      function subLine() {
+        const { nowEv, soon, after, rest } = barParts();
+        const focus = nowEv || soon;
+        const bits = [];
+        if (nowEv) bits.push(`<span class="now">идёт</span> <span class="ttl">${nowEv.title}</span> до ${hm(nowEv.e)}${canJoin(nowEv) ? ` <a class="now" style="text-decoration:none">присоединиться</a>` : ""}`);
+        else if (soon) bits.push(`<span class="now">через ${soon.s - state.now} мин</span> <span class="ttl">${soon.title}</span>`);
+        else bits.push(`понедельник, 14 сентября`);
+        if (after) bits.push(`дальше ${hm(after.s)} <span class="ttl">${after.title}</span>`);
+        if (rest > (after ? 1 : 0)) bits.push(`ещё ${rest - (after ? 1 : 0)}`);
+        return `<p class="sub">${bits.join('<span class="dotsep">·</span>')}</p>`;
+      }
+      function headPill() {
+        const { nowEv, soon, nextEv } = barParts();
+        if (nowEv) return `<span class="agenda-pill live"><span class="cdot now"></span><b>${nowEv.title}</b><span class="ttl-full">· до ${hm(nowEv.e)}</span></span>`;
+        if (soon) return `<span class="agenda-pill live"><span class="cdot ${soon.cal}"></span><b>${soon.title}</b><span class="ttl-full">· через ${soon.s - state.now} мин</span></span>`;
+        if (nextEv) return `<span class="agenda-pill"><span class="cdot ${nextEv.cal}"></span>${hm(nextEv.s)} <b>${nextEv.title}</b><span class="ttl-full">· через ${dur(nextEv.s - state.now)}</span></span>`;
+        return `<span class="agenda-pill">встреч больше нет</span>`;
+      }
+      function phrase() {
+        const { nowEv, soon, after, rest } = barParts();
+        const words = n => ["одна встреча", "две встречи", "три встречи", "четыре встречи", "пять встреч"][n - 1] || `${n} встреч`;
+        let t = "";
+        if (nowEv) t += `Сейчас <b>${nowEv.title}</b>, до ${hm(nowEv.e)}${canJoin(nowEv) ? ` — <a>присоединиться</a>` : ""}. `;
+        else if (soon) t += `Через ${soon.s - state.now} мин <b>${soon.title}</b>${canJoin(soon) ? ` — <a>присоединиться</a>` : ""}. `;
+        else if (after) t += `Свободно ${dur(after.s - state.now)}. `;
+        if (after) { const left = rest - 1; t += `В ${hm(after.s)} <b>${after.title}</b>${left > 0 ? `, потом ещё ${words(left)}` : ""}.`; }
+        else if (!nowEv && !soon) t += "На сегодня встреч больше нет.";
+        return `<p class="phrase">${t}</p>`;
+      }
+      const barActive = () => { const { nowEv, nextEv } = barParts(); return Boolean(nowEv || (nextEv && nextEv.s - state.now <= 30)); };
+
+      // ── колонки памяти (из скриншота) ──────────────────────
+      const JOURNAL = [
+        ["Участие во встрече Монетизация", `<span class="tag type">результат</span><span>сегодня, 13:17</span>`],
+        ["Сделал MCP для ZB", `<span class="tag type">результат</span><span class="tag proj">ZB</span><span>сегодня, 13:17</span>`],
+        ["Доработал дизайн Хаба", `<span class="tag type">результат</span><span class="tag proj">Хаб</span><span>сегодня, 13:17</span>`],
+        ["Обсудили задачи с командой", `<span class="tag type">результат</span><span>сегодня, 12:21</span>`],
+      ];
+      const TODO = [
+        ["Попробовать схему Gemini 3.5 Transcribe Live → LLM → Sonic-3.6", `<span class="tag type">задача</span><span>4 сент., 11:06</span><span class="tag late">срок: 04.09</span><span class="tag late">просрочено</span>`],
+        ["Попробовать новую голосовую модель", `<span class="tag type">задача</span><span class="tag proj">phonely.ai</span><span class="tag proj">Alma</span><span>3 сент., 10:59</span><span class="tag late">срок: 04.09</span><span class="tag late">просрочено</span>`],
+        ["Попробовать Muse Voice Transcribe на стенде", `<span class="tag type">задача</span><span class="tag proj">Muse Voice Transcribe</span><span>2 сент., 09:42</span><span class="tag late">срок: 04.09</span><span class="tag late">просрочено</span>`],
+      ];
+      const entry = ([t, meta], late) => `<div class="entry ${late ? "late" : ""}"><div class="t">${late ? '<span class="circle"></span>' : ""}<span>${t}</span></div><div class="meta">${meta}</div></div>`;
+      const journalCard = () => `<article class="card"><h2>Что делал <span class="arr">→</span></h2><div class="stack">${JOURNAL.map(e => entry(e)).join("")}</div></article>`;
+      const notesCard = () => `<article class="card"><h2>Заметки</h2><p class="empty">Заметки появятся здесь.</p></article>`;
+      function todoCard(withMeetings) {
+        const meetings = withMeetings ? EVENTS.filter(ev => st(ev) !== "past").slice(0, 3).map(ev => meetingEntry(ev, { compact: true })).join("") : "";
+        return `<article class="card"><h2>TODO буфер <span class="arr">→</span></h2><div class="stack">${meetings}${TODO.map(e => entry(e, true)).join("")}</div><div class="more">Ещё ${withMeetings ? 12 : 11} — весь список →</div></article>`;
+      }
+      function meetingsCard() {
+        const upcoming = EVENTS.filter(ev => st(ev) !== "past");
+        const past = EVENTS.filter(ev => st(ev) === "past");
+        const shown = [...upcoming.slice(0, 4), ...past.slice(-1)].sort((a, b) => a.s - b.s);
+        return `<article class="card"><h2>Встречи <span class="arr">→</span><span class="cnt">${EVENTS.length} сегодня</span></h2><div class="stack">${ALLDAY.map(alldayEntry).join("")}${shown.map(ev => meetingEntry(ev)).join("")}</div>${EVENTS.length > shown.length ? `<div class="more">Ещё ${EVENTS.length - shown.length} — календарь →</div>` : ""}</article>`;
+      }
+
+      function capture() {
+        return `<form class="capture" onsubmit="return false"><div class="field">Запишите мысль, план, встречу или итог дня</div>
+          <div class="foot"><div class="dots"><span class="auto"><i></i>Авто</span><i style="background:#9d68d3"></i><i style="background:#56c4d8"></i><i style="background:#8a94a8"></i></div><span class="sep"></span><span class="tags">#тег…</span><span class="send">→</span></div></form>`;
+      }
+      const topbar = (extra = "") => `<header class="top"><div class="logo"><i></i>Кизуна</div><nav><span class="on">Сегодня</span><span>Доска</span><span>Календарь</span><span>Обзор</span></nav><div class="right">${extra}<span class="pill-btn">3.7-flash</span><span class="icon-btn hide-n">⚙</span><span class="icon-btn hide-n">◑</span><span class="icon-btn">CO</span></div></header>`;
+
+      const CAPS = {
+        B: "<strong>B · Лента дня.</strong> Одна строка чипов между вводом и колонками. Подпись слева отвечает на «что сейчас», чипы — на «что дальше», промежутки — «сколько свободно». Идущая встреча в кольце, прошедшие притушены. Наведите на чип — увидите людей и календарь.",
+        A: "<strong>A · Колонка «Встречи».</strong> Четыре колонки: у встреч свои плашки с временем впереди. Показываются ближайшие и последняя прошедшая, чтобы «Записать итог» был под рукой. Заголовок ведёт в вид «Календарь» на «Доске».",
+        C: "<strong>C · В TODO буфере.</strong> Ближайшие встречи ложатся над делами. Кружка «готово» у них нет: чужое событие не закрывается, его можно только взять в память. Просроченные дела уехали вниз — это главная цена варианта.",
+        D: "<strong>D · Рельс у ввода.</strong> Шкала 9–19 справа от карточки ввода, линия «сейчас», штрих у «занято». Свободные окна видны формой. Переключите на 390px — рельс уходит под ввод и превращается в длинную колонку.",
+        E: "<strong>E · Строка «сейчас».</strong> Полоска над колонками: что идёт, до скольки, куда присоединиться, что дальше. Полный список дня — за «ещё N ▾». Сдвиньте «сейчас» на 16:20 — увидите состояние «через N мин».",
+      };
+
+      const BAR_CAPS = {
+        plain: "<strong>E1 · Без рамки.</strong> Та же строка, что в рамке, но текстом по левому краю колонок. Третьей коробки нет — строка читается как подпись к ряду карточек.",
+        tray: "<strong>E2 · Лоток под вводом.</strong> Полоска приклеена к карточке ввода: общий контур, заливка чуть темнее, скруглены только нижние углы. Коробок на странице две, как и было.",
+        sub: "<strong>E3 · Под заголовком.</strong> Строка стала подзаголовком «Освободи память». Между вводом и колонками ничего. «Присоединиться» — ссылка, а не кнопка.",
+        head: "<strong>E4 · В шапке.</strong> Пилюля слева от метки модели: идущая встреча — с коралловой точкой и кольцом, иначе ближайшая с «через N». Переключите на 390px — пилюля ужимается до названия.",
+        phrase: "<strong>E5 · Фразой.</strong> Не строка свойств, а предложение под карточкой ввода. Ни пилюль, ни рамок; ссылка — только «присоединиться».",
+        only: "<strong>E6 · Только по делу.</strong> Строка без рамки появляется, когда встреча идёт или начнётся в ближайшие 30 минут. Сдвиньте «сейчас» на 14:20 — строка исчезнет; на 14:35 — вернётся.",
+      };
+      function render() {
+        const v = state.variant;
+        const bar = v === "E" ? state.bar : null;
+        let hero = `<section class="hero ${v === "D" ? "rail" : ""}"><h1 class="big">Освободи память</h1>${bar === "sub" ? subLine() : ""}${bar === "tray" ? capture().replace('class="capture"', 'class="capture tray-host"') + tray() + dayList() : capture()}${v === "D" ? rail() : ""}</section>`;
+        let between = v === "B" ? agenda()
+          : bar === "box" ? nowbar()
+          : bar === "plain" ? plainLine()
+          : bar === "phrase" ? phrase()
+          : bar === "only" ? (barActive() ? plainLine() : "")
+          : "";
+        let dash = v === "A"
+          ? `<section class="dash four">${journalCard()}${meetingsCard()}${todoCard(false)}${notesCard()}</section>`
+          : `<section class="dash">${journalCard()}${todoCard(v === "C")}${notesCard()}</section>`;
+        $("#mock").innerHTML = topbar(bar === "head" ? headPill() : "") + hero + between + dash;
+        $("#frame-cap").innerHTML = bar && bar !== "box" ? BAR_CAPS[bar] : CAPS[v];
+        $("#bar-tools").hidden = v !== "E";
+        $("#now-out").value = hm(state.now);
+        $("[data-toggle]", $("#mock"))?.addEventListener("click", () => { state.open = !state.open; render(); });
+        renderAnatomy();
+      }
+
+      function renderAnatomy() {
+        const mk = (title, ev, note) => `<div class="st"><h4>${title}</h4><div class="mock">${meetingEntry(ev)}</div><p>${note}</p></div>`;
+        const now = state.now;
+        $("#anat").innerHTML = [
+          mk("Идёт", { s: now - 12, e: now + 18, title: "1:1 с Лёшей", cal: "g", calName: "Работа · Google", join: true, people: "Лёша" }, "Коралловая заливка и кольцо — единственный яркий элемент на странице. «Присоединиться» — единственная сплошная кнопка."),
+          mk("Скоро", { s: now + 7, e: now + 67, title: "Демо ZB заказчику", cal: "g", calName: "Работа · Google", join: true, people: "5 человек", proj: "ZB" }, "За 10 минут до начала: тёплая метка «через N мин», ссылка уже активна. Проект — той же меткой, что у записей."),
+          mk("Позже", { s: now + 168, e: now + 198, title: "Ретро TCAM", cal: "y", calName: "Яндекс", rsvp: true, proj: "TCAM" }, "Тихая плашка. Приглашение без ответа получает «ответить?» и Да / Нет — тот же respond, что на «Доске»."),
+          mk("Прошла, итог записан", { s: now - 162, e: now - 102, title: "Монетизация: синк с продуктом", cal: "y", calName: "Яндекс", people: "Катя, Илья +3", outcome: "Участие во встрече Монетизация" }, "Притушена, «итог ✓» ведёт к записи в «Что делал». Ничего делать не надо — плашка это и говорит."),
+          mk("Прошла без следа", { s: now - 252, e: now - 237, title: "Стендап Hub", cal: "g", calName: "Работа · Google", join: true }, "«Записать итог» подставляет в поле ввода «Встреча «Стендап Hub» — » с типом «Результат». Хвост «Встречи без следа» в «Обзоре» закрывается отсюда."),
+          mk("Занято", { s: now + 228, e: now + 288, title: "Занято", cal: "busy", calName: "Личный · только занятость", busy: true }, "Календарь в режиме занятости: без названия, без действий. Серым, чтобы не спорить с рабочими."),
+        ].join("");
+      }
+
+      // ── управление ─────────────────────────────────────────
+      for (const b of document.querySelectorAll("[data-variant]")) b.addEventListener("click", () => setVariant(b.dataset.variant));
+      for (const b of document.querySelectorAll("[data-open]")) b.addEventListener("click", () => { setVariant(b.dataset.open); $("#frame").scrollIntoView({ behavior: "smooth", block: "start" }); });
+      function setVariant(v) {
+        state.variant = v; state.open = false;
+        for (const o of document.querySelectorAll("[data-variant]")) o.setAttribute("aria-pressed", String(o.dataset.variant === v));
+        render();
+      }
+      for (const b of document.querySelectorAll("[data-bar]")) b.addEventListener("click", () => setBar(b.dataset.bar));
+      for (const b of document.querySelectorAll("[data-open-bar]")) b.addEventListener("click", () => { setVariant("E"); setBar(b.dataset.openBar); $("#frame").scrollIntoView({ behavior: "smooth", block: "start" }); });
+      function setBar(k) {
+        state.bar = k; state.open = false;
+        for (const o of document.querySelectorAll("[data-bar]")) o.setAttribute("aria-pressed", String(o.dataset.bar === k));
+        render();
+      }
+      for (const b of document.querySelectorAll("[data-theme-btn]")) b.addEventListener("click", () => {
+        document.documentElement.dataset.theme = b.dataset.themeBtn;
+        for (const o of document.querySelectorAll("[data-theme-btn]")) o.setAttribute("aria-pressed", String(o === b));
+      });
+      for (const b of document.querySelectorAll("[data-width]")) b.addEventListener("click", () => {
+        $("#frame").classList.toggle("narrow", b.dataset.width === "narrow");
+        for (const o of document.querySelectorAll("[data-width]")) o.setAttribute("aria-pressed", String(o === b));
+      });
+      $("#now").addEventListener("input", e => { state.now = Number(e.target.value); render(); });
+      document.documentElement.dataset.theme = "dark";
+      render();
+    </script>
+  </body>
+</html>

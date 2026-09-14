@@ -1,4 +1,11 @@
 import { test, expect } from "@playwright/test";
+// Обложка «Сегодня» живёт по часам: чтобы прогон не зависел от времени суток,
+// страница видит один и тот же день — 13:00, фаза «день». Таймеры при этом
+// идут как обычно.
+const dayAt = (hour) => { const at = new Date(); at.setHours(hour, 0, 0, 0); return at; };
+test.beforeEach(async ({ page }) => {
+  await page.clock.install({ time: dayAt(13) });
+});
 
 // Подставной транспорт живого режима: настоящего ключа нет, поэтому WebRTC и
 // ответ OpenAI подменяются, а всё остальное — наш код, сервер и журнал —
@@ -93,7 +100,9 @@ test("without a key the dialog still works: the turn goes through tools into the
   await expect(panel.locator(".voice-tool")).toHaveText("create_capture");
   await expect(panel.locator(".voice-bot")).toContainText("Записал как дело");
 
-  // Запись действительно легла в журнал с разобранными параметрами.
+  // Запись действительно легла в журнал с разобранными параметрами — в
+  // завтрашний день, потому что срок «завтра».
+  await page.locator('#daybar [data-view="1"]').click();
   const entry = page.locator("#todo .entry").filter({ hasText: "подготовить отчёт" }).first();
   await expect(entry).toBeVisible({ timeout: 15000 });
   await expect(entry).toContainText("важно");
@@ -652,10 +661,11 @@ test("неясный тип записи разговор переспрашив
   await page.locator("#voice-input").press("Enter");
   await expect(page.locator(".voice-bot").last()).toContainText("Это дело, заметка или результат?");
 
+  // Запись без ясного типа сохранена, но на главной её нет — она пока не дело.
   // Ответ одним словом ложится на ту же запись, а новой не создаёт.
-  await expect(page.locator("#today .entry").filter({ hasText: "план недели" }).first()).toBeVisible({
-    timeout: 15000,
-  });
+  await expect
+    .poll(async () => (await (await request.get("/api/entries?limit=10")).json()).entries.filter((item) => item.raw.includes("план недели")).length, { timeout: 15000 })
+    .toBe(1);
   await page.locator("#voice-input").fill("заметка");
   await page.locator("#voice-input").press("Enter");
   await expect(page.locator(".voice-bot").last()).toContainText("Теперь это заметка");

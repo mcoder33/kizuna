@@ -104,9 +104,10 @@
     <main>
       <section class="app-page today-page" id="today">
         <section class="hero">
-          <div class="today-intro">
-            <h1>Освободи память</h1>
-          </div>
+          <!-- Обложка живёт по часам: дата с фазой суток, две-три фразы о дне
+               и вопрос в поле. Слова собираются шаблонами из данных дня. -->
+          <p class="today-date" id="today-date"></p>
+          <p class="today-brief" id="today-brief" aria-live="polite"></p>
           <form id="capture-form" class="capture">
             <!-- Поле ввода создаётся из public/markdown-live.js: разметка
                  оформляется прямо во время набора, поэтому это не textarea. -->
@@ -196,25 +197,18 @@
             </div>
           </form>
         </section>
-        <section class="dashboard" aria-label="Дневная сводка">
-          <article class="preview-card">
-            <h2><a class="preview-title" href="#reports">Что делал</a></h2>
-            <div id="journal" class="stack">
-              <p class="empty">Пока нет зафиксированной работы за сегодня.</p>
-            </div>
-          </article>
-          <article class="preview-card">
-            <h2><a class="preview-title" href="#board?view=list">TODO буфер</a></h2>
-            <div id="todo" class="stack">
-              <p class="empty">Открытых дел нет.</p>
-            </div>
-          </article>
-          <article class="preview-card">
-            <h2><span class="preview-title plain">Заметки</span></h2>
-            <div id="notes" class="stack">
-              <p class="empty">Заметки появятся здесь.</p>
-            </div>
-          </article>
+        <!-- Под полем — полоса дней и два ящика: «Что делал» и «День», где
+             дела лежат вместе с календарём. Заметок на главной нет: они живут
+             в «Обзоре», поиске и карточке записи. -->
+        <nav class="daybar" id="daybar" aria-label="Дни"></nav>
+        <section class="drawers" aria-label="Дневная сводка">
+          <div class="drawer-tabs" id="today-tabs" role="tablist"></div>
+          <div id="journal" class="stack drawer" role="tabpanel" aria-labelledby="tab-journal" hidden>
+            <p class="empty">Пока нет зафиксированной работы за сегодня.</p>
+          </div>
+          <div id="todo" class="stack drawer day-list" role="tabpanel" aria-labelledby="tab-day" hidden>
+            <p class="empty">Открытых дел нет.</p>
+          </div>
         </section>
       </section>
       <datalist id="known-projects">

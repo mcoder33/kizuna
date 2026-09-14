@@ -15,7 +15,12 @@ async function typeIn(page, text) {
 const valueOf = (page) =>
   page.locator(field).evaluate((node) => [...node.querySelectorAll(":scope > .md-line")].map((line) => line.textContent).join("\n"));
 
+// Обложка «Сегодня» живёт по часам: чтобы прогон не зависел от времени суток,
+// страница видит один и тот же день — 13:00, фаза «день». Таймеры при этом
+// идут как обычно.
+const dayAt = (hour) => { const at = new Date(); at.setHours(hour, 0, 0, 0); return at; };
 test.beforeEach(async ({ page }) => {
+  await page.clock.install({ time: dayAt(13) });
   await page.goto("/");
   await page.locator(field).click();
   await page.keyboard.press("ControlOrMeta+a");
@@ -110,10 +115,12 @@ test("косая черта внутри слова списка не откры
 test("меню есть и в заметке карточки, и уходит вместе с ней", async ({ page }) => {
   const posted = page.waitForResponse((response) => response.url().endsWith("/api/captures") && response.request().method() === "POST");
   await typeIn(page, "запись для проверки меню разметки");
+  // Заметок на главной нет — запись отправляется делом, чтобы открыть её карточку отсюда.
+  await page.locator('#capture-types [data-value="todo"]').click();
   await page.getByRole("button", { name: "Сохранить запись" }).click();
   expect((await posted).status()).toBe(202);
 
-  const card = page.locator("#todo .entry, #notes .entry, #journal .entry").filter({ hasText: "проверки меню разметки" }).first();
+  const card = page.locator("#todo .entry").filter({ hasText: "проверки меню разметки" }).first();
   await expect(card).toBeVisible({ timeout: 15000 });
   await card.locator(".entry-title").click();
   const editor = page.locator("#card-body-editor");

@@ -1,0 +1,734 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>«Сегодня» заново</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='2' y='2' width='60' height='60' rx='14' fill='%23c73e3a'/%3E%3Cg fill='none' stroke='white' stroke-linecap='round' stroke-width='6'%3E%3Cpath d='M8 17q24 -6 48 0'/%3E%3Cline x1='14' y1='27' x2='50' y2='27'/%3E%3Cline x1='19' y1='22' x2='21' y2='54'/%3E%3Cline x1='45' y1='22' x2='43' y2='54'/%3E%3C/g%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #222;
+        --muted: #6a6a6a;
+        --faint: #96918e;
+        --line: #e9e9e7;
+        --hairline: #f2f0ee;
+        --wash: #fbfaf9;
+        --paper: #fff;
+        --plate: rgba(34, 34, 34, 0.045);
+        --hover: rgba(55, 53, 47, 0.06);
+        --coral: #ff385c;
+        --coral-bg: rgba(255, 56, 92, 0.1);
+        --now-ring: rgba(255, 56, 92, 0.45);
+        --warm: #b45309;    --warm-bg: #fbf1e6;
+        --late: #c0392b;    --late-bg: #fceceb;
+        --ok: #0f7a5f;      --ok-bg: #e9f5ef;
+        --proj: #4a5b6b;    --proj-bg: #f1f4f7;
+        --type: #0e7490;    --type-bg: #e7f4f7;
+        --g: #3f6fd1;       --g-bg: rgba(63, 111, 209, 0.13);
+        --y: #d2691e;       --y-bg: rgba(210, 105, 30, 0.13);
+        --busy: #8a8681;    --busy-bg: rgba(138, 134, 129, 0.16);
+        --day: #0e7490;     --day-bg: rgba(14, 116, 144, 0.12);
+        --entry: #fbf2ee;
+        --entry-late: #fdf0ee;
+        --shadow: 0 18px 42px rgba(34, 34, 34, 0.08);
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --ink: rgba(255, 255, 255, 0.88);
+        --muted: rgba(255, 255, 255, 0.52);
+        --faint: rgba(255, 255, 255, 0.36);
+        --line: #2e2d2b;
+        --hairline: #262523;
+        --wash: #181818;
+        --paper: #1f1f1f;
+        --plate: rgba(255, 255, 255, 0.045);
+        --hover: rgba(255, 255, 255, 0.06);
+        --coral: #ff4d6d;
+        --coral-bg: rgba(255, 77, 109, 0.14);
+        --now-ring: rgba(255, 77, 109, 0.55);
+        --warm: #e2a15a;    --warm-bg: rgba(226, 130, 74, 0.16);
+        --late: #ff8a80;    --late-bg: rgba(255, 138, 128, 0.16);
+        --ok: #4dc79f;      --ok-bg: rgba(77, 199, 159, 0.14);
+        --proj: #b6c8e6;    --proj-bg: rgba(182, 200, 230, 0.12);
+        --type: #56c4d8;    --type-bg: rgba(86, 196, 216, 0.14);
+        --g: #7fa6ff;       --g-bg: rgba(127, 166, 255, 0.16);
+        --y: #e2824a;       --y-bg: rgba(226, 130, 74, 0.18);
+        --busy: #a8a5a2;    --busy-bg: rgba(255, 255, 255, 0.07);
+        --day: #56c4d8;     --day-bg: rgba(86, 196, 216, 0.14);
+        --entry: #2a2624;
+        --entry-late: #2e2224;
+        --shadow: 0 18px 42px rgba(0, 0, 0, 0.4);
+      }
+      * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
+      body {
+        margin: 0; background: var(--wash); color: var(--ink); line-height: 1.45;
+        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-variant-numeric: tabular-nums;
+      }
+      main { max-width: 1180px; margin: auto; padding: 52px 24px 120px; }
+      .page-head { max-width: 800px; }
+      .page-head p { font-size: 15px; color: var(--muted); max-width: 66ch; }
+      .page-head a { color: inherit; }
+      .eyebrow { margin: 0 0 8px; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
+      h1 { margin: 0 0 12px; font-size: 40px; letter-spacing: -1.4px; line-height: 1.05; text-wrap: balance; }
+      h2.sec { font-size: 24px; letter-spacing: -0.6px; margin: 64px 0 10px; }
+      .sec-note { margin: 0 0 20px; color: var(--muted); font-size: 14px; max-width: 72ch; }
+      .sec-note a { color: inherit; }
+      code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--plate); padding: 1px 5px; border-radius: 5px; }
+
+      /* ── тулбар концепта ─────────────────────────────────── */
+      .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 22px; margin: 28px 0 18px; position: sticky; top: 0; z-index: 5; padding: 12px 0; background: color-mix(in srgb, var(--wash) 88%, transparent); backdrop-filter: blur(8px); }
+      .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 99px; background: var(--paper); padding: 3px; gap: 2px; flex-wrap: wrap; }
+      .seg button { border: 0; background: none; font: 600 12.5px Inter, sans-serif; color: var(--muted); padding: 6px 12px; border-radius: 99px; cursor: pointer; }
+      .seg button[aria-pressed="true"] { background: var(--ink); color: var(--wash); }
+      .seg button:focus-visible { outline: 2px solid var(--coral); outline-offset: 1px; }
+      .seg.variants button b { display: inline-block; width: 16px; height: 16px; border-radius: 50%; background: var(--plate); font-size: 10px; line-height: 16px; text-align: center; margin-right: 6px; color: var(--ink); }
+      .seg.variants button[aria-pressed="true"] b { background: var(--coral); color: #fff; }
+      .tool-label { font-size: 12px; color: var(--faint); }
+      .clock { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+      .clock input[type="range"] { width: 150px; accent-color: var(--coral); }
+      .clock output { font-weight: 650; color: var(--ink); min-width: 40px; }
+
+      /* ── рама макета ─────────────────────────────────────── */
+      .frame { border: 1px solid var(--line); border-radius: 18px; background: var(--wash); overflow: hidden; box-shadow: var(--shadow); }
+      .frame.narrow { width: 390px; margin: 0 auto; }
+      .frame-cap { margin: 14px 0 0; font-size: 13px; color: var(--muted); max-width: 76ch; }
+      .frame-cap strong { color: var(--ink); }
+
+      /* ── приложение: шапка ───────────────────────────────── */
+      .mock { --pad: 40px; font-size: 13px; }
+      .narrow .mock { --pad: 16px; }
+      .mock .top { display: flex; align-items: center; gap: 24px; padding: 0 var(--pad); height: 64px; border-bottom: 1px solid var(--hairline); }
+      .mock .logo { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 16px; }
+      .mock .logo i { display: block; width: 26px; height: 26px; border-radius: 7px; background: #c73e3a; position: relative; }
+      .mock .logo i::before { content: ""; position: absolute; left: 6px; right: 6px; top: 7px; height: 2px; background: #fff; border-radius: 2px; box-shadow: 0 5px 0 #fff; }
+      .mock .logo i::after { content: ""; position: absolute; left: 9px; top: 9px; width: 2px; height: 11px; background: #fff; box-shadow: 6px 0 0 #fff; }
+      .mock nav { margin: 0 auto; display: flex; gap: 22px; font-size: 13px; color: var(--muted); }
+      .mock nav span.on { color: var(--ink); font-weight: 650; }
+      .mock .top .right { display: flex; align-items: center; gap: 8px; }
+      .mock .pill-btn { border: 1px solid var(--line); border-radius: 99px; padding: 5px 10px; font-size: 11.5px; color: var(--muted); }
+      .mock .icon-btn { width: 28px; height: 28px; border-radius: 50%; background: var(--plate); display: grid; place-items: center; font-size: 11px; color: var(--muted); font-weight: 700; }
+      .narrow .mock nav { gap: 12px; font-size: 12px; }
+      .narrow .mock .pill-btn, .narrow .mock .icon-btn.hide-n { display: none; }
+
+      /* ── ввод ────────────────────────────────────────────── */
+      .mock .capture { border: 1px solid var(--line); border-radius: 16px; padding: 16px; background: var(--paper); }
+      .mock .field { min-height: 112px; color: var(--faint); font-size: 16px; padding: 4px 4px 12px; }
+      .narrow .mock .field { min-height: 88px; font-size: 15px; }
+      .mock .foot { display: flex; align-items: center; gap: 10px; border-top: 1px solid var(--hairline); padding-top: 12px; }
+      .mock .dots { display: flex; align-items: center; gap: 12px; }
+      .mock .dots i { width: 9px; height: 9px; border-radius: 50%; display: block; }
+      .mock .dots .auto { display: inline-flex; align-items: center; gap: 6px; background: var(--coral-bg); color: var(--coral); border-radius: 99px; padding: 4px 10px 4px 8px; font-weight: 700; font-size: 12px; }
+      .mock .dots .auto i { background: var(--coral); }
+      .mock .sep { width: 1px; height: 18px; background: var(--line); }
+      .mock .tags { color: var(--faint); font-size: 12px; flex: 1; }
+      .mock .send { width: 38px; height: 38px; border-radius: 50%; background: var(--coral); margin-left: auto; display: grid; place-items: center; color: #fff; font-size: 20px; line-height: 1; }
+      .mock .mini-hero { font-size: 22px; letter-spacing: -0.6px; margin: 0 0 14px; }
+      .mock .capture.tray-host { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+      .mock .tray { border: 1px solid var(--line); border-top: 0; border-radius: 0 0 16px 16px; background: var(--plate); padding: 9px 16px; }
+
+      /* ── общие элементы списков ──────────────────────────── */
+      .mock .card { background: var(--paper); border: 1px solid var(--line); border-radius: 16px; padding: 24px; min-width: 0; }
+      .narrow .mock .card { padding: 18px; }
+      .mock .card h2 { margin: 0 0 13px; font-size: 16px; display: flex; align-items: baseline; gap: 8px; }
+      .mock .arr { color: var(--faint); font-weight: 400; }
+      .mock .cnt { margin-left: auto; font-size: 11px; color: var(--faint); font-weight: 500; }
+      .mock .stack { display: grid; gap: 6px; }
+      .mock .entry { padding: 11px 12px; border-radius: 12px; background: var(--entry); font-size: 12px; }
+      .mock .entry.late { background: var(--entry-late); }
+      .mock .entry.late .t, .mock .entry.late .meta { color: var(--late); }
+      .mock .entry .t { font-weight: 650; display: flex; align-items: flex-start; gap: 8px; }
+      .mock .circle { flex: none; width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--faint); margin-top: 1px; }
+      .mock .meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 10px; color: var(--muted); margin-top: 5px; }
+      .mock .tag { display: inline-block; border-radius: 99px; padding: 2px 7px; font-size: 10px; font-weight: 600; background: var(--plate); color: var(--muted); white-space: nowrap; }
+      .mock .tag.type { background: var(--type-bg); color: var(--type); }
+      .mock .tag.proj { background: var(--proj-bg); color: var(--proj); }
+      .mock .tag.late { background: var(--late-bg); color: var(--late); }
+      .mock .tag.ok { background: var(--ok-bg); color: var(--ok); }
+      .mock .tag.warm { background: var(--warm-bg); color: var(--warm); }
+      .mock .tag.now { background: var(--coral); color: #fff; }
+      .mock .tag.g { background: var(--g-bg); color: var(--g); }
+      .mock .tag.y { background: var(--y-bg); color: var(--y); }
+      .mock .tag.busy { background: var(--busy-bg); color: var(--busy); }
+      .mock .tag.day { background: var(--day-bg); color: var(--day); }
+      .mock .more { margin-top: 10px; font-size: 12px; color: var(--muted); }
+      .mock .empty { color: var(--faint); font-size: 13px; margin: 0; }
+      .mock .cdot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex: none; }
+      .mock .cdot.g { background: var(--g); } .mock .cdot.y { background: var(--y); } .mock .cdot.busy { background: var(--busy); } .mock .cdot.day { background: var(--day); } .mock .cdot.now { background: var(--coral); }
+      .mock .btn { display: inline-flex; align-items: center; gap: 5px; border-radius: 99px; padding: 3px 9px; font-size: 10.5px; font-weight: 650; border: 1px solid var(--line); color: var(--ink); background: var(--paper); cursor: pointer; white-space: nowrap; }
+      .mock .btn.join { background: var(--coral); border-color: var(--coral); color: #fff; }
+      .mock .btn.ghost { border-color: transparent; background: var(--plate); color: var(--muted); }
+      .mock .btn.lg { padding: 7px 14px; font-size: 12px; }
+      .mock .note-ok { color: var(--ok); font-weight: 600; font-size: 11px; }
+      .mock .dim { color: var(--muted); }
+
+      /* плашка встречи */
+      .mock .entry.mt { background: var(--plate); }
+      .mock .entry.mt.now { background: var(--coral-bg); box-shadow: inset 0 0 0 1px var(--now-ring); }
+      .mock .entry.mt.past { opacity: 0.6; }
+      .mock .entry.mt .t { align-items: baseline; }
+      .mock .entry.mt .tm { flex: none; width: 38px; font-weight: 600; color: var(--muted); }
+      .mock .entry.mt.now .tm { color: var(--coral); }
+      .mock .entry.mt .acts { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+
+      /* строка встречи (рельс, документ, ящик) */
+      .mock .mrow { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; font-size: 12.5px; }
+      .mock .mrow .mt { width: 38px; color: var(--muted); font-weight: 600; flex: none; }
+      .mock .mrow .mtitle { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+      .mock .mrow .mr { margin-left: auto; display: flex; gap: 6px; align-items: center; flex: none; font-size: 11px; color: var(--muted); }
+      .mock .mrow.now { background: var(--coral-bg); box-shadow: inset 0 0 0 1px var(--now-ring); }
+      .mock .mrow.now .mt { color: var(--coral); }
+      .mock .mrow.past { opacity: 0.55; }
+      .mock .mrow.allday .mt { font-size: 10px; }
+      .mock .gaprow { font-size: 11px; color: var(--faint); padding: 2px 8px 2px 61px; }
+      .mock .trow { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: 9px; font-size: 12.5px; background: var(--entry); }
+      .mock .trow.late { background: var(--entry-late); }
+      .mock .trow.late .ttitle { color: var(--late); }
+      .mock .trow .ttitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+      .mock .trows { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
+      .mock .trow { min-width: 0; }
+
+      /* строка «сейчас / дальше» без коробки */
+      .mock .nowline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); }
+      .mock .nowline .lbl { font-weight: 700; color: var(--coral); font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; }
+      .mock .nowline .lbl.quiet { color: var(--faint); }
+      .mock .nowline .ttl { font-weight: 650; color: var(--ink); }
+      .mock .nowline .next { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+      .mock .nowline .next b { color: var(--ink); font-weight: 650; }
+      .mock .nowline .btn.join { padding: 2px 8px; }
+      .narrow .mock .nowline .next { margin-left: 0; width: 100%; }
+
+      /* заголовок дня */
+      .mock .dayhead { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+      .mock .dayhead b { font-size: 20px; letter-spacing: -0.4px; }
+      .mock .dayhead span { font-size: 12px; color: var(--muted); }
+
+      /* ── A · лента дня ───────────────────────────────────── */
+      .mock .tl-wrap { max-width: 760px; margin: 0 auto; padding: 30px var(--pad) 48px; }
+      .mock .tl-wrap .dayhead { margin-bottom: 14px; }
+      .mock .todo-strip { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--muted); padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); margin-bottom: 8px; }
+      .mock .todo-strip .ts-lbl { font-weight: 700; color: var(--ink); }
+      .mock .todo-strip .ts-chip { background: var(--entry-late); color: var(--late); border-radius: 99px; padding: 3px 9px; font-weight: 600; max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .mock .todo-strip .ts-more { margin-left: auto; color: var(--faint); }
+      .mock .tl-allday { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 6px 70px; }
+      .mock .tli { display: grid; grid-template-columns: 46px 14px minmax(0, 1fr); gap: 0 10px; align-items: start; }
+      .mock .tli-t { font-size: 11.5px; color: var(--faint); font-weight: 600; text-align: right; padding-top: 14px; }
+      .mock .tli-rail { position: relative; align-self: stretch; }
+      .mock .tli-rail::before { content: ""; position: absolute; left: 6px; top: 0; bottom: 0; width: 1px; background: var(--hairline); }
+      .mock .tli-rail::after { content: ""; position: absolute; left: 3.5px; top: 18px; width: 6px; height: 6px; border-radius: 50%; background: var(--line); }
+      .mock .tli.ev.now .tli-rail::after, .mock .tli.nowmark .tli-rail::after { background: var(--coral); width: 8px; height: 8px; left: 2.5px; }
+      .mock .tli.nowmark .tli-t { color: var(--coral); }
+      .mock .tli.ev.past .tli-rail::after { background: var(--hairline); border: 1px solid var(--line); box-sizing: border-box; }
+      .mock .tli-c { min-width: 0; padding: 6px 0; }
+      .mock .tli.nowmark .tli-c { padding: 8px 0 10px; }
+      .mock .tli.ev.past .tli-c { opacity: 0.85; }
+      .narrow .mock .tli { grid-template-columns: 38px 12px minmax(0, 1fr); gap: 0 8px; }
+      .narrow .mock .tl-allday { margin-left: 58px; }
+
+      /* ── B · сплит ───────────────────────────────────────── */
+      .mock .split { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 28px; padding: 32px var(--pad) 48px; align-items: start; }
+      .mock .blk { margin-top: 26px; }
+      .mock .blk h3 { font-size: 15px; margin: 0 0 10px; display: flex; gap: 6px; align-items: baseline; }
+      .mock .rail { min-width: 0; border: 1px solid var(--line); border-radius: 16px; background: var(--paper); padding: 18px; }
+      .mock .rail-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
+      .mock .rail-head b { font-size: 14px; }
+      .mock .rail-head span { font-size: 11px; color: var(--faint); }
+      .mock .rail-sec + .rail-sec { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--hairline); }
+      .mock .rail-sec h4 { margin: 0 0 8px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); display: flex; gap: 6px; align-items: baseline; }
+      .narrow .mock .split { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+
+      /* ── C · плитки ──────────────────────────────────────── */
+      .mock .bento-wrap { padding: 24px var(--pad) 48px; }
+      .mock .bento-wrap .dayhead { margin-bottom: 14px; }
+      .mock .bento { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+      .mock .tile { border: 1px solid var(--line); border-radius: 16px; background: var(--paper); padding: 18px; min-width: 0; }
+      .mock .tile h3 { margin: 0 0 10px; font-size: 14px; display: flex; gap: 6px; align-items: baseline; }
+      .mock .tile.tcap { grid-column: span 2; padding: 0; display: flex; }
+      .mock .tile.tcap .capture { border: 0; flex: 1; display: flex; flex-direction: column; }
+      .mock .tile.tcap .field { flex: 1; }
+      .mock .tile.tnow.live { background: var(--coral-bg); border-color: var(--now-ring); }
+      .mock .tl-lbl { margin: 0; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--coral); font-weight: 700; }
+      .mock .tile.tnow:not(.live) .tl-lbl { color: var(--faint); }
+      .mock .tl-big { margin: 6px 0 2px; font-size: 20px; font-weight: 700; letter-spacing: -0.4px; line-height: 1.15; }
+      .mock .tl-sub { margin: 0 0 12px; font-size: 12px; color: var(--muted); }
+      .mock .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 10px; }
+      .mock .stats div b { display: block; font-size: 22px; letter-spacing: -0.5px; line-height: 1.1; }
+      .mock .stats div span { font-size: 11px; color: var(--muted); }
+      .narrow .mock .bento { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+      .narrow .mock .tile.tcap, .narrow .mock .tile.tnow { grid-column: span 2; }
+
+      /* ── D · страница дня ────────────────────────────────── */
+      .mock .docwrap { display: grid; grid-template-columns: minmax(0, 1fr) 140px; gap: 40px; max-width: 960px; margin: 0 auto; padding: 36px var(--pad) 60px; }
+      .mock .doc { max-width: 720px; }
+      .mock .doc-eyebrow { margin: 0 0 6px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
+      .mock .doc h1 { margin: 0 0 12px; font-size: 32px; letter-spacing: -1px; }
+      .mock .props { display: flex; gap: 18px; flex-wrap: wrap; font-size: 12.5px; margin-bottom: 22px; }
+      .mock .props span { font-weight: 600; }
+      .mock .props span i { font-style: normal; font-weight: 500; color: var(--faint); margin-right: 6px; }
+      .mock .doc h2 { font-size: 15px; margin: 26px 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--hairline); display: flex; gap: 8px; align-items: baseline; }
+      .mock .capture.doc { border-style: dashed; background: transparent; }
+      .mock .drows { display: grid; gap: 2px; }
+      .mock .drow { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; font-size: 12.5px; }
+      .mock .drow .mt { width: 38px; color: var(--muted); font-weight: 600; flex: none; }
+      .mock .drow .mtitle { flex: 1; min-width: 0; font-weight: 600; }
+      .mock .drow .mr { display: flex; gap: 6px; flex: none; }
+      .mock .doc-toc { position: sticky; top: 24px; align-self: start; display: grid; gap: 6px; font-size: 12px; color: var(--faint); padding-top: 70px; }
+      .mock .doc-toc .on { color: var(--ink); font-weight: 600; }
+      .narrow .mock .docwrap { grid-template-columns: minmax(0, 1fr); }
+      .narrow .mock .doc-toc { display: none; }
+      .narrow .mock .doc h1 { font-size: 26px; }
+
+      /* ── E · фокус ───────────────────────────────────────── */
+      .mock .focus { max-width: 640px; margin: 0 auto; padding: 52px var(--pad) 60px; text-align: center; }
+      .mock .fdate { margin: 0 0 10px; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); }
+      .mock .ctx { margin: 0 0 22px; font-size: 15px; color: var(--muted); display: flex; justify-content: center; align-items: center; gap: 6px; flex-wrap: wrap; }
+      .mock .ctx b { color: var(--ink); }
+      .mock .ctx a { color: var(--coral); font-weight: 650; border-bottom: 1px solid var(--now-ring); }
+      .mock .ctx .cdot.now { width: 8px; height: 8px; }
+      .mock .capture.big .field { min-height: 160px; }
+      .mock .focus .capture { text-align: left; }
+      .mock .drawers { display: flex; justify-content: center; gap: 6px; margin: 22px 0 0; flex-wrap: wrap; }
+      .mock .drawers button { border: 1px solid transparent; background: none; font: 600 12.5px Inter, sans-serif; color: var(--muted); padding: 7px 12px; border-radius: 99px; cursor: pointer; }
+      .mock .drawers button b { color: var(--ink); font-weight: 700; }
+      .mock .drawers button em { font-style: normal; color: var(--late); }
+      .mock .drawers button.on { border-color: var(--line); background: var(--paper); color: var(--ink); }
+      .mock .drawer-body { text-align: left; margin-top: 16px; }
+      .narrow .mock .focus { padding-top: 32px; }
+
+      /* ── F · было / сейчас / будет ───────────────────────── */
+      .mock .tri { display: grid; grid-template-columns: 1fr 1.35fr 1fr; gap: 24px; padding: 32px var(--pad) 48px; align-items: start; }
+      .mock .tri .mid .mini-hero { text-align: center; }
+      .mock .tri .mid .blk h3 { justify-content: flex-start; }
+      .mock .subhead { margin: 18px 0 8px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); }
+      .narrow .mock .tri { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+      .narrow .mock .tri .mid { order: -1; }
+      .narrow .mock .tri .will { order: 0; }
+      .narrow .mock .tri .was { order: 1; }
+
+      /* ── сравнение ───────────────────────────────────────── */
+      .places { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+      .place { border: 1px solid var(--line); border-radius: 16px; background: var(--paper); padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+      .place .cap { display: flex; align-items: center; gap: 10px; }
+      .place .n { width: 24px; height: 24px; border-radius: 50%; background: var(--plate); display: grid; place-items: center; font-size: 12px; font-weight: 700; flex: none; }
+      .place h3 { margin: 0; font-size: 15px; letter-spacing: -0.2px; }
+      .place .rec { margin-left: auto; font-size: 10.5px; font-weight: 700; color: var(--ok); background: var(--ok-bg); border-radius: 99px; padding: 3px 8px; white-space: nowrap; }
+      .place .rec.alt { color: var(--warm); background: var(--warm-bg); }
+      .place p { margin: 0; font-size: 13px; color: var(--muted); }
+      .place p b { color: var(--ink); font-weight: 650; }
+      .place .strip { font-size: 12px; color: var(--muted); padding: 8px 10px; border-radius: 10px; background: var(--plate); }
+      .place .strip b { color: var(--ink); font-weight: 650; }
+      .place .pm { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 12.5px; }
+      .place .pm div::before { display: block; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); margin-bottom: 3px; }
+      .place .pm .plus::before { content: "за"; } .place .pm .minus::before { content: "против"; }
+      .place .pm div { color: var(--muted); }
+      .place .open { margin-top: auto; align-self: flex-start; border: 1px solid var(--line); background: none; color: var(--ink); font: 600 12px Inter, sans-serif; border-radius: 99px; padding: 6px 12px; cursor: pointer; }
+      .place .open:hover { background: var(--hover); }
+      .rules { list-style: none; padding: 0; margin: 0; display: grid; gap: 0; max-width: 78ch; }
+      .rules li { display: grid; grid-template-columns: 170px 1fr; gap: 14px; font-size: 13.5px; padding: 10px 0; border-top: 1px solid var(--hairline); }
+      .rules li b { font-weight: 650; }
+      .rules li span { color: var(--muted); }
+      .tbl-wrap { overflow-x: auto; }
+      table.take { width: 100%; border-collapse: collapse; font-size: 13px; }
+      table.take th { text-align: left; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); padding: 8px 10px; border-bottom: 1px solid var(--line); }
+      table.take td { padding: 10px; border-bottom: 1px solid var(--hairline); vertical-align: top; color: var(--muted); }
+      table.take td:first-child { color: var(--ink); font-weight: 600; width: 22%; }
+      @media (max-width: 760px) { main { padding: 32px 14px 80px; } h1 { font-size: 30px; } .frame.narrow { width: 100%; } .rules li { grid-template-columns: 1fr; gap: 4px; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="page-head">
+        <p class="eyebrow">Кизуна · концепт · «Сегодня» заново</p>
+        <h1>«Сегодня» заново</h1>
+        <p>
+          Сегодняшняя главная — заголовок, поле ввода и три колонки по типу записи: сделанное, дела, заметки.
+          Полоска «идёт · дальше · присоединиться» показала, что странице не хватает <strong>времени</strong>:
+          она знает, что человек записал, но не знает, где он сейчас в своём дне. Ниже шесть устройств страницы,
+          в каждом данные полоски — не надстройка, а часть структуры.
+        </p>
+        <p>
+          Макет живой: переключайте устройства, тему и ширину, двигайте «сейчас». Данные те же, что в
+          <a href="today-meetings-concept.html">концепте встреч на «Сегодня»</a>: шесть событий из Google и Яндекса,
+          четыре результата, заметка, четырнадцать дел. Решение не принято: страница для выбора.
+        </p>
+      </div>
+
+      <div class="toolbar">
+        <div class="seg variants" role="tablist" aria-label="Устройство страницы">
+          <button type="button" data-variant="F" aria-pressed="true"><b>F</b>Было · сейчас · будет</button>
+          <button type="button" data-variant="A" aria-pressed="false"><b>A</b>Лента дня</button>
+          <button type="button" data-variant="B" aria-pressed="false"><b>B</b>Ввод и рельс</button>
+          <button type="button" data-variant="C" aria-pressed="false"><b>C</b>Плитки</button>
+          <button type="button" data-variant="D" aria-pressed="false"><b>D</b>Страница дня</button>
+          <button type="button" data-variant="E" aria-pressed="false"><b>E</b>Фокус</button>
+        </div>
+        <div class="seg" role="group" aria-label="Тема">
+          <button type="button" data-theme-btn="dark" aria-pressed="true">Тёмная</button>
+          <button type="button" data-theme-btn="light" aria-pressed="false">Светлая</button>
+        </div>
+        <div class="seg" role="group" aria-label="Ширина">
+          <button type="button" data-width="wide" aria-pressed="true">Десктоп</button>
+          <button type="button" data-width="narrow" aria-pressed="false">390px</button>
+        </div>
+        <label class="clock">
+          <span class="tool-label">сейчас</span>
+          <input id="now" type="range" min="540" max="1140" step="5" value="822" />
+          <output id="now-out">13:42</output>
+        </label>
+      </div>
+
+      <div class="frame" id="frame"><div class="mock" id="mock"></div></div>
+      <p class="frame-cap" id="frame-cap"></p>
+
+      <h2 class="sec">Шесть устройств страницы</h2>
+      <p class="sec-note">Ось выбора — <strong>что держит страницу</strong>: тип записи (как сейчас), время, поле ввода или документ. Под каждым вариантом — куда в нём уходят данные полоски: идущая встреча, ближайшая, свободное окно, кнопка «Присоединиться».</p>
+      <div class="places">
+        <div class="place">
+          <div class="cap"><span class="n">F</span><h3>Было · сейчас · будет</h3><span class="rec">рекомендую</span></div>
+          <p>Те же три колонки, но их держит время, а не тип записи. Слева <b>«Было»</b>: прошедшие встречи и сделанное, ближайшее к «сейчас» сверху. В центре <b>«Сейчас»</b>: поле ввода с лотком идущей встречи под ним и заметки. Справа <b>«Будет»</b>: ближайшие встречи, ниже дела по срокам.</p>
+          <div class="strip">Идущая встреча — лоток под вводом. Прошедшие — в «Было» рядом с итогами, где им и писать итог. Ближайшие — в «Будет» над делами: к ним готовятся так же, как делают дела.</div>
+          <div class="pm"><div class="plus">Силуэт страницы знаком: ввод сверху, три колонки. Но у колонок появляется причина быть тремя. Встреча и запись про неё лежат рядом.</div><div class="minus">«Что делал» и «Заметки» перестают быть отдельными колонками: сделанное — в «Было», заметки — под вводом. Это ломает привычку.</div></div>
+          <button type="button" class="open" data-open="F">Показать в макете</button>
+        </div>
+        <div class="place">
+          <div class="cap"><span class="n">A</span><h3>Лента дня</h3><span class="rec alt">телефонное прочтение F</span></div>
+          <p>Одна колонка по часам: встречи и записи вперемешку по времени, поле ввода стоит <b>на отметке «сейчас»</b> и едет вниз вместе с днём. Дела — сложенной строкой над лентой: сколько просрочено, ближайшие три.</p>
+          <div class="strip">Идущая встреча — прямо над полем ввода, следующая — сразу под ним. «Свободно» читается пустотой между отметками.</div>
+          <div class="pm"><div class="plus">Самая честная картина дня — в порядке, в котором он случился. Итог встречи пишется под ней же. На телефоне это единственная раскладка без переключений.</div><div class="minus">Дела без времени в ленте чужие, отсюда сложенная строка. К вечеру поле ввода уезжает вниз — нужна кнопка «к сейчас».</div></div>
+          <button type="button" class="open" data-open="A">Показать в макете</button>
+        </div>
+        <div class="place">
+          <div class="cap"><span class="n">B</span><h3>Ввод и рельс</h3></div>
+          <p>Две колонки: слева пишут — поле ввода, под ним «Что делал» и заметки; справа <b>рельс дня</b> одной панелью: встречи по часам с отметкой «сейчас» и промежутками «свободно», ниже дела. Как боковая панель Notion Calendar.</p>
+          <div class="strip">Вся полоска растворяется в рельсе: идущая встреча подсвечена, у неё же «Присоединиться», промежутки подписаны.</div>
+          <div class="pm"><div class="plus">Рабочая половина и справочная половина не мешают друг другу. Рельс один на «Сегодня», «Доску» и «Обзор» — можно сделать общим.</div><div class="minus">Слева колонка широкая, справа плотная — страница неравновесная. Идущая встреча далеко от поля ввода, где пишут её итог.</div></div>
+          <button type="button" class="open" data-open="B">Показать в макете</button>
+        </div>
+        <div class="place">
+          <div class="cap"><span class="n">C</span><h3>Плитки</h3></div>
+          <p>Без заголовка, сетка из плиток одинаковой высоты: ввод на две плитки, рядом <b>«Сейчас»</b> коралловой плиткой и «Дальше» списком; второй ряд — «Что делал», «Дела», «Заметки» и «День» с цифрами: сделано, впереди, просрочено, свободно.</p>
+          <div class="strip">Полоска становится двумя плитками — «Сейчас» с большой кнопкой и «Дальше». Свободное окно — цифрой в плитке «День».</div>
+          <div class="pm"><div class="plus">Плотно, всё на одном экране без прокрутки. Состояние дня читается цветом плитки «Сейчас». Легко добавлять плитки.</div><div class="minus">Виджеты вместо страницы: Кизуна теряет интонацию «записать и отпустить». Поле ввода — одна из плиток, а не центр.</div></div>
+          <button type="button" class="open" data-open="C">Показать в макете</button>
+        </div>
+        <div class="place">
+          <div class="cap"><span class="n">D</span><h3>Страница дня</h3></div>
+          <p>День — документ, как в концепте «всё страница»: заголовок — дата, строка свойств (встречи, дела, сделано, свободно), поле ввода — первый блок, дальше разделы <b>«Сейчас»</b>, «Встречи», «Что делал», «Дела», «Заметки» одной колонкой. Справа оглавление.</p>
+          <div class="strip">Полоска — раздел «Сейчас» сразу под вводом; свободное окно — свойство страницы.</div>
+          <div class="pm"><div class="plus">Прямой путь к модели «всё страница» и к экспорту в Obsidian: сегодняшний день — файл. Читается сверху вниз, как дневник.</div><div class="minus">Длинная прокрутка: дела и заметки под тремя экранами. Нет параллельного взгляда на сделанное и оставшееся.</div></div>
+          <button type="button" class="open" data-open="D">Показать в макете</button>
+        </div>
+        <div class="place">
+          <div class="cap"><span class="n">E</span><h3>Фокус</h3></div>
+          <p>Только дата, одна строка обстоятельств — <b>«идёт 1:1 с Лёшей · до 14:00 · присоединиться»</b> — и большое поле ввода. Всё остальное сложено в ящики под полем: «Что делал 4», «Дела 14 · 3 просрочено», «Заметки 1», «Встречи 6 · дальше 15:00». Открывается один.</p>
+          <div class="strip">Полоска — единственный контекст на странице, строкой над полем. Счётчики ящиков досказывают остальное.</div>
+          <div class="pm"><div class="plus">Максимум «освободи память»: страница не показывает ничего, что можно не показывать. Работает на любой ширине без переделки.</div><div class="minus">Просроченное и заметки — за кликом; утренний обзор дня требует открыть три ящика по очереди.</div></div>
+          <button type="button" class="open" data-open="E">Показать в макете</button>
+        </div>
+      </div>
+      <p class="sec-note" style="margin-top:16px"><strong>Рекомендация:</strong> F — «Было · сейчас · будет». Он оставляет знакомый силуэт и главную роль поля ввода, но даёт колонкам смысл, а данным полоски — своё место: идущая встреча под вводом, прошедшие рядом с итогами, ближайшие рядом с делами. На 390px F складывается в A: колонки становятся одной лентой по часам с полем ввода на отметке «сейчас». Если через месяц окажется, что заметки под вводом мешают писать, они переезжают в «Было» — это правка одной колонки, не устройства.</p>
+
+      <h2 class="sec">Что неизменно во всех шести</h2>
+      <ul class="rules">
+        <li><b>Поле ввода первое</b><span>Во всех устройствах оно в первом экране и получает фокус. Заголовок «Освободи память» становится строкой над полем (B, F), плейсхолдером (A, C, D) или исчезает вовсе (E): большой заголовок — цена, которую платит каждый вариант.</span></li>
+        <li><b>Плашка встречи одна</b><span>Состояния и действия — из <a href="today-meetings-concept.html">концепта встреч</a>: «Присоединиться» за 10 минут, «Записать итог» в поле ввода, Да/Нет на приглашение, «Взять в память», «Занято» серым.</span></li>
+        <li><b>Без календаря — как сейчас</b><span>Нет подключённого календаря — нет ни лотка, ни рельса, ни плитки «Сейчас»; страница выглядит как сегодня. Есть календарь, но встреч нет — одна тихая строка «встреч сегодня нет».</span></li>
+        <li><b>«Сейчас» считается на клиенте</b><span>Идёт / скоро / позже / прошла — от времени начала и конца, пересчёт раз в минуту. Сервер не меняется: события отдаёт <code>GET /api/calendar?from=D&amp;to=D</code>, живое обновление уже идёт.</span></li>
+        <li><b>Полные списки там же</b><span>«Обзор» для сделанного, «Доска» для дел и календаря. Главная показывает первые три-пять и «Ещё N →», как сейчас.</span></li>
+      </ul>
+
+      <h2 class="sec">Что потребуется для F</h2>
+      <div class="tbl-wrap"><table class="take">
+        <thead><tr><th>Слой</th><th>Что сделать</th><th>Замечание</th></tr></thead>
+        <tbody>
+          <tr><td>Разметка</td><td>Три колонки <code>.dashboard</code> получают роли «было / сейчас / будет»; поле ввода переезжает из <code>.hero</code> в среднюю колонку, лоток — под ним.</td><td>Ширина средней колонки 1.35fr: поле ввода не должно стать уже 480px.</td></tr>
+          <tr><td>Данные</td><td>«Было» — результаты дня и прошедшие события, отсортированные по времени, новое сверху. «Будет» — события с началом позже «сейчас», затем открытые дела в порядке TODO-буфера.</td><td>Свои встречи из памяти в календаре не дублируются — ответ уже отфильтрован по <code>calendar_links</code>.</td></tr>
+          <tr><td>Лоток</td><td>Показывается, когда встреча идёт или начнётся в ближайшие 30 минут; иначе одна строка «свободно N до HH:MM».</td><td>В день без встреч лоток не рисуется — карточка ввода как сегодня.</td></tr>
+          <tr><td>Телефон</td><td>На 390px колонки складываются в одну ленту по часам (A): поле ввода на отметке «сейчас», кнопка «к сейчас» при прокрутке.</td><td>Это отдельный этап, десктоп работает и с простым стеком «сейчас · будет · было».</td></tr>
+        </tbody>
+      </table></div>
+    </main>
+
+    <script>
+      const $ = (s, r = document) => r.querySelector(s);
+      const state = { variant: "F", now: 822, drawer: "todo" };
+
+      const EVENTS = [
+        { id: 1, s: 570, e: 585, title: "Стендап Hub", cal: "g", calName: "Работа · Google", join: true, outcome: null },
+        { id: 2, s: 660, e: 720, title: "Монетизация: синк с продуктом", cal: "y", calName: "Яндекс", people: "Катя, Илья +3", outcome: "Участие во встрече Монетизация" },
+        { id: 3, s: 810, e: 840, title: "1:1 с Лёшей", cal: "g", calName: "Работа · Google", join: true, people: "Лёша" },
+        { id: 4, s: 900, e: 960, title: "Демо ZB заказчику", cal: "g", calName: "Работа · Google", join: true, people: "5 человек", proj: "ZB" },
+        { id: 5, s: 990, e: 1020, title: "Ретро TCAM", cal: "y", calName: "Яндекс", rsvp: true, proj: "TCAM" },
+        { id: 6, s: 1050, e: 1110, title: "Занято", cal: "busy", calName: "Личный · только занятость", busy: true },
+      ];
+      const ALLDAY = [{ title: "Маша в отпуске", cal: "day", calName: "Команда" }];
+      const RECORDS = [
+        { t: 725, title: "Итог встречи удобнее надиктовать сразу после неё — кнопка прямо в плашке", type: "заметка", kind: "note" },
+        { t: 741, title: "Обсудили задачи с командой", type: "результат" },
+        { t: 797, title: "Участие во встрече Монетизация", type: "результат" },
+        { t: 797, title: "Сделал MCP для ZB", type: "результат", proj: ["ZB"] },
+        { t: 797, title: "Доработал дизайн Хаба", type: "результат", proj: ["Хаб"] },
+      ];
+      const TODO = [
+        { title: "Попробовать схему Gemini 3.5 Transcribe Live → LLM → Sonic-3.6", late: true, due: "04.09", created: "4 сент., 11:06" },
+        { title: "Попробовать новую голосовую модель", late: true, due: "04.09", created: "3 сент., 10:59", proj: ["phonely.ai", "Alma"] },
+        { title: "Попробовать Muse Voice Transcribe на стенде", late: true, due: "04.09", created: "2 сент., 09:42", proj: ["Muse Voice Transcribe"] },
+        { title: "Ответить Кате по доступу к Метрике", due: "сегодня", soon: true },
+        { title: "Собрать релиз 3.7", due: "16.09", proj: ["Хаб"] },
+      ];
+      const TODO_TOTAL = 14;
+      const DATE = "Понедельник, 14 сентября";
+
+      const hm = m => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+      const dur = m => (m >= 60 ? `${Math.floor(m / 60)} ч${m % 60 ? ` ${m % 60} мин` : ""}` : `${m} мин`);
+      function st(ev) {
+        const n = state.now;
+        if (n >= ev.e) return "past";
+        if (n >= ev.s) return "now";
+        if (ev.s - n <= 10) return "soon";
+        return "later";
+      }
+      const canJoin = ev => ev.join && (st(ev) === "now" || st(ev) === "soon");
+      const done = () => RECORDS.filter(r => r.kind !== "note").sort((a, b) => b.t - a.t);
+      const notes = () => RECORDS.filter(r => r.kind === "note");
+      function dayStats() {
+        const nowEv = EVENTS.find(ev => st(ev) === "now") || null;
+        const nextEv = EVENTS.find(ev => ev.s > state.now) || null;
+        const upcoming = EVENTS.filter(ev => ev.s > state.now).length;
+        const pastCount = EVENTS.filter(ev => st(ev) === "past").length;
+        const freeFrom = nowEv ? nowEv.e : state.now;
+        const free = nextEv ? Math.max(0, nextEv.s - freeFrom) : null;
+        return { nowEv, nextEv, upcoming, pastCount, free, freeFrom, doneCount: done().length, late: TODO.filter(t => t.late).length };
+      }
+      const stateTag = ev => {
+        const s = st(ev);
+        if (s === "now") return `<span class="tag now">идёт · до ${hm(ev.e)}</span>`;
+        if (s === "soon") return `<span class="tag warm">через ${ev.s - state.now} мин</span>`;
+        if (s === "past") return ev.outcome ? `<span class="note-ok">итог ✓</span>` : `<span class="tag">прошла</span>`;
+        return `<span class="tag">через ${dur(ev.s - state.now)}</span>`;
+      };
+      const calTag = ev => `<span class="tag ${ev.cal}"><span class="cdot ${ev.cal}"></span> ${ev.calName}</span>`;
+      const joinBtn = (ev, cls = "") => (canJoin(ev) ? `<span class="btn join ${cls}">Присоединиться</span>` : "");
+
+      // ── примитивы ──────────────────────────────────────────
+      const capture = (cls = "", ph = "Запишите мысль, план, встречу или итог дня") => `<form class="capture ${cls}" onsubmit="return false"><div class="field">${ph}</div>
+        <div class="foot"><div class="dots"><span class="auto"><i></i>Авто</span><i style="background:#9d68d3"></i><i style="background:#56c4d8"></i><i style="background:#8a94a8"></i></div><span class="sep"></span><span class="tags">#тег…</span><span class="send">→</span></div></form>`;
+      const topbar = () => `<header class="top"><div class="logo"><i></i>Кизуна</div><nav><span class="on">Сегодня</span><span>Доска</span><span>Календарь</span><span>Обзор</span></nav><div class="right"><span class="pill-btn">3.7-flash</span><span class="icon-btn hide-n">⚙</span><span class="icon-btn hide-n">◑</span><span class="icon-btn">CO</span></div></header>`;
+      const projTags = list => (list || []).map(p => `<span class="tag proj">${p}</span>`).join("");
+      const recEntry = r => `<div class="entry"><div class="t"><span>${r.title}</span></div><div class="meta"><span class="tag type">${r.type}</span>${projTags(r.proj)}<span>сегодня, ${hm(r.t)}</span></div></div>`;
+      const todoEntry = t => `<div class="entry ${t.late ? "late" : ""}"><div class="t"><span class="circle"></span><span>${t.title}</span></div><div class="meta"><span class="tag type">задача</span>${projTags(t.proj)}${t.created ? `<span>${t.created}</span>` : ""}<span class="tag ${t.late ? "late" : t.soon ? "warm" : ""}">срок: ${t.due}</span>${t.late ? `<span class="tag late">просрочено</span>` : ""}</div></div>`;
+      const todoRow = t => `<div class="trow ${t.late ? "late" : ""}"><span class="circle"></span><span class="ttitle">${t.title}</span><span class="tag ${t.late ? "late" : t.soon ? "warm" : ""}">${t.late ? "просрочено" : t.due}</span></div>`;
+      function meetEntry(ev, { time = true } = {}) {
+        const s = st(ev);
+        const acts = [];
+        if (canJoin(ev)) acts.push(joinBtn(ev));
+        if (ev.rsvp && s !== "past") acts.push(`<span class="btn">Да</span><span class="btn ghost">Нет</span>`);
+        if (s === "past" && !ev.outcome && !ev.busy) acts.push(`<span class="btn ghost">Записать итог</span>`);
+        return `<div class="entry mt ${s === "now" ? "now" : ""} ${s === "past" ? "past" : ""}">
+          <div class="t">${time ? `<span class="tm">${hm(ev.s)}</span>` : ""}<span>${ev.title}</span></div>
+          <div class="meta">${stateTag(ev)}${ev.rsvp && s !== "past" ? `<span class="tag warm">ответить?</span>` : ""}${calTag(ev)}${ev.people ? `<span class="tag">${ev.people}</span>` : ""}${ev.proj ? `<span class="tag proj">${ev.proj}</span>` : ""}</div>
+          ${acts.length ? `<div class="acts">${acts.join("")}</div>` : ""}</div>`;
+      }
+      const alldayEntry = a => `<div class="entry mt"><div class="t"><span class="tm" style="font-size:10px">день</span><span>${a.title}</span></div><div class="meta"><span class="tag day"><span class="cdot day"></span> ${a.calName}</span></div></div>`;
+      function mrow(ev, { actions = true } = {}) {
+        const s = st(ev);
+        const right = canJoin(ev) && actions ? joinBtn(ev)
+          : ev.rsvp && s !== "past" ? `<span class="tag warm">ответить?</span>`
+          : s === "past" ? (ev.outcome ? `<span class="note-ok">итог ✓</span>` : ev.busy ? "" : actions ? `<span class="btn ghost">Записать итог</span>` : `<span class="dim">прошла</span>`)
+          : s === "now" ? `<span class="tag now">до ${hm(ev.e)}</span>`
+          : `<span class="dim">через ${dur(ev.s - state.now)}</span>`;
+        return `<div class="mrow ${s}"><span class="mt">${hm(ev.s)}</span><span class="cdot ${ev.cal}"></span><span class="mtitle">${ev.title}</span><span class="mr">${right}</span></div>`;
+      }
+      function agendaRows({ actions = true, allday = true } = {}) {
+        let html = allday ? ALLDAY.map(a => `<div class="mrow allday"><span class="mt">день</span><span class="cdot day"></span><span class="mtitle">${a.title}</span></div>`).join("") : "";
+        EVENTS.forEach((ev, i) => {
+          html += mrow(ev, { actions });
+          const next = EVENTS[i + 1];
+          if (next && next.s - ev.e >= 45 && next.s > state.now) html += `<div class="gaprow">свободно ${dur(next.s - Math.max(ev.e, state.now))}</div>`;
+        });
+        return html;
+      }
+      function nowLine() {
+        const { nowEv, nextEv } = dayStats();
+        const soon = nextEv && st(nextEv) === "soon" ? nextEv : null;
+        const focus = nowEv || soon;
+        const after = focus ? EVENTS.find(ev => ev.s >= focus.e) : nextEv;
+        const left = nowEv
+          ? `<span class="lbl">Идёт</span><span class="ttl">${nowEv.title}</span><span>до ${hm(nowEv.e)}</span>${joinBtn(nowEv)}`
+          : soon
+            ? `<span class="lbl">Через ${soon.s - state.now} мин</span><span class="ttl">${soon.title}</span><span>${hm(soon.s)}–${hm(soon.e)}</span>${joinBtn(soon)}`
+            : nextEv
+              ? `<span class="lbl quiet">Свободно</span><span class="ttl">${dur(nextEv.s - state.now)}</span><span>до ${hm(nextEv.s)}</span>`
+              : `<span class="lbl quiet">На сегодня всё</span>`;
+        const gap = focus && after ? `<span>потом свободно ${dur(after.s - focus.e)}</span>` : "";
+        const right = after ? `<span class="next">${gap}${gap ? "·" : "дальше"} <span class="cdot ${after.cal}"></span>${hm(after.s)} <b>${after.title}</b></span>` : "";
+        return `<div class="nowline">${left}${right}</div>`;
+      }
+      function dayHead() {
+        const s = dayStats();
+        const bits = [`${EVENTS.length} встреч`, `${TODO_TOTAL} дел`, `сделано ${s.doneCount}`];
+        if (s.free != null) bits.push(`свободно ${dur(s.free)}${s.nowEv ? ` после ${hm(s.nowEv.e)}` : ""}`);
+        return `<div class="dayhead"><b>${DATE}</b><span>${bits.join(" · ")}</span></div>`;
+      }
+
+      // ── A · лента дня ──────────────────────────────────────
+      function vA() {
+        const items = [...EVENTS.map(ev => ({ t: ev.s, ev })), ...RECORDS.map(r => ({ t: r.t, r }))].sort((a, b) => a.t - b.t);
+        let html = "", placed = false, prev = null;
+        const tlabel = t => { const l = t === prev ? "" : hm(t); prev = t; return l; };
+        for (const it of items) {
+          if (!placed && it.t > state.now) { html += `<div class="tli nowmark"><span class="tli-t">${hm(state.now)}</span><span class="tli-rail"></span><div class="tli-c">${capture()}</div></div>`; placed = true; prev = null; }
+          if (it.ev) { const s = st(it.ev); html += `<div class="tli ev ${s}"><span class="tli-t">${tlabel(it.ev.s)}</span><span class="tli-rail"></span><div class="tli-c">${meetEntry(it.ev, { time: false })}</div></div>`; }
+          else html += `<div class="tli rec"><span class="tli-t">${tlabel(it.r.t)}</span><span class="tli-rail"></span><div class="tli-c">${recEntry(it.r)}</div></div>`;
+        }
+        if (!placed) html += `<div class="tli nowmark"><span class="tli-t">${hm(state.now)}</span><span class="tli-rail"></span><div class="tli-c">${capture()}</div></div>`;
+        const s = dayStats();
+        const strip = `<div class="todo-strip"><span class="ts-lbl">Дела</span><span class="tag late">${s.late} просрочено</span>${TODO.filter(t => t.late).map(t => `<span class="ts-chip">${t.title}</span>`).join("")}<span class="ts-more">ещё ${TODO_TOTAL - s.late} → доска</span></div>`;
+        return `<div class="tl-wrap">${dayHead()}${strip}<div class="tl-allday">${ALLDAY.map(a => `<span class="tag day"><span class="cdot day"></span> ${a.title}</span>`).join("")}</div><div class="tl-list">${html}</div></div>`;
+      }
+
+      // ── B · ввод и рельс ───────────────────────────────────
+      function vB() {
+        return `<div class="split">
+          <div class="main">
+            <h2 class="mini-hero">Освободи память</h2>
+            ${capture()}
+            <section class="blk"><h3>Что делал <span class="arr">→</span></h3><div class="stack">${done().map(recEntry).join("")}</div></section>
+            <section class="blk"><h3>Заметки</h3><div class="stack">${notes().map(recEntry).join("")}</div></section>
+          </div>
+          <aside class="rail">
+            <div class="rail-head"><b>${DATE}</b><span>${EVENTS.length} встреч</span></div>
+            <section class="rail-sec"><h4>Встречи</h4><div class="drows">${agendaRows()}</div></section>
+            <section class="rail-sec"><h4>Дела <span class="cnt">${TODO_TOTAL}</span></h4><div class="trows">${TODO.map(todoRow).join("")}</div><div class="more">Ещё ${TODO_TOTAL - TODO.length} — весь список →</div></section>
+          </aside>
+        </div>`;
+      }
+
+      // ── C · плитки ─────────────────────────────────────────
+      function vC() {
+        const s = dayStats();
+        const soon = s.nextEv && st(s.nextEv) === "soon" ? s.nextEv : null;
+        const focus = s.nowEv || soon;
+        const nowTile = s.nowEv
+          ? `<div class="tile tnow live"><p class="tl-lbl">Идёт</p><p class="tl-big">${s.nowEv.title}</p><p class="tl-sub">до ${hm(s.nowEv.e)}${s.free != null ? ` · потом свободно ${dur(s.free)}` : ""}</p>${joinBtn(s.nowEv, "lg")}</div>`
+          : soon
+            ? `<div class="tile tnow live"><p class="tl-lbl">Через ${soon.s - state.now} мин</p><p class="tl-big">${soon.title}</p><p class="tl-sub">${hm(soon.s)}–${hm(soon.e)}</p>${joinBtn(soon, "lg")}</div>`
+            : s.nextEv
+              ? `<div class="tile tnow"><p class="tl-lbl">Свободно</p><p class="tl-big">${dur(s.nextEv.s - state.now)}</p><p class="tl-sub">до ${hm(s.nextEv.s)} — ${s.nextEv.title}</p></div>`
+              : `<div class="tile tnow"><p class="tl-lbl">Вечер</p><p class="tl-big">Встреч больше нет</p><p class="tl-sub">${s.pastCount} прошло</p></div>`;
+        const nextList = EVENTS.filter(ev => ev.s > state.now && ev !== focus).slice(0, 3);
+        return `<div class="bento-wrap">${dayHead()}<div class="bento">
+          <div class="tile tcap">${capture("", "Освободи память — запишите мысль, план или итог дня")}</div>
+          ${nowTile}
+          <div class="tile"><h3>Дальше</h3><div class="drows">${nextList.map(ev => mrow(ev, { actions: false })).join("") || `<p class="empty">Больше ничего</p>`}</div></div>
+          <div class="tile"><h3>Что делал <span class="arr">→</span></h3><div class="stack">${done().slice(0, 3).map(recEntry).join("")}</div>${done().length > 3 ? `<div class="more">Ещё ${done().length - 3} →</div>` : ""}</div>
+          <div class="tile"><h3>Дела <span class="arr">→</span></h3><div class="stack">${TODO.slice(0, 3).map(todoEntry).join("")}</div><div class="more">Ещё ${TODO_TOTAL - 3} →</div></div>
+          <div class="tile"><h3>Заметки</h3><div class="stack">${notes().map(recEntry).join("")}</div></div>
+          <div class="tile tstats"><h3>День</h3><div class="stats"><div><b>${s.doneCount}</b><span>сделано</span></div><div><b>${s.upcoming}</b><span>встреч впереди</span></div><div><b>${s.late}</b><span>просрочено</span></div><div><b>${s.free != null ? dur(s.free) : "—"}</b><span>свободно${s.nowEv ? ` после ${hm(s.nowEv.e)}` : ""}</span></div></div></div>
+        </div></div>`;
+      }
+
+      // ── D · страница дня ───────────────────────────────────
+      function vD() {
+        const s = dayStats();
+        const docRow = r => `<div class="drow"><span class="mt">${hm(r.t)}</span><span class="mtitle">${r.title}</span><span class="mr"><span class="tag type">${r.type}</span>${projTags(r.proj)}</span></div>`;
+        return `<div class="docwrap"><article class="doc">
+          <p class="doc-eyebrow">Сегодня</p><h1>${DATE}</h1>
+          <div class="props"><span><i>Встречи</i>${EVENTS.length}</span><span><i>Дела</i>${TODO_TOTAL}</span><span><i>Сделано</i>${s.doneCount}</span><span><i>Свободно</i>${s.free != null ? `${dur(s.free)}${s.nowEv ? ` после ${hm(s.nowEv.e)}` : ""}` : "—"}</span></div>
+          ${capture("doc", "Освободи память — запишите мысль, план или итог дня")}
+          <h2>Сейчас</h2>${nowLine()}
+          <h2>Встречи <span class="cnt">${EVENTS.length}</span></h2><div class="drows">${agendaRows()}</div>
+          <h2>Что делал <span class="cnt">${s.doneCount}</span></h2><div class="drows">${done().map(docRow).join("")}</div>
+          <h2>Дела <span class="cnt">${TODO_TOTAL}</span></h2><div class="trows">${TODO.map(todoRow).join("")}</div><div class="more">Ещё ${TODO_TOTAL - TODO.length} — весь список →</div>
+          <h2>Заметки <span class="cnt">${notes().length}</span></h2><div class="drows">${notes().map(docRow).join("")}</div>
+        </article><nav class="doc-toc"><span class="on">Сейчас</span><span>Встречи</span><span>Что делал</span><span>Дела</span><span>Заметки</span></nav></div>`;
+      }
+
+      // ── E · фокус ──────────────────────────────────────────
+      function vE() {
+        const s = dayStats();
+        const soon = s.nextEv && st(s.nextEv) === "soon" ? s.nextEv : null;
+        const ctx = s.nowEv
+          ? `<span class="cdot now"></span> идёт <b>${s.nowEv.title}</b> · до ${hm(s.nowEv.e)}${canJoin(s.nowEv) ? ` · <a>присоединиться</a>` : ""}`
+          : soon
+            ? `через ${soon.s - state.now} мин <b>${soon.title}</b>${canJoin(soon) ? ` · <a>присоединиться</a>` : ""}`
+            : s.nextEv
+              ? `свободно ${dur(s.nextEv.s - state.now)} · в ${hm(s.nextEv.s)} <b>${s.nextEv.title}</b>`
+              : `на сегодня встреч больше нет`;
+        const drawers = [
+          ["done", `Что делал <b>${s.doneCount}</b>`],
+          ["todo", `Дела <b>${TODO_TOTAL}</b>${s.late ? ` <em>${s.late} просрочено</em>` : ""}`],
+          ["notes", `Заметки <b>${notes().length}</b>`],
+          ["meet", `Встречи <b>${EVENTS.length}</b>${s.nextEv ? ` · дальше ${hm(s.nextEv.s)}` : ""}`],
+        ];
+        const body = state.drawer === "done" ? done().map(recEntry).join("")
+          : state.drawer === "todo" ? TODO.map(todoEntry).join("") + `<div class="more">Ещё ${TODO_TOTAL - TODO.length} — весь список →</div>`
+          : state.drawer === "notes" ? notes().map(recEntry).join("")
+          : state.drawer === "meet" ? `<div class="drows">${agendaRows()}</div>` : "";
+        return `<div class="focus"><p class="fdate">${DATE}</p><p class="ctx">${ctx}</p>${capture("big")}
+          <div class="drawers">${drawers.map(([k, l]) => `<button type="button" class="${state.drawer === k ? "on" : ""}" data-drawer="${k}">${l}</button>`).join("")}</div>
+          ${state.drawer ? `<div class="drawer-body"><div class="stack">${body}</div></div>` : ""}</div>`;
+      }
+
+      // ── F · было / сейчас / будет ──────────────────────────
+      function vF() {
+        const s = dayStats();
+        const was = [...EVENTS.filter(ev => st(ev) === "past").map(ev => ({ t: ev.s, ev })), ...done().map(r => ({ t: r.t, r }))].sort((a, b) => b.t - a.t);
+        const will = EVENTS.filter(ev => ev.s > state.now);
+        const trayOn = s.nowEv || (s.nextEv && s.nextEv.s - state.now <= 30) || s.nextEv;
+        return `<div class="tri">
+          <article class="card was"><h2>Было <span class="arr">→</span><span class="cnt">${s.doneCount} сделано · ${s.pastCount} встреч</span></h2><div class="stack">${was.map(it => it.ev ? meetEntry(it.ev) : recEntry(it.r)).join("") || `<p class="empty">День только начался.</p>`}</div></article>
+          <div class="mid">
+            <h2 class="mini-hero">Освободи память</h2>
+            ${trayOn ? capture("tray-host") + `<div class="tray">${nowLine()}</div>` : capture()}
+            <section class="blk"><h3>Заметки</h3><div class="stack">${notes().map(recEntry).join("") || `<p class="empty">Заметки появятся здесь.</p>`}</div></section>
+          </div>
+          <article class="card will"><h2>Будет <span class="arr">→</span><span class="cnt">${will.length} встреч · ${TODO_TOTAL} дел</span></h2><div class="stack">${ALLDAY.map(alldayEntry).join("")}${will.map(ev => meetEntry(ev)).join("") || `<p class="empty">Встреч больше нет.</p>`}</div><h4 class="subhead">Дела</h4><div class="stack">${TODO.slice(0, 3).map(todoEntry).join("")}</div><div class="more">Ещё ${TODO_TOTAL - 3} — весь список →</div></article>
+        </div>`;
+      }
+
+      const CAPS = {
+        F: "<strong>F · Было · сейчас · будет.</strong> Три знакомые колонки, но их держит время. Слева — прошедшие встречи и сделанное, новое сверху; в центре — поле ввода с лотком идущей встречи и заметки; справа — ближайшие встречи и под ними дела. Сдвиньте «сейчас» — встречи перетекают из «Будет» в «Было».",
+        A: "<strong>A · Лента дня.</strong> Одна колонка по часам: встречи и записи в порядке дня, поле ввода стоит на отметке «сейчас» и уезжает вниз вместе с днём. Дела — сложенной строкой сверху. Так же выглядит F на 390px.",
+        B: "<strong>B · Ввод и рельс.</strong> Слева пишут: поле, сделанное, заметки. Справа рельс дня одной панелью: встречи с отметкой «сейчас» и промежутками «свободно», ниже дела. Рельс может быть общим для всех страниц.",
+        C: "<strong>C · Плитки.</strong> Без заголовка: ввод на две плитки, рядом «Сейчас» коралловой плиткой с большой кнопкой и «Дальше». Второй ряд — сделанное, дела, заметки и «День» цифрами. Всё в один экран.",
+        D: "<strong>D · Страница дня.</strong> День — документ: заголовок-дата, строка свойств, ввод первым блоком, дальше разделы одной колонкой и оглавление справа. Прямой путь к модели «всё страница».",
+        E: "<strong>E · Фокус.</strong> Дата, одна строка обстоятельств и большое поле. Остальное — в ящиках под полем, открыт один. Ящики переключаются кликом; повторный клик закрывает.",
+      };
+
+      function render() {
+        const v = state.variant;
+        const body = { A: vA, B: vB, C: vC, D: vD, E: vE, F: vF }[v]();
+        $("#mock").innerHTML = topbar() + body;
+        $("#frame-cap").innerHTML = CAPS[v];
+        $("#now-out").value = hm(state.now);
+        for (const b of $("#mock").querySelectorAll("[data-drawer]")) b.addEventListener("click", () => { state.drawer = state.drawer === b.dataset.drawer ? null : b.dataset.drawer; render(); });
+      }
+
+      // ── управление ─────────────────────────────────────────
+      function setVariant(v) {
+        state.variant = v;
+        for (const o of document.querySelectorAll("[data-variant]")) o.setAttribute("aria-pressed", String(o.dataset.variant === v));
+        render();
+      }
+      for (const b of document.querySelectorAll("[data-variant]")) b.addEventListener("click", () => setVariant(b.dataset.variant));
+      for (const b of document.querySelectorAll("[data-open]")) b.addEventListener("click", () => { setVariant(b.dataset.open); $("#frame").scrollIntoView({ behavior: "smooth", block: "start" }); });
+      for (const b of document.querySelectorAll("[data-theme-btn]")) b.addEventListener("click", () => {
+        document.documentElement.dataset.theme = b.dataset.themeBtn;
+        for (const o of document.querySelectorAll("[data-theme-btn]")) o.setAttribute("aria-pressed", String(o === b));
+      });
+      for (const b of document.querySelectorAll("[data-width]")) b.addEventListener("click", () => {
+        $("#frame").classList.toggle("narrow", b.dataset.width === "narrow");
+        for (const o of document.querySelectorAll("[data-width]")) o.setAttribute("aria-pressed", String(o === b));
+      });
+      $("#now").addEventListener("input", e => { state.now = Number(e.target.value); render(); });
+      document.documentElement.dataset.theme = "dark";
+      render();
+    </script>
+  </body>
+</html>

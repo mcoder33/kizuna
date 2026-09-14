@@ -3,6 +3,7 @@ import { createMarkdownField } from "./markdown-live.js";
 import { attachSlashMenu } from "./slash-menu.js";
 import { attachFormatToolbar } from "./format-toolbar.js";
 import { createVoiceDialog } from "./voice.js";
+import { phaseOf, coverFor, endedRecently, plural, hm, duration, minutesOf, longDate, shortDate, isWeekend, dateParts, WEEKDAYS_SHORT, MEETINGS, DEALS, PHASE_NAMES } from "./today-cover.js";
 
 const $ = (selector) => document.querySelector(selector);
 const typeNames = {
@@ -193,9 +194,9 @@ function updatePageFromHash() {
       link.getAttribute("href") === `#${activePage}`,
     );
   if (activePage !== pageId) history.replaceState(null, "", "#today");
-  // Вернулись на «Сегодня» — колонки перемеряются: пока страница была скрыта,
-  // высоты равнялись нулю, и подгонка превью откладывалась.
-  if (activePage === "today") requestAnimationFrame(fitPreviews);
+  // Вернулись на «Сегодня» — обложка и строка «сейчас» пересчитываются: пока
+  // страница была скрыта, время шло.
+  if (activePage === "today") renderToday();
   // Открыли настройки — перечитываем расход: он меняется от каждой записи, а
   // страница может висеть открытой долго.
   if (activePage === "settings") {
@@ -504,126 +505,502 @@ function appendEntries(container, entries, emptyText, options) {
   if (!container.childNodes.length)
     container.append(node("p", emptyText, "empty"));
 }
-// Сколько записей показывать в колонке — настройка, а не константа.
+// Сколько дел без срока показывать в «Дне» — настройка, а не константа.
 let previewLimit = 3;
-// Колонка показывает первые записи, а не все. Раньше об этом было сказано
-// только заголовком-ссылкой, и запись, ушедшая за границу превью (например,
-// дело, которому передвинули срок вперёд), выглядела пропавшей.
-// Сколько записей колонка держит в запасе сверх трёх: ряд колонок тянется по
-// самой высокой, и колонка с местом добирает записи из запаса, пока влезает.
-const previewReserve = 12;
-function appendPreview(container, entries, emptyText, options) {
-  appendEntries(container, entries.slice(0, previewLimit + previewReserve), emptyText, {
-    entryOptions: (entry) => ({
-      ...options?.entryOptions?.(entry),
-      compact: true,
-    }),
-  });
-  // Запас спрятан: первые три задают высоту ряда, остальное покажет
-  // fitPreviews, когда раскладка посчитана.
-  for (const [index, card] of [...container.querySelectorAll(":scope > .entry")].entries())
-    card.hidden = index >= previewLimit;
-  container.dataset.total = String(entries.length);
-  const hidden = entries.length - previewLimit;
-  if (hidden <= 0) return;
-  // Полной страницы у колонки может и не быть (заметки): тогда под превью
-  // только счётчик, чтобы записи за границей трёх не выглядели пропавшими.
-  if (!options?.href) {
-    container.append(node("span", `Ещё ${hidden}`, "preview-more"));
-    return;
-  }
-  const more = node("a", `Ещё ${hidden} — весь список →`, "preview-more");
-  more.href = options.href;
-  container.append(more);
+// ── «Сегодня»: обложка по часам, полоса дней, два ящика ──────────────────────
+// Страница знает, который час: дата с фазой суток, бриф из двух-трёх фраз и
+// вопрос в поле меняются утром, днём, вечером и ночью. Под полем — полоса дней
+// и два ящика: «Что делал» и «День», где дела лежат вместе с календарём.
+// Заметок на главной нет: они живут в «Обзоре», поиске и карточке записи.
+const TODAY_ZONE = "Europe/Samara";
+const todayState = {
+  view: 0,            // смещение показанного дня от сегодняшнего
+  tab: null,          // открытый ящик: "journal" | "day" | null
+  manual: false,      // ящик выбран рукой — фаза его не трогает
+  phase: null,
+  cover: null,
+  calendar: null,     // /api/calendar на сегодня и завтра
+  entries: [],
+  done: [],
+  todo: [],
+  cache: new Map(),   // другие дни: date → { calendar, report }
+  loading: new Set(),
+  placeholder: null,
+  placeholderType: "auto",
+  calendarStale: true,
+  calendarLoading: false,
+};
+function zoneMinutes(at) {
+  const parts = new Intl.DateTimeFormat("ru-RU", { timeZone: TODAY_ZONE, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(at);
+  const get = (type) => Number(parts.find((part) => part.type === type)?.value || 0);
+  return (get("hour") % 24) * 60 + get("minute");
 }
-// Колонки «Сегодня» — один ряд, и ряд тянется по самой высокой колонке. Три
-// записи в каждой задают эту высоту, а колонка, у которой остаётся место,
-// добирает записи из запаса, пока ряд не начинает расти. Счётчик «Ещё N»
-// пересчитывается по тому, что осталось спрятанным.
-function fitPreviews() {
-  const containers = [$("#journal"), $("#todo"), $("#notes")];
-  for (const container of containers)
-    for (const [index, card] of [...container.querySelectorAll(":scope > .entry")].entries())
-      card.hidden = index >= previewLimit;
-  // На скрытой странице (журнал обновился, пока открыт календарь) все высоты
-  // нулевые: колонка «не растёт», и подгонка раскрывала весь запас. Тогда
-  // остаются первые записи и «Ещё N»; перемерим, когда страницу откроют.
-  if ($("#today")?.hidden) return;
-  for (const container of containers) {
-    const panel = container.closest(".preview-card");
-    if (!panel || !panel.clientHeight) continue;
-    const cards = [...container.querySelectorAll(":scope > .entry")];
-    const total = Number(container.dataset.total || cards.length);
-    let shown = Math.min(previewLimit, cards.length);
-    for (const card of cards.slice(previewLimit)) {
-      const height = panel.clientHeight;
-      card.hidden = false;
-      if (panel.clientHeight > height + 1) { card.hidden = true; break; }
-      shown += 1;
-    }
-    const more = container.querySelector(":scope > .preview-more");
-    const hidden = total - shown;
-    if (!more) continue;
-    if (hidden <= 0) more.hidden = true;
-    else {
-      more.hidden = false;
-      more.textContent = more.matches("a") ? `Ещё ${hidden} — весь список →` : `Ещё ${hidden}`;
-    }
-  }
+const nowMinutes = () => zoneMinutes(new Date());
+const zoneDate = (at) => new Intl.DateTimeFormat("en-CA", { timeZone: TODAY_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
+// Календарь на сегодня, отложенный на время чужой страницы, добирается при
+// первой отрисовке «Сегодня».
+async function refreshTodayCalendar() {
+  if (todayState.calendarLoading || !currentDayDate) return;
+  todayState.calendarLoading = true;
+  try { todayState.calendar = await request(`/api/calendar?from=${currentDayDate}&to=${shiftDate(currentDayDate, 1)}`); }
+  catch { todayState.calendar = todayState.calendar || null; }
+  finally { todayState.calendarLoading = false; }
+  todayState.calendarStale = false;
+  renderToday();
 }
-{
-  let fitTimer = 0;
-  window.addEventListener("resize", () => {
-    clearTimeout(fitTimer);
-    fitTimer = setTimeout(fitPreviews, 150);
-  });
+const scheduleOf = (entry) => entry.interpretation.classification.entities.schedule || null;
+const titleOf = (entry) => (entry.interpretation.classification.summary || entry.raw || "").split("\n")[0];
+const calendarConnected = () => Boolean(todayState.calendar?.accounts?.some((account) => !account.disabled));
+// Календарь в режиме «только занятость» отдаёт события без названия.
+const busyOnly = (item) => item.title === "Занято" && item.readOnly;
+// Встречи дня для брифа: чужие события по часам и свои встречи со временем.
+function todayMeetings() {
+  const today = currentDayDate;
+  const external = (todayState.calendar?.external || []).filter((item) => item.date === today && !item.allDay && item.time);
+  const defaults = todayState.calendar?.defaults?.meetingMinutes || 30;
+  const hasOutcome = (title) => {
+    const needle = title.toLowerCase();
+    return todayState.done.some((entry) => titleOf(entry).toLowerCase().includes(needle));
+  };
+  return [
+    ...external.map((item) => ({ id: item.id, title: item.title, start: minutesOf(item.time), end: minutesOf(item.end) ?? minutesOf(item.time) + defaults, joinUrl: item.joinUrl || null, busy: busyOnly(item), hasOutcome: hasOutcome(item.title) })),
+    ...todayState.todo
+      .filter((entry) => isActiveMeeting(entry) && scheduleOf(entry)?.date === today && scheduleOf(entry)?.time)
+      .map((entry) => ({ id: entry.id, title: titleOf(entry), start: minutesOf(scheduleOf(entry).time), end: minutesOf(scheduleOf(entry).end) ?? minutesOf(scheduleOf(entry).time) + defaults, joinUrl: null, busy: false, hasOutcome: true })),
+  ].filter((meeting) => meeting.start != null);
+}
+function todayTasks() {
+  const today = currentDayDate;
+  const todays = todayState.todo.filter((entry) => scheduleOf(entry)?.date === today);
+  return {
+    late: todayState.todo.filter((entry) => isOverdue(entry, today)).length,
+    today: todays.length,
+    todayTitle: todays.find((entry) => isActiveTask(entry)) ? titleOf(todays.find((entry) => isActiveTask(entry))) : null,
+  };
+}
+function tomorrowInfo() {
+  const calendar = todayState.calendar;
+  if (!calendar || !currentDayDate) return null;
+  const tomorrow = shiftDate(currentDayDate, 1);
+  const timed = [
+    ...(calendar.external || []).filter((item) => item.date === tomorrow && !item.allDay && item.time).map((item) => ({ start: minutesOf(item.time), title: item.title })),
+    ...(calendar.items || []).filter((item) => item.date === tomorrow && item.kind === "meeting" && item.time && !item.done).map((item) => ({ start: minutesOf(item.time), title: item.title })),
+  ].sort((a, b) => a.start - b.start);
+  return { count: timed.length, first: timed[0] || null };
+}
+function lastEntryMinutes() {
+  const today = currentDayDate;
+  const times = todayState.entries.filter((entry) => entryDate(entry) === today).map((entry) => zoneMinutes(new Date(entry.createdAt)));
+  return times.length ? Math.max(...times) : null;
+}
+// Ящик, выбранный рукой, держится до конца фазы этого дня.
+function rememberTab() {
+  try { localStorage.setItem("kizuna-today-tab", JSON.stringify({ date: currentDayDate, phase: todayState.phase, tab: todayState.tab })); } catch {}
+}
+function recallTab(phase) {
+  try {
+    const saved = JSON.parse(localStorage.getItem("kizuna-today-tab") || "null");
+    if (saved && saved.date === currentDayDate && saved.phase === phase && ["journal", "day", null].includes(saved.tab)) {
+      todayState.tab = saved.tab;
+      todayState.manual = true;
+      return true;
+    }
+  } catch {}
+  return false;
 }
 function render(data) {
   currentDayDate = data.date;
-  const all = uniqueEntries([
-      data.entries,
-      data.day,
-      data.upcoming,
-      data.attention,
-    ]).sort((left, right) =>
-      (right.createdAt || "").localeCompare(left.createdAt || ""),
-    ),
-    todayEntries = all.filter(
-      (entry) =>
-        entryDate(entry) === data.date ||
-        entry.interpretation.classification.entities.schedule?.date ===
-          data.date,
-    ),
-    done = todayEntries.filter(isReportedWork),
-    todo = all
-      .filter(
-        (entry) =>
-          (isActiveTask(entry) ||
-            isActiveMeeting(entry) ||
-            needsClarification(entry)) &&
-          !isReportedWork(entry),
-      )
-      .sort((left, right) => todoOrder(left, data.date) - todoOrder(right, data.date)),
-    notes = todayEntries.filter((entry) => {
-      const type = entry.interpretation.classification.primaryType;
-      return (
-        !isReportedWork(entry) &&
-        !isClosed(entry) &&
-        ["note", "outcome_decision", "idea_question"].includes(type)
-      );
-    });
-  // Полные списки живут не в отдельном журнале: сделанное за день — в «Обзоре»,
-  // открытые дела — на доске списком. У заметок полной страницы нет.
-  appendPreview($("#journal"), done, "Пока нет зафиксированной работы за сегодня.", {
-    href: "#reports",
-  });
-  appendPreview($("#todo"), todo, "Открытых дел нет.", {
-    href: "#board?view=list",
-    entryOptions: (entry) => ({ overdue: isOverdue(entry, data.date) }),
-  });
-  appendPreview($("#notes"), notes, "Заметки появятся здесь.");
-  requestAnimationFrame(fitPreviews);
+  const all = uniqueEntries([data.entries, data.day, data.upcoming, data.attention]).sort((left, right) =>
+    (right.createdAt || "").localeCompare(left.createdAt || ""),
+  );
+  const todayEntries = all.filter((entry) => entryDate(entry) === data.date || scheduleOf(entry)?.date === data.date);
+  todayState.entries = all;
+  todayState.done = todayEntries.filter(isReportedWork);
+  todayState.todo = all
+    .filter((entry) => (isActiveTask(entry) || isActiveMeeting(entry) || needsClarification(entry)) && !isReportedWork(entry))
+    .sort((left, right) => todoOrder(left, data.date) - todoOrder(right, data.date));
+  renderToday();
 }
+function renderToday() {
+  if (!currentDayDate) return;
+  if (todayState.calendarStale && !$("#today")?.hidden) refreshTodayCalendar();
+  const minutes = nowMinutes();
+  const phase = phaseOf({ minutes, weekend: isWeekend(currentDayDate) });
+  const meetings = todayMeetings();
+  const cover = coverFor({
+    phase,
+    minutes,
+    meetings,
+    tasks: todayTasks(),
+    doneCount: todayState.done.length,
+    tomorrow: tomorrowInfo(),
+    calendar: calendarConnected(),
+    endedMeeting: phase === "weekend" ? null : endedRecently({ meetings, minutes, lastEntryMinutes: lastEntryMinutes() }),
+  });
+  todayState.cover = cover;
+  // Новая фаза ставит свой ящик один раз; дальше — как решил человек.
+  if (todayState.phase !== phase) {
+    todayState.phase = phase;
+    if (!recallTab(phase)) {
+      todayState.manual = false;
+      if (todayState.view === 0) todayState.tab = cover.tab;
+    }
+  }
+  applyCoverComposer(cover);
+  paintCover(cover, currentDayDate);
+  paintDaybar(currentDayDate);
+  const viewDate = shiftDate(currentDayDate, todayState.view);
+  paintTabs(viewDate);
+  paintJournal(viewDate);
+  paintDayList(viewDate);
+}
+// Вопрос в поле и тип записи — по фазе, но только пока поле пустое и тип не
+// выбран рукой: страница не меняется под руками.
+function applyCoverComposer(cover = todayState.cover) {
+  if (!cover || typeof captureField === "undefined") return;
+  todayState.placeholder = cover.placeholder;
+  todayState.placeholderType = cover.type === "outcome" ? "outcome" : "auto";
+  if (!composerState.userType && !String(captureField.getValue()).trim()) {
+    const wanted = cover.type === "outcome" ? "outcome" : "auto";
+    if (composerState.type !== wanted) {
+      composerState.type = wanted;
+      composerState.date = null;
+      composerState.time = null;
+      composerState.priority = "normal";
+    }
+  }
+  renderCaptureControls();
+}
+function paintCover(cover, date) {
+  const dateEl = $("#today-date");
+  clear(dateEl);
+  dateEl.append(document.createTextNode(`${longDate(date)} · `), node("span", PHASE_NAMES[cover.phase], `today-phase ${cover.phase}`));
+  if (cover.endedMeeting) dateEl.append(document.createTextNode(" · "), node("span", "после встречи", "today-phase after"));
+  const brief = $("#today-brief");
+  clear(brief);
+  // Бриф собирается узлами, а не HTML: названия встреч и дел — чужой текст.
+  for (const part of cover.brief) {
+    if (typeof part === "string") brief.append(document.createTextNode(part));
+    else if (part.b) brief.append(node("b", part.b));
+    else if (part.a) {
+      const link = node("a", part.a.text);
+      link.href = part.a.href;
+      link.target = "_blank";
+      link.rel = "noopener";
+      brief.append(link);
+    }
+  }
+}
+// Полоса дней: семь дней вокруг выбранного, сегодня коралловым, точка под
+// днём — есть встречи. Листается только нижняя часть: верх всегда про сейчас.
+// Свои дела и встречи любого дня — из тех же записей журнала, что и сегодня;
+// календарь даёт только чужие события.
+function ownEntriesFor(date) {
+  return todayState.entries.filter((entry) =>
+    scheduleOf(entry)?.date === date && !isReportedWork(entry)
+    && (isActiveTask(entry) || isActiveMeeting(entry) || needsClarification(entry) || isClosed(entry)),
+  );
+}
+function externalFor(date) {
+  const source = [todayState.calendar, todayState.cache.get(date)?.calendar].find((calendar) => calendar && date >= calendar.from && date <= calendar.to);
+  return (source?.external || []).filter((item) => item.date === date);
+}
+function dayHasEvents(date) {
+  return externalFor(date).length > 0 || ownEntriesFor(date).some((entry) => !isClosed(entry));
+}
+function setView(offset) {
+  todayState.view = offset;
+  if (offset === 0) todayState.tab = todayState.manual ? todayState.tab : todayState.cover?.tab || "day";
+  else todayState.tab = offset < 0 ? "journal" : "day";
+  renderToday();
+}
+function paintDaybar(today) {
+  const host = $("#daybar");
+  clear(host);
+  const arrow = (delta, label, text) => {
+    const button = node("button", text, "daybar-arrow");
+    button.type = "button";
+    button.setAttribute("aria-label", label);
+    button.addEventListener("click", () => setView(todayState.view + delta));
+    return button;
+  };
+  host.append(arrow(-1, "Предыдущий день", "‹"));
+  for (let offset = todayState.view - 3; offset <= todayState.view + 3; offset += 1) {
+    const date = shiftDate(today, offset);
+    const { weekday, day } = dateParts(date);
+    const button = node("button", undefined, `daybar-day${offset === todayState.view ? " selected" : ""}${offset === 0 ? " today" : ""}${isWeekend(date) ? " weekend" : ""}${Math.abs(offset - todayState.view) === 3 ? " edge" : ""}`);
+    button.type = "button";
+    button.dataset.view = String(offset);
+    button.title = longDate(date);
+    button.setAttribute("aria-pressed", String(offset === todayState.view));
+    const label = node("span", undefined, "daybar-label");
+    label.append(node("small", WEEKDAYS_SHORT[weekday]), node("b", String(day)));
+    button.append(label, node("i", undefined, `daybar-dot${dayHasEvents(date) ? " has" : ""}`));
+    button.addEventListener("click", () => setView(offset));
+    host.append(button);
+  }
+  host.append(arrow(1, "Следующий день", "›"));
+  if (todayState.view !== 0) {
+    const back = node("button", "сегодня", "daybar-today");
+    back.type = "button";
+    back.addEventListener("click", () => setView(0));
+    host.append(back);
+  }
+}
+// Счётчики в ящиках: сколько встреч и дел в показанном дне.
+function dayCountNode(date) {
+  const wrap = node("span", undefined, "drawer-count");
+  const parts = [];
+  if (date === currentDayDate) {
+    const band = todayState.todo.filter((entry) => todoOrder(entry, date) <= 3);
+    const timed = todayState.todo.filter((entry) => isActiveTask(entry) && scheduleOf(entry)?.date === date && scheduleOf(entry)?.time);
+    const allDay = (todayState.calendar?.external || []).filter((item) => item.date === date && item.allDay).length;
+    const meetings = todayMeetings().length + allDay;
+    if (calendarConnected() || meetings) parts.push(plural(meetings, MEETINGS));
+    parts.push(plural(band.length + timed.length, DEALS));
+    const late = todayState.todo.filter((entry) => isOverdue(entry, date)).length;
+    wrap.append(document.createTextNode(parts.join(" · ")));
+    if (late) wrap.append(document.createTextNode(" · "), node("em", `${late} просрочено`));
+    return wrap;
+  }
+  const own = ownEntriesFor(date).filter((entry) => !isClosed(entry));
+  const meetings = externalFor(date).length + own.filter(isActiveMeeting).length;
+  if (calendarConnected() || meetings) parts.push(plural(meetings, MEETINGS));
+  parts.push(plural(own.filter((entry) => !isActiveMeeting(entry)).length, DEALS));
+  wrap.append(document.createTextNode(parts.join(" · ")));
+  return wrap;
+}
+function paintTabs(date) {
+  const host = $("#today-tabs");
+  clear(host);
+  const today = date === currentDayDate;
+  const report = todayState.cache.get(date)?.report;
+  const doneCount = today ? String(todayState.done.length) : report ? String((report.done || []).length) : "…";
+  const tabs = [
+    ["journal", "Что делал", node("b", doneCount)],
+    ["day", today ? "День" : `День ${shortDate(date)}`, dayCountNode(date)],
+  ];
+  for (const [key, label, count] of tabs) {
+    const button = node("button", undefined, "drawer-tab");
+    button.type = "button";
+    button.id = `tab-${key}`;
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-selected", String(todayState.tab === key));
+    button.setAttribute("aria-controls", key === "journal" ? "journal" : "todo");
+    button.append(node("span", label, "drawer-tab-label"), count);
+    button.addEventListener("click", () => {
+      todayState.tab = todayState.tab === key ? null : key;
+      todayState.manual = true;
+      rememberTab();
+      renderToday();
+    });
+    host.append(button);
+  }
+  $("#journal").hidden = todayState.tab !== "journal";
+  $("#todo").hidden = todayState.tab !== "day";
+}
+// Строка с временем слева: карточка записи или чужое событие.
+function rowWithTime(time, child, className = "") {
+  const row = node("div", undefined, `day-row ${className}`.trim());
+  row.append(node("span", time, "day-time"), child);
+  return row;
+}
+function outcomeButton(title) {
+  const button = node("button", "Записать итог", "day-ghost");
+  button.type = "button";
+  button.addEventListener("click", () => prefillCapture(`Встреча «${title}» — `, "outcome"));
+  return button;
+}
+// «Записать итог»: текст и тип ложатся в поле, дальше пишет человек.
+function prefillCapture(text, type) {
+  composerState.type = type;
+  composerState.userType = true;
+  composerState.date = null;
+  composerState.time = null;
+  composerState.priority = "normal";
+  captureField.setValue(text, { caretToEnd: true });
+  renderCaptureControls();
+  paintCaptureAction(text);
+  $("#capture-form").scrollIntoView({ block: "center", behavior: motionAllowed() ? "smooth" : "auto" });
+  captureField.focus();
+}
+function eventRow(item, { minutes = null, today = false, pastDay = false } = {}) {
+  const box = node("div", undefined, "day-event");
+  const dot = node("i", undefined, "cal-dot");
+  if (item.color) dot.style.background = item.color;
+  const meta = node("span", undefined, "day-event-meta");
+  const actions = node("span", undefined, "day-event-actions");
+  const start = minutesOf(item.time), end = minutesOf(item.end);
+  const finish = end ?? (start == null ? null : start + (todayState.calendar?.defaults?.meetingMinutes || 30));
+  const busy = busyOnly(item);
+  let className = "external";
+  if (item.allDay) meta.append(node("span", "весь день", "tag"));
+  else if (today && start != null) {
+    const running = minutes >= start && minutes < finish;
+    const soon = !running && start > minutes && start - minutes <= 10;
+    if (running) { className += " now"; meta.append(node("span", `идёт · до ${hm(finish)}`, "tag now")); }
+    else if (soon) meta.append(node("span", `через ${start - minutes} мин`, "tag soon"));
+    else if (minutes >= finish) { className += " past"; meta.append(node("span", "прошла", "tag")); }
+    else meta.append(node("span", `через ${duration(start - minutes)}`, "tag"));
+    if (item.joinUrl && (running || soon)) {
+      const join = node("a", "Присоединиться", "day-join");
+      join.href = item.joinUrl;
+      join.target = "_blank";
+      join.rel = "noopener";
+      actions.append(join);
+    }
+    if (minutes >= finish && !busy) actions.append(outcomeButton(item.title));
+  } else if (pastDay) {
+    className += " past";
+    if (!busy) actions.append(outcomeButton(item.title));
+  } else if (item.end) meta.append(node("span", `до ${item.end}`, "tag"));
+  if (item.me?.status === "needs-action" && !pastDay) {
+    const rsvp = node("a", "ответить?", "tag warm");
+    rsvp.href = "#calendar";
+    meta.append(rsvp);
+  }
+  if (item.calendarName) meta.append(node("span", item.calendarName, "day-event-cal"));
+  box.append(dot, node("span", item.title, "day-event-title"), meta);
+  if (actions.childNodes.length) box.append(actions);
+  return rowWithTime(item.allDay ? "день" : item.time, box, className);
+}
+function nowRow(minutes, meetings) {
+  const next = meetings.find((meeting) => meeting.start > minutes) || null;
+  const text = next ? `сейчас · свободно ${duration(next.start - minutes)} — в ${hm(next.start)} ${next.title}` : "сейчас · встреч больше нет";
+  return rowWithTime(hm(minutes), node("span", text, "day-now-text"), "now-mark");
+}
+function appendMore(container, hidden) {
+  if (hidden <= 0) return;
+  const more = node("a", `Ещё ${hidden} — весь список →`, "preview-more");
+  more.href = "#board?view=list";
+  container.append(more);
+}
+function paintDayList(date) {
+  const container = $("#todo");
+  clear(container);
+  if (date === currentDayDate) { paintTodayList(container); return; }
+  const data = todayState.cache.get(date);
+  if (!data) {
+    container.append(node("p", "Загружаю…", "empty"));
+    ensureDayData(date);
+    return;
+  }
+  paintOtherDayList(container, date, data);
+}
+// Сегодня: сверху «без времени» — просроченное, требующее уточнения, сегодняшнее
+// без часа и дела без срока (эти — до предела превью), ниже «по часам» — свои
+// дела и встречи со временем вперемешку с чужими событиями, между прошедшими
+// и будущими — строка «сейчас». Дела на другие дни живут в своих днях и в
+// хвосте «Ещё N».
+function paintTodayList(container) {
+  const today = currentDayDate, minutes = nowMinutes();
+  const timed = (entry) => scheduleOf(entry)?.date === today && Boolean(scheduleOf(entry)?.time);
+  const order = (entry) => todoOrder(entry, today);
+  const band = todayState.todo.filter((entry) => order(entry) <= 3 && !timed(entry));
+  const undated = band.filter((entry) => order(entry) === 3);
+  const shownBand = band.filter((entry) => order(entry) < 3).concat(undated.slice(0, previewLimit));
+  const later = todayState.todo.filter((entry) => order(entry) === 4);
+  const hidden = undated.length - Math.min(undated.length, previewLimit) + later.length;
+  const external = (todayState.calendar?.external || []).filter((item) => item.date === today);
+  const allDay = external.filter((item) => item.allDay);
+  const hours = [
+    ...todayState.todo.filter(timed).map((entry) => ({ start: minutesOf(scheduleOf(entry).time), entry })),
+    ...external.filter((item) => !item.allDay && item.time).map((item) => ({ start: minutesOf(item.time), item })),
+  ].filter((slot) => slot.start != null).sort((a, b) => a.start - b.start);
+  if (!shownBand.length && !allDay.length && !hours.length) {
+    container.append(node("p", "Открытых дел нет.", "empty"));
+    appendMore(container, hidden);
+    return;
+  }
+  if (shownBand.length || allDay.length) {
+    container.append(node("div", "без времени", "day-group"));
+    for (const entry of shownBand) container.append(entryCard(entry, { overdue: isOverdue(entry, today), compact: true }));
+    for (const item of allDay) container.append(eventRow(item, { minutes, today: true }));
+  }
+  if (hours.length) {
+    container.append(node("div", "по часам", "day-group"));
+    const meetings = todayMeetings();
+    const running = meetings.some((meeting) => minutes >= meeting.start && minutes < meeting.end);
+    let nowPlaced = running;
+    for (const slot of hours) {
+      if (!nowPlaced && slot.start > minutes) { container.append(nowRow(minutes, meetings)); nowPlaced = true; }
+      container.append(slot.entry
+        ? rowWithTime(scheduleOf(slot.entry).time, entryCard(slot.entry, { overdue: false, compact: true }))
+        : eventRow(slot.item, { minutes, today: true }));
+    }
+    if (!nowPlaced) container.append(nowRow(minutes, meetings));
+  }
+  appendMore(container, hidden);
+}
+function paintOtherDayList(container, date, data) {
+  const pastDay = date < currentDayDate;
+  const own = ownEntriesFor(date);
+  const external = (data.calendar?.external || []).filter((item) => item.date === date);
+  const card = (entry) => entryCard(entry, { overdue: pastDay && !isClosed(entry), compact: true });
+  const band = [...own.filter((entry) => !scheduleOf(entry)?.time).map((entry) => ({ entry })), ...external.filter((item) => item.allDay).map((item) => ({ item }))];
+  const hours = [
+    ...own.filter((entry) => scheduleOf(entry)?.time).map((entry) => ({ start: minutesOf(scheduleOf(entry).time), entry })),
+    ...external.filter((item) => !item.allDay && item.time).map((item) => ({ start: minutesOf(item.time), item })),
+  ].filter((slot) => slot.start != null).sort((a, b) => a.start - b.start);
+  if (!band.length && !hours.length) {
+    container.append(node("p", pastDay ? "Встреч и дел со сроком не было." : "Встреч и дел со сроком пока нет.", "empty"));
+    return;
+  }
+  if (band.length) {
+    container.append(node("div", "без времени", "day-group"));
+    for (const slot of band) container.append(slot.entry ? card(slot.entry) : eventRow(slot.item, { pastDay }));
+  }
+  if (hours.length) {
+    container.append(node("div", "по часам", "day-group"));
+    for (const slot of hours) container.append(slot.entry ? rowWithTime(scheduleOf(slot.entry).time, card(slot.entry)) : eventRow(slot.item, { pastDay }));
+  }
+}
+function paintJournal(date) {
+  const container = $("#journal");
+  if (date === currentDayDate) {
+    appendEntries(container, todayState.done, "Пока нет зафиксированной работы за сегодня.", { entryOptions: () => ({ compact: true }) });
+    return;
+  }
+  clear(container);
+  const data = todayState.cache.get(date);
+  if (!data) { container.append(node("p", "Загружаю…", "empty")); ensureDayData(date); return; }
+  const done = data.report?.done || [];
+  if (!done.length) { container.append(node("p", date < currentDayDate ? "В этот день ничего не записано." : "День ещё не наступил.", "empty")); return; }
+  const entriesById = new Map(todayState.entries.map((entry) => [entry.id, entry]));
+  for (const record of done) {
+    const entry = entriesById.get(record.captureId);
+    if (entry) { container.append(entryCard(entry, { compact: true })); continue; }
+    const box = node("div", undefined, "day-own");
+    box.append(node("span", record.title, "day-own-title"));
+    const meta = node("span", undefined, "day-event-meta");
+    meta.append(node("span", typeNames[record.type] || record.type, "tag"), node("span", hm(zoneMinutes(new Date(record.at))), "tag"));
+    box.append(meta);
+    container.append(box);
+  }
+}
+// Другой день грузится, когда его открыли, и помнится до следующего изменения
+// журнала: встречи — из календаря, записанное — из отчёта «Обзора».
+async function ensureDayData(date) {
+  if (todayState.cache.has(date) || todayState.loading.has(date)) return;
+  todayState.loading.add(date);
+  try {
+    const [calendar, report] = await Promise.all([
+      request(`/api/calendar?from=${date}&to=${date}`).catch(() => null),
+      request(`/api/reports/day?date=${date}`).catch(() => null),
+    ]);
+    todayState.cache.set(date, { calendar, report });
+  } finally {
+    todayState.loading.delete(date);
+  }
+  if (currentDayDate && shiftDate(currentDayDate, todayState.view) === date) renderToday();
+}
+// Раз в минуту обложка и строка «сейчас» пересчитываются — но не под руками:
+// с текстом в поле страница ждёт.
+setInterval(() => {
+  if ($("#today")?.hidden || !currentDayDate) return;
+  if (typeof captureField !== "undefined" && String(captureField.getValue()).trim()) return;
+  renderToday();
+}, 60000);
 function isOverdue(entry, today) {
   const date = entry.interpretation.classification.entities.schedule?.date;
   return Boolean(date && date < today);
@@ -637,10 +1014,23 @@ function todoOrder(entry, today) {
   return 4;
 }
 async function load() {
-  const [day, entries] = await Promise.all([
+  // Календарь на сегодня и завтра нужен «Дню» и брифу. Он грузится вместе с
+  // журналом, но только пока открыта «Сегодня»: на других страницах журнал
+  // перечитывается так же быстро, как раньше, а календарь добирается при
+  // возвращении. Другие дни грузятся, когда их открывают, и забываются при
+  // каждом изменении журнала.
+  const todayGuess = currentDayDate || zoneDate(new Date());
+  const onToday = !$("#today")?.hidden;
+  const [day, entries, calendar] = await Promise.all([
     request("/api/day"),
     request("/api/entries?limit=100"),
+    onToday ? request(`/api/calendar?from=${todayGuess}&to=${shiftDate(todayGuess, 1)}`).catch(() => null) : Promise.resolve(undefined),
   ]);
+  todayState.cache.clear();
+  if (calendar !== undefined && todayGuess === day.date) {
+    todayState.calendar = calendar;
+    todayState.calendarStale = false;
+  } else todayState.calendarStale = true;
   render({ ...day, entries: entries.entries });
   // Доска и «Обзор» живут своими запросами: правка в карточке или доразбор
   // записи должны быть видны сразу там, откуда карточку открыли, а не после
@@ -1675,7 +2065,7 @@ const captureTypes = [
   { value: "outcome", label: "Результат", cssVar: "outcome", placeholder: "Что решили или что уже сделано" },
   { value: "note", label: "Заметка", cssVar: "note", placeholder: "Наблюдение, идея, открытый вопрос" },
 ];
-const composerState = { type: "auto", date: null, time: null, priority: "normal", tags: [] };
+const composerState = { type: "auto", userType: false, date: null, time: null, priority: "normal", tags: [] };
 let knownTags = [];
 async function refreshKnownTags() {
   try {
@@ -1695,11 +2085,14 @@ function composerOverridesBody() {
 }
 function resetComposerOverrides() {
   composerState.type = "auto";
+  composerState.userType = false;
   composerState.date = null;
   composerState.time = null;
   composerState.priority = "normal";
   composerState.tags = [];
   renderCaptureControls();
+  // Поле снова пустое — фаза суток может вернуть свой тип и вопрос.
+  applyCoverComposer();
   refreshKnownTags();
 }
 const captureIso = (shift) => {
@@ -1720,6 +2113,7 @@ for (const type of captureTypes) {
   button.append(node("span", undefined, "mark"), node("span", type.label, "label"));
   button.addEventListener("click", () => {
     composerState.type = type.value;
+    composerState.userType = true;
     if (composerState.type !== "todo") {
       composerState.date = null;
       composerState.time = null;
@@ -1866,7 +2260,8 @@ function renderCaptureControls() {
   const type = captureTypes.find((item) => item.value === composerState.type);
   for (const button of typeDotsHost.querySelectorAll("button"))
     button.setAttribute("aria-selected", String(button.dataset.value === composerState.type));
-  captureField.setPlaceholder(type.placeholder);
+  // Вопрос в поле — по фазе суток, пока тип тот, для которого он задан.
+  captureField.setPlaceholder(todayState.placeholder && composerState.type === todayState.placeholderType ? todayState.placeholder : type.placeholder);
   todoLineHost.hidden = composerState.type !== "todo";
   for (const button of quickButtons)
     button.setAttribute("aria-pressed", String(captureIso(Number(button.dataset.shift)) === composerState.date));
@@ -5218,7 +5613,9 @@ async function paintUpcomingReminders() {
   } catch { element.textContent = ""; }
 }
 async function openCaptureById(id) {
-  try { const { entry } = await request(`/api/captures/${encodeURIComponent(id)}`); showCorrection(entry); }
+  // По ссылке карточка открывается так же, как по клику в списке: с вопросом
+  // модели, если разбор неуверенный.
+  try { const { entry } = await request(`/api/captures/${encodeURIComponent(id)}`); const review = reviewFromEntry(entry); showCorrection(entry, review.level === "high" ? undefined : review); }
   catch (error) { toast(error.message); }
 }
 $("#push-enable")?.addEventListener("click", () => enablePush().catch((error) => { toast(error.message || "Не удалось включить уведомления"); paintPush(); }));

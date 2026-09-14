@@ -25,10 +25,19 @@ async function capture(page, raw) {
   await expect(page.locator("#capture-notifications")).toContainText("Готово");
   return response;
 }
-test.beforeEach(async ({ request }) => {
+// Обложка «Сегодня» живёт по часам: чтобы прогон не зависел от времени суток,
+// страница видит один и тот же день — 13:00, фаза «день». Таймеры при этом
+// идут как обычно.
+const dayAt = (hour) => { const at = new Date(); at.setHours(hour, 0, 0, 0); return at; };
+// Дела и встречи на другой день живут в своём дне: полоса дней под полем.
+async function showDay(page, offset) {
+  await page.locator(`#daybar [data-view="${offset}"]`).click();
+}
+test.beforeEach(async ({ page, request }) => {
   await request.post("/api/reset", {
     data: { confirmation: "СБРОСИТЬ КИЗУНА" },
   });
+  await page.clock.install({ time: dayAt(13) });
 });
 test("async capture shows a short success notification and adds the entry to the overview", async ({
   page,
@@ -44,6 +53,7 @@ test("async capture shows a short success notification and adds the entry to the
   await page.locator(".ai-menu summary").click();
   await capture(page, "Завтра в 11 созвон по Hub");
   await expect(page.locator("#capture-notifications")).toContainText("Готово");
+  await showDay(page, 1);
   await expect(page.locator("#todo")).toContainText("созвон по Hub");
   await page.screenshot({ path: "tmp/screenshots/async-capture-ready.png" });
 });
@@ -52,19 +62,21 @@ test("medium-confidence Codex classification remains visible in Plan", async ({ 
   await page.locator(".ai-menu summary").click();
   await page.getByLabel("Провайдер ИИ").selectOption("codex-cli");
   await capture(page, "Завтра в 11 созвон по Hub");
+  // Заглушка Codex не разбирает срок: встреча без даты лежит в сегодняшнем дне.
   await expect(page.locator("#todo")).toContainText("Созвон по Hub");
 });
-test("success notification disappears without shifting the three dashboard columns", async ({
+test("success notification disappears without shifting the drawers under the field", async ({
   page,
 }) => {
   await page.goto("/");
-  const dashboardTop = await page.locator(".dashboard").evaluate((element) => element.getBoundingClientRect().top);
+  const drawersTop = await page.locator(".drawers").evaluate((element) => element.getBoundingClientRect().top);
   await capture(page, "Завтра в 12 встреча по Hub");
-  expect(await page.locator(".dashboard").evaluate((element) => element.getBoundingClientRect().top)).toBe(dashboardTop);
+  expect(await page.locator(".drawers").evaluate((element) => element.getBoundingClientRect().top)).toBe(drawersTop);
   await expect(page.locator("#capture-notifications .capture-notification")).toHaveCount(0, {
     timeout: 5000,
   });
-  await expect(page.locator(".dashboard article")).toHaveCount(3);
+  // Под полем два ящика: «Что делал» и «День». Колонок и заметок больше нет.
+  await expect(page.locator(".drawer-tab")).toHaveCount(2);
 });
 test("notification stack is pinned to the viewport right edge on desktop", async ({
   page,
@@ -81,7 +93,7 @@ test("notification stack is pinned to the viewport right edge on desktop", async
     });
   expect(geometry.rightGap).toBeLessThanOrEqual(24);
 });
-test("today separates reported work, open TODOs and notes without an attention column", async ({
+test("today separates reported work and the day's plan; notes stay off the main page", async ({
   page,
 }) => {
   await page.goto("/");
@@ -90,18 +102,26 @@ test("today separates reported work, open TODOs and notes without an attention c
     "доработал обновление контекста",
   );
   await capture(page, "Завтра в 11 созвон по Hub");
+  // Завтрашняя встреча живёт в завтрашнем дне, а не в сегодняшнем списке.
+  await expect(page.locator("#todo")).not.toContainText("созвон по Hub");
+  await showDay(page, 1);
   await expect(page.locator("#todo")).toContainText("созвон по Hub");
+  await showDay(page, 0);
+  // Заметка сохраняется, но на главную не выносится: главная — про день.
   await capture(page, "Сегодня посмотрел работу с голосовым ИИ");
-  await expect(page.locator("#notes")).toContainText("голосовым ИИ");
-  await expect(page.getByRole("heading", { name: "Что делал" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "TODO буфер" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Заметки" })).toBeVisible();
+  await expect(page.locator("#journal")).not.toContainText("голосовым ИИ");
+  await expect(page.locator("#todo")).not.toContainText("голосовым ИИ");
+  const entries = await (await page.request.get("/api/entries")).json();
+  expect(entries.entries.some((entry) => entry.raw.includes("голосовым ИИ"))).toBe(true);
+  await expect(page.getByRole("tab", { name: /Что делал/ })).toBeVisible();
+  await expect(page.getByRole("tab", { name: /День/ })).toBeVisible();
+  expect(await page.locator("#notes").count()).toBe(0);
   expect(await page.locator("#attention").count()).toBe(0);
   await page.evaluate(() => { location.hash = "#memory"; });
   await expect(page.locator("#memory")).toBeVisible();
   await expect(page.locator("#today")).toBeHidden();
 });
-test("today keeps tasks and meetings together in the TODO buffer without duplicates in notes", async ({
+test("the day keeps tasks and meetings together; notes never land among them", async ({
   page,
 }) => {
   const task = "Нужно подготовить контекст для Hub";
@@ -112,13 +132,14 @@ test("today keeps tasks and meetings together in the TODO buffer without duplica
   await capture(page, meeting);
   await capture(page, note);
   await expect(page.locator("#todo")).toContainText(task);
-  await expect(page.locator("#todo")).toContainText(meeting);
-  await expect(page.locator("#notes")).toContainText("голосовым ИИ");
-  await expect(page.locator("#notes")).not.toContainText(task);
-  await expect(page.locator("#notes")).not.toContainText(meeting);
+  await expect(page.locator("#todo")).not.toContainText("голосовым ИИ");
   await expect(
     page.locator("#todo .completion-button").first(),
   ).toBeVisible();
+  await showDay(page, 1);
+  await expect(page.locator("#todo")).toContainText(meeting);
+  await expect(page.locator("#todo")).not.toContainText("голосовым ИИ");
+  expect(await page.locator("#notes").count()).toBe(0);
   expect(await page.locator(".calendar-block").count()).toBe(0);
 });
 test("TODO buffer keeps overdue incomplete items ahead of other open work", async ({
@@ -173,8 +194,9 @@ test("completed reports, including ready wording, are Done while negated reports
   await expect(page.locator("#journal")).toContainText(completed);
   await expect(page.locator("#todo")).not.toContainText(completed);
   await capture(page, negated);
-  await expect(page.locator("#notes")).toContainText(negated);
+  // Отрицание — заметка: её нет ни в сделанном, ни в делах дня.
   await expect(page.locator("#journal")).not.toContainText(negated);
+  await expect(page.locator("#todo")).not.toContainText(negated);
 });
 test("async conflict keeps correction folded until the user asks to clarify", async ({
   page,
@@ -199,6 +221,7 @@ test("ambiguous async meeting has a compact clarification action", async ({
   const raw = "Созвон завтра после обеда с BE";
   await page.goto("/");
   await capture(page, raw);
+  // Встреча без ясного времени требует уточнения и потому лежит в сегодняшнем дне.
   const card = page.locator(".entry").filter({ hasText: raw }).first();
   await expect(
     card.locator(".entry-title"),
@@ -688,6 +711,7 @@ test("correction from an upcoming card after reload is single-flight", async ({
   await page.goto("/");
   await capture(page, raw);
   await page.reload();
+  await showDay(page, 1);
   await expect(page.locator("#todo")).toContainText("созвон по Hub");
   let corrections = 0;
   page.on("request", (request) => {
@@ -794,6 +818,7 @@ test("mobile critical path has no horizontal overflow and keeps capture and corr
   ).toBe(true);
   await capture(page, raw);
   await expect(page.locator("#capture-notifications")).toContainText(raw);
+  await showDay(page, 1);
   await expect(
     page
       .locator("#todo .entry")
@@ -960,23 +985,23 @@ test("карточки обновляются в реальном времени
   request,
 }) => {
   await page.goto("/");
-  await expect(page.locator("#notes .empty")).toBeVisible();
+  await expect(page.locator("#todo .empty")).toBeVisible();
 
   // Запись создаётся мимо этой вкладки — как это делает голос или другое окно.
   const created = await request.post("/api/captures", {
-    data: { raw: "мысль про поток обновлений", primaryType: "note" },
+    data: { raw: "дело про поток обновлений", primaryType: "todo" },
   });
   expect(created.status()).toBe(201);
 
   // Ничего не перезагружаем: карточка должна появиться сама.
-  await expect(page.locator("#notes .entry").first()).toContainText("поток обновлений", {
+  await expect(page.locator("#todo .entry").first()).toContainText("поток обновлений", {
     timeout: 15000,
   });
 
   // Удаление тоже видно сразу.
   const entry = (await created.json()).entry;
   await request.delete(`/api/captures/${entry.id}`);
-  await expect(page.locator("#notes .entry")).toHaveCount(0, { timeout: 15000 });
+  await expect(page.locator("#todo .entry")).toHaveCount(0, { timeout: 15000 });
 });
 
 // Карточка отвечает на «когда это было» и «к чему относится»: время записи
@@ -1034,12 +1059,16 @@ test("карточка говорит, просрочено дело или не
   await expect(card("сдать отчёт").locator(".tag.due.late")).toContainText("срок:");
   await expect(card("сдать отчёт").locator(".tag.late:not(.due)")).toHaveText("просрочено");
 
+  // Без срока просрочки быть не может — и это сказано словами, а не пустотой.
+  await expect(card("купить кофе").locator(".tag.undated")).toHaveText("без срока");
+
+  // Дело со сроком через три дня живёт в своём дне полосы дней, а не в сегодняшнем.
+  await expect(page.locator("#todo")).not.toContainText("созвон по релизу");
+  await showDay(page, 3);
   await expect(card("созвон по релизу").locator(".tag.ontime")).toHaveText("в срок");
   await expect(card("созвон по релизу").locator(".tag.late")).toHaveCount(0);
   await expect(card("созвон по релизу")).not.toHaveClass(/overdue/);
-
-  // Без срока просрочки быть не может — и это сказано словами, а не пустотой.
-  await expect(card("купить кофе").locator(".tag.undated")).toHaveText("без срока");
+  await showDay(page, 0);
 
   // В самой карточке видно, когда запись сделана.
   await card("купить кофе").locator(".entry-title").click();
@@ -1090,30 +1119,22 @@ test("колонка честно говорит, сколько записей 
     await request.delete(`/api/captures/${(await response.json()).entry.id}`);
 });
 
-// Ряд колонок тянется по самой высокой; колонка с запасом места добирает
-// записи сверх трёх, пока они влезают, и «Ещё N» считает только спрятанное.
-test("a shorter column fills the row height with more than three entries", async ({ page, request }) => {
+// Дела на другие дни живут в своих днях: в сегодняшнем списке их нет, но хвост
+// «Ещё N» их считает, а «Что делал» показывает всё записанное за день.
+test("future-dated tasks stay in their days while the tail counts them", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   await page.goto("/");
-  // Три дела со сроком, важностью и тегами — высокие карточки в три строки
-  // меты, они и задают высоту ряда.
   for (const name of ["первое дело", "второе дело", "третье дело"])
     await request.post("/api/captures", {
       data: { raw: name, primaryType: "todo", due: { date: "2026-12-31" }, priority: "high", tags: ["первый", "второй", "третий"] },
     });
-  // Семь коротких отчётов — «Что делал» может показать больше трёх.
   for (const name of ["раз", "два", "три", "четыре", "пять", "шесть", "семь"])
     await request.post("/api/captures", { data: { raw: `Обсудили ${name}`, primaryType: "outcome" } });
-  await expect(page.locator("#todo .entry")).toHaveCount(3, { timeout: 15000 });
-  await expect(page.locator("#journal .entry:visible").nth(3)).toBeVisible({ timeout: 15000 });
-  const shown = await page.locator("#journal .entry:visible").count();
-  expect(shown).toBeGreaterThan(3);
-  expect(shown).toBeLessThan(7);
-  await expect(page.locator("#journal .preview-more")).toHaveText(`Ещё ${7 - shown} — весь список →`);
-  // Ряд при этом не вырос: колонки одной высоты.
-  const journal = await page.locator("#journal").locator("xpath=ancestor::article[1]").boundingBox();
-  const todo = await page.locator("#todo").locator("xpath=ancestor::article[1]").boundingBox();
-  expect(Math.abs(journal.height - todo.height)).toBeLessThan(2);
+  await expect(page.locator("#todo .preview-more")).toHaveText("Ещё 3 — весь список →", { timeout: 15000 });
+  expect(await page.locator("#todo .entry").count()).toBe(0);
+  await page.getByRole("tab", { name: /Что делал/ }).click();
+  await expect(page.locator("#journal .entry:visible")).toHaveCount(7, { timeout: 15000 });
+  await expect(page.locator("#todo")).toBeHidden();
 });
 
 // Настройки в приложении: раньше это правилось только в .env с перезапуском.
