@@ -3024,7 +3024,7 @@ dialog form > div {
 }
 /* Поле ввода выше обычного: на главной пишут длинно, и лист должен это обещать. */
 .today-page .md-field {
-  min-height: 216px;
+  min-height: 180px;
   font-size: 17px;
 }
 .today-page .capture #capture-submit {
