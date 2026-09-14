@@ -3022,11 +3022,37 @@ dialog form > div {
 .today-page .capture {
   padding: 16px;
 }
-/* Поле ввода выше обычного: на главной пишут длинно, и лист должен это обещать. */
+/* Высота поля — своя у каждого: стрелки в подвале карточки меняют её шагом,
+   выбор хранится в браузере и приходит сюда переменной. */
 .today-page .md-field {
-  min-height: 180px;
+  min-height: var(--capture-height, 150px);
   font-size: 17px;
 }
+.capture-size {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.capture-size button {
+  width: 22px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--n-82);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: color 0.15s, background 0.15s;
+}
+.capture-size button:hover { color: var(--muted); background: var(--hairline); }
+.capture-size button:disabled { opacity: 0.35; cursor: default; }
+.capture-large .capture-size { display: none; }
 .today-page .capture #capture-submit {
   min-width: 38px;
   width: 38px;
@@ -3058,7 +3084,7 @@ dialog form > div {
     font-size: 13px;
   }
   .today-page .md-field {
-    min-height: 112px;
+    min-height: var(--capture-height, 112px);
   }
   .today-page .dashboard {
     grid-template-columns: minmax(0, 1fr);

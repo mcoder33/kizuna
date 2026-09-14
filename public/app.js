@@ -2325,6 +2325,37 @@ function setCaptureLarge(large) {
   captureField.focus();
 }
 expandButton.addEventListener("click", () => setCaptureLarge(!captureLarge()));
+
+// Высота поля — стрелками в подвале карточки, шагом; выбор живёт в браузере
+// и переживает перезагрузку. Лист (capture-large) её не трогает: там высоту
+// задаёт окно.
+const CAPTURE_HEIGHT = { min: 96, max: 480, step: 32, key: "kizuna-capture-height" };
+function readCaptureHeight() {
+  try {
+    const value = Number(localStorage.getItem(CAPTURE_HEIGHT.key));
+    return Number.isFinite(value) && value >= CAPTURE_HEIGHT.min ? Math.min(value, CAPTURE_HEIGHT.max) : null;
+  } catch {
+    return null;
+  }
+}
+function paintCaptureHeight() {
+  const height = readCaptureHeight();
+  const form = $("#capture-form");
+  if (height) form.style.setProperty("--capture-height", `${height}px`);
+  else form.style.removeProperty("--capture-height");
+  const current = height || parseFloat(getComputedStyle(captureField.element).minHeight) || CAPTURE_HEIGHT.min;
+  $("#capture-taller").disabled = current >= CAPTURE_HEIGHT.max;
+  $("#capture-shorter").disabled = current <= CAPTURE_HEIGHT.min;
+}
+function stepCaptureHeight(delta) {
+  const current = readCaptureHeight() || parseFloat(getComputedStyle(captureField.element).minHeight) || CAPTURE_HEIGHT.min;
+  const next = Math.min(CAPTURE_HEIGHT.max, Math.max(CAPTURE_HEIGHT.min, Math.round((current + delta) / CAPTURE_HEIGHT.step) * CAPTURE_HEIGHT.step));
+  try { localStorage.setItem(CAPTURE_HEIGHT.key, String(next)); } catch {}
+  paintCaptureHeight();
+}
+$("#capture-taller").addEventListener("click", () => stepCaptureHeight(CAPTURE_HEIGHT.step));
+$("#capture-shorter").addEventListener("click", () => stepCaptureHeight(-CAPTURE_HEIGHT.step));
+paintCaptureHeight();
 // Esc возвращает обычный размер. Слушатель на самом поле: там же живут
 // остальные клавиши ввода, и поповеры шапки перехватывать не приходится.
 captureField.element.addEventListener("keydown", (event) => {
