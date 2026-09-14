@@ -1336,24 +1336,6 @@ test("волна на кнопке разговора стоит ровно по
   for (const value of geometry.шаги) expect(Math.abs(value - шаг)).toBeLessThan(0.5);
 });
 
-// Высота поля — своя у каждого: стрелки в подвале меняют её шагом, выбор
-// переживает перезагрузку. Лист (кнопка разворота) высоту не трогает.
-test("высота поля ввода меняется стрелками и запоминается", async ({ page }) => {
-  await page.goto("/");
-  const field = page.getByLabel("Новая запись");
-  const height = async () => field.evaluate((element) => parseFloat(getComputedStyle(element).minHeight));
-  const initial = await height();
-  await page.getByRole("button", { name: "Поле выше" }).click();
-  await page.getByRole("button", { name: "Поле выше" }).click();
-  const taller = await height();
-  expect(taller).toBeGreaterThan(initial);
-  await page.reload();
-  expect(await height()).toBe(taller);
-  await page.getByRole("button", { name: "Поле ниже" }).click();
-  expect(await height()).toBeLessThan(taller);
-  expect(await page.evaluate(() => localStorage.getItem("kizuna-capture-height"))).toMatch(/^\d+$/);
-});
-
 // Края карточки ввода тянутся, как у окна: нижний — высота, боковые — ширина.
 // Карточка стоит по центру, поэтому правый край идёт за курсором, а ширина
 // растёт на удвоенный сдвиг. Размер переживает перезагрузку, двойной клик по
