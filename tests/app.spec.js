@@ -29,9 +29,13 @@ async function capture(page, raw) {
 // страница видит один и тот же день — 13:00, фаза «день». Таймеры при этом
 // идут как обычно.
 const dayAt = (hour) => { const at = new Date(); at.setHours(hour, 0, 0, 0); return at; };
-// Дела и встречи на другой день живут в своём дне: полоса дней под полем.
+// Дела и встречи на другой день живут в своём дне: стрелки по дням внутри
+// ящика «День». Смещение считается от сегодняшнего дня.
 async function showDay(page, offset) {
-  await page.locator(`#daybar [data-view="${offset}"]`).click();
+  const back = page.locator('#todo .daynav [data-view="0"]');
+  if (await back.count()) await back.click();
+  const step = page.locator(`#todo .daynav [data-step="${offset > 0 ? 1 : -1}"]`);
+  for (let i = 0; i < Math.abs(offset); i += 1) await step.click();
 }
 test.beforeEach(async ({ page, request }) => {
   await request.post("/api/reset", {

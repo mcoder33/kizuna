@@ -6217,31 +6217,27 @@ body {
    Дата с фазой суток, бриф и вопрос в поле меняются утром, днём, вечером и
    ночью. Под полем — полоса дней и два ящика: «Что делал» и «День», где дела
    лежат вместе с календарём. Колонок и заметок на главной больше нет. */
-.today-page .hero { max-width: 800px; margin: 0 auto 8px; }
+/* Карточка ввода стоит чуть выше: меньше воздуха над обложкой и под брифом. */
+.today-page .hero { max-width: 800px; margin: -14px auto 8px; }
 .today-date { margin: 0 0 8px; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--n-66); }
 .today-phase.morning { color: var(--yellow-51); }
 .today-phase.day { color: var(--blue-61); }
 .today-phase.evening { color: var(--violet-54); }
 .today-phase.night, .today-phase.weekend { color: var(--n-62); }
 .today-phase.after { color: var(--red-66); }
-.today-brief { margin: 0 auto 22px; max-width: 560px; font-size: 15px; line-height: 1.55; color: var(--n-52); text-wrap: balance; }
+.today-brief { margin: 0 auto 14px; max-width: 560px; font-size: 15px; line-height: 1.55; color: var(--n-52); text-wrap: balance; }
 .today-brief b { color: var(--ink); font-weight: 650; }
 .today-brief a { color: var(--red-66); font-weight: 650; text-decoration: none; border-bottom: 1px solid var(--red-83); }
-.daybar { display: flex; justify-content: center; align-items: center; gap: 2px; margin: 22px auto 6px; max-width: 800px; flex-wrap: wrap; }
-.daybar-arrow { border: 0; background: none; color: var(--n-72); font: inherit; font-size: 18px; font-weight: 600; line-height: 1; cursor: pointer; padding: 6px 10px; border-radius: 99px; }
-.daybar-arrow:hover { background: var(--n-96); color: var(--ink); }
-.daybar-day { border: 1px solid transparent; background: none; font: inherit; color: var(--n-52); padding: 5px 9px 3px; border-radius: 10px; cursor: pointer; display: inline-flex; flex-direction: column; align-items: center; gap: 2px; min-width: 50px; }
-.daybar-label { display: inline-flex; gap: 4px; align-items: baseline; }
-.daybar-label small { font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--n-66); }
-.daybar-label b { font-weight: 700; color: var(--ink); font-size: 13px; }
-.daybar-day.weekend small { opacity: 0.75; }
-.daybar-day.today .daybar-label b { color: var(--red-66); }
-.daybar-day.selected { background: var(--n-100); border-color: var(--n-92); }
-.daybar-day:hover { background: var(--n-96); }
-.daybar-dot { width: 4px; height: 4px; border-radius: 50%; background: transparent; }
-.daybar-dot.has { background: var(--blue-61); }
-.daybar-today { margin-left: 6px; border: 0; background: none; font: inherit; font-size: 11.5px; font-weight: 600; color: var(--red-66); cursor: pointer; padding: 6px 8px; border-radius: 99px; }
-.daybar-today:hover { background: var(--red-97); }
+.daynav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; }
+.daynav-step { border: 0; background: none; font: inherit; font-size: 12px; font-weight: 600; color: var(--n-52); cursor: pointer; padding: 6px 8px; border-radius: 99px; display: inline-flex; align-items: center; gap: 6px; }
+.daynav-step:hover { background: var(--n-96); color: var(--ink); }
+.daynav-arrow { font-style: normal; font-size: 16px; line-height: 1; color: var(--n-72); }
+.daynav-date { text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; }
+.daynav-current { text-align: center; font-size: 13px; display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; }
+.daynav-current b { font-weight: 700; }
+.daynav-mark { font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--red-66); }
+.daynav-today { border: 0; background: none; font: inherit; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--red-66); cursor: pointer; padding: 2px 8px; border-radius: 99px; }
+.daynav-today:hover { background: var(--red-97); }
 .drawers { max-width: 800px; margin: 0 auto; }
 .drawer-tabs { display: flex; justify-content: center; gap: 6px; margin: 10px 0 0; flex-wrap: wrap; }
 .drawer-tab { border: 1px solid transparent; background: none; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--n-52); padding: 7px 12px; border-radius: 99px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
@@ -6278,7 +6274,6 @@ body {
 .drawer .preview-more { display: inline-block; margin-top: 6px; font-size: 12px; color: var(--muted); text-decoration: none; }
 .drawer .preview-more:hover { color: var(--ink); }
 @media (max-width: 480px) {
-  .daybar-day.edge { display: none; }
-  .daybar-day { min-width: 40px; padding: 4px 5px 2px; }
+  .daynav-current { font-size: 12px; }
   .day-row { grid-template-columns: 38px minmax(0, 1fr); gap: 6px; }
 }

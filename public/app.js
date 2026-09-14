@@ -3,7 +3,7 @@ import { createMarkdownField } from "./markdown-live.js";
 import { attachSlashMenu } from "./slash-menu.js";
 import { attachFormatToolbar } from "./format-toolbar.js";
 import { createVoiceDialog } from "./voice.js";
-import { phaseOf, coverFor, endedRecently, plural, hm, duration, minutesOf, longDate, shortDate, isWeekend, dateParts, WEEKDAYS_SHORT, MEETINGS, DEALS, PHASE_NAMES } from "./today-cover.js";
+import { phaseOf, coverFor, endedRecently, plural, hm, duration, minutesOf, longDate, shortDate, isWeekend, MEETINGS, DEALS, PHASE_NAMES } from "./today-cover.js";
 
 const $ = (selector) => document.querySelector(selector);
 const typeNames = {
@@ -648,10 +648,9 @@ function renderToday() {
   }
   applyCoverComposer(cover);
   paintCover(cover, currentDayDate);
-  paintDaybar(currentDayDate);
   const viewDate = shiftDate(currentDayDate, todayState.view);
   paintTabs(viewDate);
-  paintJournal(viewDate);
+  paintJournal();
   paintDayList(viewDate);
 }
 // Вопрос в поле и тип записи — по фазе, но только пока поле пустое и тип не
@@ -691,10 +690,9 @@ function paintCover(cover, date) {
     }
   }
 }
-// Полоса дней: семь дней вокруг выбранного, сегодня коралловым, точка под
-// днём — есть встречи. Листается только нижняя часть: верх всегда про сейчас.
-// Свои дела и встречи любого дня — из тех же записей журнала, что и сегодня;
-// календарь даёт только чужие события.
+// Стрелки по дням живут внутри «Дня»: слева предыдущий день, справа
+// следующий, по центру показанный. Листается только этот ящик: обложка и
+// «Что делал» всегда про сегодня.
 function ownEntriesFor(date) {
   return todayState.entries.filter((entry) =>
     scheduleOf(entry)?.date === date && !isReportedWork(entry)
@@ -705,47 +703,38 @@ function externalFor(date) {
   const source = [todayState.calendar, todayState.cache.get(date)?.calendar].find((calendar) => calendar && date >= calendar.from && date <= calendar.to);
   return (source?.external || []).filter((item) => item.date === date);
 }
-function dayHasEvents(date) {
-  return externalFor(date).length > 0 || ownEntriesFor(date).some((entry) => !isClosed(entry));
-}
 function setView(offset) {
   todayState.view = offset;
-  if (offset === 0) todayState.tab = todayState.manual ? todayState.tab : todayState.cover?.tab || "day";
-  else todayState.tab = offset < 0 ? "journal" : "day";
+  todayState.tab = "day";
   renderToday();
 }
-function paintDaybar(today) {
-  const host = $("#daybar");
-  clear(host);
-  const arrow = (delta, label, text) => {
-    const button = node("button", text, "daybar-arrow");
+function dayNavNode(date) {
+  const nav = node("div", undefined, "daynav");
+  const step = (delta) => {
+    const target = shiftDate(date, delta);
+    const button = node("button", undefined, `daynav-step ${delta < 0 ? "prev" : "next"}`);
     button.type = "button";
-    button.setAttribute("aria-label", label);
+    button.dataset.step = String(delta);
+    button.title = longDate(target);
+    button.setAttribute("aria-label", `${delta < 0 ? "Предыдущий" : "Следующий"} день, ${longDate(target)}`);
+    const parts = [node("i", delta < 0 ? "‹" : "›", "daynav-arrow"), node("span", shortDate(target), "daynav-date")];
+    if (delta > 0) parts.reverse();
+    button.append(...parts);
     button.addEventListener("click", () => setView(todayState.view + delta));
     return button;
   };
-  host.append(arrow(-1, "Предыдущий день", "‹"));
-  for (let offset = todayState.view - 3; offset <= todayState.view + 3; offset += 1) {
-    const date = shiftDate(today, offset);
-    const { weekday, day } = dateParts(date);
-    const button = node("button", undefined, `daybar-day${offset === todayState.view ? " selected" : ""}${offset === 0 ? " today" : ""}${isWeekend(date) ? " weekend" : ""}${Math.abs(offset - todayState.view) === 3 ? " edge" : ""}`);
-    button.type = "button";
-    button.dataset.view = String(offset);
-    button.title = longDate(date);
-    button.setAttribute("aria-pressed", String(offset === todayState.view));
-    const label = node("span", undefined, "daybar-label");
-    label.append(node("small", WEEKDAYS_SHORT[weekday]), node("b", String(day)));
-    button.append(label, node("i", undefined, `daybar-dot${dayHasEvents(date) ? " has" : ""}`));
-    button.addEventListener("click", () => setView(offset));
-    host.append(button);
-  }
-  host.append(arrow(1, "Следующий день", "›"));
-  if (todayState.view !== 0) {
-    const back = node("button", "сегодня", "daybar-today");
+  const current = node("div", undefined, "daynav-current");
+  current.append(node("b", longDate(date)));
+  if (date === currentDayDate) current.append(node("span", "сегодня", "daynav-mark"));
+  else {
+    const back = node("button", "сегодня", "daynav-today");
     back.type = "button";
+    back.dataset.view = "0";
     back.addEventListener("click", () => setView(0));
-    host.append(back);
+    current.append(back);
   }
+  nav.append(step(-1), current, step(1));
+  return nav;
 }
 // Счётчики в ящиках: сколько встреч и дел в показанном дне.
 function dayCountNode(date) {
@@ -774,10 +763,8 @@ function paintTabs(date) {
   const host = $("#today-tabs");
   clear(host);
   const today = date === currentDayDate;
-  const report = todayState.cache.get(date)?.report;
-  const doneCount = today ? String(todayState.done.length) : report ? String((report.done || []).length) : "…";
   const tabs = [
-    ["journal", "Что делал", node("b", doneCount)],
+    ["journal", "Что делал", node("b", String(todayState.done.length))],
     ["day", today ? "День" : `День ${shortDate(date)}`, dayCountNode(date)],
   ];
   for (const [key, label, count] of tabs) {
@@ -878,6 +865,7 @@ function appendMore(container, hidden) {
 function paintDayList(date) {
   const container = $("#todo");
   clear(container);
+  container.append(dayNavNode(date));
   if (date === currentDayDate) { paintTodayList(container); return; }
   const data = todayState.cache.get(date);
   if (!data) {
@@ -955,40 +943,17 @@ function paintOtherDayList(container, date, data) {
     for (const slot of hours) container.append(slot.entry ? rowWithTime(scheduleOf(slot.entry).time, card(slot.entry)) : eventRow(slot.item, { pastDay }));
   }
 }
-function paintJournal(date) {
-  const container = $("#journal");
-  if (date === currentDayDate) {
-    appendEntries(container, todayState.done, "Пока нет зафиксированной работы за сегодня.", { entryOptions: () => ({ compact: true }) });
-    return;
-  }
-  clear(container);
-  const data = todayState.cache.get(date);
-  if (!data) { container.append(node("p", "Загружаю…", "empty")); ensureDayData(date); return; }
-  const done = data.report?.done || [];
-  if (!done.length) { container.append(node("p", date < currentDayDate ? "В этот день ничего не записано." : "День ещё не наступил.", "empty")); return; }
-  const entriesById = new Map(todayState.entries.map((entry) => [entry.id, entry]));
-  for (const record of done) {
-    const entry = entriesById.get(record.captureId);
-    if (entry) { container.append(entryCard(entry, { compact: true })); continue; }
-    const box = node("div", undefined, "day-own");
-    box.append(node("span", record.title, "day-own-title"));
-    const meta = node("span", undefined, "day-event-meta");
-    meta.append(node("span", typeNames[record.type] || record.type, "tag"), node("span", hm(zoneMinutes(new Date(record.at))), "tag"));
-    box.append(meta);
-    container.append(box);
-  }
+function paintJournal() {
+  appendEntries($("#journal"), todayState.done, "Пока нет зафиксированной работы за сегодня.", { entryOptions: () => ({ compact: true }) });
 }
-// Другой день грузится, когда его открыли, и помнится до следующего изменения
-// журнала: встречи — из календаря, записанное — из отчёта «Обзора».
+// Чужие события другого дня грузятся, когда его открыли, и помнятся до
+// следующего изменения журнала; свои дела берутся из уже загруженных записей.
 async function ensureDayData(date) {
   if (todayState.cache.has(date) || todayState.loading.has(date)) return;
   todayState.loading.add(date);
   try {
-    const [calendar, report] = await Promise.all([
-      request(`/api/calendar?from=${date}&to=${date}`).catch(() => null),
-      request(`/api/reports/day?date=${date}`).catch(() => null),
-    ]);
-    todayState.cache.set(date, { calendar, report });
+    const calendar = await request(`/api/calendar?from=${date}&to=${date}`).catch(() => null);
+    todayState.cache.set(date, { calendar });
   } finally {
     todayState.loading.delete(date);
   }

@@ -25,16 +25,16 @@ async function showTab(page, name) {
   if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
 }
 // Дело со сроком «завтра» (заглушка модели читает слово «завтра» даже из
-// таблицы) лежит в завтрашнем дне полосы дней — проверяется и он.
+// таблицы) лежит в завтрашнем дне — стрелка в «Дне» ведёт и туда.
 async function todayEntry(page, text) {
   const inDay = page.locator("#todo .entry").filter({ hasText: text });
   const inJournal = page.locator("#journal .entry").filter({ hasText: text });
   await expect
     .poll(async () => {
       if ((await inDay.count()) || (await inJournal.count())) return true;
-      await page.locator('#daybar [data-view="1"]').click();
+      await page.locator('#todo .daynav [data-step="1"]').click();
       if (await inDay.count()) return true;
-      await page.locator('#daybar [data-view="0"]').click();
+      await page.locator('#todo .daynav [data-view="0"]').click();
       return false;
     }, { timeout: 15000 })
     .toBe(true);

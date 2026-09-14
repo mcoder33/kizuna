@@ -102,7 +102,7 @@ test("without a key the dialog still works: the turn goes through tools into the
 
   // Запись действительно легла в журнал с разобранными параметрами — в
   // завтрашний день, потому что срок «завтра».
-  await page.locator('#daybar [data-view="1"]').click();
+  await page.locator('#todo .daynav [data-step="1"]').click();
   const entry = page.locator("#todo .entry").filter({ hasText: "подготовить отчёт" }).first();
   await expect(entry).toBeVisible({ timeout: 15000 });
   await expect(entry).toContainText("важно");
