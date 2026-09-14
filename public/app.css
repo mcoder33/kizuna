@@ -6249,16 +6249,14 @@ body {
 .today-page .hero { max-width: var(--capture-width, 800px); margin: 0 auto 8px; }
 .today-page .capture { position: relative; }
 .today-page .capture.resizing { user-select: none; }
-/* Ручки: невидимые полосы вдоль краёв и квадраты в нижних углах; при
-   наведении край подсвечивается тонкой линией, курсор говорит, куда тянуть. */
+/* Ручки: невидимые полосы вдоль краёв и квадраты в нижних углах; о том, что
+   край тянется, говорит только курсор. */
 .capture-resize { position: absolute; z-index: 1; touch-action: none; user-select: none; }
 .capture-resize[data-dir="s"] { left: 14px; right: 14px; bottom: -4px; height: 9px; cursor: ns-resize; }
 .capture-resize[data-dir="e"] { top: 14px; bottom: 14px; right: -4px; width: 9px; cursor: ew-resize; }
 .capture-resize[data-dir="w"] { top: 14px; bottom: 14px; left: -4px; width: 9px; cursor: ew-resize; }
 .capture-resize[data-dir="se"] { right: -4px; bottom: -4px; width: 18px; height: 18px; cursor: nwse-resize; }
 .capture-resize[data-dir="sw"] { left: -4px; bottom: -4px; width: 18px; height: 18px; cursor: nesw-resize; }
-.capture-resize::after { content: ""; position: absolute; inset: 3px; border-radius: 3px; background: var(--red-66); opacity: 0; transition: opacity 0.15s; }
-.capture-resize:hover::after, .capture.resizing .capture-resize::after { opacity: 0.55; }
 .capture.capture-large .capture-resize { display: none; }
 @media (max-width: 760px) {
   .capture-resize[data-dir="e"], .capture-resize[data-dir="w"], .capture-resize[data-dir="se"], .capture-resize[data-dir="sw"] { display: none; }
