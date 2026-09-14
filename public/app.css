@@ -6269,7 +6269,9 @@ body {
 .daynav-mark { font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--red-66); }
 .daynav-today { border: 0; background: none; font: inherit; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--red-66); cursor: pointer; padding: 2px 8px; border-radius: 99px; }
 .daynav-today:hover { background: var(--red-97); }
-.drawers { max-width: 800px; margin: 0 auto; }
+/* Ящики той же ширины, что карточка ввода: растянул или сузил карточку —
+   списки под ней идут следом, и всё стоит одним столбцом. */
+.drawers { max-width: var(--capture-width, 800px); margin: 0 auto; }
 .drawer-tabs { display: flex; justify-content: center; gap: 6px; margin: 10px 0 0; flex-wrap: wrap; }
 .drawer-tab { border: 1px solid transparent; background: none; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--n-52); padding: 7px 12px; border-radius: 99px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
 .drawer-tab b { color: var(--ink); font-weight: 700; }
