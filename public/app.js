@@ -574,6 +574,7 @@ function todayTasks() {
   const todays = todayState.todo.filter((entry) => scheduleOf(entry)?.date === today);
   return {
     late: todayState.todo.filter((entry) => isOverdue(entry, today)).length,
+    open: todayState.todo.filter((entry) => isActiveTask(entry) && !isOverdue(entry, today)).length,
     today: todays.length,
     todayTitle: todays.find((entry) => isActiveTask(entry)) ? titleOf(todays.find((entry) => isActiveTask(entry))) : null,
   };

@@ -45,7 +45,7 @@ export function coverFor({
   phase,
   minutes,
   meetings = [],          // сегодняшние встречи по часам: {title, start, end, joinUrl, busy, hasOutcome}
-  tasks = { late: 0, today: 0, todayTitle: null },
+  tasks = { late: 0, today: 0, open: 0, todayTitle: null },
   doneCount = 0,
   tomorrow = null,        // {count, first: {start, title}} | null
   calendar = false,       // подключён ли календарь
@@ -127,7 +127,10 @@ export function coverFor({
     brief.push(`Сделано ${doneCount}${calendar ? `, встреч прошло ${past}` : ""}`);
     if (next) brief.push(`, ещё в ${hm(next.start)} `, { b: next.title });
     brief.push(".");
-    brief.push(tasks.late ? ` Не закрыто ${plural(tasks.late, DEALS)} — перенести на завтра?` : " Все дела закрыты.");
+    // Вечером важно не только просроченное: открытое без срока тоже дело.
+    if (tasks.late) brief.push(` Не закрыто ${plural(tasks.late, DEALS)} со сроком — перенести на завтра?`);
+    else if (tasks.open) brief.push(` Открыто ${plural(tasks.open, DEALS)} без срока.`);
+    else brief.push(" Все дела закрыты.");
     if (calendar && tomorrow?.first) brief.push(` Завтра первая встреча в ${hm(tomorrow.first.start)}.`);
     placeholder = "Чем закончился день?";
     type = "outcome";

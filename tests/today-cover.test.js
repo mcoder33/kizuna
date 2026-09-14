@@ -47,7 +47,12 @@ test('утро здоровается, спрашивает, с чего нач�
 
 test('вечер подводит итог, просит итог дня типом «Результат» и открывает сделанное', () => {
   const cover = coverFor({ phase: 'evening', minutes: 1110, meetings, tasks, doneCount: 4, calendar: true, tomorrow: { count: 3, first: { start: 600, title: 'Стендап Hub' } } });
-  assert.equal(text(cover.brief), 'Сделано 4, встреч прошло 5. Не закрыто 3 дела — перенести на завтра? Завтра первая встреча в 10:00.');
+  assert.equal(text(cover.brief), 'Сделано 4, встреч прошло 5. Не закрыто 3 дела со сроком — перенести на завтра? Завтра первая встреча в 10:00.');
+  // Без просроченного, но с открытым делом без срока вечер не говорит «всё закрыто».
+  const open = coverFor({ phase: 'evening', minutes: 1110, meetings: [], tasks: { late: 0, open: 1 }, doneCount: 1, calendar: false });
+  assert.equal(text(open.brief), 'Сделано 1. Открыто 1 дело без срока.');
+  const clear = coverFor({ phase: 'evening', minutes: 1110, meetings: [], tasks: { late: 0, open: 0 }, doneCount: 2, calendar: false });
+  assert.equal(text(clear.brief), 'Сделано 2. Все дела закрыты.');
   assert.equal(cover.placeholder, 'Чем закончился день?');
   assert.equal(cover.type, 'outcome');
   assert.equal(cover.tab, 'journal');

@@ -3022,8 +3022,9 @@ dialog form > div {
 .today-page .capture {
   padding: 16px;
 }
+/* Поле ввода выше обычного: на главной пишут длинно, и лист должен это обещать. */
 .today-page .md-field {
-  min-height: 128px;
+  min-height: 216px;
   font-size: 17px;
 }
 .today-page .capture #capture-submit {
@@ -6217,15 +6218,14 @@ body {
    Дата с фазой суток, бриф и вопрос в поле меняются утром, днём, вечером и
    ночью. Под полем — полоса дней и два ящика: «Что делал» и «День», где дела
    лежат вместе с календарём. Колонок и заметок на главной больше нет. */
-/* Карточка ввода стоит чуть выше: меньше воздуха над обложкой и под брифом. */
-.today-page .hero { max-width: 800px; margin: -14px auto 8px; }
+.today-page .hero { max-width: 800px; margin: 0 auto 8px; }
 .today-date { margin: 0 0 8px; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--n-66); }
 .today-phase.morning { color: var(--yellow-51); }
 .today-phase.day { color: var(--blue-61); }
 .today-phase.evening { color: var(--violet-54); }
 .today-phase.night, .today-phase.weekend { color: var(--n-62); }
 .today-phase.after { color: var(--red-66); }
-.today-brief { margin: 0 auto 14px; max-width: 560px; font-size: 15px; line-height: 1.55; color: var(--n-52); text-wrap: balance; }
+.today-brief { margin: 0 auto 22px; max-width: 560px; font-size: 15px; line-height: 1.55; color: var(--n-52); text-wrap: balance; }
 .today-brief b { color: var(--ink); font-weight: 650; }
 .today-brief a { color: var(--red-66); font-weight: 650; text-decoration: none; border-bottom: 1px solid var(--red-83); }
 .daynav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; }
