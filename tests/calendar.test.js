@@ -294,7 +294,7 @@ test('автосинк обратно: событие подвинули в Ян
   assert.equal(calls.filter(call => call.method === 'PUT').length, 0);
 });
 
-test('чужое событие из сетки: перенос и переименование уходят PUT с If-Match, удаление — DELETE; «занято» и повторы не правятся', async () => {
+test('чужое событие из сетки: перенос и переименование уходят PUT с If-Match, удаление — DELETE; «занято» не правится, повтор — только этот экземпляр', async () => {
   const calls = [];
   const app = freshApp({ calendarFetch: fakeYandex({ calls }) });
   const api = authed(app);
@@ -331,11 +331,33 @@ test('чужое событие из сетки: перенос и переим�
   assert.equal(calls.filter(call => call.method === 'DELETE')[0].url, 'https://caldav.yandex.ru/calendars/user@yandex.ru/events-123/abc.ics');
   view = (await api.get('/api/calendar?from=2026-09-08&to=2026-09-08').expect(200)).body;
   assert.equal(view.external.length, 0);
-  // Экземпляр повтора по CalDAV не правится: строка кэша с instance_key.
-  app.database.prepare(`INSERT INTO calendar_events(id,account_id,calendar_id,uid,instance_key,title,description,location,start_at,end_at,all_day,busy,join_url,etag,href,updated_at) VALUES('rec1',?,?,'rr','20260909T070000Z','Стендап',NULL,NULL,'2026-09-09T07:00:00.000Z','2026-09-09T07:15:00.000Z',0,1,NULL,'"e"','https://caldav.yandex.ru/calendars/user@yandex.ru/events-123/rr.ics',?)`).run(account.id, account.calendars[0].id, new Date().toISOString());
+  // Экземпляр повтора по CalDAV (строка кэша с instance_key) правится как «только
+  // это событие»: в файл серии дописывается VEVENT с RECURRENCE-ID.
+  app.database.prepare(`INSERT INTO calendar_events(id,account_id,calendar_id,uid,instance_key,title,description,location,start_at,end_at,all_day,busy,join_url,etag,href,updated_at) VALUES('rec1',?,?,'rr','2026-09-09T07:00:00.000Z','Стендап',NULL,NULL,'2026-09-09T07:00:00.000Z','2026-09-09T07:15:00.000Z',0,1,NULL,'"e"','https://caldav.yandex.ru/calendars/user@yandex.ru/events-123/rr.ics',?)`).run(account.id, account.calendars[0].id, new Date().toISOString());
   view = (await api.get('/api/calendar?from=2026-09-09&to=2026-09-09').expect(200)).body;
-  assert.equal(view.external[0].editable, false);
-  await api.patch('/api/calendar/external/ext:rec1').send({ time: '12:00' }).expect(409);
+  assert.deepEqual([view.external[0].editable, view.external[0].movable, view.external[0].recurring], [true, false, true]);
+  calls.length = 0;
+  // 12:00 самарского — 08:00Z; длительность четверть часа сохраняется.
+  const shifted = (await api.patch('/api/calendar/external/ext:rec1').send({ time: '12:00', title: 'Стендап (позже)' }).expect(200)).body.event;
+  assert.deepEqual([shifted.time, shifted.end, shifted.title], ['12:00', '12:15', 'Стендап (позже)']);
+  const seriesPut = calls.find(call => call.method === 'PUT');
+  assert.equal(seriesPut.url, 'https://caldav.yandex.ru/calendars/user@yandex.ru/events-123/rr.ics');
+  assert.equal(seriesPut.headers['If-Match'], '"rr-1"');
+  assert.ok(seriesPut.body.includes('RECURRENCE-ID:20260909T070000Z'));
+  assert.ok(seriesPut.body.includes('DTSTART:20260909T080000Z') && seriesPut.body.includes('DTEND:20260909T081500Z'));
+  assert.ok(seriesPut.body.includes('DTSTART:20260902T070000Z') && seriesPut.body.includes('RRULE:FREQ=WEEKLY;BYDAY=WE'), 'серия не тронута');
+  view = (await api.get('/api/calendar?from=2026-09-09&to=2026-09-09').expect(200)).body;
+  assert.deepEqual([view.external[0].time, view.external[0].title], ['12:00', 'Стендап (позже)']);
+  // В другой календарь экземпляр не переезжает — только серия целиком.
+  await api.post('/api/calendar/external/ext:rec1/move').send({ calendarId: 'whatever' }).expect(409);
+  // Удаление экземпляра — EXDATE в серии тем же PUT, а не DELETE файла.
+  calls.length = 0;
+  await api.delete('/api/calendar/external/ext:rec1').expect(200);
+  assert.equal(calls.filter(call => call.method === 'DELETE').length, 0);
+  const exdatePut = calls.find(call => call.method === 'PUT');
+  assert.ok(exdatePut.body.includes('EXDATE:20260909T070000Z') && exdatePut.body.includes('RRULE:FREQ=WEEKLY;BYDAY=WE'));
+  view = (await api.get('/api/calendar?from=2026-09-09&to=2026-09-09').expect(200)).body;
+  assert.equal(view.external.length, 0);
 });
 
 test('голос и календарь: list_calendar видит своё и чужое, update_event двигает чужое, take_event кладёт в память', async () => {
@@ -426,7 +448,7 @@ test('приглашение из Яндекса: участники с отве
   const invite = view.external.find(item => item.title === 'Монетизация ZB');
   assert.ok(invite);
   assert.equal(invite.repeat, 'Повторяется каждую неделю по чт');
-  assert.equal(invite.editable, false, 'экземпляр повтора по CalDAV не двигается');
+  assert.deepEqual([invite.editable, invite.movable, invite.recurring], [true, false, true], 'экземпляр повтора по CalDAV правится, но в другой календарь не переезжает');
   assert.deepEqual(invite.attendees.map(a => [a.name, a.status, a.organizer, a.optional, a.self]), [['Стас Косухин', 'accepted', true, false, false], ['Клим Андреев', 'accepted', false, false, false], ['Александр', 'needs-action', false, true, true]]);
   assert.deepEqual([invite.organizer.name, invite.me.status, invite.url, invite.joinUrl], ['Стас Косухин', 'needs-action', 'https://calendar.yandex.ru/event?event_id=2916085540', 'https://telemost.360.yandex.ru/j/0319350436']);
   calls.length = 0;

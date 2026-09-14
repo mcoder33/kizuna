@@ -8,6 +8,7 @@ import { createSecretBox } from '../server/secrets.js';
 export const INVITATION = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT', 'UID:inv', 'DTSTART:20260910T083000Z', 'DTEND:20260910T093000Z', 'RRULE:FREQ=WEEKLY;BYDAY=TH', 'SUMMARY:Монетизация ZB', 'ORGANIZER;CN=Стас Косухин:mailto:stas@itfinance.tech', 'ATTENDEE;CN=Клим Андреев;PARTSTAT=ACCEPTED:mailto:klim@itfinance.tech', 'ATTENDEE;CN=Александр;ROLE=OPT-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:user@yandex.ru', 'URL:https://calendar.yandex.ru/event?event_id=2916085540', 'DESCRIPTION:Ссылка на видеовстречу: https://telemost.360.yandex.ru/j/0319350436', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n') + '\r\n';
 // Заглушка Яндекса: principal и дом по логину, два календаря, одно событие и
 // еженедельное приглашение.
+export const SERIES = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT', 'UID:rr', 'DTSTART:20260902T070000Z', 'DTEND:20260902T071500Z', 'RRULE:FREQ=WEEKLY;BYDAY=WE', 'SUMMARY:Стендап', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n') + '\r\n';
 export function fakeYandex({ calls = [] } = {}) {
   return async (url, options) => {
     const method = options.method;
@@ -30,6 +31,7 @@ SUMMARY:Созвон &lt;важный&gt;
 END:VEVENT
 END:VCALENDAR</C:calendar-data></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response><D:response><D:href>/calendars/user@yandex.ru/events-123/inv.ics</D:href><D:propstat><D:prop><D:getetag>"inv-1"</D:getetag><C:calendar-data>${INVITATION.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</C:calendar-data></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>`, { status: 207 });
     if (method === 'GET' && url.endsWith('/events-123/inv.ics')) return new Response(INVITATION, { status: 200, headers: { ETag: '"inv-1"' } });
+    if (method === 'GET' && url.endsWith('/events-123/rr.ics')) return new Response(SERIES, { status: 200, headers: { ETag: '"rr-1"' } });
     if (method === 'GET' && url.endsWith('/events-123/abc.ics')) return new Response(`BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:abc\r\nDTSTART;TZID=Europe/Moscow:20260907T110000\r\nDTEND;TZID=Europe/Moscow:20260907T120000\r\nSUMMARY:Созвон <важный>\r\nX-YANDEX-FOO:bar\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n`, { status: 200, headers: { ETag: '"etag-1"' } });
     if (method === 'PUT') return new Response('', { status: 201, headers: { ETag: '"new-etag"' } });
     if (method === 'DELETE') return new Response(null, { status: 204 });

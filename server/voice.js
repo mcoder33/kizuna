@@ -487,7 +487,7 @@ function runCalendarTool(db, name, args, { now, timeZone, provider, userId, cale
   }
   const eventId = typeof args.eventId === 'string' ? args.eventId : '';
   if (!eventId.startsWith('ext:')) return { error: 'Нужен eventId события из list_calendar. Своё дело правится update_capture.' };
-  const messages = { not_found: 'Событие не найдено.', busy_mode: 'Этот календарь подключён в режиме «только занято»: его события не правятся.', recurring: 'Повторяющееся событие правьте в самом календаре.', calendar_not_found: 'В этот календарь писать нельзя.', account_not_found: 'Календарь отключён.', invalid_title: 'Название — до 300 символов.', invalid_schedule: 'Некорректная дата или время.', conflict: 'Событие только что изменили снаружи — обновите календарь.', unauthorized: 'Календарь не принял учётные данные, подключите его заново.' };
+  const messages = { not_found: 'Событие не найдено.', busy_mode: 'Этот календарь подключён в режиме «только занято»: его события не правятся.', recurring: 'В другой календарь переносится только серия целиком — в самом календаре.', calendar_not_found: 'В этот календарь писать нельзя.', account_not_found: 'Календарь отключён.', invalid_title: 'Название — до 300 символов.', invalid_schedule: 'Некорректная дата или время.', conflict: 'Событие только что изменили снаружи — обновите календарь.', unauthorized: 'Календарь не принял учётные данные, подключите его заново.' };
   const failed = result => ({ error: `${messages[result.error] || 'Календарь не принял правку.'}${result.message ? ` ${result.message}` : ''}` });
   if (name === 'update_event') {
     const patch = {};

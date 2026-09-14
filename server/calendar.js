@@ -13,7 +13,7 @@ import crypto from 'node:crypto';
 import { dateInZone, shiftDate } from './reports.js';
 import { CALDAV_PRESETS, createCaldavClient } from './caldav.js';
 import { createGoogleCalendarClient } from './google-calendar.js';
-import { buildEvent, findJoinUrl, localDateTime, rewriteEvent, setPartstat, zonedToUtc } from './ics.js';
+import { buildEvent, excludeInstance, findJoinUrl, localDateTime, overrideInstance, rewriteEvent, setPartstat, zonedToUtc } from './ics.js';
 import { replaceInterpretation } from './db.js';
 import { shouldMaterializeProjections } from './classifier.js';
 
@@ -307,12 +307,15 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     for (const row of rows) {
       const calendar = JSON.parse(row.calendars_json || '[]').find(item => item.id === row.calendar_id) || null;
       const busyOnly = row.mode === 'busy';
-      const editable = !busyOnly && calendar?.writable !== false && !(row.provider === 'caldav' && row.instance_key);
+      const editable = !busyOnly && calendar?.writable !== false;
+      // В другой календарь по CalDAV переезжает только серия целиком: один
+      // экземпляр отдельным файлом не живёт.
+      const movable = editable && !(row.provider === 'caldav' && row.instance_key);
       const base = {
         id: `ext:${row.id}`, kind: 'external', accountId: row.account_id, calendarId: row.calendar_id, calendarName: calendar?.name || row.account_label,
         color: calendar?.color || row.account_color || null, source: row.account_label,
         title: busyOnly ? 'Занято' : row.title, description: busyOnly ? null : row.description, location: busyOnly ? null : row.location,
-        busy: Boolean(row.busy), joinUrl: busyOnly ? null : row.join_url, href: busyOnly ? null : row.href, readOnly: !editable, editable,
+        busy: Boolean(row.busy), joinUrl: busyOnly ? null : row.join_url, href: busyOnly ? null : row.href, readOnly: !editable, editable, movable,
         recurring: Boolean(row.instance_key),
         ...(busyOnly ? { attendees: [], organizer: null, repeat: null, url: null, me: null } : eventPeople(row)),
       };
@@ -599,6 +602,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     const row = externalRow(userId, id);
     const refused = externalWritable(row);
     if (refused) return { error: refused };
+    if (row.provider === 'caldav' && row.instance_key) return { error: 'recurring' };
     const calendars = JSON.parse(row.calendars_json || '[]');
     const target = calendars.find(calendar => calendar.id === calendarId && calendar.writable !== false);
     if (!target) return { error: 'calendar_not_found' };
@@ -631,7 +635,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
   function externalInfo(row) {
     const tz = timeZone();
     const calendar = JSON.parse(row.calendars_json || '[]').find(item => item.id === row.calendar_id) || null;
-    const base = { id: `ext:${row.id}`, title: row.mode === 'busy' ? 'Занято' : row.title, source: row.account_label, calendarId: row.calendar_id, calendarName: calendar?.name || row.account_label, color: calendar?.color || null, location: row.mode === 'busy' ? null : row.location, joinUrl: row.mode === 'busy' ? null : row.join_url, href: row.href, recurring: Boolean(row.instance_key), editable: !externalWritable(row), ...(row.mode === 'busy' ? { attendees: [], organizer: null, repeat: null, url: null, me: null } : eventPeople(row)) };
+    const base = { id: `ext:${row.id}`, title: row.mode === 'busy' ? 'Занято' : row.title, source: row.account_label, calendarId: row.calendar_id, calendarName: calendar?.name || row.account_label, color: calendar?.color || null, location: row.mode === 'busy' ? null : row.location, joinUrl: row.mode === 'busy' ? null : row.join_url, href: row.href, recurring: Boolean(row.instance_key), editable: !externalWritable(row), movable: !externalWritable(row) && !(row.provider === 'caldav' && row.instance_key), ...(row.mode === 'busy' ? { attendees: [], organizer: null, repeat: null, url: null, me: null } : eventPeople(row)) };
     if (row.all_day) return { ...base, allDay: true, date: row.start_at.slice(0, 10), time: null, end: null };
     const start = localDateTime(new Date(row.start_at), tz), end = localDateTime(new Date(row.end_at), tz);
     return { ...base, allDay: false, date: start.date, time: start.time, end: end.date === start.date ? end.time : '23:59' };
@@ -642,7 +646,6 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     if (row.mode === 'busy') return 'busy_mode';
     const calendar = JSON.parse(row.calendars_json || '[]').find(item => item.id === row.calendar_id);
     if (!calendar || calendar.writable === false) return 'calendar_not_found';
-    if (row.provider === 'caldav' && row.instance_key) return 'recurring';
     return null;
   }
   async function updateExternalEvent({ userId, id, title, date, time, end }) {
@@ -684,7 +687,12 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
       if (row.provider === 'caldav') {
         const password = credentialsOf(row)?.password || '';
         const got = await caldavClient.getEvent({ href: row.href, username: row.username, password });
-        const ics = rewriteEvent(got.ics, { title: nextTitle, start: event.start, end: event.end, allDay: event.allDay, now: now() });
+        // Экземпляр повтора — «только это событие»: серия остаётся, экземпляр
+        // получает свой VEVENT с RECURRENCE-ID; одиночное событие правится по месту.
+        const ics = row.instance_key
+          ? overrideInstance(got.ics, { instanceKey: row.instance_key, title: nextTitle, start: event.start, end: event.end, allDay: event.allDay, now: now(), timeZone: tz })
+          : rewriteEvent(got.ics, { title: nextTitle, start: event.start, end: event.end, allDay: event.allDay, now: now() });
+        if (!ics) return { error: 'update_failed', message: 'В файле события не нашлось серии.' };
         const put = await caldavClient.putEvent({ href: row.href, username: row.username, password, uid: row.uid, ics, etag: got.etag || null });
         etag = put.etag || null;
       } else {
@@ -703,11 +711,20 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     const row = externalRow(userId, id);
     const refused = externalWritable(row);
     if (refused) return { error: refused };
+    const instance = row.provider === 'caldav' && row.instance_key;
     try {
-      if (row.provider === 'caldav') await caldavClient.deleteEvent({ href: row.href, username: row.username, password: credentialsOf(row)?.password || '' });
+      if (instance) {
+        // Один экземпляр серии: серии дописывается EXDATE, файл кладётся обратно
+        // с If-Match — остальные повторы остаются.
+        const password = credentialsOf(row)?.password || '';
+        const got = await caldavClient.getEvent({ href: row.href, username: row.username, password });
+        const ics = excludeInstance(got.ics, { instanceKey: row.instance_key, now: now(), timeZone: timeZone() });
+        if (!ics) return { error: 'remove_failed', message: 'В файле события не нашлось серии.' };
+        await caldavClient.putEvent({ href: row.href, username: row.username, password, uid: row.uid, ics, etag: got.etag || null });
+      } else if (row.provider === 'caldav') await caldavClient.deleteEvent({ href: row.href, username: row.username, password: credentialsOf(row)?.password || '' });
       else await googleClient.deleteEvent({ accessToken: await googleAccessToken(row), calendarId: row.calendar_id, eventId: row.uid });
-    } catch (error) { return { error: error.code === 'unauthorized' ? 'unauthorized' : 'remove_failed', message: error.message }; }
-    if (row.provider === 'caldav') db.prepare('DELETE FROM calendar_events WHERE account_id=? AND uid=?').run(row.account_id, row.uid);
+    } catch (error) { return { error: error.code === 'unauthorized' ? 'unauthorized' : error.code === 'conflict' ? 'conflict' : 'remove_failed', message: error.message }; }
+    if (row.provider === 'caldav' && !instance) db.prepare('DELETE FROM calendar_events WHERE account_id=? AND uid=?').run(row.account_id, row.uid);
     else db.prepare('DELETE FROM calendar_events WHERE id=?').run(row.id);
     report({ event: 'calendar_external_removed', provider: row.provider });
     changed();

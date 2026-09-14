@@ -451,3 +451,88 @@ export function rewriteEvent(text, { title, start, end, allDay = false, now = ne
   }
   return out.filter(line => line !== '').map(fold).join('\r\n') + '\r\n';
 }
+
+// ── экземпляр повтора: «только это событие», как в Календаре macOS ──────
+// Файл делится на строки вне событий и блоки VEVENT, чтобы править один блок
+// и собрать файл обратно, ничего не переставив.
+function splitCalendar(text) {
+  const parts = [];
+  let block = null;
+  for (const line of unfold(text)) {
+    if (/^BEGIN:VEVENT/i.test(line)) { block = [line]; continue; }
+    if (block) { block.push(line); if (/^END:VEVENT/i.test(line)) { parts.push({ event: block }); block = null; } continue; }
+    parts.push({ line });
+  }
+  return parts;
+}
+function joinCalendar(parts) {
+  return parts.flatMap(part => part.event || [part.line]).filter(line => line !== '').map(fold).join('\r\n') + '\r\n';
+}
+function isMasterBlock(block) { return !block.some(line => /^RECURRENCE-ID(;|:)/i.test(line)); }
+function recurrenceOf(block, timeZone) {
+  const line = block.find(candidate => /^RECURRENCE-ID(;|:)/i.test(candidate));
+  const prop = line ? parseLine(line) : null;
+  return prop ? parseDateValue(prop, { timeZone })?.at?.getTime() ?? null : null;
+}
+// Ключ экземпляра — момент исходного начала: ISO из кэша или штамп iCalendar.
+function instanceMoment(instanceKey) {
+  const key = String(instanceKey || '').trim();
+  const at = /^\d{8}(T\d{6}Z?)?$/.test(key) ? parseDateValue({ value: key, params: {} }, { timeZone: 'UTC' })?.at : new Date(key);
+  return at && !Number.isNaN(at.getTime()) ? at : null;
+}
+function recurrenceLine(master, at) {
+  const dateOnly = master.some(line => /^DTSTART;[^:]*VALUE=DATE(;|:)/i.test(line));
+  return dateOnly ? `RECURRENCE-ID;VALUE=DATE:${stamp(at).slice(0, 8)}` : `RECURRENCE-ID:${stamp(at)}`;
+}
+function nextSequence(block) {
+  const sequence = block.map(line => line.match(/^SEQUENCE:(\d+)/i)).find(Boolean);
+  return (sequence ? Number(sequence[1]) : 0) + 1;
+}
+
+// Правка одного экземпляра повтора: серия остаётся как была, а экземпляр
+// получает свой VEVENT с тем же UID и RECURRENCE-ID исходного начала (RFC 5545
+// §3.8.4.4) — так «только это событие» делает Календарь macOS. Уже
+// переопределённый экземпляр переписывается; новый — копия главного VEVENT без
+// правила повтора и исключений, с новым временем и, если просили, названием.
+export function overrideInstance(text, { instanceKey, title, start, end, allDay = false, now = new Date(), timeZone = 'UTC' }) {
+  const at = instanceMoment(instanceKey);
+  if (!at) return null;
+  const parts = splitCalendar(text);
+  const master = parts.find(part => part.event && isMasterBlock(part.event))?.event;
+  if (!master) return null;
+  const timing = allDay
+    ? [`DTSTART;VALUE=DATE:${wallStamp(start).slice(0, 8)}`, `DTEND;VALUE=DATE:${wallStamp(end).slice(0, 8)}`]
+    : [`DTSTART:${stamp(start)}`, `DTEND:${stamp(end)}`];
+  const summaryLine = title !== undefined ? [`SUMMARY:${escapeText(title)}`] : [];
+  const stamps = [`DTSTAMP:${stamp(now)}`, `LAST-MODIFIED:${stamp(now)}`];
+  const existing = parts.find(part => part.event && !isMasterBlock(part.event) && recurrenceOf(part.event, timeZone) === at.getTime());
+  if (existing) {
+    const keep = existing.event.filter(line => !/^(DTSTART|DTEND|DURATION|DTSTAMP|LAST-MODIFIED|SEQUENCE)(;|:)/i.test(line) && !(title !== undefined && /^SUMMARY(;|:)/i.test(line)));
+    const endIndex = keep.findIndex(line => /^END:VEVENT/i.test(line));
+    existing.event = [...keep.slice(0, endIndex), ...stamps, `SEQUENCE:${nextSequence(existing.event)}`, ...timing, ...summaryLine, ...keep.slice(endIndex)];
+    return joinCalendar(parts);
+  }
+  const copy = master.filter(line => !/^(RRULE|RDATE|EXDATE|EXRULE|DTSTART|DTEND|DURATION|DTSTAMP|LAST-MODIFIED|SEQUENCE)(;|:)/i.test(line) && !(title !== undefined && /^SUMMARY(;|:)/i.test(line)));
+  const endIndex = copy.findIndex(line => /^END:VEVENT/i.test(line));
+  const override = [...copy.slice(0, endIndex), recurrenceLine(master, at), ...stamps, `SEQUENCE:${nextSequence(master)}`, ...timing, ...summaryLine, ...copy.slice(endIndex)];
+  const closing = parts.findIndex(part => part.line && /^END:VCALENDAR/i.test(part.line));
+  parts.splice(closing < 0 ? parts.length : closing, 0, { event: override });
+  return joinCalendar(parts);
+}
+
+// Удаление одного экземпляра: серии дописывается EXDATE исходного начала, а
+// его переопределение, если было, убирается — остальные повторы не трогаются.
+export function excludeInstance(text, { instanceKey, now = new Date(), timeZone = 'UTC' }) {
+  const at = instanceMoment(instanceKey);
+  if (!at) return null;
+  const parts = splitCalendar(text).filter(part => !(part.event && !isMasterBlock(part.event) && recurrenceOf(part.event, timeZone) === at.getTime()));
+  const holder = parts.find(part => part.event && isMasterBlock(part.event));
+  if (!holder) return null;
+  const master = holder.event;
+  const dateOnly = master.some(line => /^DTSTART;[^:]*VALUE=DATE(;|:)/i.test(line));
+  const keep = master.filter(line => !/^(DTSTAMP|LAST-MODIFIED|SEQUENCE)(;|:)/i.test(line));
+  const endIndex = keep.findIndex(line => /^END:VEVENT/i.test(line));
+  const exdate = dateOnly ? `EXDATE;VALUE=DATE:${stamp(at).slice(0, 8)}` : `EXDATE:${stamp(at)}`;
+  holder.event = [...keep.slice(0, endIndex), exdate, `DTSTAMP:${stamp(now)}`, `LAST-MODIFIED:${stamp(now)}`, `SEQUENCE:${nextSequence(master)}`, ...keep.slice(endIndex)];
+  return joinCalendar(parts);
+}

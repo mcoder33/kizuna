@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { describeRrule, setPartstat, parseCalendar, buildEvent, findJoinUrl, zonedToUtc, localDateTime, expandRrule } from '../server/ics.js';
+import { describeRrule, setPartstat, parseCalendar, buildEvent, findJoinUrl, zonedToUtc, localDateTime, expandRrule, overrideInstance, excludeInstance } from '../server/ics.js';
 
 const sample = `BEGIN:VCALENDAR
 VERSION:2.0
@@ -115,4 +115,45 @@ test('повтор словами и ответ на приглашение пр
   assert.equal((replied.match(/COMMENT:/g) || []).length, 1);
   assert.ok(replied.includes('COMMENT:не смогу'));
   assert.equal(setPartstat(ics, { email: 'nobody@example.com', status: 'accepted' }), null);
+});
+
+test('экземпляр повтора: «только это событие» — RECURRENCE-ID в файле серии, повторное — переписывает, удаление — EXDATE', () => {
+  const series = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT', 'UID:rr', 'DTSTART;TZID=Europe/Moscow:20260902T100000', 'DTEND;TZID=Europe/Moscow:20260902T101500', 'RRULE:FREQ=WEEKLY;BYDAY=WE', 'SEQUENCE:2', 'SUMMARY:Стендап', 'X-YANDEX-FOO:bar', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n') + '\r\n';
+  const now = new Date('2026-09-08T10:00:00Z');
+  const window = { from: '2026-09-01T00:00:00Z', to: '2026-09-30T00:00:00Z', timeZone: 'Europe/Moscow' };
+  // 9 сентября 10:00 Москвы — 07:00Z; переносим на 12:00 Москвы (09:00Z) с новым названием.
+  const moved = overrideInstance(series, { instanceKey: '2026-09-09T07:00:00.000Z', title: 'Стендап (позже)', start: new Date('2026-09-09T09:00:00Z'), end: new Date('2026-09-09T09:15:00Z'), now });
+  assert.equal((moved.match(/BEGIN:VEVENT/g) || []).length, 2);
+  assert.ok(moved.includes('RECURRENCE-ID:20260909T070000Z'));
+  assert.ok(moved.includes('RRULE:FREQ=WEEKLY;BYDAY=WE'), 'серия осталась');
+  assert.equal((moved.match(/RRULE:/g) || []).length, 1, 'у переопределения правила нет');
+  assert.equal((moved.match(/X-YANDEX-FOO:bar/g) || []).length, 2, 'чужие свойства скопированы в экземпляр');
+  const read = parseCalendar(moved, window).events;
+  assert.deepEqual(read.map(event => [event.title, event.start.toISOString(), event.instanceKey]), [
+    ['Стендап', '2026-09-02T07:00:00.000Z', '2026-09-02T07:00:00.000Z'],
+    ['Стендап (позже)', '2026-09-09T09:00:00.000Z', '2026-09-09T07:00:00.000Z'],
+    ['Стендап', '2026-09-16T07:00:00.000Z', '2026-09-16T07:00:00.000Z'],
+    ['Стендап', '2026-09-23T07:00:00.000Z', '2026-09-23T07:00:00.000Z'],
+  ]);
+  // Второй перенос того же экземпляра переписывает его блок, а не плодит третий.
+  const again = overrideInstance(moved, { instanceKey: '2026-09-09T07:00:00.000Z', start: new Date('2026-09-09T11:00:00Z'), end: new Date('2026-09-09T11:15:00Z'), now });
+  assert.equal((again.match(/BEGIN:VEVENT/g) || []).length, 2);
+  assert.equal((again.match(/RECURRENCE-ID:20260909T070000Z/g) || []).length, 1);
+  const reread = parseCalendar(again, window).events.find(event => event.instanceKey === '2026-09-09T07:00:00.000Z');
+  assert.deepEqual([reread.title, reread.start.toISOString()], ['Стендап (позже)', '2026-09-09T11:00:00.000Z']);
+  // Удаление экземпляра: EXDATE у серии, переопределение убрано.
+  const gone = excludeInstance(again, { instanceKey: '2026-09-09T07:00:00.000Z', now });
+  assert.equal((gone.match(/BEGIN:VEVENT/g) || []).length, 1);
+  assert.ok(gone.includes('EXDATE:20260909T070000Z'));
+  assert.ok(gone.includes('SEQUENCE:3'));
+  assert.deepEqual(parseCalendar(gone, window).events.map(event => event.start.toISOString()), ['2026-09-02T07:00:00.000Z', '2026-09-16T07:00:00.000Z', '2026-09-23T07:00:00.000Z']);
+  // Событие на весь день — RECURRENCE-ID и EXDATE датами.
+  const allDay = ['BEGIN:VCALENDAR', 'BEGIN:VEVENT', 'UID:d', 'DTSTART;VALUE=DATE:20260901', 'DTEND;VALUE=DATE:20260902', 'RRULE:FREQ=DAILY', 'SUMMARY:Зарядка', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n') + '\r\n';
+  const dayMoved = overrideInstance(allDay, { instanceKey: '2026-09-03T00:00:00.000Z', allDay: true, start: { year: 2026, month: 9, day: 4 }, end: { year: 2026, month: 9, day: 5 }, now });
+  assert.ok(dayMoved.includes('RECURRENCE-ID;VALUE=DATE:20260903'));
+  assert.ok(dayMoved.includes('DTSTART;VALUE=DATE:20260904'));
+  assert.ok(excludeInstance(allDay, { instanceKey: '2026-09-03T00:00:00.000Z', now }).includes('EXDATE;VALUE=DATE:20260903'));
+  // Без серии в файле — null: правка невозможна, а не тихо сломана.
+  assert.equal(overrideInstance('BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n', { instanceKey: '2026-09-09T07:00:00.000Z', start: now, end: now }), null);
+  assert.equal(excludeInstance(series, { instanceKey: 'мусор' }), null);
 });

@@ -4579,7 +4579,8 @@ function showExternalEvent(item) {
   const dot = node("i", undefined, "cal-dot");
   dot.style.background = item.color || account?.color || "var(--n-72)";
   calPick.append(dot);
-  if (item.editable && writable.length > 1) {
+  // Экземпляр повтора по CalDAV в другой календарь не переезжает — только серия.
+  if ((item.movable ?? item.editable) && writable.length > 1) {
     const select = node("select");
     select.setAttribute("aria-label", "Календарь события");
     for (const calendar of writable) { const option = node("option", calendar.name); option.value = calendar.id; option.selected = calendar.id === item.calendarId; select.append(option); }
@@ -4703,7 +4704,10 @@ function showExternalEvent(item) {
   actions.append(take);
   if (item.editable) {
     const remove = calButton("Удалить", "cal-pop-btn danger", async () => {
-      if (!confirm(`Удалить «${item.title}» из календаря ${item.source}? Это не вернуть.`)) return;
+      const question = item.recurring
+        ? `Удалить только этот повтор «${item.title}» (${calHuman(item.date)}) из календаря ${item.source}? Серия останется.`
+        : `Удалить «${item.title}» из календаря ${item.source}? Это не вернуть.`;
+      if (!confirm(question)) return;
       remove.disabled = true;
       try { await request(`/api/calendar/external/${encodeURIComponent(item.id)}`, { method: "DELETE" }); toast(`Удалено из ${item.source}`); closeCalendarPop(); await loadCalendar(); }
       catch (error) { toast(error.message); remove.disabled = false; }
@@ -4711,7 +4715,14 @@ function showExternalEvent(item) {
     actions.append(remove);
   }
   pop.append(actions);
-  pop.append(node("p", item.editable ? "Чужое событие не запись: его нет в поиске и отчётах, пока вы не возьмёте его в память. Название правится по клику, перенос — мышкой, изменения уходят в календарь сразу." : item.recurring ? "Экземпляр повтора: время и название правятся в самом календаре, ответ организатору — здесь." : "Чужое событие не запись: его нет в поиске и отчётах, пока вы не возьмёте его в память.", "cal-pop-note"));
+  // Как в Календаре macOS: правка и удаление повтора касаются только этого
+  // события, серия остаётся; ответ организатору — один на всю серию.
+  const note = !item.editable
+    ? "Чужое событие не запись: его нет в поиске и отчётах, пока вы не возьмёте его в память."
+    : item.recurring
+      ? "Экземпляр повтора: название по клику и перенос мышкой меняют только этот повтор, серия остаётся как была; ответ организатору — на всю серию."
+      : "Чужое событие не запись: его нет в поиске и отчётах, пока вы не возьмёте его в память. Название правится по клику, перенос — мышкой, изменения уходят в календарь сразу.";
+  pop.append(node("p", note, "cal-pop-note"));
   // Плашка стала высокой — не даём ей уехать за нижний край окна.
   const rect = pop.getBoundingClientRect();
   const overflow = rect.bottom - (window.innerHeight - 8);
