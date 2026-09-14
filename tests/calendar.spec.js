@@ -45,7 +45,7 @@ test("календарь: неделя, день, месяц, перенос м�
 
   // Клик по пустому месту — новая запись с подставленным временем.
   await column.click({ position: { x: 40, y: 8 * 48 + 2 } });
-  const quick = calendar.locator(".cal-pop.quick input");
+  const quick = page.locator(".cal-pop.quick input");
   await expect(quick).toBeVisible();
   await quick.fill("Проверить быстрый ввод");
   await quick.press("Enter");

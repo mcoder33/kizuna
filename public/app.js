@@ -4569,21 +4569,49 @@ function openCalendarItem(item) {
   if (item.kind !== "external") { openReportEntry(item.id); return; }
   showExternalEvent(item);
 }
-function closeCalendarPop() { calState.pop?.remove(); calState.pop = null; }
+function closeCalendarPop() {
+  calState.pop?.remove();
+  calState.pop = null;
+  calState.popCleanup?.();
+  calState.popCleanup = null;
+}
+// Плашка живёт поверх всей страницы, а не внутри сетки: сетка прокручивается
+// и режет всё, что выходит за её край, а плашке нужен весь экран. Координаты —
+// от окна; прокрутка сетки или окна закрывает плашку, чтобы она не повисла
+// отдельно от своего события.
 function calPopAt(anchorElement) {
   closeCalendarPop();
   const pop = node("div", undefined, "cal-pop");
-  const wrap = $("#calendar-view");
-  const box = anchorElement.getBoundingClientRect(), base = wrap.getBoundingClientRect();
-  pop.style.left = `${Math.max(8, Math.min(box.left - base.left, base.width - 320))}px`;
-  pop.style.top = `${box.bottom - base.top + 6}px`;
-  wrap.append(pop);
+  const box = anchorElement.getBoundingClientRect();
+  calPopPlace(pop, box.left, box.bottom + 6);
+  document.body.append(pop);
   calState.pop = pop;
-  setTimeout(() => {
-    const away = (event) => { if (!pop.contains(event.target)) { closeCalendarPop(); document.removeEventListener("pointerdown", away); } };
+  const away = (event) => { if (!pop.contains(event.target)) closeCalendarPop(); };
+  const drift = (event) => { if (!pop.contains(event.target)) closeCalendarPop(); };
+  const timer = setTimeout(() => {
     document.addEventListener("pointerdown", away);
+    document.addEventListener("scroll", drift, true);
+    window.addEventListener("resize", drift);
   }, 0);
+  calState.popCleanup = () => {
+    clearTimeout(timer);
+    document.removeEventListener("pointerdown", away);
+    document.removeEventListener("scroll", drift, true);
+    window.removeEventListener("resize", drift);
+  };
   return pop;
+}
+function calPopPlace(pop, left, top) {
+  const width = pop.classList.contains("rich") ? 340 : 300;
+  pop.style.left = `${Math.max(8, Math.min(left, window.innerWidth - width - 8))}px`;
+  pop.style.top = `${Math.max(8, top)}px`;
+}
+// Плашка собрана — если не влезает под событием, поднимается, но не выше
+// верхнего края; остаток, если он есть, прокручивается внутри неё.
+function calPopFit(pop) {
+  const rect = pop.getBoundingClientRect();
+  const overflow = rect.bottom - (window.innerHeight - 8);
+  if (overflow > 0) pop.style.top = `${Math.max(8, rect.top - overflow)}px`;
 }
 // Плашка чужого события — как в Календаре macOS: заголовок и календарь,
 // откуда событие, когда и как повторяется, участники с ответами, ссылка на
@@ -4760,10 +4788,7 @@ function showExternalEvent(item) {
       ? "Экземпляр повтора: название по клику и перенос мышкой меняют только этот повтор, серия остаётся как была; ответ организатору — на всю серию."
       : "Чужое событие не запись: его нет в поиске и отчётах, пока вы не возьмёте его в память. Название правится по клику, перенос — мышкой, изменения уходят в календарь сразу.";
   pop.append(node("p", note, "cal-pop-note"));
-  // Плашка стала высокой — не даём ей уехать за нижний край окна.
-  const rect = pop.getBoundingClientRect();
-  const overflow = rect.bottom - (window.innerHeight - 8);
-  if (overflow > 0) pop.style.top = `${Math.max(8, parseFloat(pop.style.top) - overflow)}px`;
+  calPopFit(pop);
 }
 // Клик по пустому месту сетки — новая запись с уже подставленным временем.
 function openCalendarQuickAdd(target, event) {
@@ -4774,9 +4799,7 @@ function openCalendarQuickAdd(target, event) {
     time = calTime(calSnap(CAL_H0 * 60 + ((event.clientY - rect.top) / CAL_HOUR_PX) * 60));
   }
   const pop = calPopAt(target);
-  const wrap = $("#calendar-view").getBoundingClientRect();
-  pop.style.left = `${Math.max(8, Math.min(event.clientX - wrap.left + 8, wrap.width - 320))}px`;
-  pop.style.top = `${event.clientY - wrap.top + 8}px`;
+  calPopPlace(pop, event.clientX + 8, event.clientY + 8);
   pop.classList.add("quick");
   pop.append(node("p", `${calHuman(date)}${time ? `, ${time}` : ""}`, "cal-pop-when"));
   const input = node("input");
