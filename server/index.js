@@ -633,7 +633,11 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   app.use((error,req,res,next)=>{if(res.headersSent)return next(error);const status=Number(error?.status||error?.statusCode);if(typeof error?.type==='string'&&(error.type.startsWith('entity.')||error.type.startsWith('encoding.'))&&status>=400&&status<500)return res.status(status).json({error:{code:bodyErrorCodes[status]||'invalid_request',message:bodyErrorMessages[status]||'Некорректный запрос.'}});res.status(500).json({error:{code:'internal_error',message:'Не удалось обработать запрос.'}});});
   return app;
 }
-if(process.argv[1]===fileURLToPath(import.meta.url)){const app=createApp();const server=app.listen(Number(process.env.PORT||3000),process.env.HOST||'127.0.0.1',()=>{app.captureJobWorker.start();app.calendarSyncWorker.start();app.reminderWorker.start();console.log('Kizuna server started.');});let shuttingDown=false;const shutdown=()=>{if(shuttingDown)return;shuttingDown=true;
+// Аудит службы — в stdout, то есть в journalctl: события у кода были всегда
+// (удаление записи, экспорт, блокировка, ошибки календаря), но сборщик по
+// умолчанию пустой, и они падали в никуда. Одной строкой в JSON, чтобы журнал
+// можно было грепать и читать через `journalctl -u kizuna -o cat | jq`.
+if(process.argv[1]===fileURLToPath(import.meta.url)){const app=createApp({audit:(event)=>{try{console.log(JSON.stringify({at:new Date().toISOString(),...event}));}catch{}}});const server=app.listen(Number(process.env.PORT||3000),process.env.HOST||'127.0.0.1',()=>{app.captureJobWorker.start();app.calendarSyncWorker.start();app.reminderWorker.start();console.log('Kizuna server started.');});let shuttingDown=false;const shutdown=()=>{if(shuttingDown)return;shuttingDown=true;
   // Потоки событий держали ответы открытыми, и server.close ждал их вечно:
   // systemd убивал процесс по таймауту через 90 с — каждый деплой давал
   // полторы минуты простоя. Потоки закрываем сами, простаивающие соединения

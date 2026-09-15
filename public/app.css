@@ -6098,6 +6098,11 @@ body {
 .cal-ev small { display: block; color: var(--n-52); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cal-ev.meeting { --cal-c: var(--type-meeting); --cal-bg: var(--tint-wait); }
 .cal-ev.external { --cal-c: var(--n-62); --cal-bg: color-mix(in srgb, var(--cal-c) 16%, var(--paper)); color: color-mix(in srgb, var(--cal-c) 72%, var(--ink)); }
+/* Приглашение без ответа — незакрашенное, пунктиром: время занято, но событие
+   ещё не ваше, пока не ответили. Тем же пунктиром помечен значок «без ответа»
+   в плашке события. */
+.cal-ev.unanswered, .cal-chip.unanswered { background: var(--paper); border: 1px dashed color-mix(in srgb, var(--cal-c) 55%, transparent); }
+.cal-row.unanswered small { color: var(--yellow-51); }
 .cal-ev.external b { font-weight: 600; }
 .cal-ev.external .cal-ev-time { color: inherit; font-weight: 500; }
 .cal-ev.external small { color: color-mix(in srgb, var(--cal-c) 55%, var(--n-52)); }

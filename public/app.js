@@ -5114,8 +5114,12 @@ function calToolbarEl() {
   top.append(nav, title, seg);
   return top;
 }
+// Приглашение, на которое вы ещё не ответили, стоит в сетке незакрашенным и
+// пунктиром — как в Календаре macOS: событие уже занимает время, но оно ещё не
+// ваше. Прошедший день не метим: ответ там уже ничего не решает.
+const calAwaitingAnswer = (item) => item.kind === "external" && item.me?.status === "needs-action" && item.date >= calToday();
 function calChipEl(item, { overdue = false } = {}) {
-  const chip = node("div", undefined, `cal-chip ${item.kind}${item.done ? " done" : ""}${overdue || item.overdue ? " late" : ""}`);
+  const chip = node("div", undefined, `cal-chip ${item.kind}${item.done ? " done" : ""}${overdue || item.overdue ? " late" : ""}${calAwaitingAnswer(item) ? " unanswered" : ""}`);
   chip.dataset.id = item.id;
   if (item.kind === "external" && item.editable) { chip.draggable = true; chip.dataset.own = "1"; }
   if (item.kind !== "external") {
@@ -5137,7 +5141,7 @@ function calEventEl(item) {
   const start = calMinutes(item.time), end = calMinutes(calEndOf(item));
   const top = ((start - CAL_H0 * 60) / 60) * CAL_HOUR_PX;
   const height = Math.max(((end - start) / 60) * CAL_HOUR_PX - 2, 18);
-  const element = node("div", undefined, `cal-ev ${item.kind}${item.done ? " done" : ""}${item.overdue ? " late" : ""}${height < 34 ? " short" : ""}`);
+  const element = node("div", undefined, `cal-ev ${item.kind}${item.done ? " done" : ""}${item.overdue ? " late" : ""}${height < 34 ? " short" : ""}${calAwaitingAnswer(item) ? " unanswered" : ""}`);
   element.style.top = `${top}px`;
   element.style.height = `${height}px`;
   element.dataset.id = item.id;
@@ -5221,10 +5225,11 @@ function calAgendaEl(date) {
   for (const item of timed) {
     const start = calMinutes(item.time);
     if (start - cursor >= 60) aside.append(node("p", `свободно ${Math.floor((start - cursor) / 60)} ч${(start - cursor) % 60 ? ` ${(start - cursor) % 60} мин` : ""}`, "cal-free"));
-    const row = node("div", undefined, `cal-row ${item.kind}${item.done ? " done" : ""}`);
+    const waiting = calAwaitingAnswer(item);
+    const row = node("div", undefined, `cal-row ${item.kind}${item.done ? " done" : ""}${waiting ? " unanswered" : ""}`);
     row.append(node("time", item.time));
     const text = node("span", item.title, "cal-row-title");
-    const meta = node("small", item.kind === "external" ? item.source : `до ${calEndOf(item)}${item.project ? ` · ${item.project}` : ""}`);
+    const meta = node("small", item.kind === "external" ? `${item.source}${waiting ? " · без ответа" : ""}` : `до ${calEndOf(item)}${item.project ? ` · ${item.project}` : ""}`);
     const body = node("span", undefined, "cal-row-body");
     body.append(text, meta);
     row.append(body);

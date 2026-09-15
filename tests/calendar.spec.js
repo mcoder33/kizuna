@@ -144,6 +144,14 @@ test("плашка чужого события: участники с ответ
   // Экземпляр повтора (instance_key) — у него «Удалить» спрашивает про серию.
   db.prepare("INSERT INTO calendar_events(id,account_id,calendar_id,uid,instance_key,title,description,location,start_at,end_at,all_day,busy,join_url,etag,href,updated_at,repeat,sequence) VALUES('e2','acc1','c1','u2',?,'Ретро команды',NULL,NULL,?,?,0,1,NULL,'\"r\"','https://calendar.yandex.ru/event?event_id=1',datetime('now'),'Повторяется каждую неделю по пн',1)")
     .run(`${today}T15:30:00.000Z`, `${today}T15:30:00.000Z`, `${today}T16:30:00.000Z`);
+  // Приглашение, на которое я не ответил: в сетке его видно и без плашки.
+  db.prepare("INSERT INTO calendar_events(id,account_id,calendar_id,uid,instance_key,title,start_at,end_at,all_day,busy,etag,href,updated_at,attendees_json,organizer_json,sequence) VALUES('e3','acc1','c1','u3',NULL,'Аналитика ЗБ по ИИ',?,?,0,1,'\"a\"','https://calendar.yandex.ru/event?event_id=3',datetime('now'),?,?,1)")
+    .run(`${today}T09:00:00.000Z`, `${today}T10:00:00.000Z`,
+      JSON.stringify([
+        { email: "stas@itfinance.tech", name: "Станислав Косухин", status: "accepted", optional: false, organizer: true },
+        { email: "me@itfinance.tech", name: "Александр Марченков", status: "needs-action", optional: false, organizer: false },
+      ]),
+      JSON.stringify({ email: "stas@itfinance.tech", name: "Станислав Косухин" }));
   db.close();
   await page.goto("/#calendar");
   await page.evaluate(() => { localStorage.setItem("kizuna-calendar-mode", "day"); });
@@ -195,6 +203,17 @@ test("плашка чужого события: участники с ответ
   await ask.getByRole("button", { name: "Отмена" }).click();
   await expect(ask).toHaveCount(0);
   await expect(series.locator(".cal-pop-btn", { hasText: "Удалить" })).toBeVisible();
+
+  // Приглашение без ответа видно прямо в сетке, не открывая плашку:
+  // незакрашенное и пунктиром, как в Календаре macOS.
+  await page.keyboard.press("Escape");
+  const waitingEvent = page.locator(".cal-ev.external", { hasText: "Аналитика" });
+  await expect(waitingEvent).toHaveClass(/unanswered/);
+  expect(await waitingEvent.evaluate((element) => getComputedStyle(element).borderTopStyle)).toBe("dashed");
+  // На принятой встрече метки нет: она уже ваша.
+  await expect(page.locator(".cal-ev.external", { hasText: "Монетизация" })).not.toHaveClass(/unanswered/);
+  // В списке дня рядом с ней сказано словами, а не только цветом.
+  await expect(page.locator(".cal-row", { hasText: "Аналитика" })).toContainText("без ответа");
 });
 
 // Удаление чужого события идёт в чужой календарь, а он отвечает не сразу:
