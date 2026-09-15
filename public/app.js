@@ -773,15 +773,18 @@ function applyCoverComposer(cover = todayState.cover) {
   renderCaptureControls();
 }
 function paintCover(cover, date) {
+  // Обложка рассказывает про день, только пока оба ящика закрыты. Раскрытый
+  // ящик говорит сам: дату — своей полосой дней, дела и встречи — списком, —
+  // и страница начинала повторяться, «Вторник, 15 сентября» дважды на одном
+  // экране. Место у даты и брифа при этом прежнее: они не переезжают.
+  const covered = todayState.tab === null;
   const dateEl = $("#today-date");
+  dateEl.hidden = !covered;
   clear(dateEl);
   dateEl.append(document.createTextNode(`${longDate(date)} · `), node("span", PHASE_NAMES[cover.phase], `today-phase ${cover.phase}`));
   if (cover.endedMeeting) dateEl.append(document.createTextNode(" · "), node("span", "после встречи", "today-phase after"));
   const brief = $("#today-brief");
-  // Рассказ и список не спорят: бриф виден, только пока оба ящика закрыты.
-  // С открытым «Днём» страница говорила одно и то же дважды — словами сверху и
-  // списком снизу. Место брифа при этом не меняется: он там же, где и был.
-  brief.hidden = todayState.tab !== null;
+  brief.hidden = !covered;
   clear(brief);
   // Бриф собирается узлами, а не HTML: названия встреч и дел — чужой текст.
   for (const part of cover.brief) {

@@ -621,9 +621,8 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   app.get('/manifest.webmanifest',(req,res)=>{ res.set({ 'Content-Type':'application/manifest+json; charset=utf-8' }); res.sendFile(path.join(__dirname,'..','public','manifest.webmanifest')); });
   app.get('/login',(req,res)=>res.sendFile(path.join(__dirname,'..','public','auth.html')));
   app.get('/',(req,res)=>req.user?res.sendFile(path.join(__dirname,'..','public','app.html')):res.redirect('/login'));
-  // Черновики и студии макетов — часть той же двери: снаружи у приложения
-  // видна только страница входа.
-  for(const page of ['prototype.html','memory-model.html','index.html','design-options.html','ui-options.html','voice-orb-variations.html','capture-motion-variations.html'])app.get(`/${page}`,(req,res)=>req.user?res.sendFile(path.join(__dirname,'..',page)):res.redirect('/login'));
+  // Макеты и черновики в репозитории не живут, поэтому и раздавать их нечем:
+  // раньше здесь была дверь к концепт-страницам в корне проекта.
   app.use((req,res)=>res.status(404).json({error:{code:'not_found',message:'Не найдено.'}}));
   // Ошибка разбора тела — вина запроса, а не сервера: express.json() помечает
   // такие ошибки типом entity.*/encoding.* и своим статусом (400 на битый JSON,

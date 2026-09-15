@@ -125,23 +125,33 @@ test("today separates reported work and the day's plan; notes stay off the main 
   await expect(page.locator("#memory")).toBeVisible();
   await expect(page.locator("#today")).toBeHidden();
 });
-// Бриф и список не говорят одно и то же: рассказ виден, только пока оба ящика
-// закрыты. Днём фаза открывает «День», поэтому страница встречает списком.
-test("бриф пропадает при раскрытом ящике и возвращается, когда всё свёрнуто", async ({ page }) => {
+// Обложка и список не говорят одно и то же: дата с брифом видны, только пока
+// оба ящика закрыты — иначе «Вторник, 15 сентября» стоит на экране дважды,
+// сверху и в полосе дней. Днём фаза открывает «День», поэтому страница
+// встречает списком.
+test("дата и бриф пропадают при раскрытом ящике и возвращаются, когда всё свёрнуто", async ({ page }) => {
   await page.goto("/");
   const brief = page.locator("#today-brief");
+  const date = page.locator("#today-date");
+  const dayNavDate = page.locator("#todo .daynav b");
   const dayTab = page.getByRole("tab", { name: /^День/ });
   const journalTab = page.getByRole("tab", { name: /Что делал/ });
   await expect(dayTab).toHaveAttribute("aria-selected", "true");
   await expect(brief).toBeHidden();
-  // Свернули — бриф вернулся на своё место, над полем ввода.
+  await expect(date).toBeHidden();
+  // Дата на экране всё-таки есть — одна, в полосе дней раскрытого ящика.
+  await expect(dayNavDate).toBeVisible();
+  // Свернули — обложка вернулась на своё место, над полем ввода.
   await dayTab.click();
+  await expect(date).toBeVisible();
   await expect(brief).toBeVisible();
   await expect(brief).not.toHaveText("");
-  // Соседний ящик прячет его так же.
+  // Соседний ящик прячет их так же.
   await journalTab.click();
+  await expect(date).toBeHidden();
   await expect(brief).toBeHidden();
   await journalTab.click();
+  await expect(date).toBeVisible();
   await expect(brief).toBeVisible();
 });
 // Стрелки уводят ящик в другой день, но переключение ящика — всегда «сегодня»:
@@ -920,8 +930,6 @@ test("initial root load and legacy deck produce no console, page or resource err
     "href",
     /^data:image\/svg\+xml/,
   );
-  await page.goto("/prototype.html");
-  await expect(page.locator("body")).toBeVisible();
   expect(errors).toEqual([]);
 });
 test("morning brief loads, refreshes and opens a safe source record", async ({
