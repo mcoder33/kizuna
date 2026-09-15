@@ -1130,9 +1130,16 @@ export function resetLedger(db, userId = null) {
 // уносит экспорт, не стирает «Очистить данные» и не видит модель.
 const USER_COLUMNS = 'id,email,role,status,totp_enabled,voice_limit_usd,voice_limit_minutes,monthly_limit_usd,voice_limit_window,voice_blocked,created_at,approved_at,approved_by,blocked_at,blocked_reason,last_login_at';
 
-export function createUser(db, { email, passwordHash, role = 'user', status = 'pending' }) {
+// Новому человеку открыто всё — и разбор моделью, и разговор, — но с потолком
+// в доллар на месяц: пробовать надо на всём приложении, а не на обрезанном,
+// иначе непонятно, ради чего оно. Доллар — это порядок сотни записей или
+// десятка минут разговора; упрётся — значит, человек им действительно
+// пользуется, и дальше разговор про подписку. Хозяину дома потолок не ставим:
+// платит он.
+export const NEW_USER_MONTHLY_LIMIT_USD = 1;
+export function createUser(db, { email, passwordHash, role = 'user', status = 'pending', monthlyLimitUsd = role === 'admin' ? null : NEW_USER_MONTHLY_LIMIT_USD }) {
   const userId = id(), createdAt = now();
-  db.prepare('INSERT INTO users(id,email,password_hash,role,status,created_at) VALUES(?,?,?,?,?,?)').run(userId, email, passwordHash, role, status, createdAt);
+  db.prepare('INSERT INTO users(id,email,password_hash,role,status,created_at,monthly_limit_usd) VALUES(?,?,?,?,?,?,?)').run(userId, email, passwordHash, role, status, createdAt, monthlyLimitUsd);
   return findUserById(db, userId);
 }
 export function findUserByEmail(db, email) { return db.prepare('SELECT * FROM users WHERE email=?').get(String(email || '')) || null; }

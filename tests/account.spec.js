@@ -8,7 +8,11 @@ test("без входа приложение не открывается", async
   // Отдельный контекст без сохранённой куки: так выглядит первый приход.
   const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
   const page = await context.newPage();
+  // Гостю корень рассказывает, что это за приложение; журнала в нём нет.
   await page.goto("/");
+  await expect(page.locator(".hello-title")).toBeVisible();
+  await expect(page.locator("#today")).toHaveCount(0);
+  await page.getByRole("link", { name: "Войти" }).click();
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole("heading", { name: "Вход" })).toBeVisible();
   await context.close();
@@ -179,9 +183,10 @@ test("выход возвращает на страницу входа", async (
   await page.locator(".account-menu > summary").click();
   await page.getByRole("button", { name: "Выйти" }).click();
   await expect(page).toHaveURL(/\/login$/);
-  // Кука закрытой сессии больше ничего не открывает.
+  // Кука закрытой сессии больше ничего не открывает: корень снова рассказ.
   await page.goto("/");
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page.locator(".hello-title")).toBeVisible();
+  await expect(page.locator("#today")).toHaveCount(0);
   await context.close();
 });
 
@@ -194,7 +199,8 @@ test("администратор ставит человеку потолок р
   await pending.getByRole("button", { name: "Одобрить" }).click();
 
   const card = page.locator("#admin-users .admin-user").filter({ hasText: email });
-  await expect(card).toContainText("потолок общий");
+  // Новому человеку потолок уже стоит: доллар на пробу, дальше решает хозяин.
+  await expect(card).toContainText("в этом месяце $0.00 из $1");
 
   // Потолок правится полем прямо в карточке, а не вопросом в модальном окне.
   await card.locator('input[data-key="monthlyLimitUsd"]').fill("7");

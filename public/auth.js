@@ -13,7 +13,9 @@ const submit = $("#auth-submit");
 
 // Второй фактор спрашивается только после того, как пароль подошёл: спросить
 // код раньше значило бы подсказать, что такой адрес существует.
-let mode = "login";
+// «Завести учётную запись» с посадочной ведёт сюда же: режим берётся из
+// адреса, иначе человек попадал на форму входа и искал, где регистрация.
+let mode = new URLSearchParams(location.search).has("join") ? "register" : "login";
 let needsCode = false;
 
 function show(element, text) {

@@ -128,3 +128,99 @@
   top: 20px;
   right: 22px;
 }
+
+/* Посадочная страница. Отдельной разметкой, но теми же токенами и шрифтом, что
+   вход и приложение: человек, пришедший по ссылке, должен увидеть тот же
+   продукт, а не рекламный лендинг перед ним. Ни картинок, ни обещаний —
+   три примера того, что происходит с фразой, и честный список того, что нужно
+   знать до начала. */
+.hello-shell {
+  width: min(720px, 100%);
+  margin: 0 auto;
+  padding: 40px 20px 72px;
+}
+.hello-title {
+  margin: 26px 0 10px;
+  font-size: clamp(28px, 5vw, 40px);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+.hello-lead {
+  margin: 0 0 24px;
+  max-width: 52ch;
+  color: var(--n-52);
+  font-size: 16px;
+  line-height: 1.55;
+}
+.hello-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 40px;
+}
+.hello-primary,
+.hello-secondary {
+  display: inline-flex;
+  align-items: center;
+  padding: 11px 18px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.hello-primary {
+  background: var(--red-66);
+  color: var(--n-100);
+}
+.hello-secondary {
+  border: 1px solid var(--n-87);
+  color: var(--ink);
+}
+.hello-examples {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 36px;
+}
+.hello-examples article {
+  border: 1px solid var(--n-93);
+  border-radius: 16px;
+  padding: 16px 18px;
+  background: var(--n-100);
+}
+.hello-said {
+  margin: 0 0 6px;
+  font-weight: 650;
+  font-size: 15px;
+}
+.hello-got {
+  margin: 0;
+  color: var(--n-52);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.hello-plain h2 {
+  margin: 0 0 12px;
+  font-size: 17px;
+}
+.hello-plain ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+.hello-plain li {
+  color: var(--n-52);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.hello-plain b {
+  color: var(--ink);
+  font-weight: 650;
+}
+.hello-foot {
+  margin: 34px 0 0;
+  color: var(--n-66);
+  font-size: 13.5px;
+  line-height: 1.55;
+}

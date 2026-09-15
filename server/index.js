@@ -620,7 +620,9 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   app.get('/sw.js',(req,res)=>{ res.set({ 'Cache-Control':'no-store', 'Content-Type':'text/javascript; charset=utf-8' }); res.sendFile(path.join(__dirname,'..','public','sw.js')); });
   app.get('/manifest.webmanifest',(req,res)=>{ res.set({ 'Content-Type':'application/manifest+json; charset=utf-8' }); res.sendFile(path.join(__dirname,'..','public','manifest.webmanifest')); });
   app.get('/login',(req,res)=>res.sendFile(path.join(__dirname,'..','public','auth.html')));
-  app.get('/',(req,res)=>req.user?res.sendFile(path.join(__dirname,'..','public','app.html')):res.redirect('/login'));
+  // Гостю корень показывает, что это за приложение, а не форму входа: по
+  // ссылке человек попадал на поле почты и не понимал, куда пришёл.
+  app.get('/',(req,res)=>res.sendFile(path.join(__dirname,'..','public',req.user?'app.html':'hello.html')));
   // Макеты и черновики в репозитории не живут, поэтому и раздавать их нечем:
   // раньше здесь была дверь к концепт-страницам в корне проекта.
   app.use((req,res)=>res.status(404).json({error:{code:'not_found',message:'Не найдено.'}}));

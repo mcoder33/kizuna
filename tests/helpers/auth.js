@@ -11,7 +11,7 @@ export function seedUser(app, { email = 'admin@kizuna.test', role = 'admin', sta
   const db = app.database;
   const existing = findUserByEmail(db, email);
   if (existing) return existing;
-  const user = createUser(db, { email, passwordHash: hashPassword(password), role, status });
+  const user = createUser(db, { email, passwordHash: hashPassword(password), role, status, monthlyLimitUsd: null });
   return updateUser(db, user.id, { approved_at: new Date().toISOString() });
 }
 

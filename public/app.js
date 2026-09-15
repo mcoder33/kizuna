@@ -755,6 +755,28 @@ function renderToday() {
   paintJournal(journalDate);
   paintDayList(viewDate);
 }
+// Первый шаг. Пустой журнал ничего о себе не рассказывает: поле есть, а что в
+// него писать — человек не знает, и уходит, ничего не записав. Три примера
+// подставляются прямо в поле, чтобы первая запись случилась его руками.
+// С первой же записью блок исчезает навсегда.
+const FIRST_STEPS = [
+  "Завтра в 11 созвон с Аней по проекту",
+  "Нужно оплатить хостинг до пятницы",
+  "Созвонились по проекту, решили начать с детектора",
+];
+function firstStepNode() {
+  const box = node("div", undefined, "today-start");
+  box.append(node("p", "Журнал пустой. Напишите своими словами что угодно — разберётся само. Например:", "start-lead"));
+  const row = node("div", undefined, "start-row");
+  for (const text of FIRST_STEPS) {
+    const button = node("button", text, "start-chip");
+    button.type = "button";
+    button.addEventListener("click", () => prefillCapture(text, null));
+    row.append(button);
+  }
+  box.append(row);
+  return box;
+}
 // Вопрос в поле и тип записи — по фазе, но только пока поле пустое и тип не
 // выбран рукой: страница не меняется под руками.
 function applyCoverComposer(cover = todayState.cover) {
@@ -922,8 +944,12 @@ function outcomeButton(title) {
 }
 // «Записать итог»: текст и тип ложатся в поле, дальше пишет человек.
 function prefillCapture(text, type) {
-  composerState.type = type;
-  composerState.userType = true;
+  // Тип навязывается только там, где он известен («Записать итог»): пример для
+  // первой записи должен разбираться так же, как всё остальное.
+  if (type) {
+    composerState.type = type;
+    composerState.userType = true;
+  }
   composerState.date = null;
   composerState.time = null;
   composerState.priority = "normal";
@@ -1018,7 +1044,9 @@ function paintTodayList(container) {
     ...external.filter((item) => !item.allDay && item.time).map((item) => ({ start: minutesOf(item.time), item })),
   ].filter((slot) => slot.start != null).sort((a, b) => a.start - b.start);
   if (!shownBand.length && !allDay.length && !hours.length) {
-    container.append(node("p", "Открытых дел нет.", "empty"));
+    // Пустому журналу «Открытых дел нет» ничего не объясняет: человек видит
+    // поле и не знает, что в него писать. Место то же, слова другие.
+    container.append(todayState.entries.length ? node("p", "Открытых дел нет.", "empty") : firstStepNode());
     appendMore(container, hidden);
     return;
   }

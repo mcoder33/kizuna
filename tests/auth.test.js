@@ -336,9 +336,33 @@ test('без входа не открывается ничего, кроме с�
   for (const path of ['/api/entries', '/api/day', '/api/settings', '/api/usage', '/api/export', '/api/tags', '/api/voice/status', '/api/events'])
     assert.equal((await api.get(path)).status, 401, `${path} должен быть закрыт`);
   await api.post('/api/captures').send({ raw: 'без спроса' }).expect(401);
-  await api.get('/').expect(302).expect('Location', '/login');
+  // Корень гостю показывает, что это за приложение; журнала в нём нет.
+  const hello = await api.get('/').expect(200);
+  assert.match(hello.text, /Кизуна/);
+  assert.doesNotMatch(hello.text, /id="today"/);
   await api.get('/login').expect(200);
   await api.get('/api/auth/state').expect(200);
+});
+
+// Пробовать надо на всём приложении: новому человеку открыт и разбор моделью,
+// и разговор, но с потолком в доллар на месяц.
+test('новому человеку открыто всё, но с потолком в доллар', async () => {
+  const application = app();
+  const admin = authed(application, { email: 'admin@example.com' });
+  const api = request(application);
+  await api.post('/api/auth/register').send({ email: 'gost@example.com', password: 'gost-long-password' }).expect(201);
+  const gost = (await admin.get('/api/admin/users')).body.users.find(user => user.email === 'gost@example.com');
+  await admin.post(`/api/admin/users/${gost.id}/approve`).expect(200);
+  const login = await api.post('/api/auth/login').send({ email: 'gost@example.com', password: 'gost-long-password' }).expect(200);
+  const cookie = login.headers['set-cookie'].find(value => value.startsWith('pagent_session='));
+  // Потолок виден администратору рядом с расходом — доллар, а не «общий».
+  const listed = (await admin.get('/api/admin/users')).body.users.find(user => user.email === 'gost@example.com');
+  assert.equal(listed.monthlyLimitUsd, 1);
+  // Разговор не закрыт: отказ, если и будет, то по расходу, а не по запрету.
+  const status = (await api.get('/api/voice/status').set('Cookie', cookie).expect(200)).body;
+  assert.notEqual(status.quota?.reason, 'voice_blocked_for_user');
+  // Хозяину дома потолок не ставится: платит он.
+  assert.equal(admin.user.monthly_limit_usd, null);
 });
 
 test('очередь заявок не бесконечна', async () => {

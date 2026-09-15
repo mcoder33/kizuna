@@ -6352,6 +6352,16 @@ body {
 .today-phase.evening { color: var(--violet-54); }
 .today-phase.night, .today-phase.weekend { color: var(--n-62); }
 .today-phase.after { color: var(--red-66); }
+/* Первый шаг для пустого журнала: три примера, которые подставляются в поле.
+   Набран тише карточки ввода — это подсказка, а не ещё один блок страницы. */
+.today-start { margin: 4px auto 0; max-width: 560px; text-align: center; }
+.start-lead { margin: 0 0 10px; color: var(--n-62); font-size: 13.5px; line-height: 1.5; }
+.start-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.start-chip {
+  border: 1px solid var(--n-93); background: var(--n-100); color: var(--n-52);
+  border-radius: 999px; padding: 7px 14px; font: inherit; font-size: 13px; cursor: pointer;
+}
+.start-chip:hover { border-color: var(--n-87); color: var(--ink); }
 .today-brief { margin: 0 auto 22px; max-width: 560px; font-size: 15px; line-height: 1.55; color: var(--n-52); text-wrap: balance; }
 .today-brief b { color: var(--ink); font-weight: 650; }
 .today-brief a { color: var(--red-66); font-weight: 650; text-decoration: none; border-bottom: 1px solid var(--red-83); }

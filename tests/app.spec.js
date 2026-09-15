@@ -172,6 +172,22 @@ test("запись с намерениями дробится на дела, и 
   await expect(card.locator(".card-origin")).toContainText("Из этой записи 2 дела");
   await expect(card.locator(".card-origin")).toContainText("Допинываем карусель");
 });
+// Пустой журнал не объясняет себя сам: человек видит поле и не знает, что в
+// него писать. Двое приглашённых так и ушли, не записав ничего.
+test("пустой журнал предлагает первый шаг, и он исчезает после первой записи", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  const start = page.locator("#todo .today-start");
+  await expect(start).toBeVisible();
+  const example = start.locator(".start-chip").first();
+  const text = await example.textContent();
+  await example.click();
+  // Пример подставился в поле, но записан не сам: первая запись — руками.
+  await expect(page.getByLabel("Новая запись")).toContainText(text);
+  await page.getByRole("button", { name: "Сохранить запись" }).click();
+  await expect(page.locator("#capture-notifications")).toContainText(text);
+  await expect(start).toBeHidden({ timeout: 20000 });
+});
 // Обложка и список не говорят одно и то же: дата с брифом видны, только пока
 // оба ящика закрыты — иначе «Вторник, 15 сентября» стоит на экране дважды,
 // сверху и в полосе дней. Днём фаза открывает «День», поэтому страница
@@ -1101,7 +1117,8 @@ test("карточки обновляются в реальном времени
   request,
 }) => {
   await page.goto("/");
-  await expect(page.locator("#todo .empty")).toBeVisible();
+  // Журнал пуст — в «Дне» стоит первый шаг, а не список.
+  await expect(page.locator("#todo .today-start")).toBeVisible();
 
   // Запись создаётся мимо этой вкладки — как это делает голос или другое окно.
   const created = await request.post("/api/captures", {
