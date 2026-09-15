@@ -33,7 +33,7 @@ test('worker records one interpretation, terminal trail and safe job metadata',a
   const { app, api, databasePath }=fixture({status:async()=>({selectedProvider:'fallback'}),classify:async raw=>({...classification(raw),model:'internal-model-42'}),answer:async()=>({})}); app.captureJobWorker.start();
   const queued=(await api.post('/api/captures').set('Prefer','respond-async').send({raw:'Нужно проверить Hub'}).expect(202)).body;
   const job=await eventually(async()=>{const response=await api.get(queued.statusUrl);assert.equal(response.body.state,'succeeded');return response.body;});
-  assert.deepEqual(Object.keys(job).sort(),['cancelledAt','captureId','createdAt','error','finishedAt','id','retryOfId','retryable','stage','startedAt','state','usedProvider'].sort());
+  assert.deepEqual(Object.keys(job).sort(),['cancelledAt','captureId','createdAt','error','finishedAt','id','parts','retryOfId','retryable','stage','startedAt','state','usedProvider'].sort());
   for(const unsafeKey of ['raw','prompt','stdout','stderr','path','env','auth','model'])assert.equal(Object.hasOwn(job,unsafeKey),false);
   assert.equal(job.usedProvider,'fallback'); assert.equal(job.error,null);
   const exported=(await api.get('/api/export')).body; assert.equal(exported.interpretations.length,1);

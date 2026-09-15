@@ -63,6 +63,46 @@ function groundedValues(candidates,raw,max){
   return out.slice(0,max);
 }
 
+// Запись часто несёт два разных действия сразу: «созвонились по ВойсОпс…
+// решили допинать бот-детектор и карусель» — это и отчёт о сделанном, и два
+// намерения на будущее. Раньше намерения оставались текстом заметки: тип у
+// записи один, а у второй проекции был бы тот же заголовок, что у первой.
+// Теперь модель называет их отдельно, и из каждого выходит своя запись-дело
+// (см. splitOffActions в server/db.js). Заземление то же, что у остальных
+// сущностей: действие, которого нет в тексте, отбрасывается — выдуманное дело
+// в неизменяемом журнале дороже пропущенного.
+const ACTION_MIN_LENGTH=8;
+function groundedActions(actions,raw,{summary='',followUp=null}={}){
+  const lower=String(raw).toLowerCase(),out=[];
+  const taken=new Set([summary,followUp].filter(Boolean).map(value=>value.trim().toLowerCase()));
+  for(const action of actions||[]){
+    const title=typeof action?.title==='string'?action.title.trim().slice(0,300):'';
+    if(title.length<ACTION_MIN_LENGTH)continue;
+    const stem=title.toLowerCase().slice(0,Math.min(title.length,12));
+    if(!lower.includes(stem))continue;
+    if(taken.has(title.toLowerCase()))continue;
+    taken.add(title.toLowerCase());
+    out.push({type:'task',title});
+    if(out.length===5)break;
+  }
+  return out;
+}
+// Действие, отделённое от записи, живёт дальше своей записью-делом: заголовок
+// — дословная фраза человека, проекты наследуются от исходной (речь об одном),
+// люди и срок — нет: срок у намерения не назван, а участники встречи не
+// исполнители дела.
+export function actionClassification(title,parent){
+  const projects=(parent?.entities?.projects||[]).slice(0,6);
+  const claims=[
+    claim('type','task',true,0.9,'inference','split'),
+    claim('projects',projects,projects.length===1,0.8,'fact','split'),
+    claim('schedule',null,false,0,'unknown','split'),
+    claim('people',[],false,0,'unknown','split'),
+    claim('followUp',null,false,0,'unknown','split'),
+  ];
+  return {primaryType:'task',summary:title.slice(0,500),entities:{projects,people:[],schedule:null,followUp:null},additionalTypes:[],proposedActions:[],completed:false,ambiguity:null,claims,confidence:Object.fromEntries(claims.map(item=>[item.field,item.confidence])),conflicts:{projects:false,schedule:false}};
+}
+
 function claim(field,value,essential,confidence,kind,source){
   const filled=Array.isArray(value)?value.length>0:Boolean(value);
   return {field,value:value??null,kind:filled?kind:'unknown',confidence:filled?confidence:0,provenance:{source,evidence:filled?String(Array.isArray(value)?value.join(', '):typeof value==='object'?JSON.stringify(value):value).slice(0,300):undefined},essential};
@@ -98,7 +138,7 @@ export function normalizeClassification(candidate,raw='',now=new Date(),source='
     claim('people',people,false,0.88,'fact',source),
     claim('followUp',followUp,false,0.88,'inference',source),
   ];
-  const out={primaryType,summary,entities:{projects,people,schedule,followUp},additionalTypes,proposedActions:[],completed,ambiguity,claims,confidence:Object.fromEntries(claims.map(c=>[c.field,c.confidence])),conflicts:{projects:ambiguity?.field==='projects',schedule:ambiguity?.field==='schedule'}};
+  const out={primaryType,summary,entities:{projects,people,schedule,followUp},additionalTypes,proposedActions:groundedActions(parsed.proposedActions,raw,{summary,followUp}),completed,ambiguity,claims,confidence:Object.fromEntries(claims.map(c=>[c.field,c.confidence])),conflicts:{projects:ambiguity?.field==='projects',schedule:ambiguity?.field==='schedule'}};
   return out;
 }
 

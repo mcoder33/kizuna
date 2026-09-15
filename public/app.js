@@ -1616,6 +1616,23 @@ function showReview(entry, review, undoGroupId, provenance) {
     if (event.key === "Enter") { event.preventDefault(); startTitleEdit(); }
   });
   area.append(cardTitle);
+  // Происхождение: дело, отделённое от записи, помнит, из чего оно вышло, а
+  // исходная запись — что из неё вышло. Без этого «Допинать бот-детектор»
+  // висело бы ничьим делом, а у отчёта о встрече не было бы следа, что дела
+  // из него уже заведены.
+  if (entry.parent || entry.parts?.length) {
+    const origin = node("p", undefined, "card-origin");
+    const link = (id, text) => { const button = node("button", text, "text-button"); button.type = "button"; button.addEventListener("click", () => openCaptureById(id)); return button; };
+    if (entry.parent) origin.append(document.createTextNode("Отделено от записи "), link(entry.parent.id, `«${entry.parent.title}»`));
+    else {
+      origin.append(document.createTextNode(`Из этой записи ${plural(entry.parts.length, DEALS)}: `));
+      entry.parts.forEach((part, index) => {
+        if (index) origin.append(document.createTextNode(", "));
+        origin.append(link(part.id, part.title));
+      });
+    }
+    area.append(origin);
+  }
   // «Когда это было» — справочная мета: живёт футером внизу карточки одной
   // строкой, а не блоком в шапке. Шапка — заголовок, статус и заметки.
   const written = entryClock(entry);
@@ -2051,6 +2068,13 @@ function renderCaptureProgress(job, record) {
         "progress-raw",
       ),
     );
+  if (job.parts?.length) {
+    // Дела, отделённые от записи, показываются сразу: подтверждения заранее
+    // приложение не спрашивает нигде, но даёт отменить сделанное.
+    const parts = node("p", undefined, "progress-raw progress-parts");
+    parts.append(document.createTextNode(`Отделил ${plural(job.parts.length, DEALS)}: ${job.parts.map((part) => `«${part.title}»`).join(", ")}`));
+    card.append(parts);
+  }
   if (job.state === "failed")
     card.append(
       node("p", "Запись сохранена, но не классифицирована.", "progress-raw"),
@@ -2064,6 +2088,25 @@ function renderCaptureProgress(job, record) {
       ),
     );
   const actions = node("div", undefined, "progress-actions");
+  if (job.parts?.length) {
+    const drop = node("button", job.parts.length === 1 ? "Убрать дело" : "Убрать дела", "text-button");
+    drop.type = "button";
+    drop.addEventListener("click", async () => {
+      drop.disabled = true;
+      const removed = job.parts;
+      try {
+        for (const part of removed) await request(`/api/captures/${part.id}`, { method: "DELETE" });
+        job.parts = [];
+        renderCaptureProgress(job, record);
+        await load();
+        toast(`${plural(removed.length, DEALS)} убрано из журнала`, { label: "Вернуть", run: async () => {
+          try { for (const part of removed) await request(`/api/captures/${part.id}/restore`, { method: "POST" }); await load(); toast("Вернул"); }
+          catch (error) { toast(error.message); }
+        } });
+      } catch (error) { toast(error.message); drop.disabled = false; }
+    });
+    actions.append(drop);
+  }
   if (!terminal(job)) {
     const cancel = node("button", "Отменить классификацию", "text-button");
     cancel.addEventListener("click", () => cancelCapture(record, cancel));

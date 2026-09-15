@@ -3010,6 +3010,29 @@ dialog form > div {
   color: var(--muted);
   overflow-wrap: anywhere;
 }
+/* Отделённые дела в уведомлении и происхождение в карточке — одна мысль:
+   запись несла два действия, и второе живёт своей строкой. Набраны тише
+   самой записи: это след разбора, а не то, что человек написал. */
+.progress-parts {
+  color: var(--ink);
+  font-size: 13px;
+}
+.card-origin {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--n-66);
+}
+.card-origin .text-button {
+  /* Заголовок исходной записи бывает длинным: строка происхождения держится
+     одной и обрезается, а не расползается на три. */
+  font-size: 13px;
+  max-width: 100%;
+  display: inline-block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
 .progress-actions {
   display: flex;
   gap: 8px;

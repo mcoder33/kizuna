@@ -125,6 +125,53 @@ test("today separates reported work and the day's plan; notes stay off the main 
   await expect(page.locator("#memory")).toBeVisible();
   await expect(page.locator("#today")).toBeHidden();
 });
+// Одна запись — два разных действия: отчёт о встрече несёт и результат, и
+// намерения на будущее. Намерения уходят своими делами, исходная запись
+// остаётся целой и помнит, что из неё вышло.
+test("запись с намерениями дробится на дела, и это видно в уведомлении и в карточке", async ({ page }) => {
+  const raw = [
+    "Созвонились по ВойсОпс",
+    "Что решили, 2 вектора",
+    "1. Допинываем бот детектор",
+    "2. Допинываем карусель с генератором фраз",
+  ].join("\n");
+  await page.goto("/");
+  const posted = page.waitForResponse((response) => response.url().endsWith("/api/captures") && response.request().method() === "POST");
+  await page.getByLabel("Новая запись").fill(raw);
+  await page.getByRole("button", { name: "Сохранить запись" }).click();
+  expect((await posted).status()).toBe(202);
+
+  // Уведомление говорит, что отделилось, и даёт это убрать.
+  const notification = page.locator("#capture-notifications .capture-notification");
+  await expect(notification).toContainText("Отделил 2 дела", { timeout: 20000 });
+  await expect(notification).toContainText("«Допинываем бот детектор»");
+  await expect(notification.getByRole("button", { name: "Убрать дела" })).toBeVisible();
+
+  // Дела живут в «Дне» обычными делами, а не строчками внутри чужой заметки.
+  const openTab = async (name) => {
+    const tab = page.getByRole("tab", { name });
+    if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
+  };
+  await openTab(/^День/);
+  await expect(page.locator("#todo")).toBeVisible();
+  const deal = page.locator("#todo .entry").filter({ hasText: "Допинываем бот детектор" });
+  await expect(deal).toBeVisible({ timeout: 20000 });
+
+  // В карточке дела видно, из чего оно вышло.
+  await deal.locator(".entry-title").click();
+  const card = page.locator("#review-dialog");
+  await expect(card).toBeVisible();
+  await expect(card.locator(".card-origin")).toContainText("Отделено от записи");
+  await page.keyboard.press("Escape");
+
+  // Исходная запись цела и помнит оба дела.
+  await openTab(/Что делал/);
+  const source = page.locator("#journal .entry").filter({ hasText: "Созвонились по ВойсОпс" });
+  await expect(source).toBeVisible();
+  await source.locator(".entry-title").click();
+  await expect(card.locator(".card-origin")).toContainText("Из этой записи 2 дела");
+  await expect(card.locator(".card-origin")).toContainText("Допинываем карусель");
+});
 // Обложка и список не говорят одно и то же: дата с брифом видны, только пока
 // оба ящика закрыты — иначе «Вторник, 15 сентября» стоит на экране дважды,
 // сверху и в полосе дней. Днём фаза открывает «День», поэтому страница

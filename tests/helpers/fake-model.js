@@ -135,7 +135,9 @@ export function fakeModelCandidate(raw, now = new Date(), timeZone = 'Europe/Sam
     entities: { projects, people: people(text), when, followUp: followUpMatch ? followUpMatch[1].trim().slice(0, 500) : null },
     additionalTypes: !completed && outcome && task ? ['task'] : [],
     summary: text.slice(0, 500),
-    proposedActions: [],
+    // Нумерованный список в записи — отдельные дела: «что решили: 1. …, 2. …».
+    // Настоящая модель выделяет их смыслом, заглушке хватает разметки.
+    proposedActions: text.split(/\r?\n/).map(line => line.match(/^\s*\d{1,2}[.)]\s+(.{8,300})$/)).filter(Boolean).map(match => ({ type:'task', title: match[1].trim() })).slice(0, 5),
     completed,
     ambiguity,
   };
