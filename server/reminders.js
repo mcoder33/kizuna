@@ -8,6 +8,7 @@
 import { dateInZone, shiftDate } from './reports.js';
 import { zonedToUtc } from './ics.js';
 import { completionEvents } from './board.js';
+import { occurrenceDates } from './repeat.js';
 
 export const REMIND_MAX_MINUTES = 7 * 24 * 60;
 export const REMIND_DEFAULT_HOUR = '09:00';
@@ -74,6 +75,7 @@ export function createReminderService({ db, now = () => new Date(), timeZone = (
     }
     const completion = completionEvents(db);
     const tz = timeZone();
+    const today = dateInZone(now(), tz);
     const out = [];
     for (const row of rows) {
       const ids = byCapture.get(row.id);
@@ -83,9 +85,15 @@ export function createReminderService({ db, now = () => new Date(), timeZone = (
       if (classification.completed === true || !['task', 'meeting_event'].includes(classification.primaryType)) continue;
       if (ids.every(id => completion.get(id)?.type === 'completed')) continue;
       const schedule = classification.entities?.schedule;
-      const remindAt = remindMoment(schedule, { timeZone: tz, defaults: settingsFor(row.user_id) });
-      if (!remindAt) continue;
-      out.push({ userId: row.user_id, captureId: row.id, title: classification.summary || '(без названия)', type: classification.primaryType, schedule, remindAt });
+      // У повтора напоминание считается по экземплярам: ближайшие несколько
+      // от вчерашнего дня (пропущенное за простоем ещё может догнать) —
+      // каждому свой момент, а значит и своя запись в журнале отправок.
+      const schedules = schedule?.repeat ? occurrenceDates(schedule, shiftDate(today, -1), shiftDate(today, 8), { limit: 3 }).map(date => ({ ...schedule, date })) : [schedule];
+      for (const each of schedules) {
+        const remindAt = remindMoment(each, { timeZone: tz, defaults: settingsFor(row.user_id) });
+        if (!remindAt) continue;
+        out.push({ userId: row.user_id, captureId: row.id, title: classification.summary || '(без названия)', type: classification.primaryType, schedule: each, remindAt });
+      }
     }
     return out;
   }

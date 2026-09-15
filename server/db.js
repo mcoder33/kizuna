@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { makeProjections, gateClassification, shouldMaterializeProjections } from './classifier.js';
+import { occursOn, nextOccurrence } from './repeat.js';
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -303,6 +304,10 @@ function migrate(db) {
       PRIMARY KEY(capture_id, remind_at)
     )`);
     db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(15, now());
+    // Миграция 16: серия у экземпляра повтора, чтобы удалять серию целиком:
+    // у CalDAV это uid файла, у Google — recurringEventId.
+    if (!db.prepare('PRAGMA table_info(calendar_events)').all().some(entry => entry.name === 'series_uid')) db.exec('ALTER TABLE calendar_events ADD COLUMN series_uid TEXT');
+    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(16, now());
 }
 // Ограничение переписывается из собственного определения таблицы, а не из
 // зашитой здесь копии: копия разошлась бы с настоящей схемой на первой же новой
@@ -912,7 +917,7 @@ export function listEntries(db, { cursor, limit = 40, userId }) {
 export function serializeEntry(row) { return { id: row.id, raw: row.raw, occurredAt: row.occurred_at, createdAt: row.created_at, interpretation: { id: row.interpretation_id, version: row.version, provider: row.provider, model: row.model, classification: JSON.parse(row.classification_json), confidence: JSON.parse(row.field_confidence_json) }, projections: [] }; }
 export function fullEntry(db, row) { const entry = serializeEntry(row); entry.note = activeNote(db, row.id); entry.attachments = attachmentsFor(db, row.id); entry.projections = db.prepare("SELECT * FROM projections WHERE capture_id=? AND status='active' ORDER BY created_at").all(row.id).map(p => ({ id:p.id,type:p.projection_type,payload:JSON.parse(p.payload_json),undoGroupId:p.undo_group_id,completion:completionState(db,p.id),completionCandidate:null })); return entry; }
 export function day(db, userId) { const rows = db.prepare(`SELECT c.*, i.id interpretation_id, i.version, i.provider, i.model, i.classification_json, i.field_confidence_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND c.user_id IS ? ORDER BY c.created_at DESC LIMIT 100`).all(userId); return rows.map(row=>fullEntry(db,row)); }
-export function dayView(db, date, now=new Date(), userId=null) { const entries=day(db,userId); const scheduled=entry=>entry.interpretation.classification.entities.schedule; const completable=entry=>entry.projections.find(projection=>['task','meeting_event'].includes(projection.type)); const dayEntries=entries.filter(entry=>scheduled(entry)?.date===date); const horizon=new Date(now.getTime()+48*60*60*1000); const upcoming=entries.filter(entry=>{const c=entry.interpretation.classification,s=scheduled(entry),projection=completable(entry);return !projection?.completion.completed&&['meeting_event','task'].includes(c.primaryType)&&s?.sortAt&&new Date(s.sortAt)>=now&&new Date(s.sortAt)<=horizon}).sort((a,b)=>new Date(scheduled(a).sortAt)-new Date(scheduled(b).sortAt)); const attention=entries.filter(entry=>{const c=entry.interpretation.classification,projection=completable(entry);return !projection?.completion.completed&&!c.completed&&((c.primaryType==='task'&&!scheduled(entry)?.date)||c.entities.followUp||c.primaryType==='outcome_decision')}); return {day:dayEntries,upcoming,attention}; }
+export function dayView(db, date, now=new Date(), userId=null) { const entries=day(db,userId); const scheduled=entry=>entry.interpretation.classification.entities.schedule; const onDay=s=>Boolean(s?.date)&&(s.date===date||occursOn(s,date)); const sortAtOf=s=>{if(!s?.sortAt)return null;if(!s.repeat)return s.sortAt;const next=nextOccurrence(s,date);return next?`${next}T${s.time||'23:59'}:00`:null;}; const completable=entry=>entry.projections.find(projection=>['task','meeting_event'].includes(projection.type)); const dayEntries=entries.filter(entry=>onDay(scheduled(entry))); const horizon=new Date(now.getTime()+48*60*60*1000); const upcoming=entries.filter(entry=>{const c=entry.interpretation.classification,s=scheduled(entry),projection=completable(entry);return !projection?.completion.completed&&['meeting_event','task'].includes(c.primaryType)&&sortAtOf(s)&&new Date(sortAtOf(s))>=now&&new Date(sortAtOf(s))<=horizon}).sort((a,b)=>new Date(sortAtOf(scheduled(a)))-new Date(sortAtOf(scheduled(b)))); const attention=entries.filter(entry=>{const c=entry.interpretation.classification,projection=completable(entry);return !projection?.completion.completed&&!c.completed&&((c.primaryType==='task'&&!scheduled(entry)?.date)||c.entities.followUp||c.primaryType==='outcome_decision')}); return {day:dayEntries,upcoming,attention}; }
 
 const dailySectionLabels = { doneYesterday:'Сделано вчера', decisions:'Решения', carried:'Перенесённое', blockers:'Блокеры', today:'Сегодня' };
 function samaraBounds(date) { const start = new Date(`${date}T00:00:00+04:00`); return { start:start.toISOString(), end:new Date(start.getTime()+86400000).toISOString() }; }
@@ -935,7 +940,7 @@ function dailyContent(db, date, userId=null) {
   sections.push({ key:'decisions', label:dailySectionLabels.decisions, empty:'Нет зафиксированных решений.', items:decisions });
   const carriedRows = db.prepare(`SELECT p.id projection_id,p.capture_id,p.interpretation_id,p.payload_json,c.raw FROM projections p JOIN captures c ON c.id=p.capture_id JOIN interpretations i ON i.id=p.interpretation_id
     WHERE p.status='active' AND c.deleted_at IS NULL AND c.user_id IS ? AND i.status='active' AND p.projection_type IN ('task','meeting_event')
-      AND json_extract(p.payload_json,'$.schedule.date')<?
+      AND json_extract(p.payload_json,'$.schedule.date')<? AND json_extract(p.payload_json,'$.schedule.repeat') IS NULL
       AND NOT EXISTS (SELECT 1 FROM ledger_events e WHERE e.projection_id=p.id AND e.event_type='completed' AND NOT EXISTS (SELECT 1 FROM ledger_events undo_e WHERE undo_e.projection_id=p.id AND undo_e.event_type='completion_undone' AND undo_e.rowid>e.rowid))
     ORDER BY json_extract(p.payload_json,'$.schedule.date'),p.created_at LIMIT 100`).all(userId,date);
   const carried = carriedRows.map(row => ({ item:dailyItem(`carried-${row.projection_id}`,effectiveProjectionText(row),{captureId:row.capture_id}), sources:[dailySource('carried',`carried-${row.projection_id}`,'capture',row.capture_id,row),dailySource('carried',`carried-${row.projection_id}`,'projection',row.projection_id,row),dailySource('carried',`carried-${row.projection_id}`,'interpretation',row.interpretation_id,row)] }));
@@ -946,10 +951,16 @@ function dailyContent(db, date, userId=null) {
   const blockers = blockRows.map(row => ({ item:dailyItem(`blocker-${row.id}`,row.raw,{captureId:row.id}), sources:[dailySource('blockers',`blocker-${row.id}`,'capture',row.id,row),dailySource('blockers',`blocker-${row.id}`,'interpretation',row.interpretation_id,row)] }));
   sections.push({ key:'blockers', label:dailySectionLabels.blockers, empty:'Нет зафиксированных блокеров.', items:blockers });
   const todayRows = db.prepare(`SELECT p.id projection_id,p.capture_id,p.interpretation_id,p.payload_json,c.raw FROM projections p JOIN captures c ON c.id=p.capture_id JOIN interpretations i ON i.id=p.interpretation_id
-    WHERE p.status='active' AND c.deleted_at IS NULL AND c.user_id IS ? AND i.status='active' AND p.projection_type IN ('task','meeting_event') AND json_extract(p.payload_json,'$.schedule.date')=?
+    WHERE p.status='active' AND c.deleted_at IS NULL AND c.user_id IS ? AND i.status='active' AND p.projection_type IN ('task','meeting_event') AND json_extract(p.payload_json,'$.schedule.date')=? AND json_extract(p.payload_json,'$.schedule.repeat') IS NULL
       AND NOT EXISTS (SELECT 1 FROM ledger_events e WHERE e.projection_id=p.id AND e.event_type='completed' AND NOT EXISTS (SELECT 1 FROM ledger_events undo_e WHERE undo_e.projection_id=p.id AND undo_e.event_type='completion_undone' AND undo_e.rowid>e.rowid))
     ORDER BY json_extract(p.payload_json,'$.schedule.time'),p.created_at LIMIT 100`).all(userId,date);
-  const today = todayRows.map(row => ({ item:dailyItem(`today-${row.projection_id}`,effectiveProjectionText(row),{captureId:row.capture_id}), sources:[dailySource('today',`today-${row.projection_id}`,'capture',row.capture_id,row),dailySource('today',`today-${row.projection_id}`,'projection',row.projection_id,row),dailySource('today',`today-${row.projection_id}`,'interpretation',row.interpretation_id,row)] }));
+  // Повторяющиеся дела и встречи: в день попадает экземпляр, если он выпадает
+  // на эту дату и не убран.
+  const repeatingRows = db.prepare(`SELECT p.id projection_id,p.capture_id,p.interpretation_id,p.payload_json,c.raw FROM projections p JOIN captures c ON c.id=p.capture_id JOIN interpretations i ON i.id=p.interpretation_id
+    WHERE p.status='active' AND c.deleted_at IS NULL AND c.user_id IS ? AND i.status='active' AND p.projection_type IN ('task','meeting_event') AND json_extract(p.payload_json,'$.schedule.repeat') IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM ledger_events e WHERE e.projection_id=p.id AND e.event_type='completed' AND NOT EXISTS (SELECT 1 FROM ledger_events undo_e WHERE undo_e.projection_id=p.id AND undo_e.event_type='completion_undone' AND undo_e.rowid>e.rowid))
+    ORDER BY json_extract(p.payload_json,'$.schedule.time'),p.created_at LIMIT 100`).all(userId).filter(row => { try { return occursOn(JSON.parse(row.payload_json).schedule, date); } catch { return false; } });
+  const today = [...todayRows, ...repeatingRows].map(row => ({ item:dailyItem(`today-${row.projection_id}`,effectiveProjectionText(row),{captureId:row.capture_id}), sources:[dailySource('today',`today-${row.projection_id}`,'capture',row.capture_id,row),dailySource('today',`today-${row.projection_id}`,'projection',row.projection_id,row),dailySource('today',`today-${row.projection_id}`,'interpretation',row.interpretation_id,row)] }));
   sections.push({ key:'today', label:dailySectionLabels.today, empty:'На сегодня задач и встреч нет.', items:today });
   return { content:{ date, timeZone:'Europe/Samara', sections:sections.map(section=>({...section,items:section.items.map(entry=>entry.item)})) }, sourceRows:sections.flatMap(section=>section.items.flatMap(entry=>entry.sources)) };
 }

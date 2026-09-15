@@ -4,6 +4,8 @@
 // reports-concept.html: считаем по записям, а не по проекциям (переразбор не
 // должен задваивать цифры), хвосты важнее графиков, пороги названы явно.
 
+import { occursOn } from './repeat.js';
+
 const COMPLETABLE = new Set(['task', 'meeting_event']);
 const DAY_MS = 86400000;
 // Проект считается заглохшим после двух недель тишины — порог из концепта.
@@ -76,6 +78,8 @@ function inRange(at, fromAt, toAt) { const time = new Date(at).getTime(); return
 function summaryOf(entry) { return entry.classification.summary || ''; }
 function stampOf(entry) { return entry.occurredAt || entry.createdAt; }
 function scheduleOf(entry) { return entry.classification.entities?.schedule || null; }
+// Срок выпадает на день: сама дата или экземпляр повтора.
+function onDate(schedule, date) { return Boolean(schedule?.date) && (schedule.date === date || occursOn(schedule, date)); }
 function median(values) { if (!values.length) return null; const sorted = [...values].sort((a, b) => a - b); const middle = Math.floor(sorted.length / 2); return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2; }
 function topCounts(map, limit) { return [...map.values()].sort((a, b) => b.count - a.count).slice(0, limit); }
 function countInto(map, name, key = name.toLowerCase()) { const existing = map.get(key); if (existing) existing.count += 1; else map.set(key, { name, count: 1 }); }
@@ -133,7 +137,7 @@ export function periodReport(db, { period, now, timeZone, userId }) {
 
   // Просрочено — снимок на сейчас, а не за период: хвост актуален всегда.
   const overdue = entries
-    .filter(entry => entry.classification.primaryType === 'task' && !entry.closed && !entry.classification.completed && scheduleOf(entry)?.date && scheduleOf(entry).date < today)
+    .filter(entry => entry.classification.primaryType === 'task' && !entry.closed && !entry.classification.completed && scheduleOf(entry)?.date && !scheduleOf(entry).repeat && scheduleOf(entry).date < today)
     .map(entry => ({ captureId: entry.id, title: summaryOf(entry), dueDate: scheduleOf(entry).date, daysLate: diffDays(today, scheduleOf(entry).date) }))
     .sort((a, b) => b.daysLate - a.daysLate);
   const questions = entries
@@ -148,7 +152,7 @@ export function periodReport(db, { period, now, timeZone, userId }) {
   for (const entry of entries) {
     if (entry.classification.primaryType !== 'meeting_event' || entry.closed) continue;
     const date = scheduleOf(entry)?.date;
-    if (!date || date >= today || date < from) continue;
+    if (!date || scheduleOf(entry).repeat || date >= today || date < from) continue;
     const marks = new Set([...(entry.classification.entities?.projects || []), ...(entry.classification.entities?.people || [])].map(value => value.toLowerCase()));
     if (!marks.size) continue;
     const trace = entries.some(later => later.id !== entry.id && later.createdAt > entry.createdAt && dateInZone(new Date(later.createdAt), timeZone) >= date &&
@@ -270,9 +274,9 @@ export function dayReport(db, { date, now, timeZone, userId }) {
   // Не успел: срок был в этот день, к концу дня не закрыто. Если закрыли позже —
   // так и говорим, это честнее, чем молча убрать строку из прошлого дня.
   const missed = entries
-    .filter(entry => entry.classification.primaryType === 'task' && !entry.classification.completed && scheduleOf(entry)?.date === date && date < today && !(entry.closed && entry.closedAt && new Date(entry.closedAt) < endAt))
+    .filter(entry => entry.classification.primaryType === 'task' && !entry.classification.completed && onDate(scheduleOf(entry), date) && date < today && !(entry.closed && entry.closedAt && new Date(entry.closedAt) < endAt))
     .map(entry => ({ captureId: entry.id, title: summaryOf(entry), closedLater: entry.closed }));
-  const meetings = entries.filter(entry => entry.classification.primaryType === 'meeting_event' && scheduleOf(entry)?.date === date).length;
+  const meetings = entries.filter(entry => entry.classification.primaryType === 'meeting_event' && onDate(scheduleOf(entry), date)).length;
   // Назад можно, пока за показанным днём есть записи; с сегодняшнего дня —
   // всегда хотя бы на вчера, иначе у свежего журнала стрелка мертва.
   const hasOlder = entries.some(entry => new Date(entry.createdAt) < startAt) || date === today;

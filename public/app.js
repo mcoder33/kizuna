@@ -329,31 +329,37 @@ function entryClock(entry) {
           }).format(at);
   return `${day}, ${time}`;
 }
-function scheduleLabel(schedule) {
+function scheduleLabel(schedule, on = null) {
   if (!schedule) return null;
   if (schedule.state === "conflict" || (!schedule.date && !schedule.time))
     return schedule.display || null;
-  let dateLabel = schedule.date;
-  if (schedule.date && currentDayDate) {
+  // У повтора подпись — про показанный день или ближайший экземпляр, а не
+  // про первый: «сегодня, 10:00, каждую неделю».
+  const shown = schedule.repeat && schedule.date
+    ? (on && repeatOccursOn(schedule, on) ? on : nextRepeatDate(schedule, currentDayDate || schedule.date) || schedule.date)
+    : schedule.date;
+  let dateLabel = shown;
+  if (shown && currentDayDate) {
     dateLabel =
-      schedule.date === currentDayDate
+      shown === currentDayDate
         ? "сегодня"
-        : schedule.date === shiftDate(currentDayDate, 1)
+        : shown === shiftDate(currentDayDate, 1)
           ? "завтра"
-          : schedule.date === shiftDate(currentDayDate, -1)
+          : shown === shiftDate(currentDayDate, -1)
             ? "вчера"
-            : `${schedule.date.slice(8, 10)}.${schedule.date.slice(5, 7)}${
-                schedule.date.slice(0, 4) === currentDayDate.slice(0, 4)
+            : `${shown.slice(8, 10)}.${shown.slice(5, 7)}${
+                shown.slice(0, 4) === currentDayDate.slice(0, 4)
                   ? ""
-                  : `.${schedule.date.slice(0, 4)}`
+                  : `.${shown.slice(0, 4)}`
               }`;
   }
   const vague =
     !schedule.time && schedule.display?.includes("после обеда")
       ? "после обеда"
       : null;
+  const words = repeatLabel(schedule.repeat, { until: false });
   return (
-    [dateLabel, schedule.time || vague].filter(Boolean).join(", ") ||
+    [dateLabel, schedule.time || vague, words].filter(Boolean).join(", ") ||
     schedule.display ||
     null
   );
@@ -401,7 +407,7 @@ async function updateCompletion(projections, complete, button) {
     button.disabled = false;
   }
 }
-function entryCard(entry, { overdue = false, compact = false } = {}) {
+function entryCard(entry, { overdue = false, compact = false, on = null } = {}) {
   const c = entry.interpretation.classification,
     projections = completableProjections(entry),
     completed = isClosed(entry),
@@ -420,9 +426,13 @@ function entryCard(entry, { overdue = false, compact = false } = {}) {
     complete.title = label;
     complete.setAttribute("aria-label", label);
     complete.setAttribute("aria-pressed", String(completed));
-    complete.addEventListener("click", () =>
-      updateCompletion(projections, !completed, complete),
-    );
+    // У повтора «Готово» — про этот экземпляр: он убирается из серии, а
+    // остальные повторы живут дальше. Серия целиком закрывается в карточке.
+    complete.addEventListener("click", () => {
+      const occurrence = c.entities.schedule?.repeat && !completed ? (on && scheduledOn(entry, on) ? on : scheduledOn(entry, currentDayDate) ? currentDayDate : null) : null;
+      if (occurrence) { complete.disabled = true; skipOccurrence({ id: entry.id, ...scheduleTarget(c.entities.schedule) }, occurrence).finally(() => { complete.disabled = false; }); return; }
+      updateCompletion(projections, !completed, complete);
+    });
     card.append(complete);
   }
   const title = markdownNode("button", c.summary, "entry-title", { inline: true, links: false, firstLine: true });
@@ -432,6 +442,7 @@ function entryCard(entry, { overdue = false, compact = false } = {}) {
     // Если у записи есть свой вопрос от модели, он и показывается; иначе
     // карточка открывается на обычное уточнение.
     const review = reviewFromEntry(entry);
+    cardOccurrence = c.entities.schedule?.repeat && on && scheduledOn(entry, on) ? on : null;
     showCorrection(entry, review.level === "high" ? undefined : review);
   });
   card.append(title);
@@ -446,7 +457,7 @@ function entryCard(entry, { overdue = false, compact = false } = {}) {
   // а не подробность в общей строке.
   for (const project of c.entities.projects)
     meta.append(node("span", project, "tag project"));
-  const due = scheduleLabel(c.entities.schedule);
+  const due = scheduleLabel(c.entities.schedule, on);
   // Время записи видно всегда: без него карточка не отвечает на вопрос
   // «когда это было».
   const metaParts = [
@@ -457,13 +468,13 @@ function entryCard(entry, { overdue = false, compact = false } = {}) {
     meta.append(document.createTextNode(metaParts.join(" · ")));
   // Состояния — цветными метками, а не словами в общей строке: просрочено и
   // готово должны читаться взглядом, не чтением.
-  const dueDate = c.entities.schedule?.date;
+  const dueToday = c.entities.schedule?.repeat ? scheduledOn(entry, currentDayDate) : Boolean(c.entities.schedule?.date) && c.entities.schedule.date === currentDayDate;
   if (due)
     meta.append(
       node(
         "span",
         `срок: ${due}`,
-        `tag due${overdue ? " late" : dueDate && dueDate === currentDayDate ? " soon" : ""}`,
+        `tag due${overdue ? " late" : dueToday ? " soon" : ""}`,
       ),
     );
   // У дела без срока просрочки быть не может — и это тоже должно быть видно,
@@ -550,6 +561,69 @@ async function refreshTodayCalendar() {
   renderToday();
 }
 const scheduleOf = (entry) => entry.interpretation.classification.entities.schedule || null;
+// Повтор срока: выпадает ли экземпляр на дату. Зеркало серверного разбора
+// (server/repeat.js): день, неделя, месяц по числу, год — с шагом, «до» и
+// убранными экземплярами.
+function calDayDiff(from, to) { return Math.round((Date.parse(`${to}T12:00:00Z`) - Date.parse(`${from}T12:00:00Z`)) / 86400000); }
+function repeatOccursOn(schedule, date) {
+  const rule = schedule?.repeat;
+  if (!rule || !schedule.date || !date || date < schedule.date) return false;
+  if (rule.until && date > rule.until) return false;
+  if ((schedule.skip || []).includes(date)) return false;
+  const interval = rule.interval || 1;
+  const days = calDayDiff(schedule.date, date);
+  const base = new Date(`${schedule.date}T12:00:00Z`), target = new Date(`${date}T12:00:00Z`);
+  if (rule.freq === "daily") return days % interval === 0;
+  if (rule.freq === "weekly") return days % 7 === 0 && (days / 7) % interval === 0;
+  if (rule.freq === "monthly") return target.getUTCDate() === base.getUTCDate() && ((target.getUTCFullYear() - base.getUTCFullYear()) * 12 + target.getUTCMonth() - base.getUTCMonth()) % interval === 0;
+  if (rule.freq === "yearly") return target.getUTCDate() === base.getUTCDate() && target.getUTCMonth() === base.getUTCMonth() && (target.getUTCFullYear() - base.getUTCFullYear()) % interval === 0;
+  return false;
+}
+function scheduledOn(entry, date) { const schedule = scheduleOf(entry); return Boolean(schedule?.date) && (schedule.date === date || repeatOccursOn(schedule, date)); }
+// Ближайший экземпляр повтора не раньше даты — для подписи срока.
+function nextRepeatDate(schedule, from) {
+  if (!schedule?.repeat || !schedule.date) return null;
+  let day = from < schedule.date ? schedule.date : from;
+  for (let step = 0; step < 800; step += 1) { if (repeatOccursOn(schedule, day)) return day; day = shiftDate(day, 1); }
+  return null;
+}
+const REPEAT_WORDS = { daily: ["каждый день", "дня", "дней"], weekly: ["каждую неделю", "недели", "недель"], monthly: ["каждый месяц", "месяца", "месяцев"], yearly: ["каждый год", "года", "лет"] };
+function repeatLabel(rule, { until = true } = {}) {
+  if (!rule?.freq || !REPEAT_WORDS[rule.freq]) return null;
+  const count = rule.interval || 1;
+  const [one, few, many] = REPEAT_WORDS[rule.freq];
+  let text = count === 1 ? one : `каждые ${count} ${count < 5 ? few : many}`;
+  if (until && rule.until) text += ` до ${rule.until.slice(8, 10)}.${rule.until.slice(5, 7)}`;
+  return text;
+}
+// «Готово» и «удалить только этот повтор» у своей серии — одно и то же:
+// экземпляр убирается из серии уточнением срока (schedule.skip), остальные
+// повторы живут дальше. «Вернуть» — то же уточнение без этой даты. Метка
+// времени в теле — чтобы повторное «убрать» после «вернуть» не сочли
+// повтором того же запроса.
+function scheduleTarget(schedule) { return { baseDate: schedule?.date || null, time: schedule?.time || null, end: schedule?.end || null, skip: schedule?.skip || [] }; }
+async function skipOccurrence(target, date, { announce = true } = {}) {
+  let { id, baseDate, time = null, end = null, skip = [] } = target;
+  try {
+    if (!baseDate) {
+      const { entry } = await request(`/api/captures/${id}`);
+      ({ baseDate, time, end, skip } = scheduleTarget(entry.interpretation.classification.entities.schedule));
+    }
+    const body = (dates) => JSON.stringify({ patch: { schedule: { date: baseDate, time, ...(time && end ? { end } : {}), skip: dates } }, at: Date.now() });
+    const without = skip.filter((day) => day !== date);
+    await request(`/api/captures/${id}/corrections`, { method: "POST", body: body([...without, date]) });
+    await refreshAfterSkip();
+    if (announce) toast(`Повтор ${calHuman(date)} убран, серия осталась`, { label: "Вернуть", run: async () => {
+      try { await request(`/api/captures/${id}/corrections`, { method: "POST", body: body(without) }); await refreshAfterSkip(); toast("Повтор возвращён"); }
+      catch (error) { toast(error.message); }
+    } });
+  } catch (error) { toast(error.message); }
+}
+async function refreshAfterSkip() {
+  await load();
+  if (!$("#calendar")?.hidden) await loadCalendar();
+  if (!$("#board")?.hidden) loadBoard();
+}
 const titleOf = (entry) => (entry.interpretation.classification.summary || entry.raw || "").split("\n")[0];
 const calendarConnected = () => Boolean(todayState.calendar?.accounts?.some((account) => !account.disabled));
 // Календарь в режиме «только занятость» отдаёт события без названия.
@@ -566,13 +640,13 @@ function todayMeetings() {
   return [
     ...external.map((item) => ({ id: item.id, title: item.title, start: minutesOf(item.time), end: minutesOf(item.end) ?? minutesOf(item.time) + defaults, joinUrl: item.joinUrl || null, busy: busyOnly(item), hasOutcome: hasOutcome(item.title) })),
     ...todayState.todo
-      .filter((entry) => isActiveMeeting(entry) && scheduleOf(entry)?.date === today && scheduleOf(entry)?.time)
+      .filter((entry) => isActiveMeeting(entry) && scheduledOn(entry, today) && scheduleOf(entry)?.time)
       .map((entry) => ({ id: entry.id, title: titleOf(entry), start: minutesOf(scheduleOf(entry).time), end: minutesOf(scheduleOf(entry).end) ?? minutesOf(scheduleOf(entry).time) + defaults, joinUrl: null, busy: false, hasOutcome: true })),
   ].filter((meeting) => meeting.start != null);
 }
 function todayTasks() {
   const today = currentDayDate;
-  const todays = todayState.todo.filter((entry) => scheduleOf(entry)?.date === today);
+  const todays = todayState.todo.filter((entry) => scheduledOn(entry, today));
   return {
     late: todayState.todo.filter((entry) => isOverdue(entry, today)).length,
     open: todayState.todo.filter((entry) => isActiveTask(entry) && !isOverdue(entry, today)).length,
@@ -615,7 +689,7 @@ function render(data) {
   const all = uniqueEntries([data.entries, data.day, data.upcoming, data.attention]).sort((left, right) =>
     (right.createdAt || "").localeCompare(left.createdAt || ""),
   );
-  const todayEntries = all.filter((entry) => entryDate(entry) === data.date || scheduleOf(entry)?.date === data.date);
+  const todayEntries = all.filter((entry) => entryDate(entry) === data.date || scheduledOn(entry, data.date));
   todayState.entries = all;
   todayState.done = todayEntries.filter(isReportedWork);
   todayState.todo = all
@@ -698,7 +772,7 @@ function paintCover(cover, date) {
 // всегда про сегодня.
 function ownEntriesFor(date) {
   return todayState.entries.filter((entry) =>
-    scheduleOf(entry)?.date === date && !isReportedWork(entry)
+    scheduledOn(entry, date) && !isReportedWork(entry)
     && (isActiveTask(entry) || isActiveMeeting(entry) || needsClarification(entry) || isClosed(entry)),
   );
 }
@@ -750,7 +824,7 @@ function dayCountNode(date) {
   const parts = [];
   if (date === currentDayDate) {
     const band = todayState.todo.filter((entry) => todoOrder(entry, date) <= 3);
-    const timed = todayState.todo.filter((entry) => isActiveTask(entry) && scheduleOf(entry)?.date === date && scheduleOf(entry)?.time);
+    const timed = todayState.todo.filter((entry) => isActiveTask(entry) && scheduledOn(entry, date) && scheduleOf(entry)?.time);
     const allDay = (todayState.calendar?.external || []).filter((item) => item.date === date && item.allDay).length;
     const meetings = todayMeetings().length + allDay;
     if (calendarConnected() || meetings) parts.push(plural(meetings, MEETINGS));
@@ -892,7 +966,7 @@ function paintDayList(date) {
 // хвосте «Ещё N».
 function paintTodayList(container) {
   const today = currentDayDate, minutes = nowMinutes();
-  const timed = (entry) => scheduleOf(entry)?.date === today && Boolean(scheduleOf(entry)?.time);
+  const timed = (entry) => scheduledOn(entry, today) && Boolean(scheduleOf(entry)?.time);
   const order = (entry) => todoOrder(entry, today);
   const band = todayState.todo.filter((entry) => order(entry) <= 3 && !timed(entry));
   const undated = band.filter((entry) => order(entry) === 3);
@@ -912,7 +986,7 @@ function paintTodayList(container) {
   }
   if (shownBand.length || allDay.length) {
     container.append(node("div", "без времени", "day-group"));
-    for (const entry of shownBand) container.append(entryCard(entry, { overdue: isOverdue(entry, today), compact: true }));
+    for (const entry of shownBand) container.append(entryCard(entry, { overdue: isOverdue(entry, today), compact: true, on: today }));
     for (const item of allDay) container.append(eventRow(item, { minutes, today: true }));
   }
   if (hours.length) {
@@ -923,7 +997,7 @@ function paintTodayList(container) {
     for (const slot of hours) {
       if (!nowPlaced && slot.start > minutes) { container.append(nowRow(minutes, meetings)); nowPlaced = true; }
       container.append(slot.entry
-        ? rowWithTime(scheduleOf(slot.entry).time, entryCard(slot.entry, { overdue: false, compact: true }))
+        ? rowWithTime(scheduleOf(slot.entry).time, entryCard(slot.entry, { overdue: false, compact: true, on: today }))
         : eventRow(slot.item, { minutes, today: true }));
     }
     if (!nowPlaced) container.append(nowRow(minutes, meetings));
@@ -934,7 +1008,7 @@ function paintOtherDayList(container, date, data) {
   const pastDay = date < currentDayDate;
   const own = ownEntriesFor(date);
   const external = (data.calendar?.external || []).filter((item) => item.date === date);
-  const card = (entry) => entryCard(entry, { overdue: pastDay && !isClosed(entry), compact: true });
+  const card = (entry) => entryCard(entry, { overdue: pastDay && !isClosed(entry) && !scheduleOf(entry)?.repeat, compact: true, on: date });
   const band = [...own.filter((entry) => !scheduleOf(entry)?.time).map((entry) => ({ entry })), ...external.filter((item) => item.allDay).map((item) => ({ item }))];
   const hours = [
     ...own.filter((entry) => scheduleOf(entry)?.time).map((entry) => ({ start: minutesOf(scheduleOf(entry).time), entry })),
@@ -1006,12 +1080,15 @@ setInterval(() => {
   if (typeof captureField !== "undefined" && String(captureField.getValue()).trim()) return;
   renderToday();
 }, 60000);
+// Повтор не просрочивается: прошедшие экземпляры просто прошли.
 function isOverdue(entry, today) {
-  const date = entry.interpretation.classification.entities.schedule?.date;
-  return Boolean(date && date < today);
+  const schedule = entry.interpretation.classification.entities.schedule;
+  return Boolean(schedule?.date && !schedule.repeat && schedule.date < today);
 }
 function todoOrder(entry, today) {
-  const date = entry.interpretation.classification.entities.schedule?.date;
+  const schedule = entry.interpretation.classification.entities.schedule;
+  const date = schedule?.date;
+  if (schedule?.repeat) return scheduledOn(entry, today) ? 2 : 4;
   if (date && date < today) return 0;
   if (needsClarification(entry)) return 1;
   if (date === today) return 2;
@@ -1074,6 +1151,9 @@ let flushCardBody = null;
 // Свойства уходят на сервер так же, как заметка: при закрытии карточки, без
 // отдельной кнопки. Ссылка снимается до вызова — второй раз ничего не улетит.
 let flushCardProps = null;
+// День, с которого открыли карточку повторяющейся записи: «удалить» тогда
+// предлагает убрать только этот повтор.
+let cardOccurrence = null;
 function flushCard() {
   const body = flushCardBody,
     props = flushCardProps;
@@ -1087,6 +1167,7 @@ function flushCard() {
 let closeCardSlashMenu = null;
 function closeCard() {
   const dialog = $("#review-dialog");
+  cardOccurrence = null;
   // Сохранение уходит своим ходом: карточка закрывается сразу, но значения
   // полей читаются сейчас, пока разметка ещё на месте.
   flushCard();
@@ -1556,6 +1637,26 @@ function showReview(entry, review, undoGroupId, provenance) {
   remind.addEventListener("change", () => { remindChoice = remind.value; });
   time.addEventListener("input", paintRemind);
   paintRemind();
+  // Повтор — тоже свойство срока: правило и, если нужно, последний день.
+  // Без даты повторять нечего — выбор закрыт.
+  const repeat = node("select", undefined, "review-repeat");
+  repeat.id = "review-repeat";
+  repeat.setAttribute("aria-label", "Повтор");
+  const storedRepeat = c.entities.schedule?.repeat || null;
+  const repeatKey = (rule) => (rule ? `${rule.freq}:${rule.interval || 1}` : "");
+  const repeatOptions = [["", "не повторять"], ["daily:1", "каждый день"], ["weekly:1", "каждую неделю"], ["weekly:2", "каждые 2 недели"], ["monthly:1", "каждый месяц"], ["yearly:1", "каждый год"]];
+  if (storedRepeat && !repeatOptions.some(([value]) => value === repeatKey(storedRepeat))) repeatOptions.push([repeatKey(storedRepeat), repeatLabel(storedRepeat, { until: false })]);
+  for (const [value, label] of repeatOptions) { const option = node("option", label); option.value = value; option.selected = value === repeatKey(storedRepeat); repeat.append(option); }
+  const until = node("input");
+  until.type = "date"; until.id = "review-repeat-until"; until.value = storedRepeat?.until || ""; until.title = "Последний день повтора"; until.setAttribute("aria-label", "Повторять до");
+  const untilWrap = node("span", undefined, "review-until");
+  untilWrap.append(node("span", "до", "review-end-label"), until);
+  const paintRepeat = () => { repeat.disabled = !date.value; if (!date.value) repeat.value = ""; untilWrap.hidden = !repeat.value; if (!repeat.value) until.value = ""; };
+  repeat.addEventListener("change", paintRepeat);
+  date.addEventListener("input", paintRepeat);
+  paintRepeat();
+  const repeatRow = node("span", undefined, "review-repeat-row");
+  repeatRow.append(repeat, untilWrap);
   project.id = "review-project";
   project.setAttribute("list", "known-projects");
   project.value = c.entities.projects[0] || "";
@@ -1583,12 +1684,12 @@ function showReview(entry, review, undoGroupId, provenance) {
   const scheduleRow = node("div", undefined, "review-schedule");
   const endWrap = node("span", undefined, "review-end");
   endWrap.append(node("span", "до", "review-end-label"), end);
-  scheduleRow.append(date, time, endWrap, remind);
+  scheduleRow.append(date, time, endWrap, remind, repeatRow);
   // Сброс уходит на сервер сразу: «без даты» — это решение, а не правка на
   // полпути, и ждать закрытия карточки ему незачем.
   let saveProps = () => {};
   const clearAndSave = (apply) => { apply(); saveProps(); };
-  const scheduleWrap = propertyRow("Срок", scheduleRow, "schedule", { clear: () => clearAndSave(() => { date.value = ""; time.value = ""; end.value = ""; remindChoice = ""; paintEnd(); paintRemind(); }), filled: () => Boolean(date.value || time.value) }),
+  const scheduleWrap = propertyRow("Срок", scheduleRow, "schedule", { clear: () => clearAndSave(() => { date.value = ""; time.value = ""; end.value = ""; remindChoice = ""; repeat.value = ""; until.value = ""; paintEnd(); paintRemind(); paintRepeat(); }), filled: () => Boolean(date.value || time.value) }),
     peopleWrap = propertyRow("Участники", people, "people", { clear: () => clearAndSave(() => { people.value = ""; }), filled: () => Boolean(people.value.trim()) }),
     followUpWrap = propertyRow("Далее", followUp, "next", { clear: () => clearAndSave(() => { followUp.value = ""; }), filled: () => Boolean(followUp.value.trim()) });
   const props = node("div", undefined, "props");
@@ -1626,6 +1727,7 @@ function showReview(entry, review, undoGroupId, provenance) {
     const due = scheduleLabel({ state: "ok", date: date.value || null, time: time.value || null });
     if (!scheduleWrap.hidden && due) parts.push(`срок: ${due}${time.value && end.value ? `–${end.value}` : ""}`);
     if (!scheduleWrap.hidden && due && remind.value) parts.push(remind.value === "off" ? "без напоминания" : `напомнить ${remind.selectedOptions[0]?.textContent || ""}`);
+    if (!scheduleWrap.hidden && due && repeat.value) parts.push(`${repeat.selectedOptions[0]?.textContent || "повтор"}${until.value ? ` до ${until.value.slice(8, 10)}.${until.value.slice(5, 7)}` : ""}`);
     if (!peopleWrap.hidden && people.value.trim()) parts.push(people.value.trim());
     if (!followUpWrap.hidden && followUp.value.trim()) parts.push(`далее: ${followUp.value.trim()}`);
     return parts.join("   ·   ");
@@ -1665,7 +1767,7 @@ function showReview(entry, review, undoGroupId, provenance) {
       completed: done,
     };
     if (!scheduleWrap.hidden)
-      patch.schedule = { date: date.value || null, time: time.value || null, ...(time.value && end.value && end.value > time.value ? { end: end.value } : {}), remind: remind.value === "" ? null : remind.value === "off" ? "off" : Number(remind.value) };
+      patch.schedule = { date: date.value || null, time: time.value || null, ...(time.value && end.value && end.value > time.value ? { end: end.value } : {}), remind: remind.value === "" ? null : remind.value === "off" ? "off" : Number(remind.value), repeat: repeat.value && date.value ? { freq: repeat.value.split(":")[0], interval: Number(repeat.value.split(":")[1]) || 1, until: until.value && until.value >= date.value ? until.value : null } : null };
     return patch;
   };
   const untouched = JSON.stringify(propsPatch());
@@ -1736,7 +1838,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   // уточнение», а выход из журнала.
   const remove = node("button", "Удалить запись", "card-delete");
   remove.type = "button";
-  remove.addEventListener("click", async () => {
+  const deleteRecord = async () => {
     // Записи больше не будет: сохранять в неё заметку и свойства незачем.
     flushCardBody = null;
     flushCardProps = null;
@@ -1761,6 +1863,26 @@ function showReview(entry, review, undoGroupId, provenance) {
       toast(error.message);
       remove.disabled = false;
     }
+  };
+  // Серия, открытая из календаря или «Дня» на конкретный день: удалить можно
+  // только этот повтор (он убирается из серии) или всю запись — выбор на
+  // месте кнопки.
+  const occurrence = c.entities.schedule?.repeat && cardOccurrence && scheduledOn(entry, cardOccurrence) ? cardOccurrence : null;
+  remove.addEventListener("click", () => {
+    if (!occurrence) { deleteRecord(); return; }
+    const ask = node("div", undefined, "card-delete-ask");
+    ask.append(node("span", `Запись повторяется. Убрать только ${calHuman(occurrence)} или удалить всю серию?`));
+    const only = node("button", "Только этот повтор", "danger"), all = node("button", "Всю серию", "danger"), cancel = node("button", "Отмена");
+    for (const button of [only, all, cancel]) button.type = "button";
+    only.addEventListener("click", async () => {
+      for (const button of [only, all, cancel]) button.disabled = true;
+      closeCard();
+      await skipOccurrence({ id: entry.id, ...scheduleTarget(c.entities.schedule) }, occurrence);
+    });
+    all.addEventListener("click", () => { ask.replaceWith(remove); deleteRecord(); });
+    cancel.addEventListener("click", () => ask.replaceWith(remove));
+    ask.append(only, all, cancel);
+    remove.replaceWith(ask);
   });
   footerRow.append(remove);
   // Отправить встречу во внешний календарь можно только отсюда, кнопкой:
@@ -3516,7 +3638,8 @@ function reportCard(title, { right = null, hint = null } = {}) {
   return card;
 }
 // Каждая строка — дверь: клик открывает ту же карточку записи, что и журнал.
-async function openReportEntry(captureId) {
+async function openReportEntry(captureId, { occurrence = null } = {}) {
+  cardOccurrence = occurrence;
   try {
     const { entries } = await request("/api/entries?limit=100");
     const entry = entries.find((candidate) => candidate.id === captureId);
@@ -3951,6 +4074,8 @@ function boardCardStatus(card) {
   return { key: "ontime", label: "В срок", icon: "clock" };
 }
 async function completeBoardCard(card, element, button) {
+  // Повтор: «готово» убирает ближайший экземпляр, серия остаётся на доске.
+  if (card.due?.repeat) { button.disabled = true; try { await skipOccurrence({ id: card.captureId }, card.due.date); } finally { button.disabled = false; } return; }
   button.disabled = true;
   try {
     for (const projectionId of card.projectionIds)
@@ -4047,7 +4172,7 @@ function boardCardEl(card, column, { closed = false } = {}) {
   // Как на «Сегодня»: просроченное — розовая плашка и красный заголовок,
   // открытое — песочная.
   if (!closed) element.classList.add(status.key === "late" ? "overdue" : "waiting");
-  const due = card.due ? scheduleLabel({ state: "ok", date: card.due.date, time: card.due.time }) : null;
+  const due = card.due ? [scheduleLabel({ state: "ok", date: card.due.date, time: card.due.time }), card.due.repeat].filter(Boolean).join(", ") : null;
   // Срок — обычным текстом, как дата в Notion; цвет подсказывает состояние.
   const dueChip = () =>
     node("span", due, `btag due${status.key === "late" ? " late" : status.key === "today" ? " soon" : ""}`);
@@ -4750,7 +4875,7 @@ const CAL_DOW = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"];
 const CAL_MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
 const CAL_MONTHS_G = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
 const CAL_PHONE = window.matchMedia("(max-width: 760px)");
-const calState = { mode: "week", anchor: null, days: 7, data: null, hidden: new Set(), seq: 0, drag: null, pop: null, search: "" };
+const calState = { mode: "week", anchor: null, days: 7, data: null, hidden: new Set(), seq: 0, drag: null, pop: null, popAnchorId: null, scrollTop: null, gridScroll: null, search: "" };
 try {
   const storedMode = localStorage.getItem("kizuna-calendar-mode");
   if (["day", "week", "month"].includes(storedMode)) calState.mode = storedMode;
@@ -4896,13 +5021,15 @@ function calChipEl(item, { overdue = false } = {}) {
   if (item.kind !== "external") {
     chip.draggable = !item.done;
     chip.dataset.own = "1";
+    chip.dataset.occ = item.date;
     const box = calButton(undefined, `cal-box${item.kind === "meeting" ? " meeting" : ""}${item.done ? " is-done" : ""}`, (event) => { event.stopPropagation(); toggleCalendarDone(item); });
-    box.title = item.done ? "Вернуть в работу" : "Готово";
+    box.title = item.recurring ? "Готово: убрать этот повтор, серия останется" : item.done ? "Вернуть в работу" : "Готово";
     if (item.kind === "meeting" && !item.done) box.innerHTML = BOARD_CLOCK;
     chip.append(box);
   } else if (item.color) chip.style.setProperty("--cal-c", item.color);
   chip.append(node("span", item.title, "cal-chip-title"));
-  chip.title = item.title;
+  if (item.kind !== "external" && item.recurring) { const repeat = node("i", "⟳", "cal-chip-repeat"); repeat.title = item.repeat || "Повторяется"; chip.append(repeat); }
+  chip.title = item.recurring && item.repeat ? `${item.title} · ${item.repeat}` : item.title;
   chip.addEventListener("click", () => openCalendarItem(item));
   return chip;
 }
@@ -4914,7 +5041,7 @@ function calEventEl(item) {
   element.style.top = `${top}px`;
   element.style.height = `${height}px`;
   element.dataset.id = item.id;
-  if (item.kind !== "external") { element.draggable = !item.done; element.dataset.own = "1"; }
+  if (item.kind !== "external") { element.draggable = !item.done; element.dataset.own = "1"; element.dataset.occ = item.date; }
   else { if (item.editable) { element.draggable = true; element.dataset.own = "1"; } if (item.color) element.style.setProperty("--cal-c", item.color); }
   const title = node("b", undefined);
   title.append(node("span", `${item.time} `, "cal-ev-time"), document.createTextNode(item.title));
@@ -4922,14 +5049,14 @@ function calEventEl(item) {
   const sub = item.kind === "external" ? item.calendarName || item.source : [item.project, ...(item.people || [])].filter(Boolean).join(" · ");
   if (sub) element.append(node("small", sub));
   // Повтор — значком в правом верхнем углу, как в Apple.
-  if (item.kind === "external" && (item.repeat || item.recurring)) { const repeat = node("i", "⟳", "cal-ev-repeat"); repeat.title = item.repeat || "Повторяется"; element.append(repeat); }
+  if (item.repeat || item.recurring) { const repeat = node("i", "⟳", "cal-ev-repeat"); repeat.title = item.repeat || "Повторяется"; element.append(repeat); }
   if (item.joinUrl && height >= 34) {
     const join = node("a", "Войти", "cal-join");
     join.href = item.joinUrl; join.target = "_blank"; join.rel = "noopener";
     join.addEventListener("click", (event) => event.stopPropagation());
     element.append(join);
   }
-  element.title = `${item.time}–${calEndOf(item)} ${item.title}`;
+  element.title = `${item.time}–${calEndOf(item)} ${item.title}${item.repeat ? ` · ${item.repeat}` : ""}`;
   element.addEventListener("click", () => openCalendarItem(item));
   return element;
 }
@@ -4975,7 +5102,8 @@ function calGridEl(dates) {
   scroll.append(grid);
   const wrap = node("div", undefined, "cal-week");
   wrap.append(head, lane, scroll);
-  requestAnimationFrame(() => { scroll.scrollTop = (Math.max(CAL_H0, 8) - CAL_H0) * CAL_HOUR_PX - 10; });
+  // Первый показ — с восьми утра; при перерисовке прокрутка остаётся прежней.
+  requestAnimationFrame(() => { if (calState.scrollTop === null) { scroll.scrollTop = (Math.max(CAL_H0, 8) - CAL_H0) * CAL_HOUR_PX - 10; calState.gridScroll = scroll.scrollTop; } });
   return wrap;
 }
 function calAgendaEl(date) {
@@ -5037,7 +5165,12 @@ function calMonthEl() {
 function renderCalendar() {
   const wrap = $("#calendar-view");
   if (!calState.data) return;
-  closeCalendarPop();
+  // Перерисовка в фоне — пришло обновление журнала — не должна сбрасывать
+  // прокрутку сетки и закрывать открытую плашку: плашка остаётся, если её
+  // событие после перерисовки стоит на том же месте.
+  const keepId = calState.pop ? calState.popAnchorId : null;
+  const anchorBefore = keepId ? wrap.querySelector(`[data-id="${CSS.escape(keepId)}"]`)?.getBoundingClientRect() : null;
+  calState.scrollTop = wrap.querySelector(".cal-scroll")?.scrollTop ?? null;
   clear(wrap);
   // Источники живут в шапке страницы, рядом с поиском, как фильтр на доске.
   const sources = $("#calendar-sources");
@@ -5048,6 +5181,11 @@ function renderCalendar() {
   else if (calState.mode === "day") { const day = node("div", undefined, "cal-day"); const { from } = calRange(); day.append(calGridEl([from]), calAgendaEl(from)); body.append(day); }
   else { const { from } = calRange(); body.append(calGridEl(Array.from({ length: calDays() }, (_, index) => shiftDate(from, index)))); }
   wrap.append(body);
+  const scroll = wrap.querySelector(".cal-scroll");
+  if (scroll && calState.scrollTop !== null) { scroll.scrollTop = calState.scrollTop; calState.gridScroll = scroll.scrollTop; }
+  const anchorAfter = keepId ? wrap.querySelector(`[data-id="${CSS.escape(keepId)}"]`)?.getBoundingClientRect() : null;
+  const samePlace = anchorBefore && anchorAfter && Math.abs(anchorBefore.top - anchorAfter.top) < 1 && Math.abs(anchorBefore.left - anchorAfter.left) < 1;
+  if (calState.pop && !samePlace) closeCalendarPop();
   const hint = node("p", undefined, "cal-hint");
   hint.append(node("kbd", "D"), node("kbd", "W"), node("kbd", "M"), document.createTextNode(" виды · "), node("kbd", "T"), document.createTextNode(" сегодня · "), node("kbd", "←"), node("kbd", "→"), document.createTextNode(" листать · "), node("kbd", "1"), document.createTextNode("–"), node("kbd", "7"), document.createTextNode(" дней · тяните дела, встречи и чужие события, клик по пустому месту — новая запись"));
   wrap.append(hint);
@@ -5055,12 +5193,13 @@ function renderCalendar() {
 // Клик по своему делу — карточка записи; по чужому событию — плашка с тем,
 // что известно, и «Взять в память».
 function openCalendarItem(item) {
-  if (item.kind !== "external") { openReportEntry(item.id); return; }
+  if (item.kind !== "external") { openReportEntry(item.id, { occurrence: item.recurring ? item.date : null }); return; }
   showExternalEvent(item);
 }
 function closeCalendarPop() {
   calState.pop?.remove();
   calState.pop = null;
+  calState.popAnchorId = null;
   calState.popCleanup?.();
   calState.popCleanup = null;
 }
@@ -5075,8 +5214,15 @@ function calPopAt(anchorElement) {
   calPopPlace(pop, box.left, box.bottom + 6);
   document.body.append(pop);
   calState.pop = pop;
+  calState.popAnchorId = anchorElement.dataset.id || null;
   const away = (event) => { if (!pop.contains(event.target)) closeCalendarPop(); };
-  const drift = (event) => { if (!pop.contains(event.target)) closeCalendarPop(); };
+  // Прокрутка сетки закрывает плашку, но не та, что сделала сама перерисовка,
+  // возвращая сетку на прежнее место: у неё положение известно заранее.
+  const drift = (event) => {
+    if (pop.contains(event.target)) return;
+    if (event.target instanceof Element && event.target.classList.contains("cal-scroll") && event.target.scrollTop === calState.gridScroll) return;
+    closeCalendarPop();
+  };
   const timer = setTimeout(() => {
     document.addEventListener("pointerdown", away);
     document.addEventListener("scroll", drift, true);
@@ -5257,24 +5403,43 @@ function showExternalEvent(item) {
   });
   actions.append(take);
   if (item.editable) {
+    const erase = async (scope) => {
+      await request(`/api/calendar/external/${encodeURIComponent(item.id)}${scope ? `?scope=${scope}` : ""}`, { method: "DELETE" });
+      toast(scope === "series" ? `Серия «${item.title}» удалена из ${item.source}` : `Удалено из ${item.source}`);
+      closeCalendarPop();
+      await loadCalendar();
+    };
+    // Повтор — выбор, как в Календаре macOS: только этот экземпляр или вся
+    // серия. Выбор живёт в самой плашке, на месте кнопок.
+    const askDeleteScope = () => {
+      const ask = node("div", undefined, "cal-pop-ask");
+      ask.append(node("p", `«${item.title}» повторяется. Удалить только этот повтор (${calHuman(item.date)}) или всю серию из календаря ${item.source}? Это не вернуть.`, "cal-pop-ask-text"));
+      const row = node("div", undefined, "cal-pop-actions");
+      const run = (scope) => async () => {
+        for (const button of row.children) button.disabled = true;
+        try { await erase(scope); } catch (error) { toast(error.message); for (const button of row.children) button.disabled = false; }
+      };
+      row.append(calButton("Только это событие", "cal-pop-btn danger", run("instance")), calButton("Всю серию", "cal-pop-btn danger", run("series")), calButton("Отмена", "cal-pop-btn", () => ask.replaceWith(actions)));
+      ask.append(row);
+      actions.replaceWith(ask);
+      calPopFit(pop);
+    };
     const remove = calButton("Удалить", "cal-pop-btn danger", async () => {
-      const question = item.recurring
-        ? `Удалить только этот повтор «${item.title}» (${calHuman(item.date)}) из календаря ${item.source}? Серия останется.`
-        : `Удалить «${item.title}» из календаря ${item.source}? Это не вернуть.`;
-      if (!confirm(question)) return;
+      if (item.recurring) { askDeleteScope(); return; }
+      if (!confirm(`Удалить «${item.title}» из календаря ${item.source}? Это не вернуть.`)) return;
       remove.disabled = true;
-      try { await request(`/api/calendar/external/${encodeURIComponent(item.id)}`, { method: "DELETE" }); toast(`Удалено из ${item.source}`); closeCalendarPop(); await loadCalendar(); }
-      catch (error) { toast(error.message); remove.disabled = false; }
+      try { await erase(null); } catch (error) { toast(error.message); remove.disabled = false; }
     });
     actions.append(remove);
   }
   pop.append(actions);
-  // Как в Календаре macOS: правка и удаление повтора касаются только этого
-  // события, серия остаётся; ответ организатору — один на всю серию.
+  // Как в Календаре macOS: правка повтора касается только этого события,
+  // удалить можно и его одного, и всю серию; ответ организатору — один на
+  // всю серию.
   const note = !item.editable
     ? "Чужое событие не запись: его нет в поиске и отчётах, пока вы не возьмёте его в память."
     : item.recurring
-      ? "Экземпляр повтора: название по клику и перенос мышкой меняют только этот повтор, серия остаётся как была; ответ организатору — на всю серию."
+      ? "Экземпляр повтора: название по клику и перенос мышкой меняют только этот повтор; «Удалить» спросит, убрать его одного или всю серию; ответ организатору — на всю серию."
       : "Чужое событие не запись: его нет в поиске и отчётах, пока вы не возьмёте его в память. Название правится по клику, перенос — мышкой, изменения уходят в календарь сразу.";
   pop.append(node("p", note, "cal-pop-note"));
   calPopFit(pop);
@@ -5323,6 +5488,8 @@ function openCalendarQuickAdd(target, event) {
 }
 function calSnap(minutes) { return Math.max(CAL_H0 * 60, Math.min(CAL_H1 * 60 - CAL_STEP, Math.round(minutes / CAL_STEP) * CAL_STEP)); }
 async function toggleCalendarDone(item) {
+  // Экземпляр своей серии: «готово» убирает его из серии, остальные остаются.
+  if (item.recurring) { await skipOccurrence({ id: item.id, baseDate: item.baseDate, time: item.time, end: item.end, skip: item.skip || [] }, item.date); return; }
   const projectionId = item.projectionIds?.[0];
   if (!projectionId) return;
   try {
@@ -5337,6 +5504,21 @@ async function toggleCalendarDone(item) {
 // Чужое событие переносится в самом календаре — PATCH уходит в Яндекс, Apple
 // или Google; «Вернуть» — такой же перенос обратно.
 async function moveCalendarItem(item, schedule, { announce = true } = {}) {
+  // Экземпляр своей серии двигается вместе с серией: новое время — у всех
+  // повторов, сдвиг по дням — у первого экземпляра, остальные идут за ним.
+  if (item.kind !== "external" && item.recurring) {
+    const base = shiftDate(item.baseDate, calDayDiff(item.date, schedule.date));
+    const next = { date: base, time: schedule.time ?? null, ...(schedule.time && schedule.end ? { end: schedule.end } : {}) };
+    if (base === item.baseDate && (next.time || null) === (item.time || null) && (next.end || null) === (item.end || null)) return;
+    try {
+      await request(`/api/captures/${item.id}/corrections`, { method: "POST", body: JSON.stringify({ patch: { schedule: next }, at: Date.now() }) });
+      await loadCalendar();
+      const label = next.time ? `${calHuman(schedule.date)}, ${next.time}` : `${calHuman(schedule.date)}, без времени`;
+      if (announce) toast(`Перенесена вся серия: ${label}`, { label: "Вернуть", run: () => moveCalendarItem({ ...item, date: schedule.date, time: next.time, end: next.end || null, baseDate: base }, { date: item.date, time: item.time, ...(item.end ? { end: item.end } : {}) }, { announce: false }) });
+      await load();
+    } catch (error) { toast(error.message); }
+    return;
+  }
   if (item.date === schedule.date && (item.time || null) === (schedule.time || null) && (item.end || null) === (schedule.end || null)) return;
   const before = { date: item.date, time: item.time, ...(item.end ? { end: item.end } : {}) };
   try {
@@ -5350,11 +5532,12 @@ async function moveCalendarItem(item, schedule, { announce = true } = {}) {
 }
 {
   const wrap = $("#calendar-view");
-  const findItem = (id) => calState.data?.items.find((item) => item.id === id) || calState.data?.overdue?.find((item) => item.id === id) || calState.data?.external?.find((item) => item.id === id);
+  // У повтора один id на все экземпляры: экземпляр узнаётся ещё и по дате.
+  const findItem = (id, occ = null) => calState.data?.items.find((item) => item.id === id && (!occ || item.date === occ)) || calState.data?.overdue?.find((item) => item.id === id) || calState.data?.external?.find((item) => item.id === id);
   wrap.addEventListener("dragstart", (event) => {
     const element = event.target.closest?.("[data-own][draggable='true']");
     if (!element) return;
-    calState.drag = findItem(element.dataset.id);
+    calState.drag = findItem(element.dataset.id, element.dataset.occ || null);
     element.classList.add("dragging");
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", element.dataset.id);

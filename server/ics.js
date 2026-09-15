@@ -403,13 +403,16 @@ function wallStamp({ year, month, day, hour = 0, minute = 0 }) {
 
 // Событие со временем уходит в UTC (…Z): так его одинаково понимают Яндекс,
 // Apple и Google, и не нужен VTIMEZONE. Событие на весь день — датой.
-export function buildEvent({ uid, title, description = '', start, end, allDay = false, location = '', url = null, now = new Date() }) {
+// Повтор — RRULE, убранные экземпляры — EXDATE (моменты UTC или даты).
+export function buildEvent({ uid, title, description = '', start, end, allDay = false, location = '', url = null, rrule = null, exdates = [], now = new Date() }) {
   const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Kizuna//Calendar//RU', 'BEGIN:VEVENT', `UID:${uid}`, `DTSTAMP:${stamp(now)}`];
   if (allDay) {
     lines.push(`DTSTART;VALUE=DATE:${wallStamp(start).slice(0, 8)}`, `DTEND;VALUE=DATE:${wallStamp(end).slice(0, 8)}`);
   } else {
     lines.push(`DTSTART:${stamp(start)}`, `DTEND:${stamp(end)}`);
   }
+  if (rrule) lines.push(`RRULE:${rrule}`);
+  for (const exdate of exdates) lines.push(allDay ? `EXDATE;VALUE=DATE:${wallStamp(exdate).slice(0, 8)}` : `EXDATE:${stamp(exdate)}`);
   lines.push(`SUMMARY:${escapeText(title)}`);
   if (description) lines.push(`DESCRIPTION:${escapeText(description)}`);
   if (location) lines.push(`LOCATION:${escapeText(location)}`);

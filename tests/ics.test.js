@@ -157,3 +157,19 @@ test('экземпляр повтора: «только это событие» 
   assert.equal(overrideInstance('BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n', { instanceKey: '2026-09-09T07:00:00.000Z', start: now, end: now }), null);
   assert.equal(excludeInstance(series, { instanceKey: 'мусор' }), null);
 });
+
+// Своя серия наружу: RRULE и EXDATE в VEVENT читаются обратно тем же
+// разбором — экземпляры разворачиваются, убранный пропадает.
+test('buildEvent: повтор уходит RRULE и EXDATE и разворачивается при чтении', () => {
+  const start = new Date('2026-09-07T06:00:00Z'), end = new Date('2026-09-07T06:30:00Z');
+  const ics = buildEvent({ uid: 'series@kizuna', title: 'Стендап', start, end, rrule: 'FREQ=WEEKLY;INTERVAL=1;UNTIL=20261005T060000Z', exdates: [new Date('2026-09-21T06:00:00Z')] });
+  assert.ok(ics.includes('RRULE:FREQ=WEEKLY;INTERVAL=1;UNTIL=20261005T060000Z'));
+  assert.ok(ics.includes('EXDATE:20260921T060000Z'));
+  const { events } = parseCalendar(ics, { from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-10-31T00:00:00Z'), timeZone: 'Europe/Samara' });
+  assert.deepEqual(events.map(event => event.start.toISOString()), ['2026-09-07T06:00:00.000Z', '2026-09-14T06:00:00.000Z', '2026-09-28T06:00:00.000Z', '2026-10-05T06:00:00.000Z']);
+  assert.equal(events[0].repeat, 'Повторяется каждую неделю до 5 окт 2026');
+  assert.ok(events.every(event => event.uid === 'series@kizuna' && event.instanceKey));
+  // На весь день — датами.
+  const allDay = buildEvent({ uid: 'd@kizuna', title: 'Отчёт', allDay: true, start: { year: 2026, month: 9, day: 7 }, end: { year: 2026, month: 9, day: 8 }, rrule: 'FREQ=MONTHLY', exdates: [{ year: 2026, month: 10, day: 7 }] });
+  assert.ok(allDay.includes('RRULE:FREQ=MONTHLY') && allDay.includes('EXDATE;VALUE=DATE:20261007'));
+});

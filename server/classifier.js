@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { normalizeRepeat, validRepeat, scheduleDisplay } from './repeat.js';
 export const primaryTypes=['meeting_event','task','note','outcome_decision','idea_question'];
 export const claimSchema=z.object({field:z.string(),value:z.unknown(),kind:z.enum(['fact','inference','assumption','unknown']),confidence:z.number().min(0).max(1),provenance:z.object({source:z.enum(['raw','rule','model']),evidence:z.string().max(300).optional()}),essential:z.boolean()});
 export const classificationSchema=z.object({
@@ -40,7 +41,11 @@ export function scheduleFromModel(when,now=new Date(),timeZone='Europe/Samara'){
   const endMatch=time&&typeof when.end==='string'?when.end.match(isoTime):null;
   const end=endMatch&&Number(endMatch[1])<=23&&Number(endMatch[2])<=59?`${endMatch[1].padStart(2,'0')}:${endMatch[2]}`:null;
   const endValid=end&&(Number(end.slice(0,2))*60+Number(end.slice(3)))>(Number(time.slice(0,2))*60+Number(time.slice(3)));
-  return {state:'ok',date,time,...(endValid?{end}:{}),sortAt:date?`${date}T${time||'23:59'}:00`:null,display:[date,time].filter(Boolean).join(', ')+(endValid?`–${end}`:'')};
+  // Повтор — только при дате и только целый: кривое правило или «до» раньше
+  // первого экземпляра отбрасываются, срок остаётся разовым.
+  const repeat=date?normalizeRepeat(when.repeat)||null:null;
+  const repeatValid=repeat&&!(repeat.until&&repeat.until<date)?repeat:null;
+  return {state:'ok',date,time,...(endValid?{end}:{}),...(repeatValid?{repeat:repeatValid}:{}),sortAt:date?`${date}T${time||'23:59'}:00`:null,display:scheduleDisplay({date,time,end:endValid?end:null,repeat:repeatValid})};
 }
 
 // Заземление: сущность принимается, только если её начало встречается в записи.
@@ -127,7 +132,10 @@ export function parseCaptureOverrides(body,now=new Date(),timeZone='Europe/Samar
     if(!scheduleFromModel({date,time},now,timeZone))return{error:'invalid_due'};
     const remind=src.due.remind;
     if(remind!==undefined&&remind!==null&&!(remind==='off'||(Number.isInteger(remind)&&remind>=0&&remind<=7*24*60)))return{error:'invalid_due'};
-    out.due={date,time,...(remind!==undefined&&remind!==null?{remind}:{})};
+    // Повтор у срока: правило целиком, «до» не раньше первого экземпляра.
+    const repeat=src.due.repeat===undefined||src.due.repeat===null?null:normalizeRepeat(src.due.repeat);
+    if(repeat===undefined||(repeat?.until&&repeat.until<date))return{error:'invalid_due'};
+    out.due={date,time,...(remind!==undefined&&remind!==null?{remind}:{}),...(repeat?{repeat}:{})};
   }
   if(src.priority!==undefined&&src.priority!==null){
     if(!['low','high'].includes(src.priority))return{error:'invalid_priority'};

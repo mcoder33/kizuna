@@ -156,3 +156,23 @@ test('push: ключ VAPID один на приложение, подписка 
   assert.match(sw.headers['content-type'], /javascript/);
   assert.match((await api.get('/manifest.webmanifest').expect(200)).text, /Кизуна/);
 });
+
+// Повтор напоминает по экземплярам: у каждого свой момент и своя запись в
+// журнале отправок; убранный экземпляр молчит.
+test('повтор напоминает по экземплярам, убранный экземпляр молчит', async () => {
+  let clock = new Date('2026-09-15T06:00:00.000Z');
+  const app = freshApp({ now: () => clock, timeZone: TZ });
+  const api = authed(app);
+  const daily = (await api.post('/api/captures').send({ raw: 'проверить почту', primaryType: 'todo', due: { date: '2026-09-14', time: '11:00', remind: 15, repeat: { freq: 'daily' } } }).expect(201)).body.entry;
+  const upcoming = (await api.get('/api/reminders/upcoming').expect(200)).body.reminders.filter(item => item.captureId === daily.id);
+  assert.deepEqual(upcoming.map(item => [item.date, item.remindAt]), [['2026-09-15', '2026-09-15T06:45:00.000Z'], ['2026-09-16', '2026-09-16T06:45:00.000Z']]);
+  clock = new Date('2026-09-15T06:45:30.000Z');
+  assert.deepEqual((await app.reminders.tick()).map(item => [item.captureId, item.body]), [[daily.id, 'Дело · сегодня, 11:00 · через 15 мин']]);
+  assert.deepEqual(await app.reminders.tick(), []);
+  // Завтрашний экземпляр убран — тишина; послезавтрашний напомнит.
+  await api.post(`/api/captures/${daily.id}/corrections`).send({ patch: { schedule: { date: '2026-09-14', time: '11:00', skip: ['2026-09-16'] } } }).expect(200);
+  clock = new Date('2026-09-16T06:45:30.000Z');
+  assert.deepEqual(await app.reminders.tick(), []);
+  clock = new Date('2026-09-17T06:45:30.000Z');
+  assert.equal((await app.reminders.tick()).length, 1);
+});

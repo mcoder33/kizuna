@@ -112,8 +112,12 @@ export function createGoogleCalendarClient({ fetch = globalThis.fetch, timeoutMs
       for (const item of data?.items || []) {
         const start = moment(item.start), end = moment(item.end);
         if (!start || !end) continue;
+        // Экземпляр повтора: свой id (по нему PATCH и DELETE правят один
+        // экземпляр), ключ — исходное начало, серия — recurringEventId.
         out.push({
-          uid: item.id, instanceKey: null,
+          uid: item.id,
+          instanceKey: item.recurringEventId ? item.originalStartTime?.dateTime || item.originalStartTime?.date || item.start?.dateTime || item.start?.date || null : null,
+          seriesUid: item.recurringEventId || null,
           title: (item.summary || '').trim() || '(без названия)',
           description: (item.description || '').slice(0, 2000),
           location: (item.location || '').slice(0, 300),
@@ -135,11 +139,18 @@ export function createGoogleCalendarClient({ fetch = globalThis.fetch, timeoutMs
     return out;
   }
 
+  // Повтор — строками RRULE и EXDATE, как в iCalendar. У повторяющегося
+  // события Google требует пояс начала и конца: в нём и разворачивает серию.
+  const icsStamp = at => at.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const dateStamp = ({ year, month, day }) => `${year}${String(month).padStart(2, '0')}${String(day).padStart(2, '0')}`;
   function eventBody(event) {
+    const zone = event.rrule && event.timeZone ? { timeZone: event.timeZone } : {};
+    const exdates = (event.exdates || []).map(exdate => (event.allDay ? `EXDATE;VALUE=DATE:${dateStamp(exdate)}` : `EXDATE:${icsStamp(exdate)}`));
     return {
       summary: event.title, description: event.description || undefined, location: event.location || undefined,
-      start: event.allDay ? { date: event.startDate } : { dateTime: event.start.toISOString() },
-      end: event.allDay ? { date: event.endDate } : { dateTime: event.end.toISOString() },
+      start: event.allDay ? { date: event.startDate } : { dateTime: event.start.toISOString(), ...zone },
+      end: event.allDay ? { date: event.endDate } : { dateTime: event.end.toISOString(), ...zone },
+      ...(event.rrule ? { recurrence: [`RRULE:${event.rrule}`, ...exdates] } : {}),
       extendedProperties: { private: { kizunaCaptureId: event.captureId || '' } },
     };
   }

@@ -13,6 +13,7 @@
 import { enqueueCaptureJob, getAggregate, fullEntry, activeNote, saveNote, search, day, replaceInterpretation, deleteCapture, restoreCapture, captureOwner } from './db.js';
 import { parseCaptureOverrides, applyUserOverrides, gateClassification, shouldMaterializeProjections } from './classifier.js';
 import { dateInZone, shiftDate } from './reports.js';
+import { scheduleDisplay } from './repeat.js';
 
 export const VOICE_MODEL = 'gpt-realtime';
 export const GEMINI_VOICE_MODEL = 'models/gemini-3.1-flash-live-preview';
@@ -35,7 +36,7 @@ export const VOICE_INSTRUCTIONS = [
   'Не уверен, о какой записи речь, — найди search_memory или list_today и переспроси, а не угадывай.',
   'Не читай длинные списки целиком: назови сколько нашлось и самое важное.',
   'Если человек размышляет вслух и обращается к тебе, помоги подумать: уточняющий вопрос или следующий шаг.',
-  'Календарь — тоже твоя часть: list_calendar показывает свои дела и встречи вместе с событиями внешних календарей (Яндекс, Apple, Google). Своё дело или встречу двигай update_capture, чужое событие — update_event, удаление чужого события подтверждай вслух и вызывай delete_event только после согласия. Чтобы чужое событие стало записью в памяти — take_event. На приглашение отвечай respond_event, когда человек сказал, принимает он встречу или нет.',
+  'Календарь — тоже твоя часть: list_calendar показывает свои дела и встречи вместе с событиями внешних календарей (Яндекс, Apple, Google). Своё дело или встречу двигай update_capture, чужое событие — update_event, удаление чужого события подтверждай вслух и вызывай delete_event только после согласия. Чтобы чужое событие стало записью в памяти — take_event. На приглашение отвечай respond_event, когда человек сказал, принимает он встречу или нет. Удаляя повторяющееся событие (recurring), сначала спроси: только этот повтор или всю серию — и передай scope в delete_event.',
 ].join(' ');
 
 // Характер Кизуны по умолчанию — значение настройки «Системный промпт», пока
@@ -109,7 +110,10 @@ export const VOICE_TOOLS = [
         type: { type: 'string', enum: ['todo', 'outcome', 'note'], description: 'Тип записи, если человек назвал его явно' },
         due: {
           type: 'object',
-          properties: { date: { type: 'string', description: 'YYYY-MM-DD' }, time: { type: 'string', description: 'ЧЧ:ММ' } },
+          properties: {
+            date: { type: 'string', description: 'YYYY-MM-DD' }, time: { type: 'string', description: 'ЧЧ:ММ' },
+            repeat: { type: 'object', description: 'Повтор, если человек его назвал: freq daily|weekly|monthly|yearly, interval — раз в сколько периодов, until — последний день YYYY-MM-DD. Дата срока — первый экземпляр.', properties: { freq: { type: 'string', enum: ['daily', 'weekly', 'monthly', 'yearly'] }, interval: { type: 'integer' }, until: { type: 'string' } }, required: ['freq'] },
+          },
           required: ['date'],
         },
         priority: { type: 'string', enum: ['low', 'high'] },
@@ -185,7 +189,10 @@ export const VOICE_TOOLS = [
         type: { type: 'string', enum: ['todo', 'outcome', 'note'] },
         due: {
           type: 'object',
-          properties: { date: { type: 'string' }, time: { type: 'string' }, end: { type: 'string', description: 'ЧЧ:ММ, конец встречи или дела' } },
+          properties: {
+            date: { type: 'string' }, time: { type: 'string' }, end: { type: 'string', description: 'ЧЧ:ММ, конец встречи или дела' },
+            repeat: { type: 'object', description: 'Повтор: freq daily|weekly|monthly|yearly, interval — раз в сколько периодов, until — последний день YYYY-MM-DD; freq none снимает повтор; не передан — остаётся как был.', properties: { freq: { type: 'string', enum: ['none', 'daily', 'weekly', 'monthly', 'yearly'] }, interval: { type: 'integer' }, until: { type: 'string' } }, required: ['freq'] },
+          },
           required: ['date'],
         },
         priority: { type: 'string', enum: ['low', 'normal', 'high'] },
@@ -223,10 +230,10 @@ export const VOICE_TOOLS = [
   {
     type: 'function',
     name: 'delete_event',
-    description: 'Удалить событие из внешнего календаря. Необратимо — вызывать только после подтверждения человеком.',
+    description: 'Удалить событие из внешнего календаря. Необратимо — вызывать только после подтверждения человеком. У повторяющегося события (recurring в list_calendar) сначала спроси, удалить только этот повтор или всю серию, и передай scope.',
     parameters: {
       type: 'object',
-      properties: { eventId: { type: 'string' } },
+      properties: { eventId: { type: 'string' }, scope: { type: 'string', enum: ['instance', 'series'], description: 'У повтора: instance — только этот экземпляр (по умолчанию), series — вся серия.' } },
       required: ['eventId'],
     },
   },
@@ -436,7 +443,8 @@ export function runVoiceTool(db, name, args = {}, { now = () => new Date(), time
       Object.assign(overrides, parsed.overrides);
     }
     if (args.due) {
-      const parsed = parseCaptureOverrides({ primaryType: 'todo', due: { date: args.due.date, time: args.due.time } }, now(), timeZone);
+      const repeat = args.due.repeat && args.due.repeat.freq !== 'none' ? args.due.repeat : undefined;
+      const parsed = parseCaptureOverrides({ primaryType: 'todo', due: { date: args.due.date, time: args.due.time, ...(repeat ? { repeat } : {}) } }, now(), timeZone);
       if (parsed.error) return { error: 'Некорректный срок.' };
       overrides.due = parsed.overrides.due;
       // Встреча остаётся встречей: срок у неё тоже есть, тип менять незачем.
@@ -451,8 +459,14 @@ export function runVoiceTool(db, name, args = {}, { now = () => new Date(), time
     // Конец — только при времени начала и строго после него, как в карточке.
     const end = typeof args.due?.end === 'string' && /^\d{2}:\d{2}$/.test(args.due.end) ? args.due.end : null;
     const schedule = classification.entities?.schedule;
-    if (end && schedule?.time && end > schedule.time)
-      classification = { ...classification, entities: { ...classification.entities, schedule: { ...schedule, end, display: `${[schedule.date, schedule.time].filter(Boolean).join(', ')}–${end}` } } };
+    // Повтор и убранные экземпляры — свойства срока: перенос голосом без слова
+    // о повторе их не снимает; freq «none» снимает.
+    const before = original.entities?.schedule;
+    const clearing = args.due?.repeat?.freq === 'none';
+    const kept = args.due && schedule?.date && before?.repeat && !schedule.repeat && !clearing ? { repeat: before.repeat, ...(before.skip?.length ? { skip: before.skip } : {}) } : {};
+    const endValid = end && schedule?.time && end > schedule.time ? end : null;
+    if (schedule && (endValid || kept.repeat))
+      classification = { ...classification, entities: { ...classification.entities, schedule: { ...schedule, ...kept, ...(endValid ? { end: endValid } : {}), display: scheduleDisplay({ date: schedule.date, time: schedule.time, end: endValid || schedule.end || null, repeat: kept.repeat || schedule.repeat || null }) } } };
     if (typeof args.project === 'string' && args.project.trim())
       classification = { ...classification, entities: { ...classification.entities, projects: [args.project.trim().slice(0, 120)] } };
     if (typeof args.done === 'boolean') classification = { ...classification, completed: args.done };
@@ -472,8 +486,8 @@ const CALENDAR_TOOLS = new Set(['list_calendar', 'update_event', 'delete_event',
 const isoDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
 function calendarItem(item) {
   return item.kind === 'external'
-    ? { eventId: item.id, kind: 'событие', source: item.source, title: item.title, date: item.date, time: item.time, end: item.end, location: item.location || null, joinUrl: item.joinUrl || null, editable: Boolean(item.editable), repeat: item.repeat || null, organizer: item.organizer?.name || item.organizer?.email || null, attendees: (item.attendees || []).map(attendee => `${attendee.name || attendee.email}${attendee.self ? ' (я)' : ''}: ${attendee.status}`), myStatus: item.me?.status || null }
-    : { captureId: item.id, kind: item.kind === 'meeting' ? 'встреча' : 'задача', title: item.title, date: item.date, time: item.time, end: item.end, done: item.done, overdue: Boolean(item.overdue), project: item.project || null };
+    ? { eventId: item.id, kind: 'событие', source: item.source, title: item.title, date: item.date, time: item.time, end: item.end, location: item.location || null, joinUrl: item.joinUrl || null, editable: Boolean(item.editable), repeat: item.repeat || null, recurring: Boolean(item.recurring), organizer: item.organizer?.name || item.organizer?.email || null, attendees: (item.attendees || []).map(attendee => `${attendee.name || attendee.email}${attendee.self ? ' (я)' : ''}: ${attendee.status}`), myStatus: item.me?.status || null }
+    : { captureId: item.id, kind: item.kind === 'meeting' ? 'встреча' : 'задача', title: item.title, date: item.date, time: item.time, end: item.end, done: item.done, overdue: Boolean(item.overdue), project: item.project || null, repeat: item.repeat || null };
 }
 function runCalendarTool(db, name, args, { now, timeZone, provider, userId, calendar }) {
   if (!calendar) return { error: 'Календарь недоступен.' };
@@ -502,7 +516,7 @@ function runCalendarTool(db, name, args, { now, timeZone, provider, userId, cale
     const messages2 = { ...messages, not_invited: 'Вас нет среди участников — отвечать некому.', invalid_status: 'Ответ — accepted, declined или tentative.' };
     return calendar.respondExternalEvent({ userId, id: eventId, status: args.status, comment: typeof args.comment === 'string' ? args.comment : undefined }).then(result => (result.error ? { error: `${messages2[result.error] || 'Календарь не принял ответ.'}${result.message ? ` ${result.message}` : ''}` } : { eventId, responded: args.status, title: result.event.title }));
   }
-  if (name === 'delete_event') return calendar.deleteExternalEvent({ userId, id: eventId }).then(result => (result.error ? failed(result) : { eventId, removed: true, title: result.title }));
+  if (name === 'delete_event') return calendar.deleteExternalEvent({ userId, id: eventId, scope: args.scope === 'series' ? 'series' : 'instance' }).then(result => (result.error ? failed(result) : { eventId, removed: true, title: result.title }));
   if (name === 'take_event') {
     const event = calendar.externalEvent({ userId, id: eventId });
     if (!event) return { error: messages.not_found };

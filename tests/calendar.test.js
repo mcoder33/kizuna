@@ -475,3 +475,136 @@ test('приглашение из Яндекса: участники с отве
   const item = listed.items.find(entry => entry.title === 'Монетизация ZB');
   assert.deepEqual([item.myStatus, item.organizer, item.repeat], ['accepted', 'Стас Косухин', 'Повторяется каждую неделю по чт']);
 });
+
+// Экземпляр повтора по CalDAV: «только это событие» — EXDATE в серии, «вся
+// серия» — DELETE файла и кэш всех экземпляров разом.
+test('серия по CalDAV: удалить можно один экземпляр или всю серию', async () => {
+  const calls = [];
+  const app = freshApp({ calendarFetch: fakeYandex({ calls }) });
+  const api = authed(app);
+  const account = (await api.post('/api/calendar/accounts').send(yandexBody).expect(201)).body.account;
+  const insert = app.database.prepare(`INSERT INTO calendar_events(id,account_id,calendar_id,uid,instance_key,title,description,location,start_at,end_at,all_day,busy,join_url,etag,href,updated_at) VALUES(?,?,?,'rr',?,'Стендап',NULL,NULL,?,?,0,1,NULL,'"e"','https://caldav.yandex.ru/calendars/user@yandex.ru/events-123/rr.ics',?)`);
+  for (const [id, day] of [['rec1', '2026-09-09'], ['rec2', '2026-09-16']]) insert.run(id, account.id, account.calendars[0].id, `${day}T07:00:00.000Z`, `${day}T07:00:00.000Z`, `${day}T07:15:00.000Z`, new Date().toISOString());
+  let view = (await api.get('/api/calendar?from=2026-09-09&to=2026-09-16').expect(200)).body;
+  const standups = () => view.external.filter(item => item.title === 'Стендап');
+  assert.deepEqual(standups().map(item => [item.id, item.recurring]), [['ext:rec1', true], ['ext:rec2', true]]);
+  await api.delete('/api/calendar/external/ext:rec1?scope=bogus').expect(400);
+  // Только этот экземпляр — EXDATE тем же PUT, второй экземпляр остаётся.
+  calls.length = 0;
+  assert.equal((await api.delete('/api/calendar/external/ext:rec1?scope=instance').expect(200)).body.scope, 'instance');
+  assert.equal(calls.filter(call => call.method === 'DELETE').length, 0);
+  assert.ok(calls.find(call => call.method === 'PUT').body.includes('EXDATE:20260909T070000Z'));
+  view = (await api.get('/api/calendar?from=2026-09-09&to=2026-09-16').expect(200)).body;
+  assert.deepEqual(standups().map(item => item.id), ['ext:rec2']);
+  // Вся серия — DELETE файла, в кэше не остаётся ни одного экземпляра.
+  calls.length = 0;
+  assert.equal((await api.delete('/api/calendar/external/ext:rec2?scope=series').expect(200)).body.scope, 'series');
+  assert.equal(calls.filter(call => call.method === 'DELETE')[0].url, 'https://caldav.yandex.ru/calendars/user@yandex.ru/events-123/rr.ics');
+  assert.equal(calls.filter(call => call.method === 'PUT').length, 0);
+  view = (await api.get('/api/calendar?from=2026-09-09&to=2026-09-16').expect(200)).body;
+  assert.equal(standups().length, 0);
+  assert.equal(app.database.prepare("SELECT COUNT(*) n FROM calendar_events WHERE uid='rr'").get().n, 0);
+});
+
+// У Google экземпляр повтора — своё событие с recurringEventId: удаление
+// одного — DELETE по его id, серии — по id серии. Своя серия уходит наружу
+// строкой recurrence и с поясом у начала и конца.
+test('серия в Google: экземпляр узнаётся по recurringEventId, удаляется один или вся серия, своя серия уходит с recurrence', async () => {
+  const calls = [], deleted = [];
+  const instance = { id: 'ev1_20260907T080000Z', recurringEventId: 'ev1', originalStartTime: { dateTime: '2026-09-07T12:00:00+04:00' }, summary: 'Стендап', status: 'confirmed', start: { dateTime: '2026-09-07T12:00:00+04:00' }, end: { dateTime: '2026-09-07T12:15:00+04:00' } };
+  const googleFetch = async (url, options = {}) => {
+    const method = options.method || 'GET';
+    calls.push({ url, method, body: options.body });
+    if (url.startsWith('https://oauth2.googleapis.com/token')) return Response.json({ access_token: 'at-1', refresh_token: 'rt-1', expires_in: 3600 });
+    if (url.includes('/users/me/calendarList')) return Response.json({ items: [{ id: 'me@gmail.com', summary: 'me@gmail.com', primary: true, accessRole: 'owner' }] });
+    if (method === 'DELETE') { deleted.push(url); return new Response(null, { status: 204 }); }
+    if (url.endsWith('/calendars/me%40gmail.com/events/ev1')) return Response.json({ id: 'ev1', recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=MO'] });
+    if (url.includes('/calendars/me%40gmail.com/events?')) return Response.json({ items: deleted.some(gone => gone.endsWith('/events/ev1')) ? [] : [instance] });
+    if (url.includes('/calendars/me%40gmail.com/events') && method === 'POST') return Response.json({ id: 'g-1', htmlLink: 'https://calendar.google.com/g-1', etag: '"g-etag-1"' });
+    return new Response('not found', { status: 404 });
+  };
+  const app = freshApp({ calendarFetch: googleFetch });
+  const api = authed(app);
+  await api.put('/api/settings').send({ googleClientId: 'client-id', googleClientSecret: 'client-secret' }).expect(200);
+  const start = await api.get('/api/calendar/google/start').set('Host', 'kizuna.example').expect(302);
+  const state = new URL(start.headers.location).searchParams.get('state');
+  await api.get(`/api/calendar/google/callback?state=${state}&code=the-code`).expect(302);
+  const account = (await api.get('/api/calendar/accounts').expect(200)).body.accounts[0];
+  let view = (await api.get('/api/calendar?from=2026-09-07&to=2026-09-07').expect(200)).body;
+  const event = view.external.find(item => item.title === 'Стендап');
+  assert.deepEqual([event.recurring, event.repeat, event.editable], [true, 'Повторяется каждую неделю по пн', true]);
+  assert.equal(app.database.prepare('SELECT series_uid FROM calendar_events WHERE uid=?').get('ev1_20260907T080000Z').series_uid, 'ev1');
+  // Только этот экземпляр — DELETE по id экземпляра.
+  assert.equal((await api.delete(`/api/calendar/external/${encodeURIComponent(event.id)}`).expect(200)).body.scope, 'instance');
+  assert.ok(deleted.at(-1).endsWith('/events/ev1_20260907T080000Z'));
+  assert.equal((await api.get('/api/calendar?from=2026-09-07&to=2026-09-07').expect(200)).body.external.length, 0);
+  // Заглушка экземпляр отдаёт снова — после синхронизации он на месте; вся
+  // серия — DELETE по recurringEventId, и кэш серии пуст.
+  await api.post(`/api/calendar/accounts/${account.id}/sync`).expect(200);
+  view = (await api.get('/api/calendar?from=2026-09-07&to=2026-09-07').expect(200)).body;
+  const again = view.external.find(item => item.title === 'Стендап');
+  assert.ok(again);
+  assert.equal((await api.delete(`/api/calendar/external/${encodeURIComponent(again.id)}?scope=series`).expect(200)).body.scope, 'series');
+  assert.ok(deleted.at(-1).endsWith('/events/ev1'));
+  assert.equal((await api.get('/api/calendar?from=2026-09-07&to=2026-09-07').expect(200)).body.external.length, 0);
+  // Своя серия наружу: RRULE в recurrence, пояс у начала и конца.
+  await api.patch(`/api/calendar/accounts/${account.id}`).send({ autoExport: 'all' }).expect(200);
+  const day = shiftDate(today(), 1);
+  await api.post('/api/captures').send({ raw: 'отчёт', primaryType: 'todo', due: { date: day, time: '10:00', repeat: { freq: 'daily', until: shiftDate(day, 3) } } }).expect(201);
+  calls.length = 0;
+  await app.calendar.autoExport();
+  const post = calls.find(call => call.method === 'POST' && call.url.includes('/events'));
+  const body = JSON.parse(post.body);
+  assert.deepEqual(body.recurrence, [`RRULE:FREQ=DAILY;UNTIL=${shiftDate(day, 3).replace(/-/g, '')}T060000Z`]);
+  assert.equal(body.start.timeZone, 'Europe/Samara');
+  assert.equal(body.end.timeZone, 'Europe/Samara');
+});
+
+// Свой повтор: правило — свойство срока. Экземпляры разворачиваются в окне,
+// убранный экземпляр пропадает, перенос серии сдвигает и пропуски, наружу
+// уходит RRULE с EXDATE, снятие повтора оставляет одно дело.
+test('свой повтор: экземпляры в окне, убранный повтор, перенос серии, RRULE с EXDATE наружу и снятие повтора', async () => {
+  const calls = [];
+  const app = freshApp({ calendarFetch: fakeYandex({ calls }) });
+  const api = authed(app);
+  const day = shiftDate(today(), 1);
+  const series = (await api.post('/api/captures').send({ raw: 'стендап', primaryType: 'todo', due: { date: day, time: '09:30', repeat: { freq: 'weekly' } } }).expect(201)).body.entry;
+  const scheduleOf = entry => entry.interpretation.classification.entities.schedule;
+  assert.deepEqual(scheduleOf(series).repeat, { freq: 'weekly', interval: 1, until: null });
+  assert.equal(scheduleOf(series).display, `${day}, 09:30, каждую неделю`);
+  // Кривое правило, «до» раньше первого экземпляра и повтор без даты — отказ.
+  await api.post('/api/captures').send({ raw: 'x', primaryType: 'todo', due: { date: day, repeat: { freq: 'hourly' } } }).expect(400);
+  await api.post(`/api/captures/${series.id}/corrections`).send({ patch: { schedule: { date: day, time: '09:30', repeat: { freq: 'weekly', until: shiftDate(day, -1) } } } }).expect(400);
+  await api.post(`/api/captures/${series.id}/corrections`).send({ patch: { schedule: { date: null, time: null, repeat: { freq: 'weekly' } } } }).expect(400);
+  // Модель тоже отдаёт повтор: «каждый понедельник» — еженедельно с ближайшего понедельника.
+  const spoken = (await api.post('/api/captures').send({ raw: 'Созвон с BE каждый понедельник в 10:00' }).expect(201)).body.entry;
+  assert.equal(scheduleOf(spoken).repeat.freq, 'weekly');
+  assert.equal(new Date(`${scheduleOf(spoken).date}T12:00:00Z`).getUTCDay(), 1);
+  const range = `from=${today()}&to=${shiftDate(today(), 20)}`;
+  let mine = (await api.get(`/api/calendar?${range}`).expect(200)).body.items.filter(item => item.id === series.id);
+  assert.deepEqual(mine.map(item => [item.date, item.time, item.recurring, item.repeat, item.baseDate, item.overdue]), [[day, '09:30', true, 'каждую неделю', day, false], [shiftDate(day, 7), '09:30', true, 'каждую неделю', day, false], [shiftDate(day, 14), '09:30', true, 'каждую неделю', day, false]]);
+  // Убрать один экземпляр: пропуск в сроке, правило остаётся.
+  const skipped = (await api.post(`/api/captures/${series.id}/corrections`).send({ patch: { schedule: { date: day, time: '09:30', skip: [shiftDate(day, 7)] } } }).expect(200)).body.entry;
+  assert.deepEqual([scheduleOf(skipped).skip, scheduleOf(skipped).repeat.freq], [[shiftDate(day, 7)], 'weekly']);
+  mine = (await api.get(`/api/calendar?${range}`).expect(200)).body.items.filter(item => item.id === series.id);
+  assert.deepEqual(mine.map(item => item.date), [day, shiftDate(day, 14)]);
+  // Доска: срок серии — ближайший экземпляр, с правилом словами.
+  const card = (await api.get('/api/board').expect(200)).body.columns[0].cards.find(item => item.captureId === series.id);
+  assert.deepEqual(card.due, { date: day, time: '09:30', repeat: 'каждую неделю' });
+  // Перенос серии на день позже двигает и пропуск: он привязан к месту в серии.
+  const moved = (await api.post(`/api/captures/${series.id}/corrections`).send({ patch: { schedule: { date: shiftDate(day, 1), time: '10:00' } } }).expect(200)).body.entry;
+  assert.deepEqual([scheduleOf(moved).date, scheduleOf(moved).skip, scheduleOf(moved).repeat.freq], [shiftDate(day, 1), [shiftDate(day, 8)], 'weekly']);
+  // Наружу: RRULE и EXDATE (10:00 самарского — 06:00Z).
+  const account = (await api.post('/api/calendar/accounts').send(yandexBody).expect(201)).body.account;
+  calls.length = 0;
+  await api.post('/api/calendar/export').send({ captureId: series.id, accountId: account.id, calendarId: account.calendars[0].id }).expect(201);
+  const put = calls.find(call => call.method === 'PUT');
+  assert.ok(put.body.includes('RRULE:FREQ=WEEKLY'), put.body);
+  assert.ok(put.body.includes(`EXDATE:${shiftDate(day, 8).replace(/-/g, '')}T060000Z`), put.body);
+  // Снятие повтора: одно дело, пропусков нет.
+  const single = (await api.post(`/api/captures/${series.id}/corrections`).send({ patch: { schedule: { date: shiftDate(day, 1), time: '10:00', repeat: null } } }).expect(200)).body.entry;
+  assert.equal(scheduleOf(single).repeat, undefined);
+  assert.equal(scheduleOf(single).skip, undefined);
+  mine = (await api.get(`/api/calendar?${range}`).expect(200)).body.items.filter(item => item.id === series.id);
+  assert.deepEqual(mine.map(item => [item.date, item.recurring]), [[shiftDate(day, 1), undefined]]);
+});

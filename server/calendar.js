@@ -16,6 +16,7 @@ import { createGoogleCalendarClient } from './google-calendar.js';
 import { buildEvent, excludeInstance, findJoinUrl, localDateTime, overrideInstance, rewriteEvent, setPartstat, zonedToUtc } from './ics.js';
 import { replaceInterpretation } from './db.js';
 import { shouldMaterializeProjections } from './classifier.js';
+import { describeRepeat, occurrenceDates, repeatRrule, normalizeSkip, scheduleDisplay } from './repeat.js';
 
 export const PROVIDERS = ['caldav', 'google'];
 export const ACCOUNT_MODES = ['full', 'busy'];
@@ -206,14 +207,14 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
   // Кэш окна переписывается целиком: одна учётная запись, сотни событий — диф
   // не окупается, а «пропало у них — пропало у нас» получается само.
   function storeEvents(row, window, events) {
-    const insert = db.prepare('INSERT INTO calendar_events(id,account_id,calendar_id,uid,instance_key,title,description,location,start_at,end_at,all_day,busy,join_url,etag,href,updated_at,attendees_json,organizer_json,repeat,url,sequence) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+    const insert = db.prepare('INSERT INTO calendar_events(id,account_id,calendar_id,uid,instance_key,title,description,location,start_at,end_at,all_day,busy,join_url,etag,href,updated_at,attendees_json,organizer_json,repeat,url,sequence,series_uid) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
     const at = nowIso();
     const apply = db.transaction(() => {
       db.prepare('DELETE FROM calendar_events WHERE account_id=? AND end_at>? AND start_at<?').run(row.id, window.from.toISOString(), window.to.toISOString());
       db.prepare('DELETE FROM calendar_events WHERE account_id=? AND end_at<=?').run(row.id, window.from.toISOString());
       for (const event of events) {
         insert.run(crypto.randomUUID(), row.id, event.calendarId, event.uid, event.instanceKey || null, event.title, event.description || null, event.location || null, event.start.toISOString(), event.end.toISOString(), event.allDay ? 1 : 0, event.busy ? 1 : 0, event.joinUrl || null, event.etag || null, event.href || null, at,
-          event.attendees?.length ? JSON.stringify(event.attendees) : null, event.organizer ? JSON.stringify(event.organizer) : null, event.repeat || null, event.url || null, event.sequence || 0);
+          event.attendees?.length ? JSON.stringify(event.attendees) : null, event.organizer ? JSON.stringify(event.organizer) : null, event.repeat || null, event.url || null, event.sequence || 0, event.seriesUid || (event.instanceKey ? event.uid : null));
       }
       db.prepare('UPDATE calendar_accounts SET synced_at=?, sync_error=NULL WHERE id=?').run(at, row.id);
     });
@@ -258,7 +259,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
       WHERE c.deleted_at IS NULL AND c.user_id IS ? AND json_extract(i.classification_json,'$.primaryType') IN ('task','meeting_event')
         AND json_extract(i.classification_json,'$.completed') IS NOT 1
         AND json_extract(i.classification_json,'$.entities.schedule.date') IS NOT NULL
-        AND (json_extract(i.classification_json,'$.entities.schedule.date') BETWEEN ? AND ? OR json_extract(i.classification_json,'$.entities.schedule.date') < ?)
+        AND (json_extract(i.classification_json,'$.entities.schedule.date') BETWEEN ? AND ? OR json_extract(i.classification_json,'$.entities.schedule.date') < ? OR json_extract(i.classification_json,'$.entities.schedule.repeat') IS NOT NULL)
       ORDER BY json_extract(i.classification_json,'$.entities.schedule.date'), json_extract(i.classification_json,'$.entities.schedule.time') IS NULL, json_extract(i.classification_json,'$.entities.schedule.time'), c.created_at LIMIT 800`).all(userId, from, to, today);
     const projections = new Map();
     for (const row of db.prepare(`SELECT p.id, p.capture_id FROM projections p JOIN captures c ON c.id=p.capture_id WHERE p.status='active' AND c.deleted_at IS NULL AND c.user_id IS ? AND p.projection_type IN ('task','meeting_event')`).all(userId)) {
@@ -278,19 +279,28 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
       const c = JSON.parse(row.classification_json);
       const schedule = c.entities?.schedule || {};
       const done = ids.every(id => completion.get(id) === true);
-      const inRange = schedule.date >= from && schedule.date <= to;
-      if (!inRange && (done || schedule.date >= today)) continue;
-      const item = {
+      const base = {
         id: row.id, kind: c.primaryType === 'meeting_event' ? 'meeting' : 'task',
         title: (c.summary || '').split('\n')[0] || row.raw.split('\n')[0],
-        date: schedule.date, time: schedule.time || null, end: schedule.end || null, allDay: !schedule.time,
+        time: schedule.time || null, end: schedule.end || null, allDay: !schedule.time,
         done, project: c.entities?.projects?.[0] || null, projects: c.entities?.projects || [], people: c.entities?.people || [],
         tags: c.tags || [], priority: c.priority || null, joinUrl: findJoinUrl(row.raw), projectionIds: ids,
-        exports: links.get(row.id) || [], overdue: !done && schedule.date < today,
+        exports: links.get(row.id) || [],
       };
+      // Повтор — экземпляр на каждую дату окна; прошедшие экземпляры не
+      // просрочка, а просто прошедшие. Закрытая серия в сетке не живёт.
+      if (schedule.repeat) {
+        if (done) continue;
+        for (const date of occurrenceDates(schedule, from, to)) items.push({ ...base, date, overdue: false, recurring: true, repeat: describeRepeat(schedule.repeat), baseDate: schedule.date, skip: normalizeSkip(schedule.skip) });
+        continue;
+      }
+      const inRange = schedule.date >= from && schedule.date <= to;
+      if (!inRange && (done || schedule.date >= today)) continue;
+      const item = { ...base, date: schedule.date, overdue: !done && schedule.date < today };
       if (inRange) items.push(item);
       else overdue.push(item);
     }
+    items.sort((left, right) => left.date.localeCompare(right.date) || (left.time === null) - (right.time === null) || (left.time || '').localeCompare(right.time || ''));
     return { items, overdue };
   }
   function externalItems({ userId, from, to }) {
@@ -301,7 +311,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     // раз: они и так на сетке как дела и встречи.
     const rows = db.prepare(`SELECT e.*, a.mode, a.provider, a.username, a.label account_label, a.color account_color, a.calendars_json FROM calendar_events e JOIN calendar_accounts a ON a.id=e.account_id
       WHERE a.user_id IS ? AND a.disabled_at IS NULL AND e.start_at<? AND e.end_at>?
-        AND NOT EXISTS (SELECT 1 FROM calendar_links l WHERE l.account_id=e.account_id AND l.uid=e.uid)
+        AND NOT EXISTS (SELECT 1 FROM calendar_links l WHERE l.account_id=e.account_id AND (l.uid=e.uid OR l.uid=e.series_uid))
       ORDER BY e.start_at LIMIT 2000`).all(userId, toUtc.toISOString(), fromUtc.toISOString());
     const out = [];
     for (const row of rows) {
@@ -359,20 +369,30 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     const title = (c.summary || '').split('\n')[0] || captureRow.raw.split('\n')[0];
     const description = `${captureRow.raw.trim().slice(0, 1500)}\n\n— из Кизуны`;
     const [year, month, day] = schedule.date.split('-').map(Number);
+    const wallOf = date => ({ year: Number(date.slice(0, 4)), month: Number(date.slice(5, 7)), day: Number(date.slice(8, 10)) });
+    const skip = normalizeSkip(schedule.skip);
     if (!schedule.time) {
       const next = shiftDate(schedule.date, 1);
-      return { title, description, allDay: true, startDate: schedule.date, endDate: next, start: { year, month, day }, end: { year: Number(next.slice(0, 4)), month: Number(next.slice(5, 7)), day: Number(next.slice(8, 10)) } };
+      // Повтор на весь день: правило и убранные экземпляры — датами.
+      const rrule = repeatRrule(schedule.repeat, { allDay: true });
+      return { title, description, allDay: true, startDate: schedule.date, endDate: next, start: { year, month, day }, end: wallOf(next), rrule, exdates: rrule ? skip.map(wallOf) : [], timeZone: tz };
     }
     const startMinutes = minutesOf(schedule.time);
     const endMinutes = schedule.end && minutesOf(schedule.end) > startMinutes ? minutesOf(schedule.end) : startMinutes + (c.primaryType === 'meeting_event' ? DEFAULT_MEETING_MINUTES : DEFAULT_TASK_MINUTES);
-    const start = zonedToUtc({ year, month, day, hour: Math.floor(startMinutes / 60), minute: startMinutes % 60 }, tz);
+    const startOf = date => zonedToUtc({ ...wallOf(date), hour: Math.floor(startMinutes / 60), minute: startMinutes % 60 }, tz);
+    const start = startOf(schedule.date);
     const end = new Date(start.getTime() + (endMinutes - startMinutes) * 60000);
-    return { title, description, allDay: false, start, end };
+    // Повтор со временем: UNTIL — момент последнего возможного начала в поясе
+    // журнала, убранные экземпляры — моментами их начала.
+    const rrule = repeatRrule(schedule.repeat, { allDay: false, untilAt: schedule.repeat?.until ? startOf(schedule.repeat.until) : null });
+    return { title, description, allDay: false, start, end, rrule, exdates: rrule ? skip.map(startOf) : [], timeZone: tz };
   }
   // Отпечаток того, что ушло наружу: пока он не меняется, писать заново нечего.
+  // Повтор входит в отпечаток только у серии: у разовых событий он тот же,
+  // что и раньше, и после обновления их не переписывает.
   function fingerprintOf(event) {
     const moment = value => (value instanceof Date ? value.toISOString() : JSON.stringify(value));
-    return crypto.createHash('sha1').update(JSON.stringify([event.title, event.description, event.allDay, moment(event.start), moment(event.end)])).digest('hex');
+    return crypto.createHash('sha1').update(JSON.stringify([event.title, event.description, event.allDay, moment(event.start), moment(event.end), ...(event.rrule ? [event.rrule, (event.exdates || []).map(moment)] : [])])).digest('hex');
   }
   const captureQuery = `SELECT c.id, c.raw, c.deleted_at, i.classification_json FROM captures c LEFT JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.id=?`;
   function hasActiveProjection(captureId) { return Boolean(db.prepare(`SELECT 1 FROM projections WHERE capture_id=? AND status='active' AND projection_type IN ('task','meeting_event') LIMIT 1`).get(captureId)); }
@@ -380,7 +400,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     const uid = link?.uid || `kizuna-${capture.id}@kizuna`;
     if (row.provider === 'caldav') {
       const creds = credentialsOf(row);
-      const ics = buildEvent({ uid, title: event.title, description: event.description, start: event.start, end: event.end, allDay: event.allDay, now: now() });
+      const ics = buildEvent({ uid, title: event.title, description: event.description, start: event.start, end: event.end, allDay: event.allDay, rrule: event.rrule || null, exdates: event.exdates || [], now: now() });
       const put = await caldavClient.putEvent({ calendarUrl: calendar.url || calendar.id, username: row.username, password: creds?.password || '', uid, ics, replace: Boolean(link) });
       return { uid, href: put.href, etag: put.etag };
     }
@@ -448,7 +468,10 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     const end = schedule.time && schedule.end && minutesOf(schedule.end) > minutesOf(schedule.time) ? schedule.end : null;
     // Напоминание — свойство срока, и перенос его не сбрасывает.
     const remind = original.entities?.schedule?.remind;
-    const next = { state: schedule.date && schedule.time ? 'ok' : 'ambiguous', date: schedule.date || null, time: schedule.time || null, ...(end ? { end } : {}), ...(remind !== undefined && remind !== null ? { remind } : {}), sortAt: schedule.date ? `${schedule.date}T${schedule.time || '23:59'}:00` : null, display: [schedule.date, schedule.time].filter(Boolean).join(', ') + (end ? `–${end}` : '') };
+    // Повтор и убранные экземпляры — тоже свойства срока: перенос их не трогает.
+    const repeat = schedule.date ? original.entities?.schedule?.repeat || null : null;
+    const skip = repeat ? normalizeSkip(original.entities?.schedule?.skip) : [];
+    const next = { state: schedule.date && schedule.time ? 'ok' : 'ambiguous', date: schedule.date || null, time: schedule.time || null, ...(end ? { end } : {}), ...(remind !== undefined && remind !== null ? { remind } : {}), ...(repeat ? { repeat } : {}), ...(skip.length ? { skip } : {}), sortAt: schedule.date ? `${schedule.date}T${schedule.time || '23:59'}:00` : null, display: scheduleDisplay({ date: schedule.date || null, time: schedule.time || null, end, repeat }) };
     const classification = { ...original, entities: { ...original.entities, schedule: next } };
     return replaceInterpretation(db, captureId, classification, 'manual', { patch: { schedule: { date: next.date, time: next.time, ...(end ? { end } : {}) } }, note }, shouldMaterializeProjections(classification));
   }
@@ -478,7 +501,9 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
       if (cached && link.etag && cached.etag && plainEtag(cached.etag) !== plainEtag(link.etag)) {
         const outside = scheduleFromCached(cached, tz);
         const own = c.entities?.schedule || {};
-        if (outside.date !== own.date || (outside.time || null) !== (own.time || null) || (outside.end || null) !== (own.end || null)) {
+        // У серии правку снаружи не забираем: по одному экземпляру не понять,
+        // подвинули серию или только его. Серия правится в записи.
+        if (!own.repeat && (outside.date !== own.date || (outside.time || null) !== (own.time || null) || (outside.end || null) !== (own.end || null))) {
           applySchedule(capture.id, outside, `Перенесено в календаре «${row.label}»`);
           pulled += 1;
           const refreshed = db.prepare(captureQuery).get(capture.id);
@@ -709,13 +734,20 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     changed();
     return { event: externalInfo(externalRow(userId, id)) };
   }
-  async function deleteExternalEvent({ userId, id }) {
+  // Удаление: у одиночного события — само событие; у экземпляра повтора — по
+  // выбору человека либо только этот экземпляр (scope 'instance'), либо вся
+  // серия (scope 'series'), как в Календаре macOS.
+  async function deleteExternalEvent({ userId, id, scope = 'instance' }) {
     const row = externalRow(userId, id);
     const refused = externalWritable(row);
     if (refused) return { error: refused };
-    const instance = row.provider === 'caldav' && row.instance_key;
+    if (!['instance', 'series'].includes(scope)) return { error: 'invalid_scope' };
+    const recurring = Boolean(row.instance_key);
+    const seriesUid = row.series_uid || row.uid;
+    const wholeSeries = recurring && scope === 'series';
+    const instance = recurring && !wholeSeries;
     try {
-      if (instance) {
+      if (instance && row.provider === 'caldav') {
         // Один экземпляр серии: серии дописывается EXDATE, файл кладётся обратно
         // с If-Match — остальные повторы остаются.
         const password = credentialsOf(row)?.password || '';
@@ -724,13 +756,16 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
         if (!ics) return { error: 'remove_failed', message: 'В файле события не нашлось серии.' };
         await caldavClient.putEvent({ href: row.href, username: row.username, password, uid: row.uid, ics, etag: got.etag || null });
       } else if (row.provider === 'caldav') await caldavClient.deleteEvent({ href: row.href, username: row.username, password: credentialsOf(row)?.password || '' });
-      else await googleClient.deleteEvent({ accessToken: await googleAccessToken(row), calendarId: row.calendar_id, eventId: row.uid });
+      // У Google экземпляр — своё событие, серия — событие recurringEventId.
+      else await googleClient.deleteEvent({ accessToken: await googleAccessToken(row), calendarId: row.calendar_id, eventId: wholeSeries ? seriesUid : row.uid });
     } catch (error) { return { error: error.code === 'unauthorized' ? 'unauthorized' : error.code === 'conflict' ? 'conflict' : 'remove_failed', message: error.message }; }
-    if (row.provider === 'caldav' && !instance) db.prepare('DELETE FROM calendar_events WHERE account_id=? AND uid=?').run(row.account_id, row.uid);
+    const removedScope = wholeSeries ? 'series' : instance ? 'instance' : 'event';
+    if (wholeSeries) db.prepare('DELETE FROM calendar_events WHERE account_id=? AND (uid=? OR series_uid=?)').run(row.account_id, seriesUid, seriesUid);
+    else if (row.provider === 'caldav' && !instance) db.prepare('DELETE FROM calendar_events WHERE account_id=? AND uid=?').run(row.account_id, row.uid);
     else db.prepare('DELETE FROM calendar_events WHERE id=?').run(row.id);
-    report({ event: 'calendar_external_removed', provider: row.provider });
+    report({ event: 'calendar_external_removed', provider: row.provider, scope: removedScope });
     changed();
-    return { removed: true, title: row.title };
+    return { removed: true, title: row.title, scope: removedScope };
   }
   function externalEvent({ userId, id }) { const row = externalRow(userId, id); return row && !row.disabled_at ? externalInfo(row) : null; }
 

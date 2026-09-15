@@ -22,6 +22,29 @@ function todayIn(now, timeZone) {
 const addDays = (date, count) => new Date(date.getFullYear(), date.getMonth(), date.getDate() + count);
 const nextWeekday = (date, target) => addDays(date, (target - date.getDay() + 7) % 7 || 7);
 
+// Повтор: «каждый день», «раз в две недели», «каждый понедельник», «по
+// пятницам», с «до <дата>». Совпавшие слова снимаются с текста, чтобы «до
+// 31.12» не стало вторым сроком, а «понедельник» — разовой датой.
+const repeatPattern = /(?<daily>каждый день|ежедневно)|(?<biweekly>раз в две недели|каждые (?:две|2) недели)|(?<weekly>каждую неделю|еженедельно)|(?<monthly>каждый месяц|ежемесячно)|(?<yearly>каждый год|ежегодно)|каждый\s+(?<wd1>понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье)|по\s+(?<wd2>понедельникам|вторникам|средам|четвергам|пятницам|субботам|воскресеньям)/i;
+const weekdayPlural = { понедельникам:1, вторникам:2, средам:3, четвергам:4, пятницам:5, субботам:6, воскресеньям:0 };
+function repeatOf(text, base) {
+  const match = text.match(repeatPattern);
+  if (!match) return null;
+  const g = match.groups;
+  const untilMatch = text.match(/(?:^|\s)до\s+(\d{1,2}[.\-/]\d{1,2}(?:[.\-/]\d{2,4})?)/i);
+  const untilDate = untilMatch ? resolveToken(untilMatch[1], base) : null;
+  let rule, anchor = null;
+  if (g.daily) rule = { freq: 'daily', interval: 1 };
+  else if (g.biweekly) rule = { freq: 'weekly', interval: 2 };
+  else if (g.weekly) rule = { freq: 'weekly', interval: 1 };
+  else if (g.monthly) rule = { freq: 'monthly', interval: 1 };
+  else if (g.yearly) rule = { freq: 'yearly', interval: 1 };
+  else { rule = { freq: 'weekly', interval: 1 }; anchor = nextWeekday(base, g.wd1 ? weekdays[g.wd1.toLowerCase()] : weekdayPlural[g.wd2.toLowerCase()]); }
+  let stripped = text.replace(match[0], ' ');
+  if (untilMatch) stripped = stripped.replace(untilMatch[0], ' ');
+  return { rule: { ...rule, until: untilDate ? plain(untilDate) : null }, anchor, stripped };
+}
+
 function resolveToken(token, base) {
   if (token === 'сегодня') return base;
   if (token === 'завтра') return addDays(base, 1);
@@ -77,9 +100,13 @@ export function fakeModelCandidate(raw, now = new Date(), timeZone = 'Europe/Sam
   const primaryType = completed ? 'outcome_decision' : meeting ? 'meeting_event' : outcome ? 'outcome_decision' : task ? 'task' : idea ? 'idea_question' : 'note';
   const scheduleRelevant = (meeting || task) && !completed;
 
+  // Повтор снимается с текста до разбора дат: иначе «до 31.12» стало бы
+  // вторым сроком, а «понедельник» из «каждый понедельник» — разовой датой.
+  const repeat = scheduleRelevant ? repeatOf(cleaned, base) : null;
+  const dateSource = repeat ? repeat.stripped : cleaned;
   const dates = [];
-  const tokens = [...cleaned.matchAll(dateWords)].map(match => match[0].toLowerCase())
-    .concat(scheduleRelevant ? [...cleaned.matchAll(numericDate)].map(match => match[0]) : []);
+  const tokens = [...dateSource.matchAll(dateWords)].map(match => match[0].toLowerCase())
+    .concat(scheduleRelevant ? [...dateSource.matchAll(numericDate)].map(match => match[0]) : []);
   for (const token of tokens) { const resolved = resolveToken(token, base); if (resolved) dates.push(plain(resolved)); }
   const uniqueDates = [...new Set(dates)];
 
@@ -96,9 +123,12 @@ export function fakeModelCandidate(raw, now = new Date(), timeZone = 'Europe/Sam
   else if (/после обеда/i.test(text) && meeting) ambiguity = { field:'schedule', question:'Во сколько назначить встречу?' };
 
   const followUpMatch = !completed && outcome && task ? text.match(/(?:надо|нужно)\s+([^.!?]{3,500})/i) : null;
+  // У повтора без названной даты первый экземпляр — сегодня (или ближайший
+  // названный день недели).
+  const anchor = uniqueDates[0] || (repeat ? plain(repeat.anchor || base) : null);
   const when = ambiguity?.field === 'schedule' || !scheduleRelevant
     ? null
-    : (uniqueDates[0] || times.size ? { date: uniqueDates[0] || null, time: times.size ? [...times][0] : null } : null);
+    : (anchor || times.size ? { date: anchor, time: times.size ? [...times][0] : null, ...(repeat && anchor ? { repeat: repeat.rule } : {}) } : null);
 
   return {
     primaryType,

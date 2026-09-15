@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { E2E_EMAIL } from "./fixtures/e2e-account.js";
 
 const shift = (date, days) => { const d = new Date(`${date}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); };
 
@@ -120,10 +121,12 @@ test("настройки: раздел «Календари» с формами 
 // Плашка чужого события как в Календаре macOS: календарь, откуда, когда и
 // повтор, участники с ответами, ссылки, мой ответ. Событие кладётся прямо в
 // базу прогона: CalDAV-сервера у e2e нет, а плашка читает только кэш.
-test("плашка чужого события: участники с ответами, повтор, ссылки и мой ответ организатору", async ({ page }) => {
+test("плашка чужого события: участники с ответами, повтор, ссылки и мой ответ организатору", async ({ page, request }) => {
   const { default: Database } = await import("better-sqlite3");
   const db = new Database("/tmp/pagent-e2e.sqlite");
-  const user = db.prepare("SELECT id FROM users LIMIT 1").get();
+  // Именно e2e-учётка: другие спеки регистрируют ещё пользователей, и «первый
+  // попавшийся» в полном прогоне оказывался чужим — события не показывались.
+  const user = db.prepare("SELECT id FROM users WHERE email=?").get(E2E_EMAIL);
   db.prepare("DELETE FROM calendar_events").run();
   db.prepare("DELETE FROM calendar_accounts").run();
   db.prepare("INSERT INTO calendar_accounts(id,user_id,provider,preset,label,color,mode,server_url,username,credentials_enc,calendars_json,synced_at,created_at,auto_export) VALUES('acc1',?,'caldav','yandex','Яндекс','#3b82f6','full','https://caldav.yandex.ru','me@itfinance.tech','v1.x',?,datetime('now'),datetime('now'),'off')")
@@ -134,9 +137,13 @@ test("плашка чужого события: участники с ответ
     { email: "g@itfinance.tech", name: "Гончар Александр", status: "needs-action", optional: false, organizer: false },
     { email: "me@itfinance.tech", name: "Александр Марченков", status: "accepted", optional: true, organizer: false },
   ];
-  const today = new Date().toISOString().slice(0, 10);
+  // День — по часам приложения (Самара), а не по UTC: поздним вечером они расходятся.
+  const today = (await (await request.get("/api/day")).json()).date;
   db.prepare("INSERT INTO calendar_events(id,account_id,calendar_id,uid,instance_key,title,description,location,start_at,end_at,all_day,busy,join_url,etag,href,updated_at,attendees_json,organizer_json,repeat,url,sequence) VALUES('e1','acc1','c1','u1',NULL,'Монетизация ZB по понедельникам',NULL,NULL,?,?,0,1,'https://telemost.360.yandex.ru/j/0319350436','\"e\"','https://calendar.yandex.ru/event?event_id=2916085540',datetime('now'),?,?,'Повторяется каждую неделю по пн','https://calendar.yandex.ru/event?event_id=2916085540',3)")
     .run(`${today}T13:30:00.000Z`, `${today}T14:30:00.000Z`, JSON.stringify(attendees), JSON.stringify({ email: "stas@itfinance.tech", name: "Станислав Косухин" }));
+  // Экземпляр повтора (instance_key) — у него «Удалить» спрашивает про серию.
+  db.prepare("INSERT INTO calendar_events(id,account_id,calendar_id,uid,instance_key,title,description,location,start_at,end_at,all_day,busy,join_url,etag,href,updated_at,repeat,sequence) VALUES('e2','acc1','c1','u2',?,'Ретро команды',NULL,NULL,?,?,0,1,NULL,'\"r\"','https://calendar.yandex.ru/event?event_id=1',datetime('now'),'Повторяется каждую неделю по пн',1)")
+    .run(`${today}T15:30:00.000Z`, `${today}T15:30:00.000Z`, `${today}T16:30:00.000Z`);
   db.close();
   await page.goto("/#calendar");
   await page.evaluate(() => { localStorage.setItem("kizuna-calendar-mode", "day"); });
@@ -163,4 +170,83 @@ test("плашка чужого события: участники с ответ
   await expect(pop.locator(".pop-me-buttons button", { hasText: "Отклонить" })).toBeEnabled();
   await expect(pop.locator(".pop-comment")).toHaveAttribute("placeholder", "Комментарий организатору");
   await expect(pop.locator(".cal-pop-btn", { hasText: "Удалить" })).toBeVisible();
+  // Экземпляр повтора: «Удалить» не стирает молча, а спрашивает — только это
+  // событие или всю серию; «Отмена» возвращает кнопки на место.
+  await page.keyboard.press("Escape");
+  await page.locator(".cal-ev.external", { hasText: "Ретро" }).first().click();
+  const series = page.locator(".cal-pop.rich");
+  await expect(series.locator(".cal-pop-title")).toHaveText("Ретро команды");
+  await series.locator(".cal-pop-btn", { hasText: "Удалить" }).click();
+  const ask = series.locator(".cal-pop-ask");
+  await expect(ask).toBeVisible();
+  await expect(ask).toContainText("Удалить только этот повтор");
+  await expect(ask.getByRole("button", { name: "Только это событие" })).toBeVisible();
+  await expect(ask.getByRole("button", { name: "Всю серию" })).toBeVisible();
+  await ask.getByRole("button", { name: "Отмена" }).click();
+  await expect(ask).toHaveCount(0);
+  await expect(series.locator(".cal-pop-btn", { hasText: "Удалить" })).toBeVisible();
+});
+
+// Своя серия: повторы разворачиваются в сетке, удаление из карточки убирает
+// один повтор, правило меняется в карточке, на главной повтор виден в своём дне.
+test("своя серия: повторы в сетке, «только этот повтор» из карточки, правило в карточке", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  const today = (await (await request.get("/api/day")).json()).date;
+  const monday = shift(today, -((new Date(`${today}T12:00:00Z`).getUTCDay() + 6) % 7));
+  const created = await (await request.post("/api/captures", { data: { raw: "Стендап с командой", primaryType: "todo", due: { date: monday, time: "09:30", repeat: { freq: "daily" } } } })).json();
+  await page.goto("/#calendar");
+  await page.evaluate(() => { localStorage.setItem("kizuna-calendar-mode", "week"); });
+  await page.reload();
+  const calendar = page.locator("#calendar-view");
+  const blocks = calendar.locator(".cal-ev.task", { hasText: "Стендап" });
+  await expect(blocks).toHaveCount(7);
+  await expect(blocks.first().locator(".cal-ev-repeat")).toHaveAttribute("title", "каждый день");
+  // Из карточки, открытой на среду, «Удалить запись» предлагает выбор; «только
+  // этот повтор» убирает среду, остальные дни остаются.
+  const wednesday = shift(monday, 2);
+  await calendar.locator(`.cal-col[data-date="${wednesday}"] .cal-ev.task`, { hasText: "Стендап" }).click();
+  const dialog = page.locator("#review-dialog");
+  await expect(dialog).toBeVisible();
+  await page.locator("#review-dialog .card-delete").click();
+  const ask = page.locator(".card-delete-ask");
+  await expect(ask).toBeVisible();
+  await ask.getByRole("button", { name: "Только этот повтор" }).click();
+  await expect(page.locator("#toast")).toContainText("убран");
+  await expect(blocks).toHaveCount(6);
+  await expect(calendar.locator(`.cal-col[data-date="${wednesday}"] .cal-ev.task`, { hasText: "Стендап" })).toHaveCount(0);
+  const entry = (await (await request.get(`/api/captures/${created.entry.id}`)).json()).entry;
+  expect(entry.interpretation.classification.entities.schedule.skip).toEqual([wednesday]);
+  expect(entry.interpretation.classification.entities.schedule.repeat).toEqual({ freq: "daily", interval: 1, until: null });
+  // В карточке правило видно и меняется: «не повторять» оставляет один блок.
+  await calendar.locator(`.cal-col[data-date="${shift(monday, 3)}"] .cal-ev.task`, { hasText: "Стендап" }).click();
+  await expect(dialog).toBeVisible();
+  const propsBar = page.locator(".props-bar");
+  if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
+  const repeat = page.locator("#review-repeat");
+  await expect(repeat).toHaveValue("daily:1");
+  await expect(page.locator("#review-repeat-until")).toBeVisible();
+  await repeat.selectOption("");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(page.locator("#toast")).toContainText("Уточнение сохранено");
+  await expect(blocks).toHaveCount(1);
+  await expect(calendar.locator(`.cal-col[data-date="${monday}"] .cal-ev.task`, { hasText: "Стендап" })).toHaveCount(1);
+});
+
+// «День» на главной: повтор виден в своём дне с подписью правила, и завтра
+// тоже. Время фиксировано на 13:00, чтобы ящик «День» был открыт.
+test("«День»: повторяющееся дело видно сегодня и завтра с подписью повтора", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  const today = (await (await request.get("/api/day")).json()).date;
+  await request.post("/api/captures", { data: { raw: "Проверить почту", primaryType: "todo", due: { date: shift(today, -3), time: "09:00", repeat: { freq: "daily" } } } });
+  const at = new Date(); at.setHours(13, 0, 0, 0);
+  await page.clock.install({ time: at });
+  await page.goto("/#today");
+  const todo = page.locator("#todo");
+  const card = todo.locator(".entry", { hasText: "Проверить почту" });
+  await expect(card).toBeVisible();
+  await expect(card.locator(".tag.due")).toHaveText("срок: сегодня, 09:00, каждый день");
+  await expect(card.locator(".tag.late")).toHaveCount(0);
+  await todo.locator('.daynav [data-step="1"]').click();
+  await expect(todo.locator(".entry", { hasText: "Проверить почту" }).locator(".tag.due")).toHaveText("срок: завтра, 09:00, каждый день");
 });

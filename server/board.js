@@ -5,6 +5,7 @@
 // уходит с доски (и возвращается на своё место, если его вернуть в работу).
 import crypto from 'node:crypto';
 import { dateInZone } from './reports.js';
+import { describeRepeat, effectiveDate } from './repeat.js';
 
 const now = () => new Date().toISOString();
 export const COLUMN_NAME_LIMIT = 40;
@@ -27,7 +28,7 @@ export const CLOSED_LIMIT = 50;
 // Дела пользователя: записи с активной завершаемой проекцией. Открытые — не все
 // проекции закрыты; закрытые — все закрыты чекбоксом. Отчётная работа
 // (completed в классификации) — не дело, а дневник, её нет ни там, ни там.
-function deedCards(db, userId, timeZone) {
+function deedCards(db, userId, timeZone, now = new Date()) {
   const rows = db.prepare(`SELECT c.id, c.created_at, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND c.user_id IS ? ORDER BY c.created_at`).all(userId);
   const projections = db.prepare(`SELECT p.id, p.capture_id, p.projection_type FROM projections p JOIN captures c ON c.id=p.capture_id WHERE p.status='active' AND c.deleted_at IS NULL AND c.user_id IS ? AND p.projection_type IN ('task','meeting_event')`).all(userId);
   const completion = completionEvents(db);
@@ -54,7 +55,8 @@ function deedCards(db, userId, timeZone) {
       createdAt: row.created_at,
       title: classification.summary || '',
       type: classification.primaryType,
-      due: schedule?.date ? { date: schedule.date, time: schedule.time || null } : null,
+      // У повтора срок — ближайший экземпляр от сегодняшнего дня.
+      due: schedule?.date ? { date: schedule.repeat ? effectiveDate(schedule, dateInZone(now, timeZone)) || schedule.date : schedule.date, time: schedule.time || null, ...(schedule.repeat ? { repeat: describeRepeat(schedule.repeat) } : {}) } : null,
       priority: classification.priority || null,
       tags: classification.tags || [],
       projects: classification.entities?.projects || [],
@@ -96,7 +98,7 @@ export function boardView(db, { userId, timeZone = 'Europe/Samara', now: at = ne
   const placements = new Map(db.prepare('SELECT capture_id, column_id, position FROM board_placements WHERE user_id IS ?').all(userId).map(row => [row.capture_id, row]));
   const known = new Set(columns.map(column => column.id));
   const buckets = new Map([[null, []], ...columns.map(column => [column.id, []])]);
-  const { open, closed } = deedCards(db, userId, timeZone);
+  const { open, closed } = deedCards(db, userId, timeZone, at);
   for (const card of open) {
     const placement = placements.get(card.captureId);
     const columnId = placement && placement.column_id !== null && known.has(placement.column_id) ? placement.column_id : null;
