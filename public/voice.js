@@ -620,7 +620,12 @@ export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () =
     const outputMix = context.createGain();
     outputMix.connect(context.destination);
     const playback = { time: 0 };
-    const socket = new WebSocket(`${session.url}?access_token=${encodeURIComponent(session.clientSecret)}`);
+    // Разговор идёт через свой же сервер: он держит сокет к Google, поэтому
+    // страна браузера больше ничего не решает. Старый путь — прямой адрес
+    // Google — остаётся рабочим, если сервер отдаст его.
+    const socket = new WebSocket(session.relay
+      ? `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${session.url}?ticket=${encodeURIComponent(session.clientSecret)}`
+      : `${session.url}?access_token=${encodeURIComponent(session.clientSecret)}`);
     socket.binaryType = "arraybuffer";
 
     const sendSetup = () => {

@@ -111,6 +111,14 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
     next();
   }
 
+  // Опознать человека по одной куке, без express-обвязки: запрос на upgrade
+  // вебсокета приходит сырым — ни req.get, ни res у него нет.
+  function userFromCookieHeader(header) {
+    const token = readCookie(header, SESSION_COOKIE);
+    if (!token) return null;
+    const user = findSessionUser(db, hashToken(token), at());
+    return user && user.status === 'active' ? user : null;
+  }
   const requireAuth = (req, res, next) => req.user ? next() : fail(res, 401, 'unauthorized', 'Нужно войти.');
   const requireAdmin = (req, res, next) => !req.user ? fail(res, 401, 'unauthorized', 'Нужно войти.') : req.user.role === 'admin' ? next() : fail(res, 403, 'forbidden', 'Нужны права администратора.');
 
@@ -407,5 +415,5 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
   // после запуска — чтобы уборка не ждала часа на редко используемом сервере.
   purgeExpiredSessions(db, at());
 
-  return { attachUser, requireAuth, requireAdmin, registerRoutes, issueSession, needsBootstrap, registerAccount, publicUser, readLimits, PASSWORD_MIN_LENGTH };
+  return { attachUser, userFromCookieHeader, requireAuth, requireAdmin, registerRoutes, issueSession, needsBootstrap, registerAccount, publicUser, readLimits, PASSWORD_MIN_LENGTH };
 }

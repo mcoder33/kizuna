@@ -10,6 +10,7 @@
 //
 // Инструменты — единственный способ менять журнал: и модель, и заглушка ходят
 // через них, поэтому поведение совпадает, а контракт памяти не обходится.
+import { randomUUID } from 'node:crypto';
 import { enqueueCaptureJob, getAggregate, fullEntry, activeNote, saveNote, search, day, replaceInterpretation, deleteCapture, restoreCapture, captureOwner } from './db.js';
 import { parseCaptureOverrides, applyUserOverrides, gateClassification, shouldMaterializeProjections } from './classifier.js';
 import { dateInZone, shiftDate } from './reports.js';
@@ -21,6 +22,8 @@ const CLIENT_SECRET_URL = 'https://api.openai.com/v1/realtime/client_secrets';
 const GEMINI_TOKEN_URL = 'https://generativelanguage.googleapis.com/v1beta/auth_tokens';
 // Живой разговор у Gemini идёт по вебсокету: браузер подключается сам, токен
 // уходит в адресе — это единственный способ, который принимает их сервер.
+// Путь, по которому браузер соединяется со своим же сервером вместо Google.
+export const RELAY_PATH = '/api/voice/relay';
 export const GEMINI_LIVE_URL =
   'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained';
 
@@ -774,11 +777,31 @@ export function createVoiceService({
   fetch: fetchImplementation = globalThis.fetch,
   now = () => new Date(),
   timeoutMs = 8000,
+  liveUrl = GEMINI_LIVE_URL,
 } = {}) {
   const provider = pickVoiceProvider({ requested: requestedProvider, openaiKey: apiKey, geminiKey: geminiApiKey });
   const configured = Boolean(provider);
   const activeModel = provider === 'gemini' ? geminiModel : model;
   const activeVoice = provider === 'gemini' ? geminiVoice : voice;
+
+  // Билеты на релей: короткоживущие разовые пропуска, по которым сервер
+  // достаёт настоящий токен Google и открывает сокет за человека. Живут в
+  // памяти процесса — переживать перезапуск им незачем, разговор всё равно
+  // оборвётся.
+  const tickets = new Map();
+  function issueRelayTicket(payload) {
+    const ticket = randomUUID();
+    tickets.set(ticket, { ...payload, expiresAt: now().getTime() + 5 * 60 * 1000 });
+    for (const [key, value] of tickets) if (value.expiresAt <= now().getTime()) tickets.delete(key);
+    return ticket;
+  }
+  // Билет одноразовый: подключились — и он больше ничего не открывает.
+  function claimRelayTicket(ticket) {
+    const found = tickets.get(ticket);
+    if (!found) return null;
+    tickets.delete(ticket);
+    return found.expiresAt > now().getTime() ? found : null;
+  }
 
   // Токен Gemini живёт до получаса и годен на одно подключение: браузеру
   // достаточно, а утёкший ничего не откроет.
@@ -817,14 +840,19 @@ export function createVoiceService({
       const payload = await response.json();
       const token = payload?.name || payload?.token?.name;
       if (!token) return { mode: 'live', provider: 'gemini', error: 'malformed_output' };
+      // Наружу уходит билет, а не токен Google: сокет к Google держит сервер.
+      // Браузер соединяется со своим же сайтом — поэтому голос работает там,
+      // где Google не принимает соединения (закрывает 1007 «User location is
+      // not supported»), и ключ не покидает сервер.
       return {
         mode: 'live',
         provider: 'gemini',
-        clientSecret: token,
+        clientSecret: issueRelayTicket({ token, model: geminiModel }),
         expiresAt: expireTime,
         model: geminiModel,
         voice: geminiVoice,
-        url: GEMINI_LIVE_URL,
+        url: RELAY_PATH,
+        relay: true,
       };
     } catch (error) {
       return { mode: 'live', provider: 'gemini', error: error?.name === 'AbortError' ? 'timeout' : 'unavailable' };
@@ -834,6 +862,8 @@ export function createVoiceService({
   }
 
   return {
+    claimRelayTicket,
+    liveUrl,
     status() {
       return {
         configured,

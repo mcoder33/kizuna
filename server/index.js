@@ -6,7 +6,8 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { openDatabase, createLedger, splitPartsOf, deleteCapture, restoreCapture, saveNote, NOTE_BODY_LIMIT, readSettings, writeSettings, recordUsage, usageSummary, attachmentsFor, addAttachment, findAttachment, removeAttachment, ATTACHMENT_SIZE_LIMIT, ATTACHMENTS_PER_CAPTURE, enqueueCaptureJob, cancelCaptureJob, retryCaptureJob, getCaptureJob, getAggregate, replaceInterpretation, completeProjection, undoProjectionCompletion, dayView, getDailyBrief, findDailyBrief, findDailyBriefSource, listEntries, undo, search, exportLedger, resetLedger, fullEntry } from './db.js';
 import { createAiService } from './ai.js';
-import { createVoiceService, runVoiceTool, mockVoiceTurn, VOICE_TOOLS, VOICE_INSTRUCTIONS, VOICE_CHOICES, buildVoiceInstructions, DEFAULT_VOICE_CHARACTER } from './voice.js';
+import { WebSocketServer, WebSocket as UpstreamSocket } from 'ws';
+import { createVoiceService, runVoiceTool, mockVoiceTurn, VOICE_TOOLS, VOICE_INSTRUCTIONS, VOICE_CHOICES, buildVoiceInstructions, DEFAULT_VOICE_CHARACTER, RELAY_PATH } from './voice.js';
 import { CaptureJobWorker } from './capture-job-worker.js';
 import { normalizeClassification, gateClassification, shouldMaterializeProjections, parseCaptureOverrides, applyUserOverrides } from './classifier.js';
 import { validateRemoteModel } from './cli-config.js';
@@ -288,7 +289,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   // Кто перед нами — выясняется до всего остального, но никого не заворачивает:
   // страница входа и заявка на регистрацию должны работать без учётной записи.
   app.use(accounts.attachUser);
-  app.use((req,res,next)=>{ if(req.path==='/'||req.path.startsWith('/api/')||req.path.startsWith('/public/')) res.set({'Content-Security-Policy':"default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://api.openai.com https://generativelanguage.googleapis.com wss://generativelanguage.googleapis.com; base-uri 'none'; frame-ancestors 'none'",'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'}); next(); });
+  app.use((req,res,next)=>{ if(req.path==='/'||req.path.startsWith('/api/')||req.path.startsWith('/public/')) res.set({'Content-Security-Policy':"default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://api.openai.com; base-uri 'none'; frame-ancestors 'none'",'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'}); next(); });
   accounts.registerRoutes(app);
   // Отсюда и ниже — только для вошедших. Граница одна и видна глазом: любой
   // маршрут, добавленный после этой строки, закрыт по умолчанию.
@@ -546,6 +547,9 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     // переживает «Очистить данные» — иначе предел обходился бы одной кнопкой.
     let voiceSessionId=null;
     try{voiceSessionId=openVoiceSession(db,{userId:req.user.id,provider:voiceProvider,model:session.model||null,ratePerMinute:voiceRate(voiceProvider),startedAt:now().toISOString()});}catch{}
+    // Билет знает, какой разговор он продолжает: релей закроет его сам, с
+    // настоящей длительностью, а не со слов браузера.
+    if(session.relay&&session.clientSecret)relayBindings.set(session.clientSecret,{voiceSessionId,userId:req.user.id});
     res.json({...session,voiceSessionId,instructions:voiceInstructions(req.user),tools:VOICE_TOOLS,quota:voiceQuota(req.user)});}catch(error){next(error);}});
   // Браузер сообщает, сколько говорили. Верить ему на слово нельзя, поэтому
   // длительность обрезается по времени, реально прошедшему с выдачи токена.
@@ -625,6 +629,65 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   app.get('/',(req,res)=>res.sendFile(path.join(__dirname,'..','public',req.user?'app.html':'hello.html')));
   // Макеты и черновики в репозитории не живут, поэтому и раздавать их нечем:
   // раньше здесь была дверь к концепт-страницам в корне проекта.
+  // ── релей голоса ────────────────────────────────────────────────────────
+  // Живой разговор шёл из браузера прямо к Google, и Google закрывал сокет
+  // кодом 1007 «User location is not supported» — по стране самого браузера.
+  // Теперь сокет к Google держит сервер: браузер соединяется со своим же
+  // сайтом, география перестаёт что-либо значить, ключ не покидает сервер, а
+  // длительность разговора наконец видна нам, а не рассказывается браузером.
+  const relayBindings = new Map();
+  app.attachVoiceRelay = (server) => {
+    const relayServer = new WebSocketServer({ noServer: true });
+    server.on('upgrade', (request, socket, head) => {
+      let target;
+      try { target = new URL(request.url, 'http://relay.local'); } catch { return socket.destroy(); }
+      if (target.pathname !== RELAY_PATH) return;
+      const user = accounts.userFromCookieHeader(request.headers.cookie);
+      if (!user) return socket.destroy();
+      const claim = voice.claimRelayTicket?.(target.searchParams.get('ticket'));
+      if (!claim) return socket.destroy();
+      const binding = relayBindings.get(target.searchParams.get('ticket')) || null;
+      relayBindings.delete(target.searchParams.get('ticket'));
+      if (binding && binding.userId !== user.id) return socket.destroy();
+      relayServer.handleUpgrade(request, socket, head, client => pipeVoice(client, claim, binding));
+    });
+  };
+  function pipeVoice(client, claim, binding) {
+    const startedAt = now().getTime();
+    const upstream = new UpstreamSocket(`${voice.liveUrl}?access_token=${encodeURIComponent(claim.token)}`);
+    // Браузер здоровается сразу, а сокет к Google ещё открывается: сказанное
+    // до этого копится, иначе первая фраза разговора пропадала бы.
+    const waiting = [];
+    const flush = () => { while (waiting.length) upstream.send(waiting.shift()); };
+    client.on('message', (data, isBinary) => {
+      const frame = isBinary ? data : data.toString();
+      if (upstream.readyState === UpstreamSocket.OPEN) upstream.send(frame); else waiting.push(frame);
+    });
+    upstream.on('open', flush);
+    upstream.on('message', (data, isBinary) => { if (client.readyState === client.OPEN) client.send(isBinary ? data : data.toString()); });
+    // Причина закрытия доходит до человека как есть: «сервис недоступен в вашей
+    // стране» и «кончился ключ» — разные новости, и путать их нельзя. Коды вне
+    // разрешённого диапазона заменяются на 1011, текст остаётся.
+    const closeClient = (code, reason) => {
+      const text = String(reason || '').slice(0, 120);
+      const safe = code === 1000 || (code >= 3000 && code <= 4999) ? code : 1011;
+      try { client.close(safe, text); } catch { client.terminate(); }
+    };
+    upstream.on('close', (code, reason) => closeClient(code, reason?.toString?.() || ''));
+    upstream.on('error', (error) => closeClient(1011, error?.message || 'upstream_error'));
+    const finish = () => {
+      try { upstream.close(); } catch { upstream.terminate?.(); }
+      if (!binding?.voiceSessionId) return;
+      const seconds = Math.max(0, Math.round((now().getTime() - startedAt) / 1000));
+      // Разговор закрывает тот, кто знает правду о его длительности: раньше это
+      // говорил браузер, а брошенная вкладка не говорила ничего — и сторож
+      // засчитывал ей час.
+      try { closeVoiceSession(db, binding.voiceSessionId, { seconds, at: now().toISOString(), closedBy: 'relay' }); } catch {}
+      binding.voiceSessionId = null;
+    };
+    client.on('close', finish);
+    client.on('error', finish);
+  }
   app.use((req,res)=>res.status(404).json({error:{code:'not_found',message:'Не найдено.'}}));
   // Ошибка разбора тела — вина запроса, а не сервера: express.json() помечает
   // такие ошибки типом entity.*/encoding.* и своим статусом (400 на битый JSON,
@@ -639,7 +702,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
 // (удаление записи, экспорт, блокировка, ошибки календаря), но сборщик по
 // умолчанию пустой, и они падали в никуда. Одной строкой в JSON, чтобы журнал
 // можно было грепать и читать через `journalctl -u kizuna -o cat | jq`.
-if(process.argv[1]===fileURLToPath(import.meta.url)){const app=createApp({audit:(event)=>{try{console.log(JSON.stringify({at:new Date().toISOString(),...event}));}catch{}}});const server=app.listen(Number(process.env.PORT||3000),process.env.HOST||'127.0.0.1',()=>{app.captureJobWorker.start();app.calendarSyncWorker.start();app.reminderWorker.start();console.log('Kizuna server started.');});let shuttingDown=false;const shutdown=()=>{if(shuttingDown)return;shuttingDown=true;
+if(process.argv[1]===fileURLToPath(import.meta.url)){const app=createApp({audit:(event)=>{try{console.log(JSON.stringify({at:new Date().toISOString(),...event}));}catch{}}});const server=app.listen(Number(process.env.PORT||3000),process.env.HOST||'127.0.0.1',()=>{app.attachVoiceRelay(server);app.captureJobWorker.start();app.calendarSyncWorker.start();app.reminderWorker.start();console.log('Kizuna server started.');});let shuttingDown=false;const shutdown=()=>{if(shuttingDown)return;shuttingDown=true;
   // Потоки событий держали ответы открытыми, и server.close ждал их вечно:
   // systemd убивал процесс по таймауту через 90 с — каждый деплой давал
   // полторы минуты простоя. Потоки закрываем сами, простаивающие соединения

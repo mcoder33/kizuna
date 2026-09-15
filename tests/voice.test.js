@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server/index.js';
 import { authed } from './helpers/auth.js';
-import { createVoiceService, runVoiceTool, mockVoiceTurn, pickVoiceProvider, geminiTools, VOICE_TOOLS, VOICE_INSTRUCTIONS, GEMINI_LIVE_URL } from '../server/voice.js';
+import { createVoiceService, runVoiceTool, mockVoiceTurn, pickVoiceProvider, geminiTools, VOICE_TOOLS, VOICE_INSTRUCTIONS, GEMINI_LIVE_URL, RELAY_PATH } from '../server/voice.js';
 import { openDatabase, createLedger } from '../server/db.js';
 import { normalizeClassification } from '../server/classifier.js';
 import { fakeModelService } from './helpers/fake-model.js';
@@ -395,9 +395,14 @@ test('with a gemini key the service mints an ephemeral token and never leaks the
 
   const session = await service.createSession();
   assert.equal(session.provider, 'gemini');
-  assert.equal(session.clientSecret, 'auth_tokens/short-lived');
-  assert.equal(session.url, GEMINI_LIVE_URL);
+  // Наружу уходит билет на релей, а не токен Google: сокет держит сервер.
+  assert.notEqual(session.clientSecret, 'auth_tokens/short-lived');
+  assert.equal(session.url, RELAY_PATH);
+  assert.equal(session.relay, true);
   assert.match(GEMINI_LIVE_URL, /^wss:\/\/generativelanguage\.googleapis\.com\/ws\//);
+  // Билет одноразовый и достаёт настоящий токен только на сервере.
+  assert.equal(service.claimRelayTicket(session.clientSecret).token, 'auth_tokens/short-lived');
+  assert.equal(service.claimRelayTicket(session.clientSecret), null);
 
   const [call] = requests;
   assert.equal(call.url, 'https://generativelanguage.googleapis.com/v1beta/auth_tokens');
@@ -439,8 +444,8 @@ test('the session endpoint hands the browser a gemini token and the socket url o
   assert.equal(status.provider, 'gemini');
   const session = (await api.post('/api/voice/session').expect(200)).body;
   assert.equal(session.provider, 'gemini');
-  assert.equal(session.clientSecret, 'auth_tokens/browser');
-  assert.equal(session.url, GEMINI_LIVE_URL);
+  assert.notEqual(session.clientSecret, 'auth_tokens/browser');
+  assert.equal(session.url, RELAY_PATH);
   assert.equal(JSON.stringify(session).includes('gemini-secret-key'), false, 'ключ не должен уходить в браузер');
 });
 
