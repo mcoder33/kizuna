@@ -20,7 +20,7 @@ test('settings come back without secrets and with sensible defaults', async () =
   const body = (await api.get('/api/settings').expect(200)).body;
   assert.equal(body.settings.sleepAfterSeconds, '25');
   assert.equal(body.settings.wakeWord, 'кизуна');
-  assert.equal(body.settings.previewLimit, '3');
+  assert.equal(body.settings.previewLimit, '8');
   // Ключ описывается признаком, а не значением.
   assert.deepEqual(Object.keys(body.settings.openaiKey).sort(), ['configured', 'fromEnvironment', 'hint']);
   assert.equal(typeof body.settings.openaiKey.configured, 'boolean');

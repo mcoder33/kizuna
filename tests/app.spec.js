@@ -1168,13 +1168,13 @@ test("карточка говорит, просрочено дело или не
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   await page.goto("/");
 
-  // Сроки берём рядом с сегодняшним днём: далёкие даты приложение не принимает,
-  // а разбег в три дня переживает любой часовой пояс.
-  const day = (shift) => {
-    const at = new Date();
-    at.setDate(at.getDate() + shift);
-    return at.toISOString().slice(0, 10);
-  };
+  // Сроки берём рядом с сегодняшним днём: далёкие даты приложение не принимает.
+  // Дни считаются в часовом поясе приложения, а не в UTC: после 20:00 UTC это
+  // уже разные даты, и «через три дня» уезжало на день мимо того дня, который
+  // открывает полоса дней, — проверка падала каждую ночь.
+  const day = (shift) =>
+    new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Samara", year: "numeric", month: "2-digit", day: "2-digit" })
+      .format(new Date(Date.now() + shift * 86400000));
   const late = await request.post("/api/captures", {
     data: { raw: "сдать отчёт", primaryType: "todo", due: { date: day(-3) } },
   });
@@ -1222,7 +1222,10 @@ test("карточка говорит, просрочено дело или не
 // Колонка на «Сегодня» показывает только первые записи. Раньше об этом было
 // сказано лишь заголовком-ссылкой: дело, которому передвинули срок вперёд,
 // уходило за границу превью и выглядело пропавшим — «не сохранилось».
-test("колонка честно говорит, сколько записей осталось за границей превью", async ({
+// Дела без срока в «Дне» не обрезаются: их видно все, а ящик прокручивается.
+// Обрезка до предела превью выглядела как потерянные дела — три «Допинываем…»
+// из двенадцати, и человек шёл искать остальные на доску.
+test("дела без срока показываются все, а ящик прокручивается", async ({
   page,
   request,
 }) => {
@@ -1230,23 +1233,19 @@ test("колонка честно говорит, сколько записей 
   await page.goto("/");
 
   const created = [];
-  for (const name of ["первое дело", "второе дело", "третье дело", "четвёртое дело"])
+  for (let number = 1; number <= 12; number += 1)
     created.push(
-      await request.post("/api/captures", { data: { raw: name, primaryType: "todo" } }),
+      await request.post("/api/captures", { data: { raw: `дело номер ${number}`, primaryType: "todo" } }),
     );
 
   const todo = page.locator("#todo");
-  // Запас сверх трёх лежит в DOM скрытым — считаются видимые карточки.
-  await expect(todo.locator(".entry:visible")).toHaveCount(3, { timeout: 15000 });
-  const more = todo.locator(".preview-more");
-  await expect(more).toHaveText("Ещё 1 — весь список →");
-  await expect(more).toHaveAttribute("href", "#board?view=list");
-
-  // Полный список — доска списком, открывается по этой же ссылке, и там все четыре.
-  await more.click();
-  await expect(page.locator("#board")).toBeVisible();
-  await expect(page.locator("#board-columns")).toHaveClass(/list/);
-  await expect(page.locator("#board-columns .board-card")).toHaveCount(4);
+  await expect(todo.locator(".entry:visible")).toHaveCount(12, { timeout: 15000 });
+  // Ничего не спрятано, поэтому и хвоста «Ещё N» нет: он остался только для
+  // дел, назначенных на другие дни.
+  await expect(todo.locator(".preview-more")).toHaveCount(0);
+  const scroll = todo.locator(".day-scroll");
+  const room = await scroll.evaluate((box) => ({ visible: box.clientHeight, all: box.scrollHeight }));
+  expect(room.all).toBeGreaterThan(room.visible + 4);
 
   for (const response of created)
     await request.delete(`/api/captures/${(await response.json()).entry.id}`);
@@ -1263,8 +1262,16 @@ test("future-dated tasks stay in their days while the tail counts them", async (
     });
   for (const name of ["раз", "два", "три", "четыре", "пять", "шесть", "семь"])
     await request.post("/api/captures", { data: { raw: `Обсудили ${name}`, primaryType: "outcome" } });
-  await expect(page.locator("#todo .preview-more")).toHaveText("Ещё 3 — весь список →", { timeout: 15000 });
+  const tail = page.locator("#todo .preview-more");
+  await expect(tail).toHaveText("Ещё 3 — весь список →", { timeout: 15000 });
+  await expect(tail).toHaveAttribute("href", "#board?view=list");
   expect(await page.locator("#todo .entry").count()).toBe(0);
+  // Полный список — доска видом «Список», открывается этой же ссылкой.
+  await tail.click();
+  await expect(page.locator("#board")).toBeVisible();
+  await expect(page.locator("#board-columns")).toHaveClass(/list/);
+  await expect(page.locator("#board-columns .board-card")).toHaveCount(3);
+  await page.locator('nav a[href="#today"]').click();
   await page.getByRole("tab", { name: /Что делал/ }).click();
   await expect(page.locator("#journal .entry:visible")).toHaveCount(7, { timeout: 15000 });
   await expect(page.locator("#todo")).toBeHidden();
@@ -1295,13 +1302,15 @@ test("настройки меняются в приложении и приме�
     })
     .toBe("60|журнал|5");
 
-  // Колонка сразу показывает пять записей вместо трёх — без перезагрузки.
+  // Ящик сразу становится ростом в пять дел — без перезагрузки; шестое достаётся
+  // прокруткой, а не пропадает.
   const created = [];
   for (const name of ["дело 1", "дело 2", "дело 3", "дело 4", "дело 5", "дело 6"])
     created.push(await request.post("/api/captures", { data: { raw: name, primaryType: "todo" } }));
   await page.locator('nav a[href="#today"]').click();
-  await expect(page.locator("#todo .entry:visible")).toHaveCount(5, { timeout: 15000 });
-  await expect(page.locator("#todo .preview-more")).toHaveText("Ещё 1 — весь список →");
+  await expect(page.locator("#todo .entry:visible")).toHaveCount(6, { timeout: 15000 });
+  const room = await page.locator("#todo .day-scroll").evaluate((box) => ({ visible: box.clientHeight, all: box.scrollHeight }));
+  expect(room.all).toBeGreaterThan(room.visible + 4);
 
   // Новое слово пробуждения видно в подсказке разговора.
   await page.locator("#capture-voice").click();

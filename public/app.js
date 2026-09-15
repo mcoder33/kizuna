@@ -518,7 +518,7 @@ function appendEntries(container, entries, emptyText, options) {
     container.append(node("p", emptyText, "empty"));
 }
 // Сколько дел без срока показывать в «Дне» — настройка, а не константа.
-let previewLimit = 3;
+let previewLimit = 8;
 // ── «Сегодня»: обложка по часам, полоса дней, два ящика ──────────────────────
 // Страница знает, который час: дата с фазой суток, бриф из двух-трёх фраз и
 // вопрос в поле меняются утром, днём, вечером и ночью. Под полем — полоса дней
@@ -1012,10 +1012,14 @@ function appendMore(container, hidden) {
   container.append(more);
 }
 function paintDayList(date) {
-  const container = $("#todo");
-  clear(container);
-  container.append(dayNavNode(date, { view: todayState.view, onView: setView }));
-  if (date === currentDayDate) { paintTodayList(container); return; }
+  const box = $("#todo");
+  clear(box);
+  box.append(dayNavNode(date, { view: todayState.view, onView: setView }));
+  // Полоса дней со стрелками стоит на месте, прокручивается только список:
+  // иначе стрелки уезжали бы вверх вместе с делами.
+  const container = node("div", undefined, "day-scroll");
+  box.append(container);
+  if (date === currentDayDate) { paintTodayList(container); fitDayScroll(container); return; }
   const data = todayState.cache.get(date);
   if (!data) {
     container.append(node("p", "Загружаю…", "empty"));
@@ -1023,37 +1027,54 @@ function paintDayList(date) {
     return;
   }
   paintOtherDayList(container, date, data);
+  fitDayScroll(container);
+}
+// Высота ящика — столько записей, сколько человек просил показывать; остальные
+// достаются прокруткой, а не походом на доску. Меряем по настоящим строкам:
+// карточка с проектом и сроком выше карточки без них, и высота в «примерно
+// столько-то пикселей» разошлась бы со счётом.
+function fitDayScroll(container) {
+  container.style.maxHeight = "";
+  // Закрытый ящик мерить нечем: все смещения нулевые. Откроется — перерисуется
+  // и померится (переключение вкладки идёт через renderToday).
+  if (!container.offsetParent) return;
+  const rows = [...container.children].filter((row) => !row.classList.contains("day-group"));
+  if (rows.length <= previewLimit) return;
+  const edge = rows[previewLimit];
+  // Обрез по верху первой невлезающей строки плюс полоска от неё: видно, что
+  // список продолжается, даже когда полосы прокрутки не видно.
+  container.style.maxHeight = `${Math.round(edge.offsetTop - container.firstElementChild.offsetTop + 20)}px`;
 }
 // Сегодня: сверху «без времени» — просроченное, требующее уточнения, сегодняшнее
-// без часа и дела без срока (эти — до предела превью), ниже «по часам» — свои
-// дела и встречи со временем вперемешку с чужими событиями, между прошедшими
-// и будущими — строка «сейчас». Дела на другие дни живут в своих днях и в
-// хвосте «Ещё N».
+// без часа и дела без срока, ниже «по часам» — свои дела и встречи со временем
+// вперемешку с чужими событиями, между прошедшими и будущими — строка «сейчас».
+// Ничего из этого не обрезается: ящик прокручивается, а настройка задаёт его
+// высоту. Обрезка до трёх строк выглядела как потерянные дела — человек видел
+// три «Допинываем…» из двенадцати и шёл искать остальные. Дела на другие дни
+// живут в своих днях и в хвосте «Ещё N».
 function paintTodayList(container) {
   const today = currentDayDate, minutes = nowMinutes();
   const timed = (entry) => scheduledOn(entry, today) && Boolean(scheduleOf(entry)?.time);
   const order = (entry) => todoOrder(entry, today);
   const band = todayState.todo.filter((entry) => order(entry) <= 3 && !timed(entry));
-  const undated = band.filter((entry) => order(entry) === 3);
-  const shownBand = band.filter((entry) => order(entry) < 3).concat(undated.slice(0, previewLimit));
   const later = todayState.todo.filter((entry) => order(entry) === 4);
-  const hidden = undated.length - Math.min(undated.length, previewLimit) + later.length;
+  const hidden = later.length;
   const external = (todayState.calendar?.external || []).filter((item) => item.date === today);
   const allDay = external.filter((item) => item.allDay);
   const hours = [
     ...todayState.todo.filter(timed).map((entry) => ({ start: minutesOf(scheduleOf(entry).time), entry })),
     ...external.filter((item) => !item.allDay && item.time).map((item) => ({ start: minutesOf(item.time), item })),
   ].filter((slot) => slot.start != null).sort((a, b) => a.start - b.start);
-  if (!shownBand.length && !allDay.length && !hours.length) {
+  if (!band.length && !allDay.length && !hours.length) {
     // Пустому журналу «Открытых дел нет» ничего не объясняет: человек видит
     // поле и не знает, что в него писать. Место то же, слова другие.
     container.append(todayState.entries.length ? node("p", "Открытых дел нет.", "empty") : firstStepNode());
     appendMore(container, hidden);
     return;
   }
-  if (shownBand.length || allDay.length) {
+  if (band.length || allDay.length) {
     container.append(node("div", "без времени", "day-group"));
-    for (const entry of shownBand) container.append(entryCard(entry, { overdue: isOverdue(entry, today), compact: true, on: today }));
+    for (const entry of band) container.append(entryCard(entry, { overdue: isOverdue(entry, today), compact: true, on: today }));
     for (const item of allDay) container.append(eventRow(item, { minutes, today: true }));
   }
   if (hours.length) {

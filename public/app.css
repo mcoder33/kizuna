@@ -6439,3 +6439,15 @@ body {
   .memory-item { grid-template-columns: 1fr auto; }
   .memory-meta { grid-column: 1 / -1; }
 }
+
+/* «День» не обрезает список, а прокручивается: дела без срока видны все, а ящик
+   не растёт на весь экран. Высоту ставит скрипт — столько записей, сколько
+   человек просил показывать. */
+.day-scroll {
+  display: grid;
+  gap: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+}

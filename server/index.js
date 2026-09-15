@@ -126,7 +126,7 @@ const SETTINGS = {
 };
 // Голоса по умолчанию те же, что и у самой службы: без них выпадающий список
 // открывался бы пустым, хотя разговор уже идёт каким-то голосом.
-const SETTING_DEFAULTS = { sleepAfterSeconds:'25', remindDefault:'15', remindHour:'09:00', wakeWord:'кизуна', previewLimit:'3', voiceName:'coral', geminiVoiceName:'Leda', systemPrompt:DEFAULT_VOICE_CHARACTER, voiceModel:'gpt-realtime', geminiVoiceModel:'models/gemini-3.1-flash-live-preview', theme:'system',
+const SETTING_DEFAULTS = { sleepAfterSeconds:'25', remindDefault:'15', remindHour:'09:00', wakeWord:'кизуна', previewLimit:'8', voiceName:'coral', geminiVoiceName:'Leda', systemPrompt:DEFAULT_VOICE_CHARACTER, voiceModel:'gpt-realtime', geminiVoiceModel:'models/gemini-3.1-flash-live-preview', theme:'system',
   // Цены по умолчанию нет намеренно: выдумать её значит показать человеку
   // сумму, которой он не платил. Пока цену не задали, работает предел по
   // минутам, а деньги честно показываются как неизвестные.
