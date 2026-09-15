@@ -6416,3 +6416,26 @@ body {
   .daynav-current { font-size: 12px; }
   .day-row { grid-template-columns: 38px minmax(0, 1fr); gap: 6px; }
 }
+
+/* Память помощника: строка правила, откуда оно и кнопка «забыть». Общее
+   правило помечено полосой — оно действует не только на этого человека. */
+.memory-list { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 10px; }
+.memory-item {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--n-88);
+  border-radius: 10px;
+  background: var(--n-98-2);
+}
+.memory-item.is-shared { border-left: 3px solid var(--coral); }
+.memory-body { font-size: 13px; line-height: 1.35; }
+.memory-meta { font-size: 11px; color: var(--n-45); white-space: nowrap; }
+.memory-forget { padding: 4px 10px; font-size: 12px; }
+.memory-shared { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--n-45); }
+@media (max-width: 560px) {
+  .memory-item { grid-template-columns: 1fr auto; }
+  .memory-meta { grid-column: 1 / -1; }
+}

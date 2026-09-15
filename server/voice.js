@@ -13,6 +13,8 @@
 import { randomUUID } from 'node:crypto';
 import { enqueueCaptureJob, getAggregate, fullEntry, activeNote, saveNote, search, day, replaceInterpretation, deleteCapture, restoreCapture, captureOwner } from './db.js';
 import { parseCaptureOverrides, applyUserOverrides, gateClassification, shouldMaterializeProjections } from './classifier.js';
+import { journalOverview, listJournal } from './journal.js';
+import { rememberFact, forgetFact, recallFacts, memoryDigest, learnQuietly } from './memory.js';
 import { dateInZone, shiftDate } from './reports.js';
 import { scheduleDisplay } from './repeat.js';
 
@@ -39,6 +41,8 @@ export const VOICE_INSTRUCTIONS = [
   'Не уверен, о какой записи речь, — найди search_memory или list_today и переспроси, а не угадывай.',
   'Не читай длинные списки целиком: назови сколько нашлось и самое важное.',
   'Если человек размышляет вслух и обращается к тебе, помоги подумать: уточняющий вопрос или следующий шаг.',
+  'Карта журнала уже у тебя перед глазами — проекты, типы, метки, что горит. Не спрашивай человека о том, что в ней есть. Нужны подробности — list_entries с нужным признаком, нужна свежая карта — journal_overview.',
+  'Что человек однажды решил, ты помнишь. Поправил тебя или попросил учитывать всегда — вызови remember одной короткой фразой и скажи, что запомнил. Второй раз об этом не спрашивай. Вспомнить — recall, забыть по просьбе — forget.',
   'Календарь — тоже твоя часть: list_calendar показывает свои дела и встречи вместе с событиями внешних календарей (Яндекс, Apple, Google). Своё дело или встречу двигай update_capture, чужое событие — update_event, удаление чужого события подтверждай вслух и вызывай delete_event только после согласия. Чтобы чужое событие стало записью в памяти — take_event. На приглашение отвечай respond_event, когда человек сказал, принимает он встречу или нет. Удаляя повторяющееся событие (recurring), сначала спроси: только этот повтор или всю серию — и передай scope в delete_event.',
 ].join(' ');
 
@@ -87,7 +91,7 @@ export function voiceGender(provider, name) {
 // Что уходит модели как системный промпт: общие правила разговора, род голоса и
 // добавка из настроек. Добавка именно добавляется — правила инструментов и
 // памяти ею не отменяются.
-export function buildVoiceInstructions({ provider, voice, extra } = {}) {
+export function buildVoiceInstructions({ provider, voice, extra, briefing, memory } = {}) {
   const gender = voiceGender(provider, voice);
   const genderLine =
     gender === 'male'
@@ -96,7 +100,43 @@ export function buildVoiceInstructions({ provider, voice, extra } = {}) {
         ? 'Ты говоришь женским голосом: о себе говори в женском роде — «записала», «нашла», «поняла».'
         : 'Голос нейтральный: старайся обходиться без указания рода — «готово», «сохранено», «нашлось».';
   const addition = typeof extra === 'string' && extra.trim() ? `\nОт человека: ${extra.trim()}` : '';
-  return `${VOICE_INSTRUCTIONS} ${genderLine}${addition}`;
+  // Карта и память уходят в системный промпт, а не первым вызовом инструмента:
+  // первая же реплика человека обычно про его дела, и к ней нужно быть готовым
+  // заранее. Снимок стареет за разговор — потому и назван снимком.
+  const map = typeof briefing === 'string' && briefing.trim() ? `\n\n${briefing.trim()}` : '';
+  const known = typeof memory === 'string' && memory.trim() ? `\n\nЧто ты уже знаешь о человеке (он это поправил или попросил запомнить — следуй и не переспрашивай):\n${memory.trim()}` : '';
+  return `${VOICE_INSTRUCTIONS} ${genderLine}${addition}${map}${known}`;
+}
+
+// Снимок журнала словами: то, что модель должна знать до первой реплики.
+// Голосу нельзя зачитать журнал целиком, да и незачем — нужна карта: сколько
+// чего, как называются проекты и люди, что горит сегодня. Без неё разговор
+// начинается с трёх поисков подряд и вопроса «а какой проект?».
+export function voiceBriefing(overview) {
+  if (!overview) return '';
+  const lines = [];
+  const totals = overview.totals;
+  lines.push(`Сегодня ${overview.today} (${overview.timeZone}). Записей ${totals.entries}, открыто ${totals.open}, просрочено ${totals.overdue}${totals.unparsed ? `, на разборе ${totals.unparsed}` : ''}.`);
+  if (overview.projects.length)
+    lines.push(`Проекты: ${overview.projects.map(project => {
+      const marks = [project.open ? `${project.open} открытых` : null, project.overdue ? `${project.overdue} просрочено` : null, project.stalled ? `тихо ${project.quietDays} дн.` : null].filter(Boolean);
+      return `${project.name}${marks.length ? ` — ${marks.join(', ')}` : ''}`;
+    }).join('; ')}.`);
+  if (overview.types.length) lines.push(`Типы: ${overview.types.map(type => `${type.type} ${type.count}`).join(', ')}.`);
+  if (overview.people.length) lines.push(`Люди: ${overview.people.map(person => person.name).join(', ')}.`);
+  if (overview.tags.length) lines.push(`Метки: ${overview.tags.map(tag => tag.name).join(', ')}.`);
+  if (overview.horizon.today.length) lines.push(`Сегодня: ${overview.horizon.today.map(item => `${item.time ? `${item.time} ` : ''}${item.title}`).join('; ')}.`);
+  if (overview.horizon.tomorrow || overview.horizon.week) lines.push(`Завтра ${overview.horizon.tomorrow}, на неделе ${overview.horizon.week}.`);
+  if (overview.overdue.length) lines.push(`Просрочено: ${overview.overdue.slice(0, 5).map(item => `«${item.title}» — ${item.daysLate} дн.`).join('; ')}`);
+  const flags = overview.flags;
+  const marks = [flags.high ? `важных ${flags.high}` : null, flags.questions ? `вопросов ${flags.questions}` : null, flags.followUps ? `с хвостом ${flags.followUps}` : null, flags.unclear ? `неясных ${flags.unclear}` : null, flags.repeating ? `повторяющихся ${flags.repeating}` : null].filter(Boolean);
+  if (marks.length) lines.push(`Пометки: ${marks.join(', ')}.`);
+  return `Снимок журнала на начало разговора (за свежим — journal_overview, за подробностями — list_entries):\n${lines.join('\n')}`;
+}
+
+/** Карта журнала и память одним вызовом — всё, что уходит в голову разговора. */
+export function voiceContext(db, { userId = null, now = new Date(), timeZone = 'Europe/Samara' } = {}) {
+  return { briefing: voiceBriefing(journalOverview(db, { userId, now, timeZone })), memory: memoryDigest(db, { userId }) };
 }
 
 // Контракт инструментов. Один и тот же список уходит в Realtime-сессию и
@@ -140,6 +180,33 @@ export const VOICE_TOOLS = [
     name: 'list_today',
     description: 'Что сегодня в работе: ближайшие дела и то, что требует внимания.',
     parameters: { type: 'object', properties: {} },
+  },
+  {
+    type: 'function',
+    name: 'journal_overview',
+    description: 'Карта журнала целиком: сколько записей, сколько открыто и просрочено, все проекты со счётчиками и днями тишины, типы, люди, метки, пометки (важное, вопросы, хвосты, неясное, повторы), что сегодня и сколько ближайших. С неё начинай, когда нужно сориентироваться, — она заменяет десяток поисков.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    type: 'function',
+    name: 'list_entries',
+    description: 'Записи по признакам: проект, тип, состояние, важность, метка, участник, окно сроков, слово в тексте. Признаки складываются. Названия проектов, людей и меток бери из journal_overview. Без признаков — просто последние записи.',
+    parameters: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', description: 'Название проекта из карты' },
+        type: { type: 'string', enum: ['todo', 'meeting', 'note', 'outcome', 'idea'], description: 'todo — дело, meeting — встреча, outcome — результат или отчёт, idea — идея или вопрос' },
+        status: { type: 'string', enum: ['open', 'done', 'overdue', 'any'], description: 'open — не закрытые дела и встречи, done — закрытые и сделанное, overdue — просроченные, any — все' },
+        priority: { type: 'string', enum: ['low', 'high'] },
+        tag: { type: 'string', description: 'Метка без решётки' },
+        person: { type: 'string', description: 'Участник' },
+        from: { type: 'string', description: 'Срок не раньше, YYYY-MM-DD' },
+        to: { type: 'string', description: 'Срок не позже, YYYY-MM-DD' },
+        query: { type: 'string', description: 'Слово в заголовке или тексте' },
+        limit: { type: 'integer', description: 'Сколько вернуть, по умолчанию 30, не больше 100' },
+        offset: { type: 'integer', description: 'Сколько пропустить — чтобы дочитать длинный список следующим вызовом' },
+      },
+    },
   },
   {
     type: 'function',
@@ -260,6 +327,39 @@ export const VOICE_TOOLS = [
       required: ['eventId'],
     },
   },
+  {
+    type: 'function',
+    name: 'remember',
+    description: 'Запомнить решённое навсегда: как человек называет вещи, что считать делом, а что отчётом, любое его правило. Вызывай, когда человек тебя поправил или сказал «запомни», «всегда так», «больше не спрашивай». Одна короткая фраза от первого лица о человеке, не пересказ записи — журнал для записей.',
+    parameters: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'Правило одной фразой: «созвоны с подрядчиком — это встречи»' },
+        subject: { type: 'string', description: 'К чему правило относится: слово, проект, человек. По нему правило потом и обновляется' },
+        kind: { type: 'string', enum: ['rule', 'preference', 'fact', 'term'], description: 'rule — как разбирать, preference — как вести себя с человеком, fact — факт о человеке, term — что означает слово' },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'recall',
+    description: 'Вспомнить, что уже решено по теме. Спрашивай до того, как переспросить человека: возможно, ответ уже дан однажды.',
+    parameters: {
+      type: 'object',
+      properties: { query: { type: 'string', description: 'Тема; пусто — всё, что помнишь' } },
+    },
+  },
+  {
+    type: 'function',
+    name: 'forget',
+    description: 'Забыть правило — только по просьбе человека. memoryId берётся из recall.',
+    parameters: {
+      type: 'object',
+      properties: { memoryId: { type: 'string' } },
+      required: ['memoryId'],
+    },
+  },
 ];
 
 // Последняя запись журнала — та, к которой относится «допиши». Смотрим сами
@@ -369,6 +469,46 @@ export function runVoiceTool(db, name, args = {}, { now = () => new Date(), time
     return { total: entries.length, open: open.slice(0, 6), recent: entries.slice(0, 6) };
   }
 
+  // Карта журнала: с неё начинается ориентировка. В голове разговора лежит
+  // снимок на его начало, а журнал за разговор меняется — здесь он свежий.
+  if (name === 'journal_overview') return journalOverview(db, { userId, now: now(), timeZone });
+
+  if (name === 'list_entries') {
+    const text = value => (typeof value === 'string' && value.trim() ? value.trim().slice(0, 200) : undefined);
+    const result = listJournal(db, {
+      userId, now: now(), timeZone,
+      project: text(args.project), type: text(args.type), status: ['open', 'done', 'overdue', 'any'].includes(args.status) ? args.status : 'any',
+      priority: ['low', 'high'].includes(args.priority) ? args.priority : undefined,
+      tag: text(args.tag), person: text(args.person), from: isoDate(args.from) ? args.from : undefined, to: isoDate(args.to) ? args.to : undefined,
+      query: text(args.query), limit: args.limit, offset: args.offset,
+    });
+    if (result.error === 'unknown_type') return { error: 'Неизвестный тип: бывают todo, meeting, note, outcome, idea.' };
+    return result;
+  }
+
+  // Память помощника. Голос пишет только личную память человека: общая — дело
+  // администратора, разговор её не трогает.
+  if (name === 'remember') {
+    const text = typeof args.text === 'string' ? args.text.trim() : '';
+    if (!text) return { error: 'Нужно, что запомнить.' };
+    // Сказанное вслух — не догадка: такому правилу веры больше, чем выведенному
+    // нами из поправки.
+    const saved = rememberFact(db, { userId, kind: ['rule', 'preference', 'fact', 'term'].includes(args.kind) ? args.kind : 'rule', subject: typeof args.subject === 'string' && args.subject.trim() ? args.subject : text, body: text, source: 'voice', confidence: 0.9 });
+    if (saved.error) return { error: 'Не получилось запомнить.' };
+    return { memoryId: saved.id, remembered: true, updated: Boolean(saved.updated), text };
+  }
+
+  if (name === 'recall') {
+    const found = recallFacts(db, { userId, query: typeof args.query === 'string' ? args.query : '', limit: 8 });
+    return { found: found.length, memories: found.map(item => ({ memoryId: item.id, text: item.body, subject: item.subject, scope: item.scope === 'shared' ? 'общее' : 'личное' })) };
+  }
+
+  if (name === 'forget') {
+    const result = forgetFact(db, { userId, memoryId: typeof args.memoryId === 'string' ? args.memoryId : '' });
+    if (result.notFound) return { error: 'Такого правила не помню.' };
+    return { forgotten: true, text: result.body };
+  }
+
   if (name === 'append_note') {
     const text = typeof args.text === 'string' ? args.text.trim() : '';
     if (!text) return { error: 'Нужен текст заметки.' };
@@ -474,6 +614,10 @@ export function runVoiceTool(db, name, args = {}, { now = () => new Date(), time
       classification = { ...classification, entities: { ...classification.entities, projects: [args.project.trim().slice(0, 120)] } };
     if (typeof args.done === 'boolean') classification = { ...classification, completed: args.done };
     replaceInterpretation(db, args.captureId, classification, 'manual', null, shouldMaterializeProjections(classification));
+    // Поправка голосом учит помощника так же, как поправка в карточке: в
+    // следующий раз такую же запись он разберёт уже правильно.
+    const raw = db.prepare('SELECT raw FROM captures WHERE id=?').get(args.captureId)?.raw || '';
+    learnQuietly(db, { userId, captureId: args.captureId, raw, before: original, after: classification, source: 'voice' });
     const entry = fullEntry(db, getAggregate(db, args.captureId));
     return { captureId: args.captureId, ...entrySummary(entry), review: gateClassification(classification).level };
   }
@@ -539,6 +683,10 @@ function runCalendarTool(db, name, args, { now, timeZone, provider, userId, cale
 const RULES = [
   { intent: 'list_calendar', re: /(что\s+(у\s+меня\s+)?(в\s+календаре|завтра|на\s+неделе)|какие\s+(у\s+меня\s+)?(встречи|события)|календарь\s+на\s+(?<when>сегодня|завтра|неделю))/i },
   { intent: 'list_today', re: /(что\s+(у\s+меня\s+)?(сегодня|на\s+сегодня)|какие\s+(дела|задачи)|план\s+на\s+день)/i },
+  { intent: 'journal_overview', re: /^\s*(какие\s+(у\s+меня\s+)?проект|что\s+(у\s+меня\s+)?(вообще|всего)\s+есть|карта\s+журнала|обзор\s+журнала|как\s+дела\s+по\s+проектам)/i },
+  { intent: 'list_entries', re: /^\s*(что|покажи|какие\s+дела)\s+по\s+(проекту\s+)?(?<project>[^?.!]{2,40})\s*[?.!]?\s*$/i },
+  { intent: 'remember', re: /^(запомни|запомните|учти|имей\s+в\s+виду)\s*[,:—-]?\s*(?<text>.+)/i },
+  { intent: 'forget', re: /^(забудь|не\s+помни)\s*(про|о|об)?\s*(?<query>.+)/i },
   { intent: 'complete', re: /(отметь|пометь)\s+(как\s+)?(сделан|готов|выполнен)/i },
   { intent: 'reschedule', re: /(перенеси|сдвинь|отложи)\s*(?<when>.+)?/i },
   { intent: 'delete', re: /(удали|убери|сотри)(\s+(эту\s+)?(последнюю\s+)?запись|\s+это)?\s*$/i },
@@ -646,6 +794,42 @@ export function mockVoiceTurn(db, text, { now = () => new Date(), timeZone = 'Eu
         : `Записей за сегодня ${result.total}, открытых дел нет.`,
       calls,
     };
+  }
+
+  // Карта журнала словами: заглушка отвечает тем же, чем живая модель начинает
+  // разговор, — счётчиками и проектами, а не пересказом записей.
+  if (intent === 'journal_overview') {
+    const result = call('journal_overview', {});
+    const projects = result.projects.slice(0, 4).map(project => `${project.name}${project.open ? ` — ${project.open} открытых` : ''}`);
+    return {
+      reply: `Записей ${result.totals.entries}, открыто ${result.totals.open}, просрочено ${result.totals.overdue}.${projects.length ? ` Проекты: ${projects.join('; ')}.` : ' Проектов пока нет.'}`,
+      calls,
+    };
+  }
+
+  if (intent === 'list_entries') {
+    const project = String(groups.project || '').trim();
+    const result = call('list_entries', { project, status: 'open' });
+    if (result.error) return { reply: result.error, calls };
+    if (!result.total) return { reply: `По «${project}» открытых записей нет.`, calls };
+    return { reply: `По «${project}» ${result.total}: ${result.items.slice(0, 3).map(item => item.title).join('; ')}.`, calls };
+  }
+
+  if (intent === 'remember') {
+    const remembered = String(groups.text || '').trim();
+    if (!remembered) return { reply: 'Что запомнить?', calls };
+    const result = call('remember', { text: remembered });
+    if (result.error) return { reply: result.error, calls };
+    return { reply: `Запомнил: ${result.text}. Больше не спрошу.`, calls };
+  }
+
+  if (intent === 'forget') {
+    const query = String(groups.query || '').trim();
+    const found = call('recall', { query });
+    if (!found.found) return { reply: 'Такого не помню.', calls };
+    const result = call('forget', { memoryId: found.memories[0].memoryId });
+    if (result.error) return { reply: result.error, calls };
+    return { reply: `Забыл: ${result.text}`, calls };
   }
 
   if (intent === 'think') {

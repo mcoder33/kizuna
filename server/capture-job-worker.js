@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { claimCaptureJob, completeCaptureJob, failCaptureJob, releaseCaptureJob, renewCaptureJobLease, recordUsage } from './db.js';
 import { applyUserOverrides } from './classifier.js';
+import { memoryPrompt } from './memory.js';
 
 const safeErrorCodes = new Set(['unavailable','busy','timeout','aborted','nonzero','malformed_output','absent_output','oversize_output','schema_invalid','rate_limited','invalid_provider','not_configured']);
 
@@ -57,7 +58,9 @@ export class CaptureJobWorker {
     const stopHeartbeat = () => clearInterval(heartbeat);
     controller.signal.addEventListener('abort', stopHeartbeat, { once:true });
     try {
-      const result = await this.ai.classify(claim.raw, claim.selected_provider, controller.signal, claim.selected_model || null);
+      // Память хозяина записи уходит в разбор вместе с текстом: поправленное
+      // однажды не должно разбираться заново по-старому.
+      const result = await this.ai.classify(claim.raw, claim.selected_provider, controller.signal, claim.selected_model || null, memoryPrompt(this.db, { userId: claim.user_id ?? null }));
       // Разбор идёт здесь, значит и расход считается здесь: без этого учёт
       // видел бы только записи, сохранённые синхронно.
       try {

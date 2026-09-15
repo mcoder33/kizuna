@@ -55,7 +55,7 @@ function completionEvents(db) {
 // Записи пользователя одной выборкой: активная классификация плюс состояние
 // завершения. Закрыто — когда закрыты все завершаемые проекции записи
 // (правило то же, что у карточек и TODO-буфера).
-function loadEntries(db, userId) {
+export function loadEntries(db, userId) {
   const rows = db.prepare(`SELECT c.id, c.created_at, c.occurred_at, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND c.user_id IS ? ORDER BY c.created_at`).all(userId);
   const projections = db.prepare(`SELECT p.id, p.capture_id, p.projection_type FROM projections p JOIN captures c ON c.id=p.capture_id WHERE p.status='active' AND c.deleted_at IS NULL AND c.user_id IS ?`).all(userId);
   const completion = completionEvents(db);

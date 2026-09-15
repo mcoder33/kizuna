@@ -564,6 +564,31 @@
           </fieldset>
 
           <fieldset class="settings-group">
+            <legend>Память помощника</legend>
+            <p class="setting-hint">
+              Что Кизуна уже знает про вас: поправленный разбор и сказанное
+              вслух «запомни». Память уходит и в разговор, и в разбор новых
+              записей, поэтому одну и ту же поправку не приходится делать
+              дважды. Лишнее — забыть.
+            </p>
+            <div id="memory-list" class="memory-list"></div>
+            <label class="setting setting-wide" for="memory-new"
+              ><span class="setting-name">Запомнить правило</span
+              ><input
+                id="memory-new"
+                type="text"
+                maxlength="500"
+                placeholder="Например: созвоны с подрядчиком — это встречи"
+            /></label>
+            <div class="setting-actions">
+              <button id="memory-add" class="secondary" type="button">Запомнить</button>
+              <label class="memory-shared" id="memory-shared-row" hidden
+                ><input id="memory-shared" type="checkbox" /><span>общее для всех</span></label
+              >
+            </div>
+          </fieldset>
+
+          <fieldset class="settings-group">
             <legend>Журнал</legend>
             <label class="setting" for="setting-aiProvider"
               ><span class="setting-name">Разбирает записи по умолчанию</span

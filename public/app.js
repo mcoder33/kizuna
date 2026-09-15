@@ -204,6 +204,7 @@ function updatePageFromHash() {
     paintUpcomingReminders();
     loadUsage();
     loadCalendarAccounts();
+    loadMemory();
     // Google возвращает сюда после согласия с итогом в адресе: без слова
     // человек не понял бы, подключилось или нет.
     const calendarOutcome = params.get("calendar");
@@ -3099,6 +3100,62 @@ async function loadUsage() {
     box.append(line);
   }
 }
+// ── память помощника ────────────────────────────────────────────────────────
+// Память правит разбор молча, поэтому её показывают целиком: видно, откуда
+// правило взялось, и любое можно стереть. Без этого «помощник что-то запомнил»
+// было бы страшнее, чем полезно.
+const MEMORY_SOURCES = { correction: "из поправки", voice: "сказано голосом", manual: "записано руками", import: "перенесено" };
+async function loadMemory() {
+  const wrap = $("#memory-list");
+  if (!wrap) return;
+  try {
+    const state = await request("/api/agent/memory");
+    paintMemory(state);
+  } catch (error) {
+    clear(wrap);
+    wrap.append(node("p", error.message, "setting-hint"));
+  }
+}
+function paintMemory({ memories = [], canShare = false } = {}) {
+  const wrap = $("#memory-list");
+  clear(wrap);
+  const sharedRow = $("#memory-shared-row");
+  if (sharedRow) sharedRow.hidden = !canShare;
+  if (!memories.length) {
+    wrap.append(node("p", "Пока ничего: помощник запомнит первое же, что вы поправите или попросите запомнить.", "setting-hint"));
+    return;
+  }
+  for (const memory of memories) {
+    const row = node("div", undefined, `memory-item${memory.scope === "shared" ? " is-shared" : ""}`);
+    row.append(node("span", memory.body, "memory-body"));
+    const marks = [memory.scope === "shared" ? "общее" : null, MEMORY_SOURCES[memory.source] || memory.source].filter(Boolean);
+    row.append(node("span", marks.join(" · "), "memory-meta"));
+    const forget = calButton("Забыть", "secondary memory-forget", async () => {
+      forget.disabled = true;
+      try {
+        paintMemory(await request(`/api/agent/memory/${memory.id}`, { method: "DELETE" }));
+        toast("Забыл");
+      } catch (error) { forget.disabled = false; toast(error.message); }
+    });
+    // Общее правило человек видит, но стереть его может только тот, кому
+    // доверена установка: оно действует и на других.
+    forget.disabled = memory.scope === "shared" && !canShare;
+    row.append(forget);
+    wrap.append(row);
+  }
+}
+async function rememberRule() {
+  const input = $("#memory-new");
+  const text = input.value.trim();
+  if (!text) return;
+  const shared = Boolean($("#memory-shared")?.checked);
+  try {
+    paintMemory(await request("/api/agent/memory", { method: "POST", body: JSON.stringify({ text, scope: shared ? "shared" : "user" }) }));
+    input.value = "";
+    toast(shared ? "Запомнил для всех" : "Запомнил");
+  } catch (error) { toast(error.message); }
+}
+
 async function loadSettings() {
   if (!settingInput("timeZone")) return;
   try {
@@ -3164,6 +3221,11 @@ $("#voice-quick-provider")?.addEventListener("change", (event) => {
 });
 $("#settings-forget")?.addEventListener("click", () => {
   saveSettings(Object.fromEntries(SECRET_FIELDS.map((name) => [name, ""])));
+});
+$("#memory-add")?.addEventListener("click", () => rememberRule());
+// Enter в строке правила — то же, что кнопка: правило пишут на одном дыхании.
+$("#memory-new")?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") { event.preventDefault(); rememberRule(); }
 });
 
 // Предпросмотр закрывается крестиком, кликом по фону и Esc — как и карточка.

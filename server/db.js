@@ -314,6 +314,34 @@ function migrate(db) {
     if (!db.prepare('PRAGMA table_info(captures)').all().some(entry => entry.name === 'parent_capture_id')) db.exec('ALTER TABLE captures ADD COLUMN parent_capture_id TEXT REFERENCES captures(id)');
     db.exec('CREATE INDEX IF NOT EXISTS captures_parent ON captures(parent_capture_id)');
     db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(17, now());
+    // Миграция 18: память помощника. Личная — с хозяином, общая — без него
+    // (NULL значит «одна на всех», а не «ничья»: сюда чужие записи не
+    // усыновляются). Ключ склейки не даёт одному и тому же правилу лечь дважды:
+    // поправил ту же фразу второй раз — правило обновилось. Ни хозяин, ни
+    // запись не держатся внешним ключом: правило переживает свой источник, а
+    // удаление человека не должно спотыкаться о его память — она стирается
+    // явно, рядом с учётной записью.
+    db.exec(`CREATE TABLE IF NOT EXISTS agent_memories (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      kind TEXT NOT NULL CHECK(kind IN ('rule','preference','fact','term','correction')),
+      subject TEXT NOT NULL,
+      body TEXT NOT NULL,
+      key TEXT NOT NULL,
+      source TEXT NOT NULL CHECK(source IN ('correction','voice','manual','import')),
+      capture_id TEXT,
+      confidence REAL NOT NULL DEFAULT 0.7,
+      hits INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','archived')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_used_at TEXT
+    )`);
+    // NULL в уникальном ключе SQLite считает разным значением, поэтому общая
+    // память склеивалась бы по-другому, чем личная: выражение выравнивает их.
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS agent_memories_key ON agent_memories(IFNULL(user_id,''), key)");
+    db.exec('CREATE INDEX IF NOT EXISTS agent_memories_user ON agent_memories(user_id, status, updated_at DESC)');
+    db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(18, now());
 }
 // Ограничение переписывается из собственного определения таблицы, а не из
 // зашитой здесь копии: копия разошлась бы с настоящей схемой на первой же новой
@@ -1091,6 +1119,9 @@ const ownedRows = {
   activity_events: ["json_extract(payload_json,'$.captureId') IN (SELECT id FROM captures WHERE user_id IS ?)", 1],
   // Журнал отправленных напоминаний ссылается на записи — уходит вместе с ними.
   reminder_sends: [MINE, 1],
+  // Личная память — вывод из журнала; полный сброс уносит и её. Общая память
+  // остаётся: она не про этого человека.
+  agent_memories: ['user_id IS ?', 1],
 };
 const mineWhere = table => 'WHERE ' + ownedRows[table][0];
 function exportRowCount(db, userId) { return exportTables.reduce((total, table) => total + db.prepare(`SELECT COUNT(*) AS count FROM ${table} ${mineWhere(table)}`).get(userId).count, 0); }
@@ -1120,7 +1151,7 @@ export function resetLedger(db, userId = null) {
     db.exec('DROP TRIGGER IF EXISTS ledger_events_no_update; DROP TRIGGER IF EXISTS ledger_events_no_delete;');
     try {
       // Порядок важен: сначала то, что ссылается, потом то, на что ссылаются.
-      for (const table of ['activity_events','reminder_sends','daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','interpretations','capture_attachments','capture_notes','usage_events','board_placements','board_columns','calendar_links','calendar_events','calendar_accounts','captures']) db.prepare(`DELETE FROM ${table} ${mineWhere(table)}`).run(userId);
+      for (const table of ['agent_memories','activity_events','reminder_sends','daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','interpretations','capture_attachments','capture_notes','usage_events','board_placements','board_columns','calendar_links','calendar_events','calendar_accounts','captures']) db.prepare(`DELETE FROM ${table} ${mineWhere(table)}`).run(userId);
     } finally { createLedgerEventGuards(db); }
   });
 }

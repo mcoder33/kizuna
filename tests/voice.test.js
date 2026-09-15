@@ -43,6 +43,8 @@ test('voice tools are declared once and shared by both modes', () => {
     'create_capture',
     'search_memory',
     'list_today',
+    'journal_overview',
+    'list_entries',
     'append_note',
     'read_capture',
     'delete_capture',
@@ -53,6 +55,9 @@ test('voice tools are declared once and shared by both modes', () => {
     'delete_event',
     'respond_event',
     'take_event',
+    'remember',
+    'recall',
+    'forget',
   ]);
   for (const tool of VOICE_TOOLS) {
     assert.equal(tool.type, 'function');

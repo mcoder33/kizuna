@@ -379,6 +379,9 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
         const withData = listUsers(db).find(user => user.id === target.id)?.capture_count;
         if (withData) return fail(res, 409, 'user_has_data', 'У пользователя есть записи. Сначала заблокируйте его.');
         deleteUserSessions(db, target.id);
+        // Память помощника про этого человека уходит вместе с ним: без хозяина
+        // она никому не видна и ничего не уточняет.
+        db.prepare('DELETE FROM agent_memories WHERE user_id=?').run(target.id);
         db.prepare('DELETE FROM users WHERE id=?').run(target.id);
         logAuthEvent(db, { email: target.email, event: 'admin_delete', result: 'succeeded', detail: `от ${req.user.email}` });
         res.json({ ok: true });
