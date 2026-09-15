@@ -187,6 +187,79 @@ test("плашка чужого события: участники с ответ
   await expect(series.locator(".cal-pop-btn", { hasText: "Удалить" })).toBeVisible();
 });
 
+// Удаление чужого события идёт в чужой календарь, а он отвечает не сразу:
+// событие уходит с сетки сразу, запрос летит следом. Ошибка возвращает событие.
+test("чужое событие уходит с сетки сразу, а удаление идёт в фоне", async ({ page, request }) => {
+  const { default: Database } = await import("better-sqlite3");
+  const db = new Database("/tmp/pagent-e2e.sqlite");
+  const user = db.prepare("SELECT id FROM users WHERE email=?").get(E2E_EMAIL);
+  db.prepare("DELETE FROM calendar_events").run();
+  db.prepare("DELETE FROM calendar_accounts").run();
+  db.prepare("INSERT INTO calendar_accounts(id,user_id,provider,preset,label,color,mode,server_url,username,credentials_enc,calendars_json,synced_at,created_at,auto_export) VALUES('acc1',?,'caldav','yandex','Яндекс','#3b82f6','full','https://caldav.yandex.ru','me@itfinance.tech','v1.x',?,datetime('now'),datetime('now'),'off')")
+    .run(user.id, JSON.stringify([{ id: "c1", url: "https://caldav.yandex.ru/c1/", name: "Itfinance", color: "#3b82f6", selected: true, writable: true }]));
+  const today = (await (await request.get("/api/day")).json()).date;
+  const monday = shift(today, -((new Date(`${today}T12:00:00Z`).getUTCDay() + 6) % 7));
+  const tuesday = shift(monday, 1);
+  // Одиночное событие и два повтора одной серии: серия видна в сетке двумя
+  // экземплярами, и уйти они должны вместе.
+  const add = db.prepare("INSERT INTO calendar_events(id,account_id,calendar_id,uid,instance_key,series_uid,title,start_at,end_at,all_day,busy,etag,href,updated_at,repeat,sequence) VALUES(?,'acc1','c1',?,?,?,?,?,?,0,1,'\"e\"','https://calendar.yandex.ru/event?event_id=1',datetime('now'),?,1)");
+  add.run("e1", "u1", null, null, "Разбор поставок", `${monday}T06:30:00.000Z`, `${monday}T07:30:00.000Z`, null);
+  add.run("e2", "u2", `${monday}T08:30:00.000Z`, "u2", "Планёрка отдела", `${monday}T08:30:00.000Z`, `${monday}T09:00:00.000Z`, "Повторяется каждую неделю");
+  add.run("e3", "u2", `${tuesday}T08:30:00.000Z`, "u2", "Планёрка отдела", `${tuesday}T08:30:00.000Z`, `${tuesday}T09:00:00.000Z`, "Повторяется каждую неделю");
+  db.close();
+
+  await page.goto("/#calendar");
+  await page.evaluate(() => { localStorage.setItem("kizuna-calendar-mode", "week"); });
+  await page.reload();
+  const grid = page.locator("#calendar-view");
+  const single = grid.locator(".cal-ev.external", { hasText: "Разбор поставок" });
+  const series = grid.locator(".cal-ev.external", { hasText: "Планёрка отдела" });
+  await expect(single).toHaveCount(1);
+  await expect(series).toHaveCount(2);
+
+  // Чужой календарь держит ответ: так видно, ждёт ли его окно.
+  let releaseOk = () => {}, releaseFail = () => {};
+  const held = new Promise((resolve) => { releaseOk = resolve; });
+  const heldFail = new Promise((resolve) => { releaseFail = resolve; });
+  let deletes = 0;
+  await page.route("**/api/calendar/external/**", async (route) => {
+    if (route.request().method() !== "DELETE") { await route.continue(); return; }
+    deletes += 1;
+    if (deletes === 1) {
+      await held;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ removed: true, title: "Планёрка отдела", scope: "series" }) });
+      return;
+    }
+    await heldFail;
+    await route.fulfill({ status: 502, contentType: "application/json", body: JSON.stringify({ error: { code: "remove_failed", message: "Календарь не ответил." } }) });
+  });
+
+  // «Всю серию»: оба повтора уходят с сетки, не дожидаясь чужого календаря.
+  await series.first().click();
+  const pop = page.locator(".cal-pop.rich");
+  await pop.locator(".cal-pop-btn", { hasText: "Удалить" }).click();
+  await pop.locator(".cal-pop-ask").getByRole("button", { name: "Всю серию" }).click();
+  await expect(series).toHaveCount(0);
+  await expect(pop).toHaveCount(0);
+  await expect(page.locator("#toast")).not.toContainText("удалена");
+  // CalDAV-сервера у прогона нет: строки убираем сами, как сделал бы провайдер.
+  const after = new Database("/tmp/pagent-e2e.sqlite");
+  after.prepare("DELETE FROM calendar_events WHERE uid='u2'").run();
+  after.close();
+  releaseOk();
+  await expect(page.locator("#toast")).toContainText("Серия «Планёрка отдела» удалена из Яндекс");
+  await expect(series).toHaveCount(0);
+
+  // Отказ календаря: событие ушло сразу, но вернулось на место с объяснением.
+  page.once("dialog", (dialog) => dialog.accept());
+  await single.click();
+  await page.locator(".cal-pop.rich .cal-pop-btn", { hasText: "Удалить" }).click();
+  await expect(single).toHaveCount(0);
+  releaseFail();
+  await expect(page.locator("#toast")).toContainText("«Разбор поставок» не удалилось: Календарь не ответил.");
+  await expect(single).toHaveCount(1);
+});
+
 // Своя серия: повторы разворачиваются в сетке, удаление из карточки убирает
 // один повтор, правило меняется в карточке, на главной повтор виден в своём дне.
 test("своя серия: повторы в сетке, «только этот повтор» из карточки, правило в карточке", async ({ page, request }) => {

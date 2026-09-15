@@ -125,6 +125,44 @@ test("today separates reported work and the day's plan; notes stay off the main 
   await expect(page.locator("#memory")).toBeVisible();
   await expect(page.locator("#today")).toBeHidden();
 });
+// Стрелки уводят ящик в другой день, но переключение ящика — всегда «сегодня»:
+// закрыли, открыли соседний или вернулись — оба дня сегодняшние.
+test("переключение ящика возвращает оба дня на сегодня", async ({ page }) => {
+  await page.goto("/");
+  const dayTab = page.getByRole("tab", { name: /^День/ });
+  const journalTab = page.getByRole("tab", { name: /Что делал/ });
+  const dayLabel = page.locator("#tab-day .drawer-tab-label");
+  const journalLabel = page.locator("#tab-journal .drawer-tab-label");
+  const dayToday = page.locator("#todo .daynav .daynav-mark");
+  const journalToday = page.locator("#journal .daynav .daynav-mark");
+
+  // Ушли стрелкой в завтра: это видно и в ящике, и на самой вкладке.
+  await showDay(page, 1);
+  await expect(dayLabel).not.toHaveText("День");
+  await expect(dayToday).toHaveCount(0);
+
+  // Открыли соседний ящик — «День» уже вернулся на сегодня.
+  await journalTab.click();
+  await expect(journalToday).toBeVisible();
+  await expect(journalLabel).toHaveText("Что делал");
+  await expect(dayLabel).toHaveText("День");
+
+  // Теперь в другой день ушёл «Что делал» — и вернулся, когда открыли «День».
+  await page.locator('#journal .daynav [data-step="-1"]').click();
+  await expect(journalLabel).not.toHaveText("Что делал");
+  await dayTab.click();
+  await expect(dayToday).toBeVisible();
+  await expect(journalLabel).toHaveText("Что делал");
+
+  // Закрыли ящик — открытый снова показывает сегодня, а не тот день.
+  await page.locator('#todo .daynav [data-step="1"]').click();
+  await expect(dayToday).toHaveCount(0);
+  await dayTab.click();
+  await expect(page.locator("#todo")).toBeHidden();
+  await expect(dayLabel).toHaveText("День");
+  await dayTab.click();
+  await expect(dayToday).toBeVisible();
+});
 test("the day keeps tasks and meetings together; notes never land among them", async ({
   page,
 }) => {

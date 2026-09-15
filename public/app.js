@@ -549,12 +549,37 @@ function zoneMinutes(at) {
 }
 const nowMinutes = () => zoneMinutes(new Date());
 const zoneDate = (at) => new Intl.DateTimeFormat("en-CA", { timeZone: TODAY_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
+// Удаление чужого события идёт в чужой календарь: CalDAV и Google отвечают
+// секундами, и всё это время плашка висела «занятой», будто приложение
+// подвисло. Событие убирается с экрана сразу, а запрос летит следом. Пока он в
+// пути, обновление календаря — своё или по потоку журнала — не возвращает
+// событие на место: свежие списки проходят через те же правила.
+const removingExternal = [];
+// Ключ строки события: у события на несколько дней к id дописан день, а сервер
+// всё равно читает только часть до двоеточия.
+const externalKey = (id) => String(id || "").replace(/^ext:/, "").split(":")[0];
+function pruneRemovedExternal(calendar) {
+  if (calendar?.external?.length && removingExternal.length)
+    calendar.external = calendar.external.filter((item) => !removingExternal.some((match) => match(item)));
+  return calendar;
+}
+// Прячет событие всюду, где оно лежит: сетка календаря, «Сегодня» и уже
+// загруженные другие дни. Возвращает конец работы — правило забывается, когда
+// сервер ответил.
+function removeExternalFromView(match) {
+  removingExternal.push(match);
+  for (const owner of [calState.data, todayState.calendar, ...[...todayState.cache.values()].map((day) => day?.calendar)])
+    if (owner?.external) owner.external = owner.external.filter((item) => !match(item));
+  if (calState.data) renderCalendar();
+  renderToday();
+  return () => { const at = removingExternal.indexOf(match); if (at >= 0) removingExternal.splice(at, 1); };
+}
 // Календарь на сегодня, отложенный на время чужой страницы, добирается при
 // первой отрисовке «Сегодня».
 async function refreshTodayCalendar() {
   if (todayState.calendarLoading || !currentDayDate) return;
   todayState.calendarLoading = true;
-  try { todayState.calendar = await request(`/api/calendar?from=${currentDayDate}&to=${shiftDate(currentDayDate, 1)}`); }
+  try { todayState.calendar = pruneRemovedExternal(await request(`/api/calendar?from=${currentDayDate}&to=${shiftDate(currentDayDate, 1)}`)); }
   catch { todayState.calendar = todayState.calendar || null; }
   finally { todayState.calendarLoading = false; }
   todayState.calendarStale = false;
@@ -769,7 +794,8 @@ function paintCover(cover, date) {
 }
 // Стрелки по дням живут внутри каждого ящика: слева предыдущий день, справа
 // следующий, по центру показанный. У «Дня» и «Что делал» свои дни; обложка
-// всегда про сегодня.
+// всегда про сегодня. Ящик, открытый или закрытый рукой, сбрасывает оба дня
+// на сегодняшний.
 function ownEntriesFor(date) {
   return todayState.entries.filter((entry) =>
     scheduledOn(entry, date) && !isReportedWork(entry)
@@ -862,6 +888,11 @@ function paintTabs(date, journalDate) {
     button.addEventListener("click", () => {
       todayState.tab = todayState.tab === key ? null : key;
       todayState.manual = true;
+      // Любое переключение ящика возвращает оба дня на сегодня: день, куда
+      // человек ушёл стрелками, не тянется за ним в соседний ящик и не ждёт
+      // его в закрытом. Открывается всегда то, что сейчас.
+      todayState.view = 0;
+      todayState.journalView = 0;
       rememberTab();
       renderToday();
     });
@@ -1066,7 +1097,7 @@ async function ensureDayData(date) {
       request(`/api/calendar?from=${date}&to=${date}`).catch(() => null),
       request(`/api/reports/day?date=${date}`).catch(() => null),
     ]);
-    todayState.cache.set(date, { calendar, report });
+    todayState.cache.set(date, { calendar: pruneRemovedExternal(calendar), report });
   } finally {
     todayState.loading.delete(date);
   }
@@ -1110,7 +1141,7 @@ async function load() {
   ]);
   todayState.cache.clear();
   if (calendar !== undefined && todayGuess === day.date) {
-    todayState.calendar = calendar;
+    todayState.calendar = pruneRemovedExternal(calendar);
     todayState.calendarStale = false;
   } else todayState.calendarStale = true;
   render({ ...day, entries: entries.entries });
@@ -4961,7 +4992,7 @@ async function loadCalendar() {
   try {
     const data = await request(`/api/calendar?from=${from}&to=${to}`);
     if (seq !== calState.seq) return;
-    calState.data = data;
+    calState.data = pruneRemovedExternal(data);
     currentDayDate ||= data.today;
     renderCalendar();
   } catch (error) {
@@ -5403,11 +5434,31 @@ function showExternalEvent(item) {
   });
   actions.append(take);
   if (item.editable) {
-    const erase = async (scope) => {
-      await request(`/api/calendar/external/${encodeURIComponent(item.id)}${scope ? `?scope=${scope}` : ""}`, { method: "DELETE" });
-      toast(scope === "series" ? `Серия «${item.title}» удалена из ${item.source}` : `Удалено из ${item.source}`);
+    // Событие уходит с экрана сразу, а удаление в чужом календаре идёт следом:
+    // ждать чужой сервер, держа плашку «занятой», значит подвесить окно на
+    // секунды. Ответ придёт тостом; ошибка вернёт событие на место.
+    const erase = (scope) => {
+      const series = scope === "series";
+      const key = externalKey(item.id);
+      const forget = removeExternalFromView(series && item.seriesId
+        ? (other) => other.accountId === item.accountId && other.seriesId === item.seriesId
+        : (other) => externalKey(other.id) === key);
       closeCalendarPop();
-      await loadCalendar();
+      request(`/api/calendar/external/${encodeURIComponent(item.id)}${scope ? `?scope=${scope}` : ""}`, { method: "DELETE" })
+        .then(() => {
+          forget();
+          toast(series ? `Серия «${item.title}» удалена из ${item.source}` : `Удалено из ${item.source}`);
+          // Сервер мог убрать больше нашего — у CalDAV одиночное событие
+          // лежит файлом целиком, — поэтому сверяемся с ним.
+          todayState.calendarStale = true;
+          if (calState.data) loadCalendar();
+          renderToday();
+        })
+        .catch((error) => {
+          forget();
+          toast(`«${item.title}» не удалилось: ${error.message}`);
+          load().catch(() => {});
+        });
     };
     // Повтор — выбор, как в Календаре macOS: только этот экземпляр или вся
     // серия. Выбор живёт в самой плашке, на месте кнопок.
@@ -5415,22 +5466,16 @@ function showExternalEvent(item) {
       const ask = node("div", undefined, "cal-pop-ask");
       ask.append(node("p", `«${item.title}» повторяется. Удалить только этот повтор (${calHuman(item.date)}) или всю серию из календаря ${item.source}? Это не вернуть.`, "cal-pop-ask-text"));
       const row = node("div", undefined, "cal-pop-actions");
-      const run = (scope) => async () => {
-        for (const button of row.children) button.disabled = true;
-        try { await erase(scope); } catch (error) { toast(error.message); for (const button of row.children) button.disabled = false; }
-      };
-      row.append(calButton("Только это событие", "cal-pop-btn danger", run("instance")), calButton("Всю серию", "cal-pop-btn danger", run("series")), calButton("Отмена", "cal-pop-btn", () => ask.replaceWith(actions)));
+      row.append(calButton("Только это событие", "cal-pop-btn danger", () => erase("instance")), calButton("Всю серию", "cal-pop-btn danger", () => erase("series")), calButton("Отмена", "cal-pop-btn", () => ask.replaceWith(actions)));
       ask.append(row);
       actions.replaceWith(ask);
       calPopFit(pop);
     };
-    const remove = calButton("Удалить", "cal-pop-btn danger", async () => {
+    actions.append(calButton("Удалить", "cal-pop-btn danger", () => {
       if (item.recurring) { askDeleteScope(); return; }
       if (!confirm(`Удалить «${item.title}» из календаря ${item.source}? Это не вернуть.`)) return;
-      remove.disabled = true;
-      try { await erase(null); } catch (error) { toast(error.message); remove.disabled = false; }
-    });
-    actions.append(remove);
+      erase(null);
+    }));
   }
   pop.append(actions);
   // Как в Календаре macOS: правка повтора касается только этого события,

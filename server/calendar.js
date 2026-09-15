@@ -326,7 +326,9 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
         color: calendar?.color || row.account_color || null, source: row.account_label,
         title: busyOnly ? 'Занято' : row.title, description: busyOnly ? null : row.description, location: busyOnly ? null : row.location,
         busy: Boolean(row.busy), joinUrl: busyOnly ? null : row.join_url, href: busyOnly ? null : row.href, readOnly: !editable, editable, movable,
-        recurring: Boolean(row.instance_key),
+        // Ключ серии — чтобы страница знала, какие события уходят вместе с
+        // ней: у CalDAV серия это один файл (uid), у Google — recurringEventId.
+        recurring: Boolean(row.instance_key), seriesId: busyOnly ? null : row.series_uid || row.uid,
         ...(busyOnly ? { attendees: [], organizer: null, repeat: null, url: null, me: null } : eventPeople(row)),
       };
       if (row.all_day) {
@@ -662,7 +664,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
   function externalInfo(row) {
     const tz = timeZone();
     const calendar = JSON.parse(row.calendars_json || '[]').find(item => item.id === row.calendar_id) || null;
-    const base = { id: `ext:${row.id}`, title: row.mode === 'busy' ? 'Занято' : row.title, source: row.account_label, calendarId: row.calendar_id, calendarName: calendar?.name || row.account_label, color: calendar?.color || null, location: row.mode === 'busy' ? null : row.location, joinUrl: row.mode === 'busy' ? null : row.join_url, href: row.href, recurring: Boolean(row.instance_key), editable: !externalWritable(row), movable: !externalWritable(row) && !(row.provider === 'caldav' && row.instance_key), ...(row.mode === 'busy' ? { attendees: [], organizer: null, repeat: null, url: null, me: null } : eventPeople(row)) };
+    const base = { id: `ext:${row.id}`, title: row.mode === 'busy' ? 'Занято' : row.title, source: row.account_label, calendarId: row.calendar_id, calendarName: calendar?.name || row.account_label, color: calendar?.color || null, location: row.mode === 'busy' ? null : row.location, joinUrl: row.mode === 'busy' ? null : row.join_url, href: row.href, recurring: Boolean(row.instance_key), seriesId: row.mode === 'busy' ? null : row.series_uid || row.uid, editable: !externalWritable(row), movable: !externalWritable(row) && !(row.provider === 'caldav' && row.instance_key), ...(row.mode === 'busy' ? { attendees: [], organizer: null, repeat: null, url: null, me: null } : eventPeople(row)) };
     if (row.all_day) return { ...base, allDay: true, date: row.start_at.slice(0, 10), time: null, end: null };
     const start = localDateTime(new Date(row.start_at), tz), end = localDateTime(new Date(row.end_at), tz);
     return { ...base, allDay: false, date: start.date, time: start.time, end: end.date === start.date ? end.time : '23:59' };
