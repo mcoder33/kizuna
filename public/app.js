@@ -778,6 +778,10 @@ function paintCover(cover, date) {
   dateEl.append(document.createTextNode(`${longDate(date)} · `), node("span", PHASE_NAMES[cover.phase], `today-phase ${cover.phase}`));
   if (cover.endedMeeting) dateEl.append(document.createTextNode(" · "), node("span", "после встречи", "today-phase after"));
   const brief = $("#today-brief");
+  // Рассказ и список не спорят: бриф виден, только пока оба ящика закрыты.
+  // С открытым «Днём» страница говорила одно и то же дважды — словами сверху и
+  // списком снизу. Место брифа при этом не меняется: он там же, где и был.
+  brief.hidden = todayState.tab !== null;
   clear(brief);
   // Бриф собирается узлами, а не HTML: названия встреч и дел — чужой текст.
   for (const part of cover.brief) {
@@ -3499,7 +3503,65 @@ function adminButton(label, className, handler) {
   button.addEventListener("click", handler);
   return button;
 }
-function userRow(user, { lastAdmin = false } = {}) {
+// Человек живёт в приложении или уже нет: две недели тишины — тот же порог,
+// по которому «Обзор» считает проект заглохшим.
+const SLEEPING_AFTER_DAYS = 14;
+const DAYS_WORDS = ["день", "дня", "дней"];
+function daysBetween(iso) { return iso ? Math.floor((Date.now() - Date.parse(iso)) / 86400000) : null; }
+function agoWords(iso) {
+  const days = daysBetween(iso);
+  if (days === null) return null;
+  if (days <= 0) return "сегодня";
+  if (days === 1) return "вчера";
+  return `${plural(days, DAYS_WORDS)} назад`;
+}
+// Полоса дней: сколько записей в каждый из последних тридцати. Высота — от
+// самого плотного дня этого человека: полоса про его ритм, а не про то, кто
+// пишет больше всех. Сегодняшний столбик коралловый, как «сегодня» в дне.
+function activityBand(activity, dates) {
+  const band = node("div", undefined, "admin-band");
+  band.setAttribute("aria-hidden", "true");
+  const top = Math.max(1, ...activity.days);
+  activity.days.forEach((count, index) => {
+    const bar = node("i", undefined, `admin-band-day${count ? " on" : ""}${index === activity.days.length - 1 ? " today" : ""}`);
+    // Пустой день — приступок у основания, а не волосок: иначе полоса читается
+    // пунктирной линейкой, а не провалом в работе.
+    if (count) bar.style.height = `${30 + Math.round((count / top) * 70)}%`;
+    else bar.style.height = "4px";
+    bar.title = `${dates?.[index] || ""}: ${plural(count, ["запись", "записи", "записей"])}`;
+    band.append(bar);
+  });
+  return band;
+}
+// Строка активности: то, ради чего список и открывают — живёт человек тут или
+// уже нет. Числа за тридцать дней, рядом полоса по дням.
+function activityLine(activity, dates) {
+  const wrap = node("div", undefined, "admin-activity");
+  wrap.append(activityBand(activity, dates));
+  const facts = [];
+  const last = agoWords(activity.lastCaptureAt);
+  facts.push(last ? `последняя запись ${last}` : "записей нет");
+  facts.push(`за 30 дней ${plural(activity.capturesPeriod, ["запись", "записи", "записей"])}`);
+  facts.push(`за неделю ${activity.capturesWeek}`);
+  if (activity.completedPeriod) facts.push(`закрыто ${plural(activity.completedPeriod, DEALS)}`);
+  if (activity.voiceSessions) facts.push(`разговор ${Math.round(activity.voiceSeconds / 60)} мин`);
+  facts.push(activity.calendars ? `календарь ${activity.calendars}` : "без календаря");
+  facts.push(activity.pushDevices ? `уведомления ${activity.pushDevices}` : "без уведомлений");
+  wrap.append(node("p", facts.join(" · "), "admin-user-facts admin-user-activity"));
+  return wrap;
+}
+// Метка состояния рядом со статусом: кто ни разу ничего не записал и кто
+// замолчал. Живого человека метить нечем — молчание и есть новость.
+function activityTag(user) {
+  const activity = user.activity;
+  if (!activity || user.status !== "active") return null;
+  const silence = [activity.lastCaptureAt, user.lastLoginAt].map(daysBetween).filter((days) => days !== null);
+  if (!activity.lastCaptureAt) return node("span", "ни одной записи", "admin-tag admin-state-new");
+  const quiet = silence.length ? Math.min(...silence) : null;
+  if (quiet !== null && quiet >= SLEEPING_AFTER_DAYS) return node("span", `молчит ${plural(quiet, DAYS_WORDS)}`, "admin-tag admin-state-asleep");
+  return null;
+}
+function userRow(user, { lastAdmin = false, days = null } = {}) {
   const row = node("div", null, "admin-user");
   const head = node("div", null, "admin-user-head");
   head.append(
@@ -3508,6 +3570,8 @@ function userRow(user, { lastAdmin = false } = {}) {
     node("span", statusNames[user.status] || user.status, `admin-tag admin-status-${user.status}`),
   );
   if (user.twoFactorEnabled) head.append(node("span", "2FA", "admin-tag admin-tag-quiet"));
+  const state = activityTag(user);
+  if (state) head.append(state);
   row.append(head);
 
   // Потолок ставят, глядя на расход, поэтому они стоят рядом: «потрачено из
@@ -3525,6 +3589,7 @@ function userRow(user, { lastAdmin = false } = {}) {
   const factsLine = node("p", facts.join(" · "), "admin-user-facts");
   if (capped && spent >= cap) factsLine.classList.add("quota-exhausted");
   row.append(factsLine);
+  if (user.activity) row.append(activityLine(user.activity, days));
 
   const actions = node("div", null, "admin-user-actions");
   if (user.status === "pending") {
@@ -3605,10 +3670,11 @@ async function loadAdmin() {
   $("#admin-pending").hidden = !pending.length;
   const admins = payload.users.filter((user) => user.role === "admin" && user.status === "active");
   const soleAdmin = admins.length === 1 ? admins[0].id : null;
-  for (const user of pending) pendingBox.append(userRow(user));
+  const days = payload.activityDays || null;
+  for (const user of pending) pendingBox.append(userRow(user, { days }));
   clear(box);
   for (const user of payload.users.filter((user) => user.status !== "pending"))
-    box.append(userRow(user, { lastAdmin: user.id === soleAdmin }));
+    box.append(userRow(user, { lastAdmin: user.id === soleAdmin, days }));
 
   const events = $("#admin-events");
   clear(events);

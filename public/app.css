@@ -3704,6 +3704,54 @@ dialog form > div {
   font-size: 13px;
   color: var(--n-66);
 }
+/* Живёт человек в приложении или уже нет — строка под расходом: полоса дней
+   и числа за месяц. Полоса про ритм одного человека, поэтому высота считается
+   от его же самого плотного дня; пустой день остаётся волоском, иначе провал
+   не читался бы. */
+.admin-activity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.admin-band {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  flex: 0 0 auto;
+  width: 180px;
+  height: 24px;
+  /* Полоска-основание вместо столбиков в пустые дни: иначе тридцать приступков
+     читаются пунктирной линейкой, а не тишиной. */
+  border-bottom: 1px solid var(--n-93);
+}
+.admin-band-day {
+  flex: 1 1 0;
+  min-width: 4px;
+  border-radius: 2px 2px 0 0;
+  background: transparent;
+}
+.admin-band-day.on {
+  background: var(--n-62);
+}
+.admin-band-day.today {
+  background: var(--red-90);
+}
+.admin-band-day.today.on {
+  background: var(--coral);
+}
+.admin-user-activity {
+  margin: 0;
+}
+.admin-state-asleep {
+  background: var(--yellow-98);
+  color: var(--yellow-51);
+}
+.admin-state-new {
+  background: var(--n-96);
+  color: var(--n-52);
+}
 .admin-user-actions {
   display: flex;
   flex-wrap: wrap;
@@ -6129,6 +6177,10 @@ body {
 .pop-st.accepted { color: var(--green); }
 .pop-st.declined { color: var(--red-50); }
 .pop-st.tentative { color: var(--amber, #d29922); }
+/* Кто не ответил, тот виден: серым он сливался с именем, и «кого ещё ждём» в
+   списке участников приходилось вычитывать по значкам. Пунктирное кольцо тем
+   же жёлтым, что «ответить?» в дне: не отказ и не согласие — ожидание. */
+.pop-st.needs-action { color: var(--yellow-51); border-style: dashed; }
 .pop-link { word-break: break-all; }
 .pop-link a { color: var(--link, #3b82f6); }
 .pop-me-line { display: flex; align-items: center; gap: 6px; }

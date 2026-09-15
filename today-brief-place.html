@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Бриф: где он живёт, когда ящики закрыты</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='2' y='2' width='60' height='60' rx='14' fill='%23c73e3a'/%3E%3Cg fill='none' stroke='white' stroke-linecap='round' stroke-width='6'%3E%3Cpath d='M8 17q24 -6 48 0'/%3E%3Cline x1='14' y1='27' x2='50' y2='27'/%3E%3Cline x1='19' y1='22' x2='21' y2='54'/%3E%3Cline x1='45' y1='22' x2='43' y2='54'/%3E%3C/g%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        color-scheme: dark;
+        --ink: rgba(255, 255, 255, 0.88);
+        --muted: rgba(255, 255, 255, 0.52);
+        --faint: rgba(255, 255, 255, 0.34);
+        --line: #2e2d2b;
+        --hairline: #262523;
+        --wash: #151515;
+        --paper: #1f1f1f;
+        --plate: rgba(255, 255, 255, 0.045);
+        --hover: rgba(255, 255, 255, 0.07);
+        --coral: #ff4d6d;
+        --coral-bg: rgba(255, 77, 109, 0.14);
+        --late: #ff8a80;
+        --violet: #a78bfa;
+        --blue: #7fa6ff;
+        --busy: #8a8681;
+        --shadow: 0 18px 42px rgba(0, 0, 0, 0.45);
+      }
+      :root[data-theme="light"] {
+        color-scheme: light;
+        --ink: #222;
+        --muted: #6a6a6a;
+        --faint: #96918e;
+        --line: #e9e9e7;
+        --hairline: #f2f0ee;
+        --wash: #fbfaf9;
+        --paper: #fff;
+        --plate: rgba(34, 34, 34, 0.045);
+        --hover: rgba(55, 53, 47, 0.06);
+        --coral: #ff385c;
+        --coral-bg: rgba(255, 56, 92, 0.1);
+        --late: #c0392b;
+        --violet: #6d4fb8;
+        --blue: #3f6fd1;
+        --busy: #8a8681;
+        --shadow: 0 18px 42px rgba(34, 34, 34, 0.08);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--wash);
+        color: var(--ink);
+        font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .page { max-width: 1040px; margin: 0 auto; padding: 32px 20px 96px; }
+      h1 { font-size: 22px; margin: 0 0 8px; letter-spacing: -0.01em; }
+      .lead { color: var(--muted); margin: 0 0 4px; max-width: 70ch; }
+      .lead b { color: var(--ink); font-weight: 600; }
+
+      /* ── панель управления ── */
+      .bar {
+        position: sticky; top: 0; z-index: 5;
+        display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+        padding: 12px 0 14px; margin: 18px 0 8px;
+        background: linear-gradient(var(--wash) 78%, transparent);
+      }
+      .bar .sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+      .bar small { color: var(--faint); margin-right: 2px; }
+      button.pill {
+        appearance: none; border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+        border-radius: 999px; padding: 6px 13px; font: inherit; font-size: 13px; cursor: pointer;
+      }
+      button.pill:hover { background: var(--hover); }
+      button.pill[aria-pressed="true"] { background: var(--coral-bg); border-color: transparent; color: var(--coral); font-weight: 600; }
+
+      /* ── рамка устройства ── */
+      .stage { display: flex; justify-content: center; padding: 8px 0 0; }
+      .device {
+        width: 100%; max-width: 980px; background: var(--paper);
+        border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow);
+        padding: 30px 26px 26px; transition: max-width 0.22s ease;
+      }
+      .device.narrow { max-width: 390px; padding: 22px 14px 18px; }
+
+      /* ── «Сегодня» ── */
+      .today-date {
+        text-align: center; font-size: 11.5px; letter-spacing: 0.1em; text-transform: uppercase;
+        color: var(--faint); margin: 0 0 10px;
+      }
+      .today-date .phase { color: var(--blue); }
+      .today-date .phase.eve { color: var(--violet); }
+      .today-date .phase.morn { color: var(--coral); }
+
+      .brief {
+        text-align: center; color: var(--muted); max-width: 52ch; margin: 0 auto 18px;
+        font-size: 15px; line-height: 1.5;
+      }
+      .brief b { color: var(--ink); font-weight: 600; }
+      .brief em { color: var(--late); font-style: normal; }
+
+      .capture {
+        border: 1px solid var(--line); border-radius: 14px; background: var(--paper);
+        min-height: 180px; display: flex; flex-direction: column; margin: 0 0 14px;
+      }
+      .capture .field { flex: 1; padding: 16px 18px; color: var(--faint); }
+      .capture .foot {
+        border-top: 1px solid var(--hairline); padding: 10px 14px;
+        display: flex; align-items: center; gap: 10px;
+      }
+      .chip-type {
+        background: var(--coral-bg); color: var(--coral); border-radius: 999px;
+        padding: 3px 11px; font-size: 12.5px; font-weight: 600;
+        display: inline-flex; align-items: center; gap: 6px;
+      }
+      .chip-type i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+      .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+      .tagbox { color: var(--faint); font-size: 13px; flex: 1; padding-left: 6px; }
+      .orb { width: 34px; height: 34px; border-radius: 50%; background: var(--coral); }
+
+      /* ── ящики ── */
+      .drawers { margin-top: 14px; }
+      .tabs { display: flex; justify-content: center; gap: 22px; }
+      .tab {
+        appearance: none; border: 1px solid transparent; background: none; color: var(--muted);
+        border-radius: 999px; padding: 6px 14px; font: inherit; font-size: 13.5px; cursor: pointer;
+        display: inline-flex; align-items: baseline; gap: 8px;
+      }
+      .tab:hover { background: var(--hover); }
+      .tab[aria-selected="true"] { border-color: var(--line); background: var(--plate); color: var(--ink); }
+      .tab .label { font-weight: 600; color: var(--ink); }
+      .tab .count { color: var(--muted); font-weight: 400; }
+      .tab .count em { color: var(--late); font-style: normal; }
+
+      .panel { margin-top: 16px; }
+      .panel[hidden] { display: none; }
+      .daynav {
+        display: flex; align-items: center; justify-content: space-between;
+        color: var(--faint); font-size: 13px; padding: 0 2px 10px;
+      }
+      .daynav b { display: block; color: var(--ink); font-size: 15px; font-weight: 600; text-align: center; }
+      .daynav .mark { color: var(--coral); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+      .group { color: var(--faint); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; margin: 6px 0 8px; }
+      .row {
+        background: var(--plate); border-radius: 12px; padding: 12px 14px; margin-bottom: 8px;
+        display: flex; gap: 10px; align-items: baseline;
+      }
+      .row .title { color: var(--ink); font-weight: 600; }
+      .row .meta { color: var(--faint); font-size: 12.5px; }
+      .row .meta em { color: var(--late); font-style: normal; }
+      .row.late .title { color: var(--late); }
+
+      /* ── бриф внизу ── */
+      .brief-bottom { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--hairline); }
+      .brief-bottom .brief { margin-bottom: 0; }
+      .quiet .brief { font-size: 13.5px; color: var(--faint); }
+      .quiet .brief b { color: var(--muted); font-weight: 600; }
+      .nowline {
+        margin-top: 14px; text-align: center; color: var(--muted); font-size: 13.5px;
+      }
+      .nowline b { color: var(--ink); font-weight: 600; }
+      .nowline em { color: var(--late); font-style: normal; }
+
+      /* ── пояснения ── */
+      .notes { margin: 26px auto 0; max-width: 760px; }
+      .note { border-left: 2px solid var(--line); padding: 2px 0 2px 14px; margin: 0 0 14px; color: var(--muted); }
+      .note h3 { margin: 0 0 4px; font-size: 14.5px; color: var(--ink); }
+      .note.on { border-left-color: var(--coral); }
+      .note p { margin: 0; }
+      .note .cost { color: var(--faint); font-size: 13px; }
+      .verdict {
+        margin: 26px auto 0; max-width: 760px; border: 1px solid var(--line); border-radius: 14px;
+        padding: 16px 18px; background: var(--paper);
+      }
+      .verdict h2 { font-size: 15px; margin: 0 0 8px; }
+      .verdict p { margin: 0 0 8px; color: var(--muted); }
+      .verdict p:last-child { margin-bottom: 0; }
+      .hint { color: var(--faint); font-size: 13px; text-align: center; margin: 14px 0 0; }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <h1>Бриф: где он живёт, когда ящики закрыты</h1>
+      <p class="lead">
+        Сейчас бриф всегда стоит над полем ввода, и когда открыт «День», страница говорит одно и то же дважды:
+        сверху словами («в 14:30 VoiceOPS планирование, 4 дела просрочены»), снизу списком. Ниже — четыре прочтения
+        правила <b>«бриф виден, только пока оба ящика закрыты»</b>. Ящики живые: нажмите «Что делал» или «День».
+      </p>
+
+      <div class="bar">
+        <small>Прочтение</small>
+        <button class="pill" data-variant="a" aria-pressed="true">А. Переезд вниз</button>
+        <button class="pill" data-variant="b" aria-pressed="false">Б. Тихий переезд</button>
+        <button class="pill" data-variant="c" aria-pressed="false">В. На месте</button>
+        <button class="pill" data-variant="d" aria-pressed="false">Г. Сжатие в строку</button>
+        <span class="sep"></span>
+        <small>Фаза</small>
+        <button class="pill" data-phase="morning" aria-pressed="false">Утро</button>
+        <button class="pill" data-phase="day" aria-pressed="true">День</button>
+        <button class="pill" data-phase="evening" aria-pressed="false">Вечер</button>
+        <button class="pill" data-phase="night" aria-pressed="false">Ночь</button>
+        <span class="sep"></span>
+        <button class="pill" id="theme" aria-pressed="false">Светлая</button>
+        <button class="pill" id="width" aria-pressed="false">390px</button>
+      </div>
+
+      <div class="stage">
+        <div class="device" id="device">
+          <p class="today-date">
+            Вторник, 15 сентября · <span class="phase" id="phase-name">День</span>
+          </p>
+
+          <!-- бриф сверху: живёт только в прочтении «В» -->
+          <div id="brief-top"></div>
+
+          <div class="capture">
+            <div class="field" id="placeholder">Запишите мысль, план, встречу или итог дня</div>
+            <div class="foot">
+              <span class="chip-type"><i></i>Авто</span>
+              <span class="dot" style="background: var(--violet)"></span>
+              <span class="dot" style="background: var(--blue)"></span>
+              <span class="dot" style="background: var(--busy)"></span>
+              <span class="tagbox">#тег…</span>
+              <span class="orb"></span>
+            </div>
+          </div>
+
+          <div class="drawers">
+            <div class="tabs" role="tablist">
+              <button class="tab" role="tab" id="tab-journal" aria-selected="false">
+                <span class="label">Что делал</span><span class="count">2</span>
+              </button>
+              <button class="tab" role="tab" id="tab-day" aria-selected="false">
+                <span class="label">День</span>
+                <span class="count">3 встречи · 11 дел · <em>4 просрочено</em></span>
+              </button>
+            </div>
+
+            <!-- строка «сейчас» вместо брифа: прочтение «Г» -->
+            <div id="nowline"></div>
+
+            <div class="panel" id="panel-journal" hidden>
+              <div class="daynav">
+                <span>‹ ПН 14</span>
+                <span><b>Вторник, 15 сентября</b><span class="mark">сегодня</span></span>
+                <span>СР 16 ›</span>
+              </div>
+              <div class="row"><span class="title">Созвонился с Лёшей по Хабу</span><span class="meta">результат · 11:40</span></div>
+              <div class="row"><span class="title">Разобрал очередь заявок</span><span class="meta">результат · 13:05</span></div>
+            </div>
+
+            <div class="panel" id="panel-day" hidden>
+              <div class="daynav">
+                <span>‹ ПН 14</span>
+                <span><b>Вторник, 15 сентября</b><span class="mark">сегодня</span></span>
+                <span>СР 16 ›</span>
+              </div>
+              <div class="group">без времени</div>
+              <div class="row late"><span class="title">Дейли SMSTECH</span><span class="meta">встреча · срок: вчера, 11:00 · <em>просрочено</em></span></div>
+              <div class="row late"><span class="title">Проверить работу режимов в Хабе</span><span class="meta">задача · срок: 04.09 · <em>просрочено</em></span></div>
+              <div class="group">по часам</div>
+              <div class="row"><span class="title">14:30 VoiceOPS планирование</span><span class="meta">через 26 мин · Itfinance</span></div>
+            </div>
+
+            <!-- бриф внизу: прочтения «А», «Б», «Г» -->
+            <div id="brief-bottom"></div>
+          </div>
+        </div>
+      </div>
+
+      <p class="hint">Нажмите ящик — и посмотрите, что делается с брифом. Второй раз нажмёте — ящик свернётся.</p>
+
+      <div class="notes" id="notes"></div>
+
+      <div class="verdict">
+        <h2>Рекомендация</h2>
+        <p>
+          <b>Б — тихий переезд.</b> Правило то самое, о котором речь: пока оба ящика закрыты, бриф стоит под
+          счётчиками и закрывает страницу; открыли ящик — он уходит, и рассказ не спорит со списком. Внизу он
+          набран как подпись, а не как абзац: иначе низ страницы перевешивает поле ввода, ради которого страницу
+          и открывают.
+        </p>
+        <p>
+          <b>Г</b> — если жалко терять идущую встречу: от брифа остаётся одна строка «сейчас» над списком.
+          Она не дублирует список (список говорит «что», строка — «сколько осталось»), но это ещё одна сущность
+          на странице.
+          <b>В</b> — самая дешёвая правка: ничего не переезжает, бриф просто исчезает при раскрытии; зато верх
+          страницы то пустеет, то заполняется, и дата остаётся одна в воздухе.
+        </p>
+      </div>
+    </div>
+
+    <script>
+      const BRIEFS = {
+        morning: [
+          "Доброе утро. Первая встреча в ", { b: "10:00 — Дейли SMSTECH" },
+          ". На сегодня ", { b: "11 дел" }, ", ", { em: "4 просрочены" }, ".",
+        ],
+        day: [
+          "Свободно 26 мин, в 14:30 ", { b: "VoiceOPS планирование" }, ". ",
+          { em: "4 дела просрочены" }, ", на сегодня — ", { b: "проверить работу режимов в Хабе" }, ".",
+        ],
+        evening: [
+          "Сделано ", { b: "4" }, ", встреч прошло ", { b: "6" }, ". Не закрыто ",
+          { b: "3 дела" }, " — перенести на завтра?",
+        ],
+        night: [
+          "День закончился. Завтра первая встреча в ", { b: "10:00" }, " — Дейли SMSTECH.",
+        ],
+      };
+      const NOW_LINE = {
+        morning: ["Первая встреча в ", { b: "10:00" }, " · ", { em: "4 просрочено" }],
+        day: ["До ", { b: "VoiceOPS планирование" }, " 26 мин · ", { em: "4 просрочено" }],
+        evening: ["Не закрыто ", { b: "3 дела" }, " · перенести на завтра?"],
+        night: ["Завтра первая встреча в ", { b: "10:00" }],
+      };
+      const PHASE_NAMES = { morning: ["Утро", "morn"], day: ["День", ""], evening: ["Вечер", "eve"], night: ["Ночь", "eve"] };
+      const PLACEHOLDERS = {
+        morning: "С чего начнёте день?",
+        day: "Запишите мысль, план, встречу или итог дня",
+        evening: "Чем закончился день?",
+        night: "Запишите и отпустите",
+      };
+      const NOTES = {
+        a: {
+          title: "А. Переезд вниз",
+          text: "Пока оба ящика закрыты, бриф стоит под счётчиками тем же кеглем, что сейчас наверху. Открыли ящик — брифа нет, говорит только список. Сверху остаётся одна дата: страница начинается с поля, а не с рассказа.",
+          cost: "Чем платим: низ страницы весит столько же, сколько весил верх, и взгляд уходит вниз мимо поля ввода.",
+        },
+        b: {
+          title: "Б. Тихий переезд",
+          text: "То же правило, но внизу бриф набран как подпись — мельче и приглушённее. Он закрывает страницу, а не открывает её: «вот чем закончился день», а не «вот с чего начать».",
+          cost: "Чем платим: утренний бриф («первая встреча в 10:00») теряет в громкости — как раз когда он нужнее всего.",
+        },
+        c: {
+          title: "В. На месте",
+          text: "Бриф остаётся там, где стоит сейчас, и просто исчезает, когда раскрыт любой ящик. Ничего не переезжает — меняется только видимость.",
+          cost: "Чем платим: верх страницы то пустеет, то заполняется, и дата остаётся висеть одна; поле ввода прыгает вверх-вниз на высоту брифа.",
+        },
+        d: {
+          title: "Г. Сжатие в строку",
+          text: "Свёрнуто — бриф внизу целиком. Раскрыли ящик — от него остаётся одна строка над списком: сколько осталось до ближайшей встречи и сколько просрочено. Список говорит «что», строка — «сколько времени».",
+          cost: "Чем платим: ещё одна сущность на странице, и её легко спутать со строкой «сейчас» внутри «Дня».",
+        },
+      };
+
+      const state = { variant: "a", phase: "day", open: null, theme: "dark", narrow: false };
+      const $ = (id) => document.getElementById(id);
+
+      function briefNode(parts, className) {
+        const box = document.createElement("p");
+        box.className = className;
+        for (const part of parts) {
+          if (typeof part === "string") box.append(document.createTextNode(part));
+          else if (part.b) { const b = document.createElement("b"); b.textContent = part.b; box.append(b); }
+          else if (part.em) { const em = document.createElement("em"); em.textContent = part.em; box.append(em); }
+        }
+        return box;
+      }
+
+      function render() {
+        const [phaseName, phaseClass] = PHASE_NAMES[state.phase];
+        $("phase-name").textContent = phaseName;
+        $("phase-name").className = `phase ${phaseClass}`;
+        $("placeholder").textContent = PLACEHOLDERS[state.phase];
+        $("panel-journal").hidden = state.open !== "journal";
+        $("panel-day").hidden = state.open !== "day";
+        $("tab-journal").setAttribute("aria-selected", String(state.open === "journal"));
+        $("tab-day").setAttribute("aria-selected", String(state.open === "day"));
+
+        const top = $("brief-top"), bottom = $("brief-bottom"), now = $("nowline");
+        top.replaceChildren(); bottom.replaceChildren(); now.replaceChildren();
+        const collapsed = state.open === null;
+
+        if (state.variant === "c") {
+          // Бриф не переезжает: он там же, где сейчас, и просто исчезает.
+          if (collapsed) top.append(briefNode(BRIEFS[state.phase], "brief"));
+        } else if (collapsed) {
+          const box = document.createElement("div");
+          box.className = `brief-bottom${state.variant === "b" ? " quiet" : ""}`;
+          box.append(briefNode(BRIEFS[state.phase], "brief"));
+          bottom.append(box);
+        } else if (state.variant === "d") {
+          now.append(briefNode(NOW_LINE[state.phase], "nowline"));
+        }
+
+        const notes = $("notes");
+        notes.replaceChildren();
+        for (const [key, note] of Object.entries(NOTES)) {
+          const box = document.createElement("div");
+          box.className = `note${key === state.variant ? " on" : ""}`;
+          const head = document.createElement("h3");
+          head.textContent = note.title;
+          const text = document.createElement("p");
+          text.textContent = note.text;
+          const cost = document.createElement("p");
+          cost.className = "cost";
+          cost.textContent = note.cost;
+          box.append(head, text, cost);
+          notes.append(box);
+        }
+      }
+
+      for (const button of document.querySelectorAll("[data-variant]"))
+        button.addEventListener("click", () => {
+          state.variant = button.dataset.variant;
+          for (const other of document.querySelectorAll("[data-variant]"))
+            other.setAttribute("aria-pressed", String(other === button));
+          render();
+        });
+      for (const button of document.querySelectorAll("[data-phase]"))
+        button.addEventListener("click", () => {
+          state.phase = button.dataset.phase;
+          for (const other of document.querySelectorAll("[data-phase]"))
+            other.setAttribute("aria-pressed", String(other === button));
+          render();
+        });
+      for (const [id, key] of [["tab-journal", "journal"], ["tab-day", "day"]])
+        $(id).addEventListener("click", () => { state.open = state.open === key ? null : key; render(); });
+      $("theme").addEventListener("click", () => {
+        state.theme = state.theme === "dark" ? "light" : "dark";
+        document.documentElement.dataset.theme = state.theme;
+        $("theme").textContent = state.theme === "dark" ? "Светлая" : "Тёмная";
+        $("theme").setAttribute("aria-pressed", String(state.theme === "light"));
+      });
+      $("width").addEventListener("click", () => {
+        state.narrow = !state.narrow;
+        $("device").classList.toggle("narrow", state.narrow);
+        $("width").setAttribute("aria-pressed", String(state.narrow));
+      });
+      render();
+    </script>
+  </body>
+</html>

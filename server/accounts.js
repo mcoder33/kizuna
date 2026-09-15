@@ -17,7 +17,7 @@ import { monthlySpend } from './db.js';
 import {
   createUser, findUserByEmail, findUserById, countUsers, listUsers, updateUser, adoptOrphanRecords,
   createSession, findSessionUser, touchSession, deleteSession, deleteUserSessions, purgeExpiredSessions, countUserSessions,
-  logAuthEvent, listAuthEvents, listVoiceSessions, voiceSpend,
+  logAuthEvent, listAuthEvents, listVoiceSessions, voiceSpend, userActivity,
 } from './db.js';
 
 // Наружу о человеке уходит только это. Хеш пароля, секрет второго фактора и
@@ -281,15 +281,23 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
     });
 
     // ── администратор ──────────────────────────────────────────────────────
-    app.get('/api/admin/users', requireAdmin, (req, res) => res.json({
-      users: listUsers(db).map(row => ({
-        ...publicUser(row),
-        // Потолок ставят, глядя на расход, поэтому он приходит вместе со
-        // списком, а не отдельным запросом на каждого.
-        monthSpentUsd: monthlySpend(db, { userId: row.id, at: now(), timeZone: timeZone() }).totalUsd,
-      })),
-      month: monthlySpend(db, { userId: undefined, at: now(), timeZone: timeZone() }),
-    }));
+    app.get('/api/admin/users', requireAdmin, (req, res) => {
+      // Активность приходит тем же запросом, что и список: «сколько потратил»
+      // без «живёт ли он тут» — половина ответа, а ради второй половины список
+      // и открывают.
+      const activity = userActivity(db, { now: now(), timeZone: timeZone() });
+      res.json({
+        users: listUsers(db).map(row => ({
+          ...publicUser(row),
+          // Потолок ставят, глядя на расход, поэтому он приходит вместе со
+          // списком, а не отдельным запросом на каждого.
+          monthSpentUsd: monthlySpend(db, { userId: row.id, at: now(), timeZone: timeZone() }).totalUsd,
+          activity: activity.users[row.id] || null,
+        })),
+        activityDays: activity.days,
+        month: monthlySpend(db, { userId: undefined, at: now(), timeZone: timeZone() }),
+      });
+    });
 
     app.get('/api/admin/auth-events', requireAdmin, (req, res) => res.json({
       events: listAuthEvents(db, { limit: req.query.limit, userId: typeof req.query.userId === 'string' ? req.query.userId : null })

@@ -130,6 +130,35 @@ test('заявка и блокировка закрывают вход, одоб
   assert.match(refused.body.error.message, /ушёл/);
 });
 
+// Список людей отвечает не только «сколько потратил», но и «живёт ли он тут»:
+// записи за месяц и за неделю, последняя запись, полоса по дням, календарь и
+// уведомления. Всё считается по уже записанному, отдельного журнала нет.
+test('список людей показывает активность: записи за период, полоса дней и подключения', async () => {
+  const application = app();
+  const admin = authed(application, { email: 'admin@example.com' });
+  const gost = authed(application, { email: 'gost@example.com', role: 'user' });
+  await gost.post('/api/captures').send({ raw: 'Проверить активность' }).expect(201);
+  await gost.post('/api/captures').send({ raw: 'И ещё одна запись' }).expect(201);
+
+  const body = (await admin.get('/api/admin/users').expect(200)).body;
+  assert.equal(body.activityDays.length, 30, 'полоса — тридцать местных дат');
+  const row = body.users.find((user) => user.email === 'gost@example.com');
+  assert.equal(row.activity.capturesPeriod, 2);
+  assert.equal(row.activity.capturesWeek, 2);
+  assert.equal(row.activity.days.at(-1), 2, 'обе записи попали в сегодняшний столбик');
+  assert.equal(row.activity.days.length, 30);
+  assert.ok(row.activity.lastCaptureAt, 'последняя запись известна');
+  assert.equal(row.activity.calendars, 0);
+  assert.equal(row.activity.pushDevices, 0);
+
+  // Тот, кто ничего не писал, виден нулями, а не пропущенной строкой: «не
+  // пользуется» — это тоже ответ.
+  const quiet = body.users.find((user) => user.email === 'admin@example.com');
+  assert.equal(quiet.activity.capturesPeriod, 0);
+  assert.equal(quiet.activity.lastCaptureAt, null);
+  assert.deepEqual(new Set(quiet.activity.days), new Set([0]));
+});
+
 test('блокировка обрывает уже открытые сессии, а не ждёт, пока протухнет кука', async () => {
   const application = app();
   const admin = authed(application, { email: 'admin@example.com' });

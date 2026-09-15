@@ -125,6 +125,25 @@ test("today separates reported work and the day's plan; notes stay off the main 
   await expect(page.locator("#memory")).toBeVisible();
   await expect(page.locator("#today")).toBeHidden();
 });
+// Бриф и список не говорят одно и то же: рассказ виден, только пока оба ящика
+// закрыты. Днём фаза открывает «День», поэтому страница встречает списком.
+test("бриф пропадает при раскрытом ящике и возвращается, когда всё свёрнуто", async ({ page }) => {
+  await page.goto("/");
+  const brief = page.locator("#today-brief");
+  const dayTab = page.getByRole("tab", { name: /^День/ });
+  const journalTab = page.getByRole("tab", { name: /Что делал/ });
+  await expect(dayTab).toHaveAttribute("aria-selected", "true");
+  await expect(brief).toBeHidden();
+  // Свернули — бриф вернулся на своё место, над полем ввода.
+  await dayTab.click();
+  await expect(brief).toBeVisible();
+  await expect(brief).not.toHaveText("");
+  // Соседний ящик прячет его так же.
+  await journalTab.click();
+  await expect(brief).toBeHidden();
+  await journalTab.click();
+  await expect(brief).toBeVisible();
+});
 // Стрелки уводят ящик в другой день, но переключение ящика — всегда «сегодня»:
 // закрыли, открыли соседний или вернулись — оба дня сегодняшние.
 test("переключение ящика возвращает оба дня на сегодня", async ({ page }) => {

@@ -159,6 +159,16 @@ test("плашка чужого события: участники с ответ
   await expect(pop.locator(".pop-person")).toHaveCount(4);
   await expect(pop.locator(".pop-person").nth(0)).toContainText(/Станислав Косухин\s*\(организатор\)/);
   await expect(pop.locator(".pop-person").nth(1).locator(".pop-st")).toHaveClass(/declined/);
+  // Кто не ответил — не серый: иначе «кого ещё ждём» вычитывается по значкам.
+  const waiting = pop.locator(".pop-person").nth(2).locator(".pop-st");
+  await expect(waiting).toHaveClass(/needs-action/);
+  const waitingLook = await waiting.evaluate((element) => ({
+    color: getComputedStyle(element).color,
+    border: getComputedStyle(element).borderTopStyle,
+    name: getComputedStyle(element.parentElement.querySelector("span")).color,
+  }));
+  expect(waitingLook.border).toBe("dashed");
+  expect(waitingLook.color).not.toBe(waitingLook.name);
   await expect(pop.locator(".pop-person").nth(3)).toContainText("(вы, необязательно)");
   await expect(pop.locator(".pop-link a").first()).toHaveAttribute("href", "https://telemost.360.yandex.ru/j/0319350436");
   await expect(pop.locator(".pop-me-line")).toContainText("принято");

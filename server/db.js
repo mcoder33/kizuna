@@ -1104,6 +1104,58 @@ export function listUsers(db) {
       (SELECT COALESCE(SUM(seconds),0) FROM voice_sessions v WHERE v.user_id=users.id) AS voice_seconds
     FROM users ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at`).all();
 }
+
+// Активность человека: страница «Люди» должна отвечать не только «сколько
+// потратил», но и «живёт ли он в приложении». Считается по уже записанному —
+// записи, закрытые дела, разговоры, подключённые календари и уведомления, —
+// поэтому отдельного журнала действий заводить не нужно. Полоса дней —
+// местные даты, а не UTC: вечерняя запись не должна попадать в завтра.
+export function userActivity(db, { now: at = new Date(), timeZone = 'UTC', days = 30 } = {}) {
+  const dayMs = 86400000;
+  const sinceIso = new Date(at.getTime() - days * dayMs).toISOString();
+  const weekIso = new Date(at.getTime() - 7 * dayMs).toISOString();
+  const format = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
+  const band = [];
+  for (let step = days - 1; step >= 0; step -= 1) band.push(format.format(new Date(at.getTime() - step * dayMs)));
+  const position = new Map(band.map((date, index) => [date, index]));
+  const users = new Map();
+  const blank = () => ({ lastCaptureAt: null, capturesWeek: 0, capturesPeriod: 0, completedPeriod: 0, voiceSeconds: 0, voiceSessions: 0, calendars: 0, pushDevices: 0, days: band.map(() => 0) });
+  for (const row of db.prepare('SELECT id FROM users').all()) users.set(row.id, blank());
+  const of = (userId) => (userId === null || userId === undefined ? null : users.get(userId) || null);
+
+  for (const row of db.prepare('SELECT user_id, MAX(created_at) AS last FROM captures WHERE deleted_at IS NULL GROUP BY user_id').all()) {
+    const user = of(row.user_id);
+    if (user) user.lastCaptureAt = row.last;
+  }
+  for (const row of db.prepare('SELECT user_id, created_at FROM captures WHERE deleted_at IS NULL AND created_at >= ?').all(sinceIso)) {
+    const user = of(row.user_id);
+    if (!user) continue;
+    user.capturesPeriod += 1;
+    if (row.created_at >= weekIso) user.capturesWeek += 1;
+    const index = position.get(format.format(new Date(row.created_at)));
+    if (index !== undefined) user.days[index] += 1;
+  }
+  // Закрытое дело — событие журнала, отдельной таблицы «сделано» нет.
+  for (const row of db.prepare(`SELECT c.user_id AS user_id, COUNT(*) AS count FROM ledger_events e
+      JOIN captures c ON c.id=e.capture_id
+      WHERE e.event_type='completed' AND e.created_at >= ? GROUP BY c.user_id`).all(sinceIso)) {
+    const user = of(row.user_id);
+    if (user) user.completedPeriod = row.count;
+  }
+  for (const row of db.prepare('SELECT user_id, COUNT(*) AS count, COALESCE(SUM(seconds),0) AS seconds FROM voice_sessions WHERE started_at >= ? GROUP BY user_id').all(sinceIso)) {
+    const user = of(row.user_id);
+    if (user) { user.voiceSessions = row.count; user.voiceSeconds = row.seconds; }
+  }
+  for (const row of db.prepare('SELECT user_id, COUNT(*) AS count FROM calendar_accounts WHERE disabled_at IS NULL GROUP BY user_id').all()) {
+    const user = of(row.user_id);
+    if (user) user.calendars = row.count;
+  }
+  for (const row of db.prepare('SELECT user_id, COUNT(*) AS count FROM push_subscriptions WHERE failed_at IS NULL GROUP BY user_id').all()) {
+    const user = of(row.user_id);
+    if (user) user.pushDevices = row.count;
+  }
+  return { days: band, since: sinceIso, users: Object.fromEntries(users) };
+}
 // Правится только то, что перечислено: список полей — это и есть граница между
 // «администратор поменял роль» и «кто-то переписал чужой пароль».
 const EDITABLE_USER_FIELDS = new Set(['role','status','password_hash','totp_secret','totp_pending_secret','totp_enabled','recovery_codes_json','voice_limit_usd','voice_limit_minutes','monthly_limit_usd','voice_limit_window','voice_blocked','approved_at','approved_by','blocked_at','blocked_reason','last_login_at','failed_attempts','locked_until','email']);

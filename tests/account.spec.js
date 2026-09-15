@@ -94,6 +94,29 @@ test("администратор видит заявку, одобряет её 
   expect(refused.status()).toBe(403);
 });
 
+// Список людей отвечает на «живёт ли человек в приложении»: строка активности
+// с полосой по дням, а у молчащего — метка вместо догадок.
+test("в строке человека видно активность: полоса дней, записи за период и подключения", async ({ page, request }) => {
+  await request.post("/api/captures", { data: { raw: "Запись ради строки активности" } });
+  await page.goto("/#admin");
+  const self = page.locator("#admin-users .admin-user").filter({ hasText: E2E_EMAIL });
+  const activity = self.locator(".admin-activity");
+  await expect(activity).toBeVisible();
+  // Полоса — тридцать дней, и сегодняшний столбик покрашен как «сегодня».
+  await expect(activity.locator(".admin-band-day")).toHaveCount(30);
+  await expect(activity.locator(".admin-band-day.today.on")).toHaveCount(1);
+  await expect(activity).toContainText("последняя запись сегодня");
+  await expect(activity).toContainText("за 30 дней");
+  await expect(activity).toContainText("без календаря");
+  await expect(activity).toContainText("без уведомлений");
+  // Заведённый только что человек ещё ничего не писал — это видно меткой.
+  const email = `tihiy-${Date.now()}@kizuna.test`;
+  await request.post("/api/auth/register", { data: { email, password: "tihiy-very-long-password" } });
+  await page.reload();
+  const fresh = page.locator("#admin-pending .admin-user").filter({ hasText: email });
+  await expect(fresh.locator(".admin-activity")).toContainText("записей нет");
+});
+
 test("последнего администратора не предлагают ни заблокировать, ни разжаловать", async ({ page }) => {
   await page.goto("/#admin");
   const self = page.locator("#admin-users .admin-user").filter({ hasText: E2E_EMAIL });
