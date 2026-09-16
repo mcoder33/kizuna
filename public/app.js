@@ -178,6 +178,9 @@ function updatePageFromHash() {
   // Хэш поэтому разбирается на страницу и параметры — иначе такой страницы не
   // находится и человека выбрасывает на «Сегодня» вместо поиска.
   const hash = location.hash.slice(1);
+  // Приглашение в круг приходит ссылкой «#join/<токен>»: это не страница, а
+  // разовое действие, поэтому разбирается до страниц.
+  if (hash.startsWith("join/")) { openInvite(hash.slice(5)); return; }
   const separator = hash.indexOf("?");
   const pageId = (separator >= 0 ? hash.slice(0, separator) : hash) || "today";
   const params = new URLSearchParams(separator >= 0 ? hash.slice(separator + 1) : "");
@@ -216,6 +219,7 @@ function updatePageFromHash() {
     }
   }
   if (activePage === "admin") loadAdmin();
+  if (activePage === "circles") loadCircles();
   if (activePage === "board") loadBoard(params.get("view"));
   // Календарь перечитывается при каждом открытии: сроки правятся из карточек
   // и с доски, а чужие события приходят синхронизацией в фоне. Первый разбор
@@ -450,6 +454,9 @@ function entryCard(entry, { overdue = false, compact = false, dense = false, atT
     // карточка открывается на обычное уточнение.
     const review = reviewFromEntry(entry);
     cardOccurrence = c.entities.schedule?.repeat && on && scheduledOn(entry, on) ? on : null;
+    // Запись из круга открывается перечитанной: обсуждение и исполнитель
+    // меняются у другого человека, и показывать вчерашний разговор нельзя.
+    if (entry.foreign || circleOf(entry)) { openSharedCard(entry.id); return; }
     showCorrection(entry, review.level === "high" ? undefined : review);
   });
   card.append(title);
@@ -465,6 +472,14 @@ function entryCard(entry, { overdue = false, compact = false, dense = false, atT
   // а не подробность в общей строке.
   for (const project of c.entities.projects)
     meta.append(node("span", project, "tag project"));
+  // Круг виден меткой, а не местом: строка остаётся строкой дня.
+  const mark = circleOf(entry);
+  if (mark) meta.append(circleChip(mark, { small: true }));
+  // Чьё это дело: взятое — «от Саши», отданное — «Аня · ждёт ответа». Второе и
+  // есть слежение за реализацией, только без доски со статусами.
+  const assignment = entry.assignment || todayState.assignments?.[entry.id] || null;
+  if (assignment && assignment.state !== "declined")
+    meta.append(node("span", entry.foreign ? `от ${genitiveName(assignment.assigner?.name) || "автора"}` : `${assignment.assignee?.name || ""} · ${assignmentWord(assignment)}`, "tag assign"));
   const due = scheduleLabel(c.entities.schedule, on);
   // Время записи видно всегда: без него карточка не отвечает на вопрос
   // «когда это было».
@@ -538,6 +553,7 @@ function appendEntries(container, entries, emptyText, options) {
 // и два ящика: «Что делал» и «День», где дела лежат вместе с календарём.
 // Заметок на главной нет: они живут в «Обзоре», поиске и карточке записи.
 const TODAY_ZONE = "Europe/Samara";
+const circlesState = { circles: [], me: null, loading: false };
 const todayState = {
   view: 0,            // смещение дня, показанного в «Дне», от сегодняшнего
   journalView: 0,     // то же для «Что делал»: у ящиков свои дни
@@ -549,6 +565,15 @@ const todayState = {
   entries: [],
   done: [],
   todo: [],
+  // Общее: полоса «к вам», взятые чужие дела, круги и метки для строк.
+  inbox: [],
+  inboxFolded: [],
+  borrowed: [],
+  waiting: [],
+  circles: [],
+  mutedCircles: [],
+  circleMarks: {},
+  assignments: {},
   cache: new Map(),   // другие дни: date → { calendar, report }
   loading: new Set(),
   placeholder: null,
@@ -725,9 +750,21 @@ function recallTab(phase) {
 }
 function render(data) {
   currentDayDate = data.date;
-  const all = uniqueEntries([data.entries, data.day, data.upcoming, data.attention]).sort((left, right) =>
-    (right.createdAt || "").localeCompare(left.createdAt || ""),
-  );
+  // Взятое чужое дело живёт в дне как своё: оно и есть своё — человек его взял.
+  todayState.inbox = data.inbox || [];
+  todayState.inboxFolded = data.inboxFolded || [];
+  todayState.circles = data.circles || [];
+  todayState.mutedCircles = data.mutedCircles || [];
+  todayState.circleMarks = data.circleMarks || {};
+  todayState.borrowed = data.borrowed || [];
+  todayState.waiting = data.waiting || [];
+  todayState.assignments = data.assignments || {};
+  // Дела выключенного круга уходят из списков — и свои, и взятые: именно это
+  // обещает переключатель «не показывать круг в дне».
+  const muted = new Set((data.circles || []).filter((circle) => circle.muted).map((circle) => circle.id));
+  const all = uniqueEntries([data.entries, data.day, data.upcoming, data.attention, data.borrowed])
+    .filter((entry) => !muted.has((entry.circle || data.circleMarks?.[entry.id])?.id))
+    .sort((left, right) => (right.createdAt || "").localeCompare(left.createdAt || ""));
   const todayEntries = all.filter((entry) => entryDate(entry) === data.date || scheduledOn(entry, data.date));
   todayState.entries = all;
   todayState.done = todayEntries.filter(isReportedWork);
@@ -1024,6 +1061,147 @@ function appendMore(container, hidden) {
   more.href = "#board?view=list";
   container.append(more);
 }
+// ── круги на «Сегодня» ──
+// Общее приходит в тот же день, где человек и так стоит каждое утро: полоса
+// «к вам» над списком (просьбы и призывы одной лентой), взятые чужие дела —
+// обычными строками с меткой круга, отданное — счётчиком в хвосте. Переключателя
+// пространств нет: день у человека один.
+const CIRCLE_TONES = { violet: "violet", blue: "blue", teal: "teal", orange: "orange", pink: "pink", red: "red" };
+function circleChip(circle, { small = false } = {}) {
+  const chip = node("span", undefined, `tag circle${small ? " small" : ""}`);
+  chip.append(node("i", undefined, `circle-dot ${CIRCLE_TONES[circle.color] || "violet"}`), node("span", circle.name));
+  chip.title = `Круг «${circle.name}»`;
+  return chip;
+}
+const circleOf = (entry) => entry.circle || todayState.circleMarks?.[entry.id] || null;
+const ASSIGNMENT_WORDS = { pending: "ждёт ответа", accepted: "взято", declined: "отказ", done: "сделано" };
+const assignmentWord = (assignment) => ASSIGNMENT_WORDS[assignment.state] || assignment.state;
+// «От Саши», «от Ани»: имя в строке стоит в родительном падеже, иначе фраза
+// читается как заголовок таблицы. Правило простое и честное — хвост имени;
+// имя, которое не склоняется («Отто», «Мэри»), остаётся как есть.
+function genitiveName(name) {
+  const value = String(name || "").trim();
+  if (!value) return value;
+  const last = value.slice(-1).toLowerCase();
+  if (last === "ь" || last === "й") return `${value.slice(0, -1)}я`;
+  if (last === "я") return `${value.slice(0, -1)}и`;
+  if (last === "а") return `${value.slice(0, -1)}${"гкхжшчщ".includes(value.slice(-2, -1).toLowerCase()) ? "и" : "ы"}`;
+  if ("оеиуыэю".includes(last)) return value;
+  return `${value}а`;
+}
+async function respondRequest(row, take, button) {
+  const reason = take ? null : (prompt("Почему не вы? Можно не отвечать — причина уйдёт автору.") ?? "").trim();
+  if (button) button.disabled = true;
+  try {
+    await request(`/api/assignments/${row.id}/respond`, { method: "POST", body: JSON.stringify({ take, ...(reason ? { reason } : {}) }) });
+    toast(take ? "Взяли: дело в вашем дне" : "Вернули автору");
+    await load();
+  } catch (error) {
+    if (button) button.disabled = false;
+    toast(error.message || "Не получилось ответить");
+  }
+}
+function inboxRow(row) {
+  const element = node("div", undefined, `inbox-row ${row.kind}`);
+  const mark = node("span", undefined, "inbox-mark");
+  mark.append(node("i", undefined, row.kind === "call" ? "inbox-bubble" : "inbox-circle"));
+  const main = node("div", undefined, "inbox-main");
+  const title = node("button", row.kind === "call" ? `${row.from.name} зовёт: «${row.body}»` : row.title, "inbox-title");
+  title.type = "button";
+  title.addEventListener("click", () => openSharedCard(row.captureId));
+  const meta = node("div", undefined, "inbox-meta");
+  if (row.kind === "request") meta.append(node("span", `просит ${row.from.name}`, "inbox-who"));
+  else meta.append(node("span", `обсуждение «${row.title}»`, "inbox-who"));
+  if (row.circle) meta.append(circleChip(row.circle, { small: true }));
+  if (row.due) meta.append(node("span", `срок: ${scheduleLabel({ date: row.due.date, time: row.due.time }) || row.due.date}`, "inbox-due"));
+  meta.append(node("span", agoWords(row.createdAt) || "", "inbox-ago"));
+  main.append(title, meta);
+  const acts = node("div", undefined, "inbox-acts");
+  if (row.kind === "request") {
+    const take = node("button", "Беру", "inbox-take");
+    take.type = "button";
+    take.addEventListener("click", () => respondRequest(row, true, take));
+    const not = node("button", "Не я", "inbox-not");
+    not.type = "button";
+    not.addEventListener("click", () => respondRequest(row, false, not));
+    acts.append(take, not);
+  } else {
+    const open = node("button", "Открыть", "inbox-not");
+    open.type = "button";
+    open.addEventListener("click", () => openSharedCard(row.captureId));
+    acts.append(open);
+  }
+  element.append(mark, main, acts);
+  return element;
+}
+// Свёрнутая строка выключенного круга: просьбы не показываются поштучно, но и
+// не пропадают — иначе человек думает, что попросил, а его никто не увидит.
+function inboxFoldedRow(item) {
+  const element = node("div", undefined, "inbox-row muted");
+  const main = node("div", undefined, "inbox-main");
+  const title = node("span", undefined, "inbox-title as-text");
+  if (item.circle) title.append(circleChip(item.circle, { small: true }));
+  title.append(node("span", ` выключен — ${item.count} ${pluralRu(item.count, "просьба", "просьбы", "просьб")}`));
+  const meta = node("div", undefined, "inbox-meta");
+  meta.append(node("span", `последняя: ${agoWords(item.lastAt) || ""}${item.from ? ` · от ${item.from.name}` : ""}`, "inbox-who"));
+  main.append(title, meta);
+  const acts = node("div", undefined, "inbox-acts");
+  const show = node("button", "Включить круг", "inbox-not");
+  show.type = "button";
+  show.addEventListener("click", () => toggleCircleMute(item.circle.id, false));
+  acts.append(show);
+  element.append(node("span", undefined, "inbox-mark"), main, acts);
+  return element;
+}
+function paintInbox(container) {
+  const rows = todayState.inbox || [], folded = todayState.inboxFolded || [];
+  if (!rows.length && !folded.length) return;
+  container.append(node("div", `к вам · ${rows.length + folded.reduce((total, item) => total + item.count, 0)}`, "day-group inbox-group"));
+  const strip = node("div", undefined, "inbox");
+  for (const row of rows) strip.append(inboxRow(row));
+  for (const item of folded) strip.append(inboxFoldedRow(item));
+  container.append(strip);
+}
+// Хвост дня: сколько дел на других и какие круги выключены. Оба числа — факт в
+// своём списке, а не письмо человеку в спину.
+function paintCircleTail(container) {
+  const waiting = todayState.waiting || [];
+  const open = waiting.filter((item) => ["pending", "accepted"].includes(item.state));
+  if (open.length) {
+    const late = open.filter((item) => item.state === "pending" && daysBetween(item.createdAt) >= 2).length;
+    const link = node("button", undefined, "day-more");
+    link.type = "button";
+    link.append(node("span", `На других ${open.length} ${pluralRu(open.length, "дело", "дела", "дел")}`, "strong"));
+    if (late) link.append(node("span", ` · ${late} ${pluralRu(late, "ждёт", "ждут", "ждут")} ответа второй день`));
+    link.append(node("span", " — «Я жду» →"));
+    link.addEventListener("click", () => { location.hash = "#board?view=waiting"; });
+    container.append(link);
+  }
+  for (const circle of todayState.mutedCircles || []) {
+    const line = node("div", undefined, "day-muted");
+    line.append(circleChip(circle, { small: true }), node("span", ` выключен — ${circle.deeds} ${pluralRu(circle.deeds, "дело", "дела", "дел")}. `));
+    const on = node("button", "Включить", "linklike");
+    on.type = "button";
+    on.addEventListener("click", () => toggleCircleMute(circle.id, false));
+    line.append(on);
+    container.append(line);
+  }
+}
+async function toggleCircleMute(circleId, muted) {
+  try {
+    await request(`/api/circles/${circleId}/mute`, { method: "POST", body: JSON.stringify({ muted }) });
+    await load();
+    if (!$("#circles")?.hidden) await loadCircles();
+  } catch (error) { toast(error.message || "Не получилось"); }
+}
+// Чужая карточка открывается тем же окном, что и своя: запись живёт у автора,
+// а мы читаем её и пишем в обсуждение.
+async function openSharedCard(captureId) {
+  try {
+    const { entry } = await request(`/api/captures/${captureId}`);
+    showCorrection(entry, reviewFromEntry(entry).level === "high" ? undefined : reviewFromEntry(entry));
+  } catch (error) { toast(error.message || "Запись не открылась"); }
+}
 function paintDayList(date) {
   const container = $("#todo");
   clear(container);
@@ -1060,11 +1238,13 @@ function paintTodayList(container) {
     ...todayState.todo.filter(timed).map((entry) => ({ start: minutesOf(scheduleOf(entry).time), entry })),
     ...external.filter((item) => !item.allDay && item.time).map((item) => ({ start: minutesOf(item.time), item })),
   ].filter((slot) => slot.start != null).sort((a, b) => a.start - b.start);
+  paintInbox(container);
   if (!band.length && !allDay.length && !hours.length) {
     // Пустому журналу «Открытых дел нет» ничего не объясняет: человек видит
     // поле и не знает, что в него писать. Место то же, слова другие.
     container.append(todayState.entries.length ? node("p", "Открытых дел нет.", "empty") : firstStepNode());
     appendMore(container, hidden);
+    paintCircleTail(container);
     return;
   }
   // Часы идут первыми: день — это прежде всего встречи, к которым надо успеть.
@@ -1100,6 +1280,7 @@ function paintTodayList(container) {
     container.append(rows);
   }
   appendMore(container, hidden);
+  paintCircleTail(container);
 }
 // Соседний день собран так же, как сегодняшний: сначала часы, потом дела. День
 // не должен менять устройство от того, каким его открыли.
@@ -1497,6 +1678,192 @@ function attachmentsBlock(entry) {
   wrap.append(head, grid, input);
   return wrap;
 }
+// ── общее в карточке записи ──
+// Карточка устроена как страница в Ноушене, и общее встаёт в неё тем же
+// порядком: круг и исполнитель — строками свойств, обсуждение — последним
+// блоком после заметки. Разговор о деле идёт вокруг того, что о нём написано.
+function assignRow(entry, { onChange }) {
+  const wrap = node("div", undefined, "assign-row");
+  const select = node("select", undefined, "prop-input assign-pick");
+  select.setAttribute("aria-label", "Исполнитель");
+  const people = new Map();
+  for (const circle of entry.myCircles || []) for (const member of circle.members || []) if (member.id !== (currentUser?.id ?? null)) people.set(member.id, { ...member, circleId: circle.id });
+  select.append(new Option("— никому", ""));
+  for (const person of people.values()) select.append(new Option(person.name, person.id));
+  select.value = entry.assignment && entry.assignment.state !== "declined" ? entry.assignment.assignee?.id || "" : "";
+  const state = node("span", undefined, "assign-state");
+  const paintState = () => {
+    clear(state);
+    if (!entry.assignment || entry.assignment.state === "declined") {
+      if (entry.assignment?.state === "declined")
+        state.append(node("span", `${entry.assignment.assignee?.name || "Не взяли"} ${assignmentWord(entry.assignment)}${entry.assignment.reason ? `: «${entry.assignment.reason}»` : ""}`, "assign-declined"));
+      return;
+    }
+    state.append(node("span", `— ${assignmentWord(entry.assignment)}`, "prop-origin"));
+  };
+  paintState();
+  select.addEventListener("change", async () => {
+    const assigneeId = select.value || null;
+    const circleId = assigneeId ? people.get(assigneeId)?.circleId || null : null;
+    try {
+      const result = await request(`/api/captures/${entry.id}/assign`, { method: "POST", body: JSON.stringify({ assigneeId, circleId }) });
+      entry.assignment = result.assignment;
+      entry.circles = result.circles;
+      paintState();
+      toast(assigneeId ? `Просьба ушла: ${people.get(assigneeId).name} ответит «беру» или «не я»` : "Исполнитель снят");
+      onChange?.();
+      await load();
+    } catch (error) { toast(error.message || "Не получилось"); }
+  });
+  wrap.append(select, state);
+  return wrap;
+}
+function circleRow(entry) {
+  const wrap = node("div", undefined, "circle-value");
+  const paint = () => {
+    clear(wrap);
+    const circles = entry.circles || [];
+    if (!circles.length) { wrap.append(node("span", "только у вас", "prop-ghost")); return; }
+    for (const circle of circles) wrap.append(circleChip(circle));
+  };
+  paint();
+  return wrap;
+}
+// Призвать можно только того, кто в круге этой записи: звать в пустоту и ждать
+// ответа — худшее, что может сделать интерфейс, поэтому подсказка закрытая.
+function mentionPopup(field, callable, onPick) {
+  const pop = node("div", undefined, "mention-pop");
+  pop.hidden = true;
+  let items = [], active = 0, from = -1;
+  const close = () => { pop.hidden = true; from = -1; };
+  const paint = (query) => {
+    clear(pop);
+    items = callable.filter((person) => !query || person.name.toLowerCase().startsWith(query.toLowerCase()));
+    if (!items.length) { close(); return; }
+    active = Math.min(active, items.length - 1);
+    pop.append(node("p", "призвать", "mention-cap"));
+    items.forEach((person, index) => {
+      const row = node("button", undefined, `mention-row${index === active ? " on" : ""}`);
+      row.type = "button";
+      row.append(node("i", person.initial, "ava mini"), node("span", person.name));
+      row.addEventListener("mousedown", (event) => { event.preventDefault(); pick(index); });
+      pop.append(row);
+    });
+    pop.hidden = false;
+  };
+  const pick = (index) => {
+    const person = items[index];
+    if (!person) return;
+    const value = field.value, head = value.slice(0, from), tail = value.slice(field.selectionStart);
+    field.value = `${head}@${person.name} ${tail}`;
+    field.focus();
+    field.selectionStart = field.selectionEnd = head.length + person.name.length + 2;
+    close();
+    onPick?.();
+  };
+  field.addEventListener("input", () => {
+    const upto = field.value.slice(0, field.selectionStart);
+    const match = upto.match(/@([\p{L}\p{N}_-]*)$/u);
+    if (!match) { close(); return; }
+    from = field.selectionStart - match[0].length;
+    paint(match[1]);
+  });
+  field.addEventListener("keydown", (event) => {
+    if (pop.hidden) return;
+    if (event.key === "ArrowDown") { event.preventDefault(); active = (active + 1) % items.length; paint(field.value.slice(from + 1, field.selectionStart)); }
+    else if (event.key === "ArrowUp") { event.preventDefault(); active = (active - 1 + items.length) % items.length; paint(field.value.slice(from + 1, field.selectionStart)); }
+    else if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); pick(active); }
+    else if (event.key === "Escape") { event.preventDefault(); close(); }
+  });
+  field.addEventListener("blur", () => setTimeout(close, 120));
+  return pop;
+}
+// Призыв в сообщении подсвечен: он не украшение, а единственное, что кладёт
+// человеку строку в «к вам».
+function commentText(body, mentions) {
+  const wrap = node("div", undefined, "msg-text");
+  const names = new Set((mentions || []).map((person) => person.name.toLowerCase()));
+  const parts = String(body).split(/(@[\p{L}\p{N}_-]+)/u);
+  for (const part of parts) {
+    if (part.startsWith("@") && names.has(part.slice(1).toLowerCase())) wrap.append(node("span", part, "call"));
+    else if (part) wrap.append(document.createTextNode(part));
+  }
+  return wrap;
+}
+function cardDiscussion(entry) {
+  const wrap = node("section", undefined, "card-thread");
+  const head = node("p", undefined, "prop-section");
+  const list = node("div", undefined, "thread-list");
+  let comments = entry.comments || [];
+  const callable = entry.callable || [];
+  const paint = () => {
+    head.textContent = comments.length ? `Обсуждение · ${comments.length}` : "Обсуждение";
+    clear(list);
+    if (!comments.length) list.append(node("p", callable.length ? "Пока тихо. Напишите — и позовите, кто нужен, через @имя." : "Обсуждение появится, когда запись окажется в круге: сейчас её видите только вы.", "empty"));
+    for (const comment of comments) {
+      const row = node("div", undefined, `msg${comment.parentId ? " reply" : ""}`);
+      row.append(node("i", comment.author.initial, "ava"));
+      const main = node("div", undefined, "msg-main");
+      const line = node("p", undefined, "msg-head");
+      line.append(node("b", comment.author.name), node("span", entryClockLabel(comment.createdAt)));
+      main.append(line, commentText(comment.body, comment.mentions));
+      row.append(main);
+      // Из сообщения делается дело: пересказывать в поле то, что уже написано,
+      // дороже, чем нажать кнопку.
+      if (callable.length || comment.mentions.length) {
+        const acts = node("div", undefined, "msg-acts");
+        const deed = node("button", "В дело", "mini");
+        deed.type = "button";
+        deed.addEventListener("click", () => {
+          prefillCapture(comment.body.replace(/@[\p{L}\p{N}_-]+/gu, "").trim(), "todo");
+          closeCard();
+        });
+        acts.append(deed);
+        row.append(acts);
+      }
+      list.append(row);
+    }
+  };
+  paint();
+  const composer = node("div", undefined, "thread-composer");
+  const field = node("textarea", undefined, "thread-input");
+  field.rows = 1;
+  field.placeholder = callable.length ? "Написать… @ — призвать" : "Написать…";
+  field.setAttribute("aria-label", "Сообщение в обсуждение");
+  const send = node("button", "Отправить", "mini primary");
+  send.type = "button";
+  const submit = async () => {
+    const body = field.value.trim();
+    if (!body) return;
+    send.disabled = true;
+    try {
+      const result = await request(`/api/captures/${entry.id}/comments`, { method: "POST", body: JSON.stringify({ body }) });
+      comments = [...comments, result.comment];
+      entry.comments = comments;
+      field.value = "";
+      paint();
+      if (result.comment.mentions.length) toast(`Призвали: ${result.comment.mentions.map((person) => person.name).join(", ")}`);
+    } catch (error) { toast(error.message || "Сообщение не ушло"); }
+    finally { send.disabled = false; field.focus(); }
+  };
+  send.addEventListener("click", submit);
+  field.addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); submit(); }
+  });
+  field.addEventListener("input", () => { field.style.height = "auto"; field.style.height = `${Math.min(field.scrollHeight, 200)}px`; });
+  composer.append(field, mentionPopup(field, callable, () => {}), send);
+  wrap.append(head, list, composer);
+  return wrap;
+}
+const entryClockLabel = (iso) => {
+  try {
+    const date = new Date(iso), today = zoneDate(new Date()), on = zoneDate(date);
+    const time = new Intl.DateTimeFormat("ru-RU", { timeZone: TODAY_ZONE, hour: "2-digit", minute: "2-digit" }).format(date);
+    if (on === today) return `сегодня, ${time}`;
+    if (on === shiftDate(today, -1)) return `вчера, ${time}`;
+    return `${new Intl.DateTimeFormat("ru-RU", { timeZone: TODAY_ZONE, day: "numeric", month: "short" }).format(date)}, ${time}`;
+  } catch { return ""; }
+};
 // Тело заметки — отдельная пользовательская сущность, а не правка raw:
 // контракт памяти запрещает менять источник, поэтому оно версионируется
 // на сервере со ссылкой supersedes.
@@ -1813,10 +2180,17 @@ function showReview(entry, review, undoGroupId, provenance) {
     peopleWrap = propertyRow("Участники", people, "people", { clear: () => clearAndSave(() => { people.value = ""; }), filled: () => Boolean(people.value.trim()) }),
     followUpWrap = propertyRow("Далее", followUp, "next", { clear: () => clearAndSave(() => { followUp.value = ""; }), filled: () => Boolean(followUp.value.trim()) });
   const props = node("div", undefined, "props");
+  // Круг и исполнитель — свойства записи, а не отдельная форма: дело уходит
+  // человеку фразой, а здесь его правят, когда разбор не угадал.
+  const hasCircles = (entry.myCircles || []).some((circle) => (circle.members || []).length > 1);
+  const circleWrap = propertyRow("Круг", circleRow(entry), "project"),
+    assignWrap = entry.mine === false ? null : propertyRow("Исполнитель", assignRow(entry, { onChange: () => {} }), "people");
   props.append(
     propertyRow("Тип", type, "type"),
     scheduleWrap,
     propertyRow("Проект", project, "project", { clear: () => clearAndSave(() => { project.value = ""; }), filled: () => Boolean(project.value.trim()) }),
+    ...(entry.circles?.length ? [circleWrap] : []),
+    ...(assignWrap && (hasCircles || entry.assignment) ? [assignWrap] : []),
     peopleWrap,
     followUpWrap,
     propertyRow("Сделано", doneToggle, "done"),
@@ -1920,7 +2294,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   flushCardProps = saveProps;
   // Enter в поле свойства раньше отправлял форму; отправлять больше нечего.
   form.addEventListener("submit", (event) => event.preventDefault());
-  area.append(form, cardBody(entry));
+  area.append(form, cardBody(entry), cardDiscussion(entry));
   // Футер прижат к низу листа и собран в строку: вложения, «когда записано»,
   // источник и удаление — служебный подвал, а не столбик в теле карточки.
   const footer = node("div", undefined, "card-footer");
@@ -2005,6 +2379,16 @@ function showReview(entry, review, undoGroupId, provenance) {
     remove.replaceWith(ask);
   });
   footerRow.append(remove);
+  // Чужая запись открыта только на чтение: правит её автор, а исполнитель
+  // просит словами — в обсуждении, которое тут же ниже. Молча подсовывать
+  // поля, которые сервер всё равно не примет, — обман.
+  if (entry.mine === false) {
+    for (const control of props.querySelectorAll("input, select, textarea, button")) control.disabled = true;
+    remove.hidden = true;
+    const author = entry.assignment?.assigner?.name;
+    const line = node("p", `${author ? `Автор записи — ${author}. ` : ""}Правит её автор: что нужно поменять — скажите в обсуждении.`, "card-foreign");
+    props.before(line);
+  }
   // Отправить встречу во внешний календарь можно только отсюда, кнопкой:
   // по контракту памяти действие наружу всегда ждёт отдельного подтверждения.
   if (["task", "meeting_event"].includes(c.primaryType) && c.entities.schedule?.date) footerRow.prepend(calendarExportEl(entry));
@@ -3554,8 +3938,20 @@ async function loadAccount() {
   const line = $("#account-summary-line");
   if (line)
     line.textContent = `${currentUser.email} · ${roleNames[currentUser.role]} · вход защищён ${currentUser.twoFactorEnabled ? "паролем и вторым фактором" : "только паролем"}`;
+  const nameInput = $("#setting-name");
+  if (nameInput && document.activeElement !== nameInput) nameInput.value = currentUser.name || "";
   paintTotp();
 }
+// Имя сохраняется само, когда поле отпустили: отдельной кнопки «Сохранить» в
+// настройках нет ни у чего.
+$("#setting-name")?.addEventListener("change", async (event) => {
+  try {
+    const result = await request("/api/account", { method: "PATCH", body: JSON.stringify({ name: event.target.value }) });
+    if (currentUser) currentUser.name = result.me.name;
+    toast(`Вас будут звать «${result.me.name}»`);
+    await load();
+  } catch (error) { toast(error.message || "Имя не сохранилось"); }
+});
 
 async function logout(everywhere = false) {
   try {
@@ -4375,14 +4771,14 @@ async function uploadPendingShots(captureId) {
 // (колонки, даты, проекты, список), панель свойств, фильтр и поиск. Клик по
 // названию открывает карточку записи, кружок закрывает дело, перенос между
 // колонками сохраняется на сервере.
-const BOARD_VIEWS = ["columns", "dates", "projects", "tags", "list"];
+const BOARD_VIEWS = ["columns", "dates", "projects", "tags", "circles", "list", "waiting"];
 const BOARD_COLORS = ["gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"];
 const BOARD_COLOR_NAMES = { gray: "Серый", brown: "Коричневый", orange: "Оранжевый", yellow: "Жёлтый", green: "Зелёный", blue: "Синий", purple: "Фиолетовый", pink: "Розовый", red: "Красный" };
 const BOARD_PROPS_DEFAULT = { people: true, type: true, due: true, project: true, priority: true, files: true, compact: false };
 const boardState = {
   data: null, drag: null, openAdder: null, view: "columns",
   props: { ...BOARD_PROPS_DEFAULT },
-  filter: { type: "all", projects: [] },
+  filter: { type: "all", projects: [], circles: [] },
   search: "",
   // Закрытые дела: в списке они всегда хвостом, на доске — по желанию.
   showClosed: false,
@@ -4397,6 +4793,246 @@ try {
 } catch {}
 const boardDropHint = (() => { const hint = document.createElement("div"); hint.className = "board-drop"; return hint; })();
 
+// ── круги на доске ──
+// Круг здесь — ещё одна группировка рядом с проектами и тегами и ещё одна
+// строка в том же «Фильтре». Второго способа прятать лишнее человек не учит.
+const boardCircleOf = (card) => boardState.data?.circleMarks?.[card.captureId] || null;
+function boardCircleGroups(data) {
+  const groups = new Map();
+  for (const card of data.columns.flatMap((column) => column.cards)) {
+    const circle = boardCircleOf(card);
+    const key = circle?.id || null;
+    if (!groups.has(key)) groups.set(key, { circle, cards: [] });
+    groups.get(key).cards.push(card);
+  }
+  const named = [...groups.values()].filter((group) => group.circle).sort((left, right) => left.circle.name.localeCompare(right.circle.name, "ru"));
+  const result = named.map((group) => ({ key: `circle:${group.circle.id}`, name: group.circle.name, color: "purple", drop: null, adderWithoutDue: true, cards: group.cards }));
+  if (groups.has(null)) result.unshift({ key: "circle:none", name: "Личное", color: "gray", drop: null, adderWithoutDue: true, cards: groups.get(null).cards });
+  return result;
+}
+// «Я жду» — что я отдал и что с этим стало. Четыре состояния и ни одного
+// лишнего: колонок «в работе» и процентов готовности здесь не будет.
+const WAIT_WORDS = ASSIGNMENT_WORDS;
+function boardWaitingEl(waiting) {
+  const wrap = node("section", undefined, "board-waiting");
+  const open = waiting.filter((item) => ["pending", "accepted"].includes(item.state));
+  const closed = waiting.filter((item) => ["done", "declined"].includes(item.state));
+  const late = open.filter((item) => item.state === "pending" && daysBetween(item.createdAt) >= 2);
+  const head = node("p", undefined, "board-waiting-head");
+  head.append(node("b", `На других ${open.length} ${pluralRu(open.length, "дело", "дела", "дел")}`));
+  if (late.length) head.append(node("span", ` · ${late.length} ${pluralRu(late.length, "ждёт", "ждут", "ждут")} ответа второй день`, "late"));
+  wrap.append(head);
+  if (!waiting.length) {
+    wrap.append(node("p", "Вы пока ничего никому не отдали. Дело уходит человеку обычной записью: «Ане — прислать смету до пятницы».", "empty"));
+    return wrap;
+  }
+  const rowsWrap = node("div", undefined, "wait-rows");
+  const today = boardState.data?.today || currentDayDate;
+  for (const item of [...open, ...closed]) {
+    const row = node("div", undefined, "wait-row");
+    const who = node("div", undefined, "wait-who");
+    who.append(node("i", item.assignee?.initial || "?", "ava"), node("span", item.assignee?.name || "—"));
+    const main = node("div", undefined, "wait-main");
+    const title = node("button", item.title || "Дело", "wait-title");
+    title.type = "button";
+    title.addEventListener("click", () => openSharedCard(item.captureId));
+    const meta = node("div", undefined, "wait-meta");
+    if (item.due) meta.append(node("span", `срок: ${scheduleLabel({ state: "ok", date: item.due.date, time: item.due.time }) || item.due.date}`, item.due.date < today && item.state !== "done" ? "late" : ""));
+    else meta.append(node("span", "без срока"));
+    if (item.circle) meta.append(circleChip(item.circle, { small: true }));
+    if (item.state === "declined" && item.reason) meta.append(node("span", `«${item.reason}»`, "wait-reason"));
+    main.append(title, meta);
+    const state = node("div", undefined, `wait-state ${item.state}`);
+    const days = item.state === "pending" ? daysBetween(item.createdAt) : null;
+    state.textContent = item.state === "pending" && days >= 1
+      ? `ждёт ответа ${days === 1 ? "второй день" : `${days} ${pluralRu(days, "день", "дня", "дней")}`}`
+      : `${WAIT_WORDS[item.state]}${item.respondedAt && item.state !== "pending" ? ` ${agoWords(item.doneAt || item.respondedAt) || ""}` : ""}`;
+    row.append(who, main, state);
+    rowsWrap.append(row);
+  }
+  wrap.append(rowsWrap);
+  wrap.append(node("p", "Напоминать за вас приложение не будет: это факт в вашем списке, а не письмо человеку в спину.", "board-waiting-hint"));
+  return wrap;
+}
+// ── страница кругов ──
+// Нужна ровно для двух вещей: кто здесь и что отсюда видно. Ни ленты, ни своей
+// доски, ни настроек на каждый чих — иначе круг превращается во второй дом.
+async function loadCircles() {
+  if (circlesState.loading) return;
+  circlesState.loading = true;
+  try {
+    const data = await request("/api/circles");
+    circlesState.circles = data.circles || [];
+    circlesState.me = data.me || null;
+    renderCircles();
+  } catch (error) {
+    const body = $("#circles-body");
+    if (body) { clear(body); body.append(node("p", error.message || "Не удалось загрузить круги", "empty")); }
+  } finally { circlesState.loading = false; }
+}
+async function createCircle(name) {
+  try {
+    await request("/api/circles", { method: "POST", body: JSON.stringify({ name }) });
+    await loadCircles();
+    await load();
+    toast(`Круг «${name}» заведён. Позовите людей ссылкой.`);
+  } catch (error) { toast(error.message || "Круг не завёлся"); }
+}
+async function inviteToCircle(circle, place) {
+  try {
+    const invite = await request(`/api/circles/${circle.id}/invite`, { method: "POST", body: JSON.stringify({}) });
+    clear(place);
+    const link = node("input", undefined, "invite-link");
+    link.value = invite.url;
+    link.readOnly = true;
+    link.addEventListener("focus", () => link.select());
+    const copy = node("button", "Скопировать", "mini primary");
+    copy.type = "button";
+    copy.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(invite.url); toast("Ссылка скопирована — передайте её сами: писем приложение не шлёт"); }
+      catch { link.select(); toast("Скопируйте ссылку из поля"); }
+    });
+    place.append(link, copy, node("span", `живёт 7 дней · одна ссылка — один человек`, "invite-hint"));
+    link.focus();
+  } catch (error) { toast(error.message || "Приглашение не создалось"); }
+}
+function circleCardEl(circle) {
+  const card = node("section", undefined, "circle-card");
+  const head = node("div", undefined, "circle-head");
+  const name = node("h3", undefined, "circle-name");
+  name.append(node("i", undefined, `circle-dot big ${CIRCLE_TONES[circle.color] || "violet"}`), node("span", circle.name));
+  head.append(name);
+  const tools = node("div", undefined, "circle-tools");
+  const invitePlace = node("div", undefined, "circle-invite");
+  const invite = node("button", "Позвать по ссылке", "mini primary");
+  invite.type = "button";
+  invite.addEventListener("click", () => inviteToCircle(circle, invitePlace));
+  tools.append(invite);
+  if (circle.role === "owner") {
+    const dissolve = node("button", "Распустить", "mini");
+    dissolve.type = "button";
+    dissolve.addEventListener("click", async () => {
+      if (!confirm(`Распустить круг «${circle.name}»? Записи останутся у авторов, но из круга уйдут, а неотвеченные просьбы снимутся.`)) return;
+      try { await request(`/api/circles/${circle.id}`, { method: "DELETE" }); await loadCircles(); await load(); toast(`Круг «${circle.name}» распущен`); }
+      catch (error) { toast(error.message || "Не получилось"); }
+    });
+    tools.append(dissolve);
+  }
+  if (circle.role !== "owner" || circle.members.filter((member) => member.role === "owner").length > 1) {
+    const leave = node("button", "Покинуть", "mini");
+    leave.type = "button";
+    leave.addEventListener("click", async () => {
+      if (!confirm(`Покинуть круг «${circle.name}»? Взятые дела останутся у вас — вы их взяли.`)) return;
+      try { await request(`/api/circles/${circle.id}/leave`, { method: "POST", body: JSON.stringify({}) }); await loadCircles(); await load(); toast("Вы вышли из круга"); }
+      catch (error) { toast(error.message || "Не получилось"); }
+    });
+    tools.append(leave);
+  }
+  head.append(tools);
+  card.append(head, invitePlace);
+  const people = node("div", undefined, "circle-people");
+  for (const member of circle.members) {
+    const row = node("div", undefined, "people-row");
+    row.append(node("i", member.initial, "ava big"));
+    const who = node("div", undefined, "people-who");
+    who.append(node("p", member.id === circlesState.me?.id ? `${member.name} · вы` : member.name, "people-name"));
+    who.append(node("p", member.openDeeds ? `${member.openDeeds} ${pluralRu(member.openDeeds, "дело", "дела", "дел")} на нём` : "открытых дел нет", "people-sub"));
+    row.append(who, node("span", member.role === "owner" ? "хозяин" : "участник", "people-role"));
+    people.append(row);
+  }
+  card.append(people);
+  // Выключение — личное и обратимое: остальные ничего не замечают.
+  const switchRow = node("label", undefined, "switch-row");
+  const box = node("input");
+  box.type = "checkbox";
+  box.checked = Boolean(circle.muted);
+  box.addEventListener("change", () => toggleCircleMute(circle.id, box.checked));
+  const text = node("span", undefined, "sw-text");
+  text.append(node("span", "Не показывать круг в дне, на доске и в календаре"));
+  text.append(node("small", "Дела круга уйдут из списков. Просьбы к вам будут приходить свёрнутой строкой — обещание не пропадёт молча."));
+  switchRow.append(box, text);
+  card.append(switchRow);
+  return card;
+}
+function circleRulesEl() {
+  const rules = node("section", undefined, "circle-rules");
+  rules.append(node("h4", "Что попадает в круг"));
+  const list = node("ul");
+  for (const [strong, rest] of [
+    ["Только то, что вы туда отправили.", " Запись уходит в круг, если у неё исполнитель отсюда или в обсуждении призван участник. Всё остальное остаётся личным — по умолчанию, без переключателей."],
+    ["Видно карточку, а не журнал.", " Участники видят саму запись, её свойства и обсуждение. Ваш день, заметки, «Что делал», голос и расход не видны никому."],
+    ["Правит запись автор.", " Исполнитель закрывает дело и пишет в обсуждение; срок и заголовок меняет тот, кто записал."],
+    ["Платит тот, кто записал.", " Разбор моделью считается автору записи: потолок расходов остаётся личным."],
+  ]) {
+    const item = node("li");
+    item.append(node("b", strong), node("span", rest));
+    list.append(item);
+  }
+  rules.append(list);
+  return rules;
+}
+function renderCircles() {
+  const body = $("#circles-body");
+  if (!body) return;
+  clear(body);
+  const lead = node("p", "Круг — не второй журнал, а общая полка: день у вас остаётся один. Здесь только люди и граница.", "circles-lead");
+  body.append(lead);
+  if (!circlesState.circles.length)
+    body.append(node("p", "Кругов пока нет. Заведите первый — и позовите в него ссылкой того, с кем есть общее дело.", "empty"));
+  for (const circle of circlesState.circles) body.append(circleCardEl(circle));
+  const adder = node("form", undefined, "circle-add");
+  const input = node("input");
+  input.id = "circle-new-name";
+  input.placeholder = "Название круга — «Хаб», «Дом»";
+  input.maxLength = 40;
+  input.setAttribute("aria-label", "Название нового круга");
+  const submit = node("button", "+ Круг", "mini primary");
+  submit.type = "submit";
+  adder.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const name = input.value.trim();
+    if (!name) return;
+    input.value = "";
+    createCircle(name);
+  });
+  adder.append(input, submit);
+  body.append(adder, circleRulesEl());
+}
+// Приглашение по ссылке: человек видит, кто зовёт и во что, ещё до согласия —
+// иначе он нажимает «войти» вслепую.
+async function openInvite(token) {
+  history.replaceState(null, "", "#circles");
+  updatePageFromHash();
+  let peek;
+  try { peek = await request(`/api/circles/invite/${encodeURIComponent(token)}`); }
+  catch (error) { toast(error.message || "Приглашение не найдено"); return; }
+  const body = $("#circles-body");
+  clear(body);
+  const card = node("section", undefined, "circle-card invite-card");
+  const name = node("h3", undefined, "circle-name");
+  name.append(node("i", undefined, `circle-dot big ${CIRCLE_TONES[peek.circle.color] || "violet"}`), node("span", peek.circle.name));
+  card.append(name);
+  card.append(node("p", `${peek.invitedBy} зовёт вас в круг «${peek.circle.name}». Сейчас там ${peek.members} ${pluralRu(peek.members, "человек", "человека", "человек")}.`, "invite-lead"));
+  card.append(node("p", "Войдёте — участники круга увидят записи, которые вы туда отдадите, и вы увидите их. Журнал, заметки и расход остаются личными.", "invite-hint"));
+  const accept = node("button", "Войти в круг", "mini primary");
+  accept.type = "button";
+  accept.addEventListener("click", async () => {
+    accept.disabled = true;
+    try {
+      await request(`/api/circles/invite/${encodeURIComponent(token)}/accept`, { method: "POST", body: JSON.stringify({}) });
+      toast(`Вы в круге «${peek.circle.name}»`);
+      await loadCircles();
+      await load();
+    } catch (error) { toast(error.message || "Не получилось войти"); accept.disabled = false; }
+  });
+  const skip = node("button", "Не сейчас", "mini");
+  skip.type = "button";
+  skip.addEventListener("click", () => loadCircles());
+  const acts = node("div", undefined, "circle-tools");
+  acts.append(accept, skip);
+  card.append(acts);
+  body.append(card);
+}
 function boardCardStatus(card) {
   const today = boardState.data?.today || currentDayDate;
   const date = card.due?.date || null;
@@ -4535,6 +5171,9 @@ function boardCardEl(card, column, { closed = false } = {}) {
   }
   const projectLine = row("where");
   if (props.project) for (const project of card.projects) projectLine.append(projectChip(project));
+  // Метка круга — рядом с проектом: и то и другое отвечает на «к чему это».
+  const cardCircle = boardCircleOf(card);
+  if (cardCircle) projectLine.append(circleChip(cardCircle, { small: true }));
   // Скрепка с числом — как в списках: видно, что к делу что-то приложено.
   if (props.files && card.attachments) projectLine.append(node("span", `📎 ${card.attachments}`, "btag files c-gray"));
   body.append(titleRow);
@@ -4981,6 +5620,11 @@ function boardCardVisible(card) {
   if (type === "task" && card.type === "meeting_event") return false;
   if (type === "meeting_event" && card.type !== "meeting_event") return false;
   if (projects.length && !card.projects.some((project) => projects.includes(project))) return false;
+  const { circles: wanted } = boardState.filter;
+  const circle = boardCircleOf(card);
+  if (wanted.length) {
+    if (!wanted.includes(circle?.id || "none")) return false;
+  } else if (circle && (boardState.data?.circles || []).some((item) => item.id === circle.id && item.muted)) return false;
   const query = boardState.search.trim().toLowerCase();
   if (query && !card.title.toLowerCase().includes(query) && !card.tags.some((tag) => tag.toLowerCase().includes(query))) return false;
   return true;
@@ -4993,7 +5637,7 @@ function boardFilteredData(data) {
   };
 }
 function paintBoardFilter(data) {
-  const active = (boardState.filter.type !== "all" ? 1 : 0) + boardState.filter.projects.length;
+  const active = (boardState.filter.type !== "all" ? 1 : 0) + boardState.filter.projects.length + boardState.filter.circles.length;
   $("#board-filter-summary").textContent = active ? `Фильтр · ${active}` : "Фильтр";
   $("#board-filter").classList.toggle("is-active", active > 0);
   for (const button of document.querySelectorAll("[data-board-type]"))
@@ -5014,6 +5658,29 @@ function paintBoardFilter(data) {
       renderBoard(boardState.data);
     });
     wrap.append(chip);
+  }
+  // Круг — третья строка фильтра, после «Тип» и «Проект». Пока кругов нет,
+  // строки нет: пустая строка в фильтре обещает то, чего у человека ещё нет.
+  const circleWrap = $("#board-filter-circles"), circleLabel = $("#board-filter-circles-label");
+  const myCircles = data.circles || [];
+  clear(circleWrap);
+  circleWrap.hidden = circleLabel.hidden = !myCircles.length;
+  if (myCircles.length) {
+    const options = [...myCircles.map((circle) => ({ id: circle.id, name: circle.name, color: circle.color })), { id: "none", name: "Личное", color: null }];
+    for (const option of options) {
+      const chip = node("button", undefined, "btag circle-chip");
+      chip.type = "button";
+      if (option.color) chip.append(node("i", undefined, `circle-dot ${CIRCLE_TONES[option.color] || "violet"}`));
+      chip.append(node("span", option.name));
+      chip.setAttribute("aria-pressed", String(boardState.filter.circles.includes(option.id)));
+      chip.addEventListener("click", () => {
+        const set = new Set(boardState.filter.circles);
+        if (set.has(option.id)) set.delete(option.id); else set.add(option.id);
+        boardState.filter.circles = [...set];
+        renderBoard(boardState.data);
+      });
+      circleWrap.append(chip);
+    }
   }
 }
 // На телефоне колонки — по одной на экран: сверху сегмент подписей, точка
@@ -5059,8 +5726,18 @@ function renderBoard(source) {
   const data = boardFilteredData(source);
   wrap.classList.toggle("list", boardState.view === "list");
   wrap.classList.toggle("compact", Boolean(boardState.props.compact));
+  if (boardState.view === "waiting") {
+    wrap.classList.remove("list");
+    wrap.append(boardWaitingEl(source.waiting || []));
+    $("#board-segments").hidden = true;
+    return;
+  }
   if (boardState.view === "dates") {
     for (const bucket of boardDateBuckets(data)) wrap.append(boardDateColumnEl(bucket));
+  } else if (boardState.view === "circles") {
+    const groups = boardCircleGroups(data);
+    for (const group of groups) wrap.append(boardDateColumnEl(group));
+    if (!wrap.childNodes.length) wrap.append(node("p", "Открытых дел нет.", "empty"));
   } else if (boardState.view === "projects" || boardState.view === "tags") {
     const groups = boardState.view === "projects" ? boardProjectGroups(data) : boardTagGroups(data);
     for (const group of groups) wrap.append(boardDateColumnEl(group));
@@ -5120,7 +5797,7 @@ setBoardView(boardState.view);
       if (boardState.data) renderBoard(boardState.data);
     });
   $("#board-filter-reset").addEventListener("click", () => {
-    boardState.filter = { type: "all", projects: [] };
+    boardState.filter = { type: "all", projects: [], circles: [] };
     $("#board-filter").removeAttribute("open");
     if (boardState.data) renderBoard(boardState.data);
   });
@@ -5269,6 +5946,9 @@ function calEndOf(item) {
 // чужих событий.
 function calOwnVisible(item) {
   if (calState.hidden.has(`kind:${item.kind}`)) return false;
+  const circle = calState.data?.circleMarks?.[item.id] || todayState.circleMarks?.[item.id] || null;
+  if (circle && calState.hidden.has(`circle:${circle.id}`)) return false;
+  if (circle && (todayState.circles || []).some((item2) => item2.id === circle.id && item2.muted)) return false;
   const query = calState.search.trim().toLowerCase();
   if (query && !item.title.toLowerCase().includes(query) && !item.tags.some((tag) => tag.toLowerCase().includes(query)) && !item.projects.some((project) => project.toLowerCase().includes(query))) return false;
   return true;
@@ -5328,6 +6008,11 @@ function calSourcesEl() {
     if (account.disabled) continue;
     wrap.append(chip(`account:${account.id}`, account.label, account.color || "var(--n-72)", account.syncError ? "ошибка" : account.mode === "busy" ? "занято" : null));
   }
+  // Круги встают в ту же полосу: нажатие вычёркивает круг из недели, как
+  // вычёркивает чужой календарь. Это взгляд, а не решение — выключают круг
+  // на его странице.
+  for (const circle of todayState.circles || [])
+    wrap.append(chip(`circle:${circle.id}`, circle.name, `var(--circle-${CIRCLE_TONES[circle.color] || "violet"})`, circle.muted ? "выключен" : null));
   return wrap;
 }
 function calToolbarEl() {

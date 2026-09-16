@@ -47,7 +47,7 @@ test('versioned export includes lifecycle provenance without operational process
   const queued=(await api.post('/api/captures').set('Prefer','respond-async').send({raw:'Отменённая локальная запись'}).expect(202)).body;
   await api.post(`/api/jobs/${queued.jobId}/cancel`).expect(202);
   const exported=(await api.get('/api/export').expect(200)).body;
-  assert.equal(exported.schemaVersion,2); assert.equal(exported.dataClassification,'local-personal-data');
+  assert.equal(exported.schemaVersion,3); assert.equal(exported.dataClassification,'local-personal-data');
   for(const section of ['captures','interpretations','corrections','projections','captureJobs','captureJobEvents','ledgerEvents','dailyBriefs','dailyBriefSources'])assert.ok(Array.isArray(exported[section]),section);
   assert.ok(exported.captureJobs.some(job=>job.id===queued.jobId&&job.state==='cancelled'));
   assert.ok(exported.ledgerEvents.some(event=>event.capture_id===created.id&&event.projection_id));

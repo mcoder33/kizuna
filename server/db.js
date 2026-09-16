@@ -430,6 +430,9 @@ function migrateUsers(db) {
   const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map(column => column.name));
   if (!userColumns.has('voice_limit_minutes')) db.exec('ALTER TABLE users ADD COLUMN voice_limit_minutes REAL');
   if (!userColumns.has('monthly_limit_usd')) db.exec('ALTER TABLE users ADD COLUMN monthly_limit_usd REAL');
+  // Имя человека понадобилось кругам: «просит Аня» читается, «просит
+  // anna@example.com» — нет. Пустое имя значит «зовите по началу адреса».
+  if (!userColumns.has('display_name')) db.exec('ALTER TABLE users ADD COLUMN display_name TEXT');
   const captureColumns = new Set(db.prepare('PRAGMA table_info(captures)').all().map(column => column.name));
   if (!captureColumns.has('user_id')) db.exec('ALTER TABLE captures ADD COLUMN user_id TEXT REFERENCES users(id)');
   db.exec('CREATE INDEX IF NOT EXISTS captures_user ON captures(user_id, created_at)');
@@ -441,6 +444,46 @@ function migrateUsers(db) {
   // Ограничения переписываются копией таблицы: ALTER TABLE их не меняет.
   const briefColumns = new Set(db.prepare('PRAGMA table_info(daily_briefs)').all().map(column => column.name));
   if (!briefColumns.has('user_id')) migrateDailyBriefsPerUser(db);
+  migrateCircles(db);
+}
+// Круги: общая полка поверх личных журналов. Запись остаётся у автора, в круг
+// её кладёт отдельная строка `capture_circles` — так «убрать из круга» не
+// значит «переписать чужую память», а видимость считается по кругу, а не по
+// флагу на самой записи.
+function migrateCircles(db) {
+  db.exec(`CREATE TABLE IF NOT EXISTS circles (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, color TEXT NOT NULL DEFAULT 'violet',
+      created_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL, deleted_at TEXT);
+    CREATE TABLE IF NOT EXISTS circle_members (
+      circle_id TEXT NOT NULL REFERENCES circles(id), user_id TEXT NOT NULL REFERENCES users(id),
+      role TEXT NOT NULL CHECK(role IN ('owner','member')), joined_at TEXT NOT NULL,
+      muted_at TEXT, left_at TEXT, PRIMARY KEY(circle_id, user_id));
+    CREATE INDEX IF NOT EXISTS circle_members_user ON circle_members(user_id, left_at);
+    CREATE TABLE IF NOT EXISTS circle_invites (
+      id TEXT PRIMARY KEY, circle_id TEXT NOT NULL REFERENCES circles(id), token_hash TEXT NOT NULL UNIQUE,
+      created_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+      used_at TEXT, used_by TEXT REFERENCES users(id), revoked_at TEXT);
+    CREATE TABLE IF NOT EXISTS capture_circles (
+      capture_id TEXT NOT NULL REFERENCES captures(id), circle_id TEXT NOT NULL REFERENCES circles(id),
+      shared_by TEXT NOT NULL REFERENCES users(id), shared_at TEXT NOT NULL, removed_at TEXT,
+      PRIMARY KEY(capture_id, circle_id));
+    CREATE INDEX IF NOT EXISTS capture_circles_circle ON capture_circles(circle_id, removed_at);
+    CREATE TABLE IF NOT EXISTS assignments (
+      id TEXT PRIMARY KEY, capture_id TEXT NOT NULL REFERENCES captures(id), circle_id TEXT REFERENCES circles(id),
+      assignee_id TEXT NOT NULL REFERENCES users(id), assigner_id TEXT NOT NULL REFERENCES users(id),
+      state TEXT NOT NULL CHECK(state IN ('pending','accepted','declined','done')),
+      reason TEXT, created_at TEXT NOT NULL, responded_at TEXT, done_at TEXT, cancelled_at TEXT);
+    CREATE INDEX IF NOT EXISTS assignments_assignee ON assignments(assignee_id, state, cancelled_at);
+    CREATE INDEX IF NOT EXISTS assignments_assigner ON assignments(assigner_id, cancelled_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS assignments_open_capture ON assignments(capture_id) WHERE cancelled_at IS NULL;
+    CREATE TABLE IF NOT EXISTS comments (
+      id TEXT PRIMARY KEY, capture_id TEXT NOT NULL REFERENCES captures(id), author_id TEXT NOT NULL REFERENCES users(id),
+      body TEXT NOT NULL, parent_id TEXT REFERENCES comments(id), created_at TEXT NOT NULL, deleted_at TEXT);
+    CREATE INDEX IF NOT EXISTS comments_capture ON comments(capture_id, created_at);
+    CREATE TABLE IF NOT EXISTS comment_mentions (
+      comment_id TEXT NOT NULL REFERENCES comments(id), user_id TEXT NOT NULL REFERENCES users(id),
+      created_at TEXT NOT NULL, seen_at TEXT, PRIMARY KEY(comment_id, user_id));
+    CREATE INDEX IF NOT EXISTS comment_mentions_user ON comment_mentions(user_id, seen_at);`);
 }
 function migrateDailyBriefsPerUser(db) {
   db.pragma('foreign_keys = OFF');
@@ -1096,7 +1139,7 @@ function stemMatch(token, rawTokens) {
 }
 export function search(db, query, userId=null) { const normalizedQuery=normalizeMemoryText(query),tokens=meaningfulTokens(normalizedQuery); const rows=db.prepare('SELECT id,raw,created_at FROM captures WHERE deleted_at IS NULL AND user_id IS ? ORDER BY created_at DESC LIMIT ?').all(userId,500); const results=[]; for(const row of rows){const normalizedRaw=normalizeMemoryText(row.raw),rawTokens=new Set(normalizedRaw.split(' '));const matched=tokens.filter(token=>rawTokens.has(token));const stemmed=tokens.filter(token=>!rawTokens.has(token)&&stemMatch(token,rawTokens));const exact=Boolean(normalizedQuery&&normalizedRaw.includes(normalizedQuery));if(!matched.length&&!stemmed.length&&!exact)continue;const score=(exact?10000:0)+matched.length*100+stemmed.length*40+(tokens.length?(matched.length+stemmed.length*0.5)/tokens.length:0)*10;results.push({captureId:row.id,snippet:row.raw.slice(0,500),createdAt:row.created_at,score})}return results.sort((left,right)=>right.score-left.score||right.createdAt.localeCompare(left.createdAt)).slice(0,12).map(({score,...result})=>result); }
 const EXPORT_ROW_LIMIT = 10_000;
-const exportTables = ['captures','interpretations','corrections','projections','capture_jobs','capture_job_events','ledger_events','daily_briefs','daily_brief_sources'];
+const exportTables = ['captures','interpretations','corrections','projections','capture_jobs','capture_job_events','ledger_events','daily_briefs','daily_brief_sources','comments','assignments'];
 // Экспорт и очистка — только про свой журнал: чужие записи не выгружаются и
 // не стираются, даже если очистку запускает администратор.
 const MINE = 'capture_id IN (SELECT id FROM captures WHERE user_id IS ?)';
@@ -1122,6 +1165,14 @@ const ownedRows = {
   // Личная память — вывод из журнала; полный сброс уносит и её. Общая память
   // остаётся: она не про этого человека.
   agent_memories: ['user_id IS ?', 1],
+  // Круги. «Своё» здесь — то, что висит на своих записях: связь с кругом,
+  // просьба и разговор вокруг записи. Сами круги и своё участие в них очистка
+  // не трогает — это отношения с людьми, а не журнал; чужие слова в чужих
+  // записях тоже остаются, как и при удалении одной записи.
+  capture_circles: [MINE, 1],
+  assignments: [MINE, 1],
+  comments: [MINE, 1],
+  comment_mentions: ['comment_id IN (SELECT id FROM comments WHERE ' + MINE + ')', 1],
 };
 const mineWhere = table => 'WHERE ' + ownedRows[table][0];
 function exportRowCount(db, userId) { return exportTables.reduce((total, table) => total + db.prepare(`SELECT COUNT(*) AS count FROM ${table} ${mineWhere(table)}`).get(userId).count, 0); }
@@ -1130,7 +1181,7 @@ export function exportLedger(db, userId = null) {
   if (rowCount > EXPORT_ROW_LIMIT) return { limitExceeded:true, rowCount, rowLimit:EXPORT_ROW_LIMIT };
   const mine = (table, columns, order) => db.prepare(`SELECT ${columns} FROM ${table} ${mineWhere(table)} ORDER BY ${order}`).all(userId);
   return {
-    schemaVersion:2,
+    schemaVersion:3,
     exportedAt:now(),
     dataClassification:'local-personal-data',
     rowLimit:EXPORT_ROW_LIMIT,
@@ -1143,7 +1194,12 @@ export function exportLedger(db, userId = null) {
     captureJobEvents:mine('capture_job_events','id,job_id,event_type,created_at','created_at,id'),
     ledgerEvents:mine('ledger_events','*','created_at,id'),
     dailyBriefs:mine('daily_briefs','*','brief_date,time_zone,revision'),
-    dailyBriefSources:mine('daily_brief_sources','*','daily_brief_id,created_at,id')
+    dailyBriefSources:mine('daily_brief_sources','*','daily_brief_id,created_at,id'),
+    // Общее на своих записях: в какой круг отдана, кому поставлено дело и что
+    // об этом говорили. Без этого выгрузка обрывалась бы на полуслове.
+    captureCircles:mine('capture_circles','*','shared_at,capture_id'),
+    assignments:mine('assignments','*','created_at,id'),
+    comments:mine('comments','*','created_at,id')
   };
 }
 export function resetLedger(db, userId = null) {
@@ -1151,7 +1207,7 @@ export function resetLedger(db, userId = null) {
     db.exec('DROP TRIGGER IF EXISTS ledger_events_no_update; DROP TRIGGER IF EXISTS ledger_events_no_delete;');
     try {
       // Порядок важен: сначала то, что ссылается, потом то, на что ссылаются.
-      for (const table of ['agent_memories','activity_events','reminder_sends','daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','interpretations','capture_attachments','capture_notes','usage_events','board_placements','board_columns','calendar_links','calendar_events','calendar_accounts','captures']) db.prepare(`DELETE FROM ${table} ${mineWhere(table)}`).run(userId);
+      for (const table of ['agent_memories','activity_events','reminder_sends','daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','comment_mentions','comments','assignments','capture_circles','interpretations','capture_attachments','capture_notes','usage_events','board_placements','board_columns','calendar_links','calendar_events','calendar_accounts','captures']) db.prepare(`DELETE FROM ${table} ${mineWhere(table)}`).run(userId);
     } finally { createLedgerEventGuards(db); }
   });
 }

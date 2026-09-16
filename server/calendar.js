@@ -254,15 +254,19 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     for (const row of db.prepare("SELECT projection_id, event_type FROM ledger_events WHERE projection_id IS NOT NULL AND event_type IN ('completed','completion_undone') ORDER BY rowid").iterate()) map.set(row.projection_id, row.event_type === 'completed');
     return map;
   }
-  function ownItems({ userId, from, to, today }) {
+  // Взятое чужое дело стоит в сетке рядом со своими: у человека один день, а
+  // не два. Запись при этом живёт у автора — сюда приходит её идентификатор.
+  function ownItems({ userId, from, to, today, borrowed = [] }) {
+    const mine = borrowed.length ? `(c.user_id IS ? OR c.id IN (${borrowed.map(() => '?').join(',')}))` : 'c.user_id IS ?';
+    const who = [userId, ...borrowed];
     const rows = db.prepare(`SELECT c.id, c.raw, c.created_at, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active'
-      WHERE c.deleted_at IS NULL AND c.user_id IS ? AND json_extract(i.classification_json,'$.primaryType') IN ('task','meeting_event')
+      WHERE c.deleted_at IS NULL AND ${mine} AND json_extract(i.classification_json,'$.primaryType') IN ('task','meeting_event')
         AND json_extract(i.classification_json,'$.completed') IS NOT 1
         AND json_extract(i.classification_json,'$.entities.schedule.date') IS NOT NULL
         AND (json_extract(i.classification_json,'$.entities.schedule.date') BETWEEN ? AND ? OR json_extract(i.classification_json,'$.entities.schedule.date') < ? OR json_extract(i.classification_json,'$.entities.schedule.repeat') IS NOT NULL)
-      ORDER BY json_extract(i.classification_json,'$.entities.schedule.date'), json_extract(i.classification_json,'$.entities.schedule.time') IS NULL, json_extract(i.classification_json,'$.entities.schedule.time'), c.created_at LIMIT 800`).all(userId, from, to, today);
+      ORDER BY json_extract(i.classification_json,'$.entities.schedule.date'), json_extract(i.classification_json,'$.entities.schedule.time') IS NULL, json_extract(i.classification_json,'$.entities.schedule.time'), c.created_at LIMIT 800`).all(...who, from, to, today);
     const projections = new Map();
-    for (const row of db.prepare(`SELECT p.id, p.capture_id FROM projections p JOIN captures c ON c.id=p.capture_id WHERE p.status='active' AND c.deleted_at IS NULL AND c.user_id IS ? AND p.projection_type IN ('task','meeting_event')`).all(userId)) {
+    for (const row of db.prepare(`SELECT p.id, p.capture_id FROM projections p JOIN captures c ON c.id=p.capture_id WHERE p.status='active' AND c.deleted_at IS NULL AND ${mine} AND p.projection_type IN ('task','meeting_event')`).all(...who)) {
       if (!projections.has(row.capture_id)) projections.set(row.capture_id, []);
       projections.get(row.capture_id).push(row.id);
     }
@@ -348,12 +352,12 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     }
     return out;
   }
-  function view({ userId, from, to }) {
+  function view({ userId, from, to, borrowed = [] }) {
     if (!validDate(from) || !validDate(to) || from > to) return { error: 'invalid_range' };
     const spanDays = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
     if (spanDays > RANGE_LIMIT_DAYS) return { error: 'range_too_wide' };
     const today = dateInZone(now(), timeZone());
-    const own = ownItems({ userId, from, to, today });
+    const own = ownItems({ userId, from, to, today, borrowed });
     return {
       from, to, today, timeZone: timeZone(),
       defaults: { meetingMinutes: DEFAULT_MEETING_MINUTES, taskMinutes: DEFAULT_TASK_MINUTES },

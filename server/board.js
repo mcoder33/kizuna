@@ -28,12 +28,17 @@ export const CLOSED_LIMIT = 50;
 // Дела пользователя: записи с активной завершаемой проекцией. Открытые — не все
 // проекции закрыты; закрытые — все закрыты чекбоксом. Отчётная работа
 // (completed в классификации) — не дело, а дневник, её нет ни там, ни там.
-function deedCards(db, userId, timeZone, now = new Date()) {
-  const rows = db.prepare(`SELECT c.id, c.created_at, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND c.user_id IS ? ORDER BY c.created_at`).all(userId);
-  const projections = db.prepare(`SELECT p.id, p.capture_id, p.projection_type FROM projections p JOIN captures c ON c.id=p.capture_id WHERE p.status='active' AND c.deleted_at IS NULL AND c.user_id IS ? AND p.projection_type IN ('task','meeting_event')`).all(userId);
+// Взятое чужое дело живёт на доске рядом со своими: человек взял его на себя,
+// и спрашивать «чьё оно» каждый раз, глядя на список, незачем. Сама запись
+// при этом остаётся у автора — сюда приходит только её идентификатор.
+function deedCards(db, userId, timeZone, now = new Date(), borrowed = []) {
+  const mine = borrowed.length ? `(c.user_id IS ? OR c.id IN (${borrowed.map(() => '?').join(',')}))` : 'c.user_id IS ?';
+  const who = [userId, ...borrowed];
+  const rows = db.prepare(`SELECT c.id, c.created_at, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND ${mine} ORDER BY c.created_at`).all(...who);
+  const projections = db.prepare(`SELECT p.id, p.capture_id, p.projection_type FROM projections p JOIN captures c ON c.id=p.capture_id WHERE p.status='active' AND c.deleted_at IS NULL AND ${mine} AND p.projection_type IN ('task','meeting_event')`).all(...who);
   const completion = completionEvents(db);
   // Скрепка на карточке: сколько живых вложений у записи.
-  const attachments = new Map(db.prepare(`SELECT a.capture_id, COUNT(*) n FROM capture_attachments a JOIN captures c ON c.id=a.capture_id WHERE a.deleted_at IS NULL AND c.user_id IS ? GROUP BY a.capture_id`).all(userId).map(row => [row.capture_id, row.n]));
+  const attachments = new Map(db.prepare(`SELECT a.capture_id, COUNT(*) n FROM capture_attachments a JOIN captures c ON c.id=a.capture_id WHERE a.deleted_at IS NULL AND ${mine} GROUP BY a.capture_id`).all(...who).map(row => [row.capture_id, row.n]));
   const byCapture = new Map();
   for (const projection of projections) {
     if (!byCapture.has(projection.capture_id)) byCapture.set(projection.capture_id, []);
@@ -92,13 +97,13 @@ function sortBucket(bucket, today) {
   return bucket.map(item => item.card);
 }
 
-export function boardView(db, { userId, timeZone = 'Europe/Samara', now: at = new Date() } = {}) {
+export function boardView(db, { userId, timeZone = 'Europe/Samara', now: at = new Date(), borrowed = [] } = {}) {
   const today = dateInZone(at, timeZone);
   const columns = db.prepare('SELECT id, name, position, color FROM board_columns WHERE user_id IS ? ORDER BY position, created_at').all(userId);
   const placements = new Map(db.prepare('SELECT capture_id, column_id, position FROM board_placements WHERE user_id IS ?').all(userId).map(row => [row.capture_id, row]));
   const known = new Set(columns.map(column => column.id));
   const buckets = new Map([[null, []], ...columns.map(column => [column.id, []])]);
-  const { open, closed } = deedCards(db, userId, timeZone, at);
+  const { open, closed } = deedCards(db, userId, timeZone, at, borrowed);
   for (const card of open) {
     const placement = placements.get(card.captureId);
     const columnId = placement && placement.column_id !== null && known.has(placement.column_id) ? placement.column_id : null;

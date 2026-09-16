@@ -1,0 +1,181 @@
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import { createApp } from '../server/index.js';import { fakeModelService } from './helpers/fake-model.js';import { authed } from './helpers/auth.js';
+
+function freshApp(){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pagent-circles-'));return createApp({aiService:fakeModelService(),databasePath:path.join(dir,'test.sqlite')})}
+// Два человека в одном приложении: у каждого своя кука, свой журнал и свой день.
+async function pair(){
+  const app=freshApp();
+  const sasha=authed(app,{email:'sasha@kizuna.test',role:'admin'});
+  const anya=authed(app,{email:'anya@kizuna.test',role:'user'});
+  await sasha.patch('/api/account').send({name:'Саша'}).expect(200);
+  await anya.patch('/api/account').send({name:'Аня'}).expect(200);
+  const circle=(await sasha.post('/api/circles').send({name:'Хаб'}).expect(201)).body.circle;
+  const invite=(await sasha.post(`/api/circles/${circle.id}/invite`).send({}).expect(201)).body;
+  await anya.post(`/api/circles/invite/${invite.token}/accept`).send({}).expect(200);
+  return {app,sasha,anya,circle};
+}
+const ask=async(api,raw='Ане — прислать смету по Хабу')=>(await api.post('/api/captures').send({raw}).expect(201)).body.entry;
+
+test('круг: заводится, зовёт по ссылке, показывает людей',async()=>{
+  const {sasha,anya,circle}=await pair();
+  const mine=(await sasha.get('/api/circles').expect(200)).body.circles;
+  assert.deepEqual(mine.map(item=>item.name),['Хаб']);
+  assert.deepEqual(mine[0].members.map(member=>member.name).sort(),['Аня','Саша']);
+  assert.equal(mine[0].members.find(member=>member.name==='Саша').role,'owner');
+  // Приглашённый видит круг у себя, но хозяином не становится.
+  const hers=(await anya.get('/api/circles').expect(200)).body.circles;
+  assert.equal(hers[0].id,circle.id);
+  assert.equal(hers[0].role,'member');
+  // Использованное приглашение второй раз не работает.
+  const used=(await sasha.post(`/api/circles/${circle.id}/invite`).send({}).expect(201)).body;
+  await anya.post(`/api/circles/invite/${used.token}/accept`).send({}).expect(200);
+  await anya.post(`/api/circles/invite/${used.token}/accept`).send({}).expect(409);
+  // Последний хозяин не может уйти: круг не должен остаться без него.
+  await sasha.post(`/api/circles/${circle.id}/leave`).send({}).expect(409);
+  await anya.post(`/api/circles/${circle.id}/leave`).send({}).expect(200);
+});
+
+test('дело уходит фразой: у Ани просьба в «к вам», у Саши «ждёт ответа»',async()=>{
+  const {sasha,anya}=await pair();
+  const entry=await ask(sasha);
+  // У автора — честное «ждёт ответа», а не выдуманное «в работе».
+  const waiting=(await sasha.get('/api/inbox').expect(200)).body.waiting;
+  assert.equal(waiting.length,1);
+  assert.equal(waiting[0].state,'pending');
+  assert.equal(waiting[0].assignee.name,'Аня');
+  assert.equal(waiting[0].circle.name,'Хаб');
+  // У Ани — строка в полосе «к вам», и ни одной чужой записи в своём журнале.
+  const day=(await anya.get('/api/day').expect(200)).body;
+  assert.equal(day.inbox.length,1);
+  assert.equal(day.inbox[0].kind,'request');
+  assert.equal(day.inbox[0].from.name,'Саша');
+  assert.equal(day.inbox[0].captureId,entry.id);
+  assert.equal(day.borrowed.length,0,'до ответа дело в чужом дне не лежит');
+  const entries=(await anya.get('/api/entries?limit=100').expect(200)).body.entries;
+  assert.equal(entries.length,0,'чужая запись не попадает в журнал');
+});
+
+test('«беру» опускает дело в день, чекбокс закрывает просьбу',async()=>{
+  const {app,sasha,anya}=await pair();
+  const entry=await ask(sasha);
+  const assignmentId=(await anya.get('/api/inbox').expect(200)).body.rows[0].id;
+  await anya.post(`/api/assignments/${assignmentId}/respond`).send({take:true}).expect(200);
+  const day=(await anya.get('/api/day').expect(200)).body;
+  assert.equal(day.inbox.length,0,'просьба уходит из полосы, когда её взяли');
+  assert.deepEqual(day.borrowed.map(item=>item.id),[entry.id]);
+  assert.equal(day.borrowed[0].circle.name,'Хаб');
+  // Взятое дело стоит и на доске — рядом со своими.
+  const board=(await anya.get('/api/board').expect(200)).body;
+  assert.ok(board.columns[0].cards.some(card=>card.captureId===entry.id));
+  assert.equal((await sasha.get('/api/inbox').expect(200)).body.waiting[0].state,'accepted');
+  // Закрыть чужое дело может тот, кто его взял, — и только он.
+  const projectionId=day.borrowed[0].projections.find(projection=>projection.type==='task').id;
+  const outsider=authed(app,{email:'lesha@kizuna.test',role:'user'});
+  await outsider.post(`/api/projections/${projectionId}/complete`).send({}).expect(404);
+  await anya.post(`/api/projections/${projectionId}/complete`).send({}).expect(200);
+  assert.equal((await sasha.get('/api/inbox').expect(200)).body.waiting[0].state,'done');
+  // И возврат в работу возвращает просьбу в «взял».
+  await anya.post(`/api/projections/${projectionId}/undo-complete`).send({}).expect(200);
+  assert.equal((await sasha.get('/api/inbox').expect(200)).body.waiting[0].state,'accepted');
+});
+
+test('«не я» возвращает дело автору вместе с причиной',async()=>{
+  const {sasha,anya}=await pair();
+  await ask(sasha);
+  const assignmentId=(await anya.get('/api/inbox').expect(200)).body.rows[0].id;
+  await anya.post(`/api/assignments/${assignmentId}/respond`).send({take:false,reason:'это к Кате'}).expect(200);
+  await anya.post(`/api/assignments/${assignmentId}/respond`).send({take:true}).expect(409);
+  const waiting=(await sasha.get('/api/inbox').expect(200)).body.waiting[0];
+  assert.equal(waiting.state,'declined');
+  assert.equal(waiting.reason,'это к Кате');
+  assert.equal((await anya.get('/api/day').expect(200)).body.inbox.length,0);
+});
+
+test('граница круга: участник видит карточку, посторонний — нет, правит автор',async()=>{
+  const {app,sasha,anya}=await pair();
+  const entry=await ask(sasha);
+  const lesha=authed(app,{email:'lesha@kizuna.test',role:'user'});
+  await anya.get(`/api/captures/${entry.id}`).expect(200);
+  await lesha.get(`/api/captures/${entry.id}`).expect(404);
+  // Личная запись в круг не уходит: туда попадает только отданное.
+  const personal=(await sasha.post('/api/captures').send({raw:'Оплатить хостинг до пятницы'}).expect(201)).body.entry;
+  await anya.get(`/api/captures/${personal.id}`).expect(404);
+  // Правит запись только автор: исполнитель просит словами.
+  await anya.post(`/api/captures/${entry.id}/corrections`).send({patch:{primaryType:'note'}}).expect(404);
+  // Снятый исполнитель уносит запись из круга.
+  await sasha.post(`/api/captures/${entry.id}/assign`).send({assigneeId:null}).expect(200);
+  await anya.get(`/api/captures/${entry.id}`).expect(404);
+});
+
+test('обсуждение: призыв кладёт строку в ту же полосу, открытая карточка её гасит',async()=>{
+  const {sasha,anya}=await pair();
+  const entry=await ask(sasha);
+  await anya.post(`/api/captures/${entry.id}/comments`).send({body:'Половина готова. @Саша, цены от подрядчика были?'}).expect(201);
+  // Обычное сообщение не дёргает никого — строку порождает только призыв.
+  await anya.post(`/api/captures/${entry.id}/comments`).send({body:'Напишу подрядчику ещё раз'}).expect(201);
+  const inbox=(await sasha.get('/api/inbox').expect(200)).body.rows;
+  assert.deepEqual(inbox.map(row=>row.kind),['call']);
+  assert.equal(inbox[0].from.name,'Аня');
+  assert.equal(inbox[0].captureId,entry.id);
+  // Открыл карточку — значит прочитал.
+  const card=(await sasha.get(`/api/captures/${entry.id}`).expect(200)).body.entry;
+  assert.equal(card.comments.length,2);
+  assert.deepEqual(card.callable.map(person=>person.name),['Аня']);
+  assert.equal((await sasha.get('/api/inbox').expect(200)).body.rows.length,0);
+  // Призвать того, кого нет в круге, нечем: такого имени просто не найдут.
+  await sasha.post(`/api/captures/${entry.id}/comments`).send({body:'@Дима посмотри'}).expect(201);
+  assert.equal((await sasha.get(`/api/captures/${entry.id}`).expect(200)).body.entry.comments.at(-1).mentions.length,0);
+});
+
+test('выключенный круг уходит из списков, но просьбы сворачиваются, а не пропадают',async()=>{
+  const {sasha,anya,circle}=await pair();
+  const entry=await ask(sasha);
+  const assignmentId=(await anya.get('/api/inbox').expect(200)).body.rows[0].id;
+  await anya.post(`/api/assignments/${assignmentId}/respond`).send({take:true}).expect(200);
+  await sasha.post('/api/captures').send({raw:'Ане — проверить режимы в Хабе'}).expect(201);
+  await anya.post(`/api/circles/${circle.id}/mute`).send({muted:true}).expect(200);
+  const day=(await anya.get('/api/day').expect(200)).body;
+  assert.equal(day.inbox.length,0,'поштучно просьбы выключенного круга не показываются');
+  assert.equal(day.inboxFolded.length,1,'но одной свёрнутой строкой — да');
+  assert.equal(day.inboxFolded[0].count,1);
+  assert.equal(day.inboxFolded[0].circle.name,'Хаб');
+  assert.deepEqual(day.mutedCircles.map(item=>[item.name,item.deeds]),[['Хаб',2]]);
+  assert.equal(day.circles.find(item=>item.id===circle.id).muted,true);
+  // Выключение личное: у автора ничего не изменилось и он о нём не знает.
+  const waiting=(await sasha.get('/api/inbox').expect(200)).body.waiting;
+  assert.equal(waiting.length,2);
+  assert.ok(!JSON.stringify(waiting).includes('muted'));
+  await anya.post(`/api/circles/${circle.id}/mute`).send({muted:false}).expect(200);
+  assert.equal((await anya.get('/api/day').expect(200)).body.borrowed.length,1);
+  assert.equal(entry.id,(await anya.get('/api/day').expect(200)).body.borrowed[0].id);
+});
+
+test('исполнителя ставят руками, когда разбор не назвал никого',async()=>{
+  const {app,sasha,anya}=await pair();
+  const entry=(await sasha.post('/api/captures').send({raw:'Нужно собрать цифры по марту'}).expect(201)).body.entry;
+  assert.equal((await sasha.get('/api/inbox').expect(200)).body.waiting.length,0);
+  const lesha=authed(app,{email:'lesha@kizuna.test',role:'user'});
+  // Человека не из круга исполнителем не назначить.
+  await sasha.post(`/api/captures/${entry.id}/assign`).send({assigneeId:lesha.user.id}).expect(409);
+  await sasha.post(`/api/captures/${entry.id}/assign`).send({assigneeId:sasha.user.id}).expect(400);
+  const assigned=(await sasha.post(`/api/captures/${entry.id}/assign`).send({assigneeId:anya.user.id}).expect(200)).body;
+  assert.equal(assigned.assignment.assignee.name,'Аня');
+  assert.equal((await anya.get('/api/day').expect(200)).body.inbox.length,1);
+});
+
+test('очистка данных уносит разговор и просьбы со своих записей, а круг оставляет',async()=>{
+  const {sasha,anya,circle}=await pair();
+  const entry=await ask(sasha);
+  await anya.post(`/api/captures/${entry.id}/comments`).send({body:'Беру в работу, @Саша'}).expect(201);
+  const exported=(await sasha.get('/api/export').expect(200)).body;
+  assert.equal(exported.schemaVersion,3);
+  assert.equal(exported.assignments.length,1,'просьба со своей записи выгружается');
+  assert.equal(exported.comments.length,1,'и разговор вокруг неё тоже');
+  assert.equal(exported.captureCircles[0].circle_id,circle.id);
+  // Очистка журнала не спотыкается о просьбы и сообщения — и не уносит круг:
+  // это отношения с людьми, а не журнал.
+  await sasha.post('/api/reset').send({confirmation:'СБРОСИТЬ КИЗУНА'}).expect(200);
+  assert.equal((await sasha.get('/api/entries?limit=100').expect(200)).body.entries.length,0);
+  assert.equal((await sasha.get('/api/inbox').expect(200)).body.waiting.length,0);
+  assert.deepEqual((await sasha.get('/api/circles').expect(200)).body.circles.map(item=>item.name),['Хаб']);
+  assert.equal((await anya.get('/api/day').expect(200)).body.inbox.length,0,'просьба ушла вместе с записью');
+});

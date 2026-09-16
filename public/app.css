@@ -6557,3 +6557,169 @@ body {
   .memory-item { grid-template-columns: 1fr auto; }
   .memory-meta { grid-column: 1 / -1; }
 }
+
+/* ── круги: общее дело в личном журнале ─────────────────────────────────────
+   Цвет круга — метка, а не место: тихая точка в строке, а не второй интерфейс.
+   Все цвета берутся из общей шкалы, поэтому тёмная тема считается сама. */
+:root {
+  --circle-violet: var(--violet-54);
+  --circle-blue: var(--blue-54);
+  --circle-teal: var(--teal-51);
+  --circle-orange: var(--orange-56);
+  --circle-pink: var(--red-60);
+  --circle-red: var(--red-66);
+}
+.circle-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: none; background: var(--circle-violet); }
+.circle-dot.blue { background: var(--circle-blue); }
+.circle-dot.teal { background: var(--circle-teal); }
+.circle-dot.orange { background: var(--circle-orange); }
+.circle-dot.pink { background: var(--circle-pink); }
+.circle-dot.red { background: var(--circle-red); }
+.circle-dot.big { width: 10px; height: 10px; }
+.tag.circle {
+  background: var(--n-96); color: var(--muted);
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.tag.assign { background: var(--n-96); color: var(--muted); }
+.btag.circle-chip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 99px; padding: 2px 9px; background: var(--paper); cursor: pointer; font: inherit; font-size: 11.5px; }
+.btag.circle-chip[aria-pressed="true"] { background: var(--pink); color: var(--coral); border-color: transparent; font-weight: 600; }
+.ava {
+  width: 20px; height: 20px; border-radius: 50%; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 10.5px; font-weight: 700; font-style: normal; color: var(--n-100); background: var(--n-62);
+}
+.ava.big { width: 28px; height: 28px; font-size: 12px; }
+.ava.mini { width: 18px; height: 18px; font-size: 9.5px; }
+.mini {
+  appearance: none; border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+  border-radius: 8px; padding: 4px 10px; font: inherit; font-size: 12.5px; cursor: pointer;
+}
+.mini:hover { background: var(--n-96); }
+.mini.primary { background: var(--pink); color: var(--coral); border-color: transparent; font-weight: 600; }
+.mini:disabled { opacity: 0.5; cursor: default; }
+
+/* полоса «к вам»: просьбы и призывы одной лентой над списком дня */
+.day-group.inbox-group { color: var(--type-todo); }
+.inbox { border-radius: 14px; background: var(--tint-todo); padding: 4px; display: flex; flex-direction: column; gap: 4px; }
+.inbox-row { display: flex; align-items: flex-start; gap: 10px; background: var(--paper); border-radius: 11px; padding: 10px 12px; }
+.inbox-mark { flex: none; width: 17px; display: flex; justify-content: center; padding-top: 2px; }
+.inbox-circle { width: 15px; height: 15px; border-radius: 50%; border: 1.5px solid var(--n-81); display: block; }
+.inbox-bubble { width: 15px; height: 15px; display: block; background: var(--type-todo); opacity: 0.45; border-radius: 4px 4px 1px 4px; }
+.inbox-main { flex: 1; min-width: 0; }
+.inbox-title { display: block; text-align: left; background: none; border: 0; padding: 0; font: inherit; font-size: 14px; color: var(--ink); cursor: pointer; }
+.inbox-title.as-text { cursor: default; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.inbox-title:hover { text-decoration: underline; }
+.inbox-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 3px; font-size: 11.5px; color: var(--n-66); }
+.inbox-meta .tag { margin-right: 0; }
+.inbox-acts { display: flex; gap: 6px; flex: none; }
+.inbox-take, .inbox-not {
+  appearance: none; border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+  border-radius: 8px; padding: 4px 11px; font: inherit; font-size: 12.5px; cursor: pointer;
+}
+.inbox-take { background: var(--pink); color: var(--coral); border-color: transparent; font-weight: 600; }
+.inbox-take:disabled, .inbox-not:disabled { opacity: 0.5; cursor: default; }
+.inbox-row.muted { background: var(--n-98-4); }
+/* хвост дня: сколько на других и какие круги выключены */
+.day-more {
+  display: block; width: 100%; text-align: center; background: none; border: 0; cursor: pointer;
+  font: inherit; font-size: 12.5px; color: var(--muted); padding: 12px 0 2px;
+}
+.day-more:hover { color: var(--ink); }
+.day-more .strong { color: var(--ink); font-weight: 600; }
+.day-muted { display: flex; align-items: center; gap: 6px; justify-content: center; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); padding: 6px 0 0; }
+
+/* обсуждение в карточке — последним блоком после заметки */
+.card-thread { border-top: 1px solid var(--hairline); margin-top: 18px; padding-top: 14px; }
+.thread-list { display: flex; flex-direction: column; gap: 2px; margin-bottom: 10px; }
+.msg { display: flex; gap: 10px; padding: 8px 10px; border-radius: 10px; position: relative; }
+.msg:hover { background: var(--n-98-4); }
+.msg.reply { margin-left: 28px; }
+.msg-main { flex: 1; min-width: 0; }
+.msg-head { margin: 0 0 2px; font-size: 12.5px; }
+.msg-head b { font-weight: 600; }
+.msg-head span { color: var(--n-66); margin-left: 7px; }
+.msg-text { font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg-text .call { color: var(--type-todo); background: var(--tint-todo); border-radius: 4px; padding: 0 3px; font-weight: 600; }
+.msg-acts { position: absolute; right: 8px; top: 6px; display: none; }
+.msg:hover .msg-acts { display: flex; }
+.thread-composer { display: flex; gap: 8px; align-items: flex-end; position: relative; border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; }
+.thread-input { flex: 1; border: 0; background: none; font: inherit; font-size: 14px; color: var(--ink); resize: none; min-height: 22px; max-height: 200px; }
+.thread-input:focus { outline: none; }
+.mention-pop {
+  position: absolute; left: 10px; bottom: calc(100% + 6px); z-index: 5; width: 240px;
+  background: var(--paper); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 18px 42px var(--n-25-a8); padding: 5px;
+}
+.mention-cap { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--n-66); margin: 4px 8px; }
+.mention-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; border-radius: 8px; background: none; font: inherit; font-size: 13.5px; color: var(--ink); cursor: pointer; text-align: left; }
+.mention-row.on, .mention-row:hover { background: var(--n-96); }
+
+/* свойства карточки: круг и исполнитель */
+.circle-value { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.prop-ghost { color: var(--n-66); }
+.assign-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.assign-pick { max-width: 220px; }
+.assign-state { font-size: 12.5px; color: var(--muted); }
+.assign-declined { color: var(--red-50); }
+.card-foreign { font-size: 12.5px; color: var(--muted); background: var(--n-98-4); border-radius: 10px; padding: 8px 11px; margin: 0 0 10px; }
+
+/* «я жду»: что я отдал и что с этим стало */
+.board-waiting { padding: 4px 2px 20px; max-width: 860px; width: 100%; }
+.board-waiting-head { margin: 0 0 12px; font-size: 14px; color: var(--muted); }
+.board-waiting-head b { color: var(--ink); }
+.board-waiting-head .late { color: var(--red-50); }
+.board-waiting-hint { margin: 14px 0 0; font-size: 12px; color: var(--n-66); max-width: 68ch; }
+.wait-rows { display: flex; flex-direction: column; gap: 2px; }
+.wait-row { display: grid; grid-template-columns: 150px 1fr auto; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 10px; }
+.wait-row:hover { background: var(--n-98-4); }
+.wait-who { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+.wait-main { min-width: 0; }
+.wait-title { background: none; border: 0; padding: 0; font: inherit; font-size: 14px; color: var(--ink); cursor: pointer; text-align: left; }
+.wait-title:hover { text-decoration: underline; }
+.wait-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 3px; font-size: 11.5px; color: var(--n-66); }
+.wait-meta .late { color: var(--red-50); }
+.wait-reason { font-style: italic; }
+.wait-state { font-size: 12.5px; color: var(--muted); text-align: right; white-space: nowrap; }
+.wait-state.pending { color: var(--type-todo); }
+.wait-state.done { color: var(--green); }
+.wait-state.declined { color: var(--n-66); }
+
+/* страница круга: люди и граница */
+.circles-body { display: flex; flex-direction: column; gap: 14px; max-width: 720px; }
+.circles-lead { color: var(--muted); margin: 0; max-width: 68ch; }
+.circle-card { border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; background: var(--paper); }
+.circle-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.circle-name { margin: 0; font-size: 16px; display: flex; align-items: center; gap: 8px; flex: 1; }
+.circle-tools { display: flex; gap: 6px; flex-wrap: wrap; }
+.circle-invite { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+.circle-invite:empty { display: none; }
+.invite-link { flex: 1; min-width: 220px; border: 1px solid var(--line); border-radius: 9px; padding: 7px 10px; font-size: 12.5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); background: var(--wash); }
+.invite-hint { font-size: 11.5px; color: var(--n-66); }
+.circle-people { margin: 12px 0 4px; display: flex; flex-direction: column; gap: 2px; }
+.people-row { display: flex; align-items: center; gap: 11px; padding: 8px 6px; border-radius: 10px; }
+.people-row:hover { background: var(--n-98-4); }
+.people-who { flex: 1; min-width: 0; }
+.people-name { margin: 0; font-size: 14px; }
+.people-sub { margin: 2px 0 0; font-size: 12px; color: var(--n-66); }
+.people-role { font-size: 12px; color: var(--muted); }
+.switch-row { display: flex; align-items: flex-start; gap: 10px; border-top: 1px solid var(--hairline); margin-top: 10px; padding-top: 12px; cursor: pointer; }
+.switch-row input { margin-top: 3px; }
+.sw-text { font-size: 13.5px; }
+.sw-text small { display: block; color: var(--n-66); font-size: 12px; margin-top: 3px; }
+.circle-add { display: flex; gap: 8px; align-items: center; }
+.circle-add input { flex: 1; border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; font: inherit; font-size: 14px; background: var(--paper); color: var(--ink); }
+.circle-rules { border: 1px solid var(--line); border-radius: 16px; padding: 4px 18px 16px; }
+.circle-rules h4 { font-size: 13px; margin: 16px 0 8px; }
+.circle-rules ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13.5px; }
+.circle-rules li { margin: 6px 0; }
+.circle-rules li b { color: var(--ink); }
+.invite-card { border-color: var(--type-todo); }
+.invite-lead { font-size: 15px; margin: 10px 0 6px; }
+.invite-hint { color: var(--n-66); }
+
+@media (max-width: 640px) {
+  .wait-row { grid-template-columns: 1fr; gap: 4px; }
+  .wait-state { text-align: left; }
+  .inbox-row { flex-wrap: wrap; }
+  .inbox-acts { width: 100%; justify-content: flex-end; }
+}

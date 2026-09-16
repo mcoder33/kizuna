@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { claimCaptureJob, completeCaptureJob, failCaptureJob, releaseCaptureJob, renewCaptureJobLease, recordUsage } from './db.js';
+import { autoAssign } from './circles.js';
 import { applyUserOverrides } from './classifier.js';
 import { memoryPrompt } from './memory.js';
 
@@ -74,7 +75,12 @@ export class CaptureJobWorker {
       if (claim.overrides_json) {
         try { result.classification = applyUserOverrides(result.classification, JSON.parse(claim.overrides_json), this.now()); } catch {}
       }
-      if (completeCaptureJob(this.db, claim, result)) this.report({event:'capture_job_succeeded',jobId:claim.id,provider:claim.selected_provider,usedProvider:result.usedProvider||result.provider,fallbackReason:result.fallbackReason||null,durationMs:Date.now()-startedAt});
+      if (completeCaptureJob(this.db, claim, result)) {
+        // Просьба уходит человеку и тогда, когда разбор закончился в фоне:
+        // иначе «Ане — прислать смету» из очереди не дошло бы ни до кого.
+        try { autoAssign(this.db, { captureId:claim.capture_id, userId:claim.user_id ?? null, classification:result.classification }); } catch {}
+        this.report({event:'capture_job_succeeded',jobId:claim.id,provider:claim.selected_provider,usedProvider:result.usedProvider||result.provider,fallbackReason:result.fallbackReason||null,durationMs:Date.now()-startedAt});
+      }
     } catch (error) {
       if (controller.signal.aborted || this.stopping) return;
       const errorCode=safeErrorCodes.has(error?.code) ? error.code : 'unavailable';

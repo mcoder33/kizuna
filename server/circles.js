@@ -1,0 +1,533 @@
+// Круги: общее дело в личном журнале.
+//
+// Круг — не второй журнал, а общая полка. Запись остаётся у автора; в круг она
+// попадает только тогда, когда её туда отправили: назначили исполнителя из
+// круга, поставили проект круга или призвали участника в обсуждении. Всё
+// остальное остаётся личным — по умолчанию, без переключателей.
+//
+// Дело уходит человеку тем же одним полем: «Ане — прислать смету до пятницы».
+// Разбор и так достаёт участников, здесь только сверяется, есть ли такой
+// человек в круге. Просьба не падает в чужой день молча: она приходит полосой
+// «к вам», и человек отвечает «беру» или «не я». До ответа автор видит честное
+// «ждёт ответа», а не выдуманное «в работе».
+import crypto from 'node:crypto';
+
+const now = () => new Date().toISOString();
+const id = () => crypto.randomUUID();
+
+export const CIRCLE_NAME_LIMIT = 40;
+export const CIRCLE_COLORS = ['violet', 'blue', 'teal', 'orange', 'pink', 'red'];
+export const CIRCLES_LIMIT = 12;
+export const COMMENT_BODY_LIMIT = 4000;
+export const DECLINE_REASON_LIMIT = 300;
+export const INVITE_TTL_DAYS = 7;
+export const NAME_LIMIT = 60;
+
+// ── люди ──
+
+// Имени у учётной записи может не быть: до кругов оно было не нужно, хватало
+// почты. Тогда человека зовут по началу адреса — это лучше, чем пустое место
+// в строке «просит …».
+export function displayName(user) {
+  if (!user) return 'кто-то';
+  const name = (user.display_name || '').trim();
+  return name || String(user.email || '').split('@')[0] || 'кто-то';
+}
+export function publicUser(user) {
+  return { id: user.id, name: displayName(user), email: user.email, initial: displayName(user).slice(0, 1).toUpperCase() };
+}
+export function setDisplayName(db, userId, value) {
+  const name = String(value ?? '').trim().slice(0, NAME_LIMIT);
+  db.prepare('UPDATE users SET display_name=? WHERE id=?').run(name || null, userId);
+  return name || null;
+}
+
+// Падежи: «Ане» и «Аня» — один человек. Полной морфологии здесь нет и не
+// нужно; хватает того, что имена расходятся только хвостом. Совпадением
+// считается общее начало не короче, чем длина большего имени минус два: так
+// «аня»/«ане» сходятся, а «аня»/«антон» — нет.
+const normalizeName = value => String(value || '').normalize('NFKC').toLocaleLowerCase('ru-RU').replace(/ё/g, 'е').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+function sameName(left, right) {
+  const a = normalizeName(left), b = normalizeName(right);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  let common = 0;
+  while (common < a.length && common < b.length && a[common] === b[common]) common += 1;
+  return common >= Math.max(2, Math.max(a.length, b.length) - 2);
+}
+
+// ── круги ──
+
+const CIRCLE_FIELDS = 'c.id, c.name, c.color, c.created_by, c.created_at';
+function serializeCircle(row, extra = {}) {
+  return { id: row.id, name: row.name, color: row.color, createdBy: row.created_by, createdAt: row.created_at, ...extra };
+}
+
+export function circlesOf(db, userId) {
+  return db
+    .prepare(`SELECT ${CIRCLE_FIELDS}, m.role, m.muted_at FROM circles c JOIN circle_members m ON m.circle_id=c.id
+      WHERE m.user_id=? AND m.left_at IS NULL AND c.deleted_at IS NULL ORDER BY c.created_at`)
+    .all(userId)
+    .map(row => serializeCircle(row, { role: row.role, muted: Boolean(row.muted_at) }));
+}
+export function circleIdsOf(db, userId) {
+  return db.prepare('SELECT circle_id FROM circle_members WHERE user_id=? AND left_at IS NULL').all(userId).map(row => row.circle_id);
+}
+export function membership(db, circleId, userId) {
+  return db.prepare('SELECT * FROM circle_members WHERE circle_id=? AND user_id=? AND left_at IS NULL').get(circleId, userId) || null;
+}
+export function membersOf(db, circleId) {
+  return db
+    .prepare(`SELECT u.*, m.role, m.joined_at FROM circle_members m JOIN users u ON u.id=m.user_id
+      WHERE m.circle_id=? AND m.left_at IS NULL ORDER BY CASE m.role WHEN 'owner' THEN 0 ELSE 1 END, m.joined_at`)
+    .all(circleId)
+    .map(row => ({ ...publicUser(row), role: row.role, joinedAt: row.joined_at }));
+}
+
+export function createCircle(db, userId, name, color = 'violet') {
+  const clean = String(name ?? '').trim().slice(0, CIRCLE_NAME_LIMIT);
+  if (!clean) return { error: 'invalid_name' };
+  if (!CIRCLE_COLORS.includes(color)) return { error: 'invalid_color' };
+  if (circlesOf(db, userId).length >= CIRCLES_LIMIT) return { error: 'circles_limit' };
+  const circleId = id(), at = now();
+  db.prepare('INSERT INTO circles(id,name,color,created_by,created_at) VALUES(?,?,?,?,?)').run(circleId, clean, color, userId, at);
+  db.prepare("INSERT INTO circle_members(circle_id,user_id,role,joined_at) VALUES(?,?,'owner',?)").run(circleId, userId, at);
+  return { circle: circleDetail(db, circleId, userId) };
+}
+export function updateCircle(db, circleId, userId, { name, color }) {
+  const member = membership(db, circleId, userId);
+  if (!member) return { error: 'not_found' };
+  if (member.role !== 'owner') return { error: 'not_owner' };
+  if (name !== undefined) {
+    const clean = String(name ?? '').trim().slice(0, CIRCLE_NAME_LIMIT);
+    if (!clean) return { error: 'invalid_name' };
+    db.prepare('UPDATE circles SET name=? WHERE id=?').run(clean, circleId);
+  }
+  if (color !== undefined) {
+    if (!CIRCLE_COLORS.includes(color)) return { error: 'invalid_color' };
+    db.prepare('UPDATE circles SET color=? WHERE id=?').run(color, circleId);
+  }
+  return { circle: circleDetail(db, circleId, userId) };
+}
+
+// Выключение круга — личное и обратимое: круг вы не покидаете, дела остаются на
+// месте, остальные ничего не замечают. Из списков дела уходят, но просьбы
+// продолжают приходить свёрнутой строкой — тихо ронять чужие просьбы нельзя.
+export function setMuted(db, circleId, userId, muted) {
+  const member = membership(db, circleId, userId);
+  if (!member) return { error: 'not_found' };
+  db.prepare('UPDATE circle_members SET muted_at=? WHERE circle_id=? AND user_id=?').run(muted ? now() : null, circleId, userId);
+  return { circle: circleDetail(db, circleId, userId) };
+}
+export function mutedCircleIds(db, userId) {
+  return new Set(db.prepare('SELECT circle_id FROM circle_members WHERE user_id=? AND left_at IS NULL AND muted_at IS NOT NULL').all(userId).map(row => row.circle_id));
+}
+
+export function circleDetail(db, circleId, userId) {
+  const row = db.prepare(`SELECT ${CIRCLE_FIELDS}, m.role, m.muted_at FROM circles c JOIN circle_members m ON m.circle_id=c.id AND m.user_id=? AND m.left_at IS NULL
+    WHERE c.id=? AND c.deleted_at IS NULL`).get(userId, circleId);
+  if (!row) return null;
+  const open = db.prepare(`SELECT a.assignee_id, COUNT(*) AS n FROM assignments a WHERE a.circle_id=? AND a.state IN ('pending','accepted') GROUP BY a.assignee_id`).all(circleId);
+  const byUser = new Map(open.map(item => [item.assignee_id, item.n]));
+  return serializeCircle(row, {
+    role: row.role,
+    muted: Boolean(row.muted_at),
+    members: membersOf(db, circleId).map(member => ({ ...member, openDeeds: byUser.get(member.id) || 0 })),
+    captureCount: db.prepare('SELECT COUNT(*) AS n FROM capture_circles WHERE circle_id=? AND removed_at IS NULL').get(circleId).n,
+  });
+}
+
+// Покинуть круг может каждый, кроме последнего хозяина: круг не должен
+// остаться без того, кто зовёт людей. Дела, которые человек взял, остаются —
+// он их взял.
+export function leaveCircle(db, circleId, userId) {
+  const member = membership(db, circleId, userId);
+  if (!member) return { error: 'not_found' };
+  const owners = db.prepare("SELECT COUNT(*) AS n FROM circle_members WHERE circle_id=? AND left_at IS NULL AND role='owner'").get(circleId).n;
+  if (member.role === 'owner' && owners <= 1) return { error: 'last_owner' };
+  db.prepare('UPDATE circle_members SET left_at=? WHERE circle_id=? AND user_id=?').run(now(), circleId, userId);
+  return { left: true };
+}
+
+// ── приглашения ──
+
+const hashToken = token => crypto.createHash('sha256').update(String(token)).digest('hex');
+export function createInvite(db, circleId, userId) {
+  const member = membership(db, circleId, userId);
+  if (!member) return { error: 'not_found' };
+  const token = crypto.randomBytes(18).toString('base64url'), at = now();
+  const expires = new Date(Date.now() + INVITE_TTL_DAYS * 86400000).toISOString();
+  db.prepare('INSERT INTO circle_invites(id,circle_id,token_hash,created_by,created_at,expires_at) VALUES(?,?,?,?,?,?)').run(id(), circleId, hashToken(token), userId, at, expires);
+  return { token, expiresAt: expires };
+}
+// Приглашённый видит, кто зовёт и во что, ещё до согласия: иначе он нажимает
+// «войти» вслепую.
+export function peekInvite(db, token) {
+  const row = db.prepare(`SELECT i.*, c.name, c.color, c.deleted_at, u.email, u.display_name FROM circle_invites i
+    JOIN circles c ON c.id=i.circle_id JOIN users u ON u.id=i.created_by WHERE i.token_hash=?`).get(hashToken(token));
+  if (!row || row.deleted_at) return { error: 'invite_not_found' };
+  if (row.revoked_at || row.used_at) return { error: 'invite_used' };
+  if (row.expires_at < now()) return { error: 'invite_expired' };
+  return { circle: { id: row.circle_id, name: row.name, color: row.color }, invitedBy: displayName(row), members: membersOf(db, row.circle_id).length };
+}
+export function acceptInvite(db, token, userId) {
+  const peek = peekInvite(db, token);
+  if (peek.error) return peek;
+  const at = now();
+  const existing = db.prepare('SELECT * FROM circle_members WHERE circle_id=? AND user_id=?').get(peek.circle.id, userId);
+  // Приглашение тратится в любом случае — даже если человек уже внутри:
+  // иначе ссылка продолжала бы работать после того, как по ней прошли.
+  db.prepare('UPDATE circle_invites SET used_at=?, used_by=? WHERE token_hash=?').run(at, userId, hashToken(token));
+  if (existing && !existing.left_at) return { circle: circleDetail(db, peek.circle.id, userId), already: true };
+  if (existing) db.prepare('UPDATE circle_members SET left_at=NULL, joined_at=?, muted_at=NULL WHERE circle_id=? AND user_id=?').run(at, peek.circle.id, userId);
+  else db.prepare("INSERT INTO circle_members(circle_id,user_id,role,joined_at) VALUES(?,?,'member',?)").run(peek.circle.id, userId, at);
+  db.prepare('UPDATE circle_invites SET used_at=?, used_by=? WHERE token_hash=?').run(at, userId, hashToken(token));
+  return { circle: circleDetail(db, peek.circle.id, userId) };
+}
+
+// ── видимость записи ──
+
+export function circlesForCapture(db, captureId) {
+  return db
+    .prepare('SELECT c.id, c.name, c.color FROM capture_circles cc JOIN circles c ON c.id=cc.circle_id WHERE cc.capture_id=? AND cc.removed_at IS NULL AND c.deleted_at IS NULL')
+    .all(captureId)
+    .map(row => ({ id: row.id, name: row.name, color: row.color }));
+}
+// Метка круга для списков: одна на запись — та, в которую её отправили.
+export function circleMarksFor(db, userId) {
+  const marks = new Map();
+  for (const row of db
+    .prepare(`SELECT cc.capture_id, c.id, c.name, c.color FROM capture_circles cc JOIN circles c ON c.id=cc.circle_id
+      JOIN circle_members m ON m.circle_id=c.id AND m.user_id=? AND m.left_at IS NULL
+      WHERE cc.removed_at IS NULL AND c.deleted_at IS NULL ORDER BY cc.shared_at`)
+    .iterate(userId))
+    if (!marks.has(row.capture_id)) marks.set(row.capture_id, { id: row.id, name: row.name, color: row.color });
+  return marks;
+}
+export function shareCapture(db, captureId, circleId, userId) {
+  const at = now();
+  db.prepare(`INSERT INTO capture_circles(capture_id,circle_id,shared_by,shared_at) VALUES(?,?,?,?)
+    ON CONFLICT(capture_id,circle_id) DO UPDATE SET removed_at=NULL, shared_at=excluded.shared_at`).run(captureId, circleId, userId, at);
+}
+export function unshareCapture(db, captureId, circleId) {
+  db.prepare('UPDATE capture_circles SET removed_at=? WHERE capture_id=? AND circle_id=? AND removed_at IS NULL').run(now(), captureId, circleId);
+}
+// Запись видна своему автору всегда, а участнику круга — пока она в круге.
+// Ответ на чужое остаётся честным «не найдено»: существование чужой записи —
+// тоже не наше дело.
+export function canSeeCapture(db, captureId, userId) {
+  const capture = db.prepare('SELECT user_id FROM captures WHERE id=?').get(captureId);
+  if (!capture) return false;
+  if (capture.user_id === userId) return true;
+  return Boolean(db.prepare(`SELECT 1 FROM capture_circles cc JOIN circle_members m ON m.circle_id=cc.circle_id AND m.user_id=? AND m.left_at IS NULL
+    WHERE cc.capture_id=? AND cc.removed_at IS NULL`).get(userId, captureId));
+}
+
+// ── дела другим людям ──
+
+const ASSIGNMENT_OPEN = "('pending','accepted')";
+export function assignmentFor(db, captureId) {
+  const row = db.prepare('SELECT * FROM assignments WHERE capture_id=? AND cancelled_at IS NULL ORDER BY created_at DESC LIMIT 1').get(captureId);
+  return row ? serializeAssignment(db, row) : null;
+}
+function serializeAssignment(db, row) {
+  const assignee = db.prepare('SELECT * FROM users WHERE id=?').get(row.assignee_id);
+  const assigner = db.prepare('SELECT * FROM users WHERE id=?').get(row.assigner_id);
+  const circle = row.circle_id ? db.prepare('SELECT id,name,color FROM circles WHERE id=?').get(row.circle_id) : null;
+  return {
+    id: row.id,
+    captureId: row.capture_id,
+    // Название и срок — того дела, о котором просьба: без них список «я жду»
+    // говорил бы, кому отдали, но не что.
+    title: titleOf(db, row.capture_id, db.prepare('SELECT raw FROM captures WHERE id=?').get(row.capture_id)?.raw),
+    due: dueOf(db, row.capture_id),
+    state: row.state,
+    reason: row.reason,
+    createdAt: row.created_at,
+    respondedAt: row.responded_at,
+    doneAt: row.done_at,
+    assignee: assignee ? publicUser(assignee) : null,
+    assigner: assigner ? publicUser(assigner) : null,
+    circle: circle || null,
+  };
+}
+
+// Кого просят: имя из разбора сверяется с людьми моих кругов. Двух похожих
+// приложение не выбирает — угадывать, кому досталось дело, нельзя; в этом
+// случае исполнителя ставят руками в карточке.
+export function matchAssignee(db, userId, people) {
+  if (!Array.isArray(people) || !people.length) return null;
+  const candidates = db
+    .prepare(`SELECT u.id, u.email, u.display_name, m.circle_id FROM circle_members m JOIN users u ON u.id=m.user_id
+      JOIN circle_members mine ON mine.circle_id=m.circle_id AND mine.user_id=? AND mine.left_at IS NULL
+      WHERE m.left_at IS NULL AND m.user_id!=? AND u.status='active'`)
+    .all(userId, userId);
+  const found = [];
+  for (const person of people)
+    for (const candidate of candidates) {
+      if (!sameName(person, displayName(candidate)) && normalizeName(person) !== normalizeName(candidate.email)) continue;
+      if (!found.some(item => item.id === candidate.id)) found.push({ id: candidate.id, circleId: candidate.circle_id });
+    }
+  return found.length === 1 ? found[0] : null;
+}
+
+export function assign(db, { captureId, assigneeId, assignerId, circleId = null }) {
+  const capture = db.prepare('SELECT user_id FROM captures WHERE id=? AND deleted_at IS NULL').get(captureId);
+  if (!capture) return { error: 'not_found' };
+  if (capture.user_id !== assignerId) return { error: 'not_owner' };
+  if (assigneeId === assignerId) return { error: 'self_assign' };
+  const shared = new Set(circleIdsOf(db, assigneeId).filter(circle => circleIdsOf(db, assignerId).includes(circle)));
+  const circle = circleId && shared.has(circleId) ? circleId : [...shared][0];
+  if (!circle) return { error: 'not_in_circle' };
+  const at = now();
+  db.prepare('UPDATE assignments SET cancelled_at=? WHERE capture_id=? AND cancelled_at IS NULL').run(at, captureId);
+  const assignmentId = id();
+  db.prepare("INSERT INTO assignments(id,capture_id,circle_id,assignee_id,assigner_id,state,created_at) VALUES(?,?,?,?,?,'pending',?)").run(assignmentId, captureId, circle, assigneeId, assignerId, at);
+  shareCapture(db, captureId, circle, assignerId);
+  return { assignment: assignmentFor(db, captureId) };
+}
+export function unassign(db, captureId, userId) {
+  const capture = db.prepare('SELECT user_id FROM captures WHERE id=?').get(captureId);
+  if (!capture || capture.user_id !== userId) return { error: 'not_found' };
+  const current = db.prepare('SELECT * FROM assignments WHERE capture_id=? AND cancelled_at IS NULL').get(captureId);
+  if (!current) return { assignment: null };
+  db.prepare('UPDATE assignments SET cancelled_at=? WHERE id=?').run(now(), current.id);
+  if (current.circle_id) unshareCapture(db, captureId, current.circle_id);
+  return { assignment: null };
+}
+// «Беру» опускает дело в день исполнителя; «не я» возвращает его автору вместе
+// с причиной, если её написали.
+export function respond(db, assignmentId, userId, take, reason = null) {
+  const row = db.prepare('SELECT * FROM assignments WHERE id=? AND cancelled_at IS NULL').get(assignmentId);
+  if (!row || row.assignee_id !== userId) return { error: 'not_found' };
+  if (row.state !== 'pending') return { error: 'already_answered' };
+  const at = now();
+  db.prepare('UPDATE assignments SET state=?, responded_at=?, reason=? WHERE id=?')
+    .run(take ? 'accepted' : 'declined', at, take ? null : String(reason || '').trim().slice(0, DECLINE_REASON_LIMIT) || null, assignmentId);
+  return { assignment: assignmentFor(db, row.capture_id) };
+}
+// Закрытое дело закрывает и просьбу: автор узнаёт об этом в «Я жду», а в свой
+// журнал чужую работу не записывает — он её не делал.
+export function noteCompletion(db, captureId, completed) {
+  const row = db.prepare('SELECT * FROM assignments WHERE capture_id=? AND cancelled_at IS NULL').get(captureId);
+  if (!row) return;
+  if (completed && row.state === 'accepted') db.prepare("UPDATE assignments SET state='done', done_at=? WHERE id=?").run(now(), row.id);
+  if (!completed && row.state === 'done') db.prepare("UPDATE assignments SET state='accepted', done_at=NULL WHERE id=?").run(row.id);
+}
+
+// Дела, которые я отдал: четыре состояния и ни одного лишнего — ждёт ответа,
+// взял, сделано, вернул.
+export function waiting(db, userId) {
+  return db
+    .prepare(`SELECT a.* FROM assignments a JOIN captures c ON c.id=a.capture_id
+      WHERE a.assigner_id=? AND a.cancelled_at IS NULL AND c.deleted_at IS NULL ORDER BY a.created_at DESC`)
+    .all(userId)
+    .map(row => serializeAssignment(db, row));
+}
+export function assignmentsTo(db, userId, states = ['pending', 'accepted']) {
+  const marks = states.map(() => '?').join(',');
+  return db
+    .prepare(`SELECT a.* FROM assignments a JOIN captures c ON c.id=a.capture_id
+      WHERE a.assignee_id=? AND a.cancelled_at IS NULL AND c.deleted_at IS NULL AND a.state IN (${marks}) ORDER BY a.created_at`)
+    .all(userId, ...states)
+    .map(row => serializeAssignment(db, row));
+}
+
+// ── обсуждение и призыв ──
+
+export function comments(db, captureId) {
+  const rows = db
+    .prepare(`SELECT m.*, u.email, u.display_name FROM comments m JOIN users u ON u.id=m.author_id
+      WHERE m.capture_id=? AND m.deleted_at IS NULL ORDER BY m.created_at`)
+    .all(captureId);
+  const mentions = new Map();
+  for (const row of db
+    .prepare(`SELECT cm.comment_id, u.id, u.email, u.display_name FROM comment_mentions cm JOIN users u ON u.id=cm.user_id
+      JOIN comments c ON c.id=cm.comment_id WHERE c.capture_id=?`)
+    .iterate(captureId)) {
+    if (!mentions.has(row.comment_id)) mentions.set(row.comment_id, []);
+    mentions.get(row.comment_id).push(publicUser(row));
+  }
+  return rows.map(row => ({
+    id: row.id,
+    body: row.body,
+    createdAt: row.created_at,
+    parentId: row.parent_id,
+    author: publicUser(row),
+    mentions: mentions.get(row.id) || [],
+  }));
+}
+// Призвать можно только того, кто в круге этой записи: звать в пустоту и ждать
+// ответа — худшее, что может сделать интерфейс.
+export function callableFor(db, captureId, userId) {
+  const circles = circlesForCapture(db, captureId).map(circle => circle.id);
+  const seen = new Map();
+  for (const circleId of circles) for (const member of membersOf(db, circleId)) if (member.id !== userId) seen.set(member.id, member);
+  return [...seen.values()];
+}
+export function addComment(db, { captureId, authorId, body, parentId = null }) {
+  const text = String(body ?? '').trim();
+  if (!text || text.length > COMMENT_BODY_LIMIT) return { error: 'invalid_comment' };
+  if (parentId && !db.prepare('SELECT 1 FROM comments WHERE id=? AND capture_id=?').get(parentId, captureId)) return { error: 'not_found' };
+  const commentId = id(), at = now();
+  db.prepare('INSERT INTO comments(id,capture_id,author_id,body,parent_id,created_at) VALUES(?,?,?,?,?,?)').run(commentId, captureId, authorId, text, parentId, at);
+  const callable = [...callableFor(db, captureId, authorId), ...ownerAsCallable(db, captureId, authorId)];
+  const insert = db.prepare('INSERT OR IGNORE INTO comment_mentions(comment_id,user_id,created_at) VALUES(?,?,?)');
+  for (const name of text.match(/@[\p{L}\p{N}_.-]{2,40}/gu) || []) {
+    const target = callable.find(person => sameName(name.slice(1), person.name) || normalizeName(name.slice(1)) === normalizeName(person.email));
+    if (target) insert.run(commentId, target.id, at);
+  }
+  return { comment: comments(db, captureId).find(item => item.id === commentId) };
+}
+// Автор записи тоже призываем: он в разговоре главный, хотя в круге его может
+// и не быть — запись могли отдать в круг ради одного дела.
+function ownerAsCallable(db, captureId, authorId) {
+  const row = db.prepare('SELECT u.* FROM captures c JOIN users u ON u.id=c.user_id WHERE c.id=?').get(captureId);
+  return row && row.id !== authorId ? [publicUser(row)] : [];
+}
+export function unseenMentions(db, userId) {
+  return db
+    .prepare(`SELECT cm.comment_id, c.id AS capture_id, c.raw, m.body, m.created_at, u.email, u.display_name, m.author_id
+      FROM comment_mentions cm JOIN comments m ON m.id=cm.comment_id JOIN captures c ON c.id=m.capture_id JOIN users u ON u.id=m.author_id
+      WHERE cm.user_id=? AND cm.seen_at IS NULL AND m.deleted_at IS NULL AND c.deleted_at IS NULL ORDER BY m.created_at`)
+    .all(userId)
+    .map(row => ({
+      commentId: row.comment_id,
+      captureId: row.capture_id,
+      title: row.raw,
+      body: row.body,
+      createdAt: row.created_at,
+      author: publicUser(row),
+    }));
+}
+export function markMentionsSeen(db, captureId, userId) {
+  db.prepare(`UPDATE comment_mentions SET seen_at=? WHERE user_id=? AND seen_at IS NULL AND comment_id IN (SELECT id FROM comments WHERE capture_id=?)`).run(now(), userId, captureId);
+}
+export function commentCounts(db, captureIds) {
+  if (!captureIds.length) return new Map();
+  const marks = captureIds.map(() => '?').join(',');
+  return new Map(
+    db.prepare(`SELECT capture_id, COUNT(*) AS n FROM comments WHERE deleted_at IS NULL AND capture_id IN (${marks}) GROUP BY capture_id`).all(...captureIds).map(row => [row.capture_id, row.n]),
+  );
+}
+
+// ── полоса «к вам» ──
+
+// Одна входящая полоса на всё: просьбы и призывы вперемешку, потому что для
+// человека это одно и то же — кому-то от меня что-то нужно. Дела выключенных
+// кругов в неё не попадают поштучно: они собираются одной свёрнутой строкой,
+// и в этом разница между «спрятать» и «тихо потерять».
+export function inbox(db, userId) {
+  const muted = mutedCircleIds(db, userId);
+  const rows = [];
+  for (const assignment of assignmentsTo(db, userId, ['pending'])) {
+    const capture = db.prepare('SELECT raw FROM captures WHERE id=?').get(assignment.captureId);
+    rows.push({
+      kind: 'request',
+      id: assignment.id,
+      captureId: assignment.captureId,
+      title: titleOf(db, assignment.captureId, capture?.raw),
+      circle: assignment.circle,
+      from: assignment.assigner,
+      createdAt: assignment.createdAt,
+      due: dueOf(db, assignment.captureId),
+      muted: assignment.circle ? muted.has(assignment.circle.id) : false,
+    });
+  }
+  for (const mention of unseenMentions(db, userId)) {
+    const circle = circlesForCapture(db, mention.captureId)[0] || null;
+    rows.push({
+      kind: 'call',
+      id: mention.commentId,
+      captureId: mention.captureId,
+      title: titleOf(db, mention.captureId, mention.title),
+      body: mention.body,
+      circle,
+      from: mention.author,
+      createdAt: mention.createdAt,
+      muted: circle ? muted.has(circle.id) : false,
+    });
+  }
+  rows.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const visible = rows.filter(row => !row.muted);
+  const hidden = rows.filter(row => row.muted);
+  const folded = [];
+  for (const row of hidden) {
+    const existing = folded.find(item => item.circle?.id === row.circle?.id);
+    if (existing) { existing.count += 1; existing.lastAt = row.createdAt; existing.from = row.from; continue; }
+    folded.push({ kind: 'muted', circle: row.circle, count: 1, lastAt: row.createdAt, from: row.from });
+  }
+  return { rows: visible, folded };
+}
+function titleOf(db, captureId, fallback = '') {
+  const row = db.prepare("SELECT i.classification_json FROM interpretations i WHERE i.capture_id=? AND i.status='active'").get(captureId);
+  if (row) {
+    const classification = JSON.parse(row.classification_json);
+    if (classification.summary) return classification.summary;
+  }
+  return String(fallback || '').slice(0, 200);
+}
+function dueOf(db, captureId) {
+  const row = db.prepare("SELECT i.classification_json FROM interpretations i WHERE i.capture_id=? AND i.status='active'").get(captureId);
+  if (!row) return null;
+  const schedule = JSON.parse(row.classification_json).entities?.schedule;
+  return schedule?.date ? { date: schedule.date, time: schedule.time || null } : null;
+}
+
+// Что приложение говорит о круге в хвосте дня, когда круг выключен.
+export function mutedSummary(db, userId) {
+  const muted = [...mutedCircleIds(db, userId)];
+  if (!muted.length) return [];
+  const marks = muted.map(() => '?').join(',');
+  return db
+    .prepare(`SELECT c.id, c.name, c.color,
+        (SELECT COUNT(*) FROM assignments a WHERE a.circle_id=c.id AND a.assignee_id=? AND a.cancelled_at IS NULL AND a.state IN ('pending','accepted')) AS deeds
+      FROM circles c WHERE c.id IN (${marks}) AND c.deleted_at IS NULL`)
+    .all(userId, ...muted)
+    .map(row => ({ id: row.id, name: row.name, color: row.color, deeds: row.deeds }));
+}
+
+// Дело уходит человеку тем же одним полем. Приложение не изобретает намерение:
+// исполнителем становится тот участник круга, которого назвал сам разбор, и
+// только если он один — угадывать, кому досталось дело, нельзя.
+export function autoAssign(db, { captureId, userId, classification }) {
+  if (!classification || classification.primaryType !== 'task') return null;
+  if (db.prepare('SELECT 1 FROM assignments WHERE capture_id=? AND cancelled_at IS NULL').get(captureId)) return null;
+  const match = matchAssignee(db, userId, classification.entities?.people);
+  if (!match) return null;
+  return assign(db, { captureId, assigneeId: match.id, assignerId: userId, circleId: match.circleId }).assignment || null;
+}
+
+// Взятые дела — ссылки, а не копии: запись живёт у автора, а в чужом дне стоит
+// строка со ссылкой на неё. Поэтому «взял» ничего не переписывает в журналах и
+// «вернул» ничего оттуда не стирает.
+export function acceptedFor(db, userId) {
+  return db
+    .prepare(`SELECT a.id AS assignment_id, a.capture_id FROM assignments a JOIN captures c ON c.id=a.capture_id
+      WHERE a.assignee_id=? AND a.state IN ('accepted','done') AND a.cancelled_at IS NULL AND c.deleted_at IS NULL ORDER BY a.responded_at`)
+    .all(userId);
+}
+// Может ли человек закрыть чекбокс: своё — всегда, чужое — только то, что взял.
+export function canCompleteCapture(db, captureId, userId) {
+  const capture = db.prepare('SELECT user_id FROM captures WHERE id=?').get(captureId);
+  if (!capture) return false;
+  if (capture.user_id === userId) return true;
+  const row = db.prepare("SELECT 1 FROM assignments WHERE capture_id=? AND assignee_id=? AND state IN ('accepted','done') AND cancelled_at IS NULL").get(captureId, userId);
+  return Boolean(row);
+}
+
+// Распустить круг может хозяин: круг, который больше не нужен, иначе остаётся
+// висеть у всех навсегда. Записи при этом не трогаются — они и так живут у
+// авторов, — но из круга уходят, а неотвеченные просьбы снимаются: просить
+// больше некому.
+export function dissolveCircle(db, circleId, userId) {
+  const member = membership(db, circleId, userId);
+  if (!member) return { error: 'not_found' };
+  if (member.role !== 'owner') return { error: 'not_owner' };
+  const at = now();
+  db.prepare("UPDATE assignments SET cancelled_at=? WHERE circle_id=? AND cancelled_at IS NULL AND state IN ('pending','accepted')").run(at, circleId);
+  db.prepare('UPDATE capture_circles SET removed_at=? WHERE circle_id=? AND removed_at IS NULL').run(at, circleId);
+  db.prepare('UPDATE circle_members SET left_at=? WHERE circle_id=? AND left_at IS NULL').run(at, circleId);
+  db.prepare('UPDATE circles SET deleted_at=? WHERE id=?').run(at, circleId);
+  return { dissolved: true };
+}

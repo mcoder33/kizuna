@@ -26,6 +26,8 @@ export function publicUser(row) {
   if (!row) return null;
   return {
     id: row.id, email: row.email, role: row.role, status: row.status,
+    // Имя видят люди в круге; без имени человека зовут по началу адреса.
+    name: (row.display_name || '').trim() || String(row.email || '').split('@')[0],
     twoFactorEnabled: Boolean(row.totp_enabled),
     createdAt: row.created_at, approvedAt: row.approved_at, lastLoginAt: row.last_login_at,
     blockedAt: row.blocked_at, blockedReason: row.blocked_reason,

@@ -64,6 +64,10 @@ function people(text) {
   const normalizations = new Map([['илья','Илья'],['ильёй','Илья'],['даниилом','Даниил'],['худояровым','Худояров']]);
   const ignored = new Set(['в','во','на','по','после','для','от']);
   const found = [];
+  // «Ане — прислать смету»: кому дело, названо первым словом и тире. Модель
+  // достаёт такого человека сама, и разбор без него не узнал бы исполнителя.
+  const addressed = text.match(/^\s*([А-ЯЁ][а-яё-]{1,30})\s*[—–-]\s+/u);
+  if (addressed) found.push(addressed[1]);
   for (const match of text.matchAll(/(?:^|[\s,])(?:с|со|для|от)\s+([А-ЯЁ][а-яё-]{1,30}|[A-ZА-ЯЁ]{2,10})(?=$|[\s,.:;])/g)) {
     const candidate = match[1], lower = candidate.toLowerCase();
     if (ignored.has(lower)) continue;
@@ -94,7 +98,10 @@ export function fakeModelCandidate(raw, now = new Date(), timeZone = 'Europe/Sam
   const completed = completedState(text) === 'affirmative';
   const meeting = /созвон|встреч|колл|митинг|обсудим/i.test(text);
   const outcome = /решили|решение|готово|сделал|сделано|завершил|договорились/i.test(text);
-  const task = /(?:^|\s)(надо|нужно|сделать|проверить|отправить|подготовить|напомни)(?=$|\s|,|\.)/i.test(text);
+  // «Ане — прислать смету»: обращение к человеку и глагол в неопределённой
+  // форме — это дело, даже если слова «нужно» в записи нет.
+  const addressedTask = /^\s*[А-ЯЁ][а-яё-]{1,30}\s*[—–-]\s+\p{L}+(?:ть|ти|чь)(?=$|\s|,|\.)/u.test(text);
+  const task = addressedTask || /(?:^|\s)(надо|нужно|сделать|проверить|отправить|подготовить|напомни)(?=$|\s|,|\.)/i.test(text);
   const idea = /\?|идея|как (?:сделать|лучше)|что если/i.test(text);
   // Отчёт о сделанном — результат, а не заметка: тот же контракт, что в промпте.
   const primaryType = completed ? 'outcome_decision' : meeting ? 'meeting_event' : outcome ? 'outcome_decision' : task ? 'task' : idea ? 'idea_question' : 'note';
