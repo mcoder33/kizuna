@@ -227,6 +227,47 @@ test("в карточке записи «[[» подсказывает стра�
   await expect.poll(async () => (await (await request.get("/api/pages")).json()).pages.some((item) => item.title === "Планы на осень")).toBe(true);
 });
 
+// Значки как в Notion: эмодзи по типу, а свой выбирается нажатием на крупный
+// значок и живёт на сервере — у страницы и у проекта.
+test("значок страницы и проекта — эмодзи: по типу, свой выбирается нажатием и сохраняется", async ({ page, request }) => {
+  await reset(request);
+  const plan = await makePage(request, "План на спринт");
+  await request.post("/api/captures", { data: { raw: "Архитектура Hub на листке" } });
+  await page.goto(`/#notes?page=${plan.id}`);
+  const head = page.locator(".notes-head .notes-head-emo");
+  const row = page.locator(".notes-side .notes-row", { hasText: "План на спринт" });
+  await expect(head).toHaveText("📝");
+  await expect(row.locator(".notes-emo")).toHaveAttribute("data-emoji", "📝");
+  await expect(page.locator(".notes-side .notes-row", { hasText: "Входящие" }).locator(".notes-emo")).toHaveAttribute("data-emoji", "📥");
+
+  await head.click();
+  const picker = page.locator(".notes-emoji-picker");
+  await expect(picker.locator(".notes-emoji-cell.is-current")).toHaveText("📝");
+  await picker.getByRole("button", { name: "🚀" }).click();
+  await expect(picker).toHaveCount(0);
+  await expect(head).toHaveText("🚀");
+  await expect(row.locator(".notes-emo")).toHaveAttribute("data-emoji", "🚀");
+  await page.reload();
+  await expect(head).toHaveText("🚀");
+
+  // Свой эмодзи — вставкой, «По умолчанию» возвращает значок по типу.
+  await head.click();
+  await picker.locator(".notes-emoji-input").fill("🦊");
+  await picker.locator(".notes-emoji-input").press("Enter");
+  await expect(head).toHaveText("🦊");
+  await head.click();
+  await picker.getByRole("button", { name: "По умолчанию" }).click();
+  await expect(head).toHaveText("📝");
+
+  // У проекта — то же самое, и значок проекта виден в дереве.
+  await page.goto("/#notes?project=Hub");
+  await expect(head).toHaveText("📁");
+  await head.click();
+  await picker.getByRole("button", { name: "🧩" }).click();
+  await expect(page.locator(".notes-side .notes-row", { hasText: "Hub" }).locator(".notes-emo").first()).toHaveAttribute("data-emoji", "🧩");
+  await expect(head).toHaveText("🧩");
+});
+
 test("страницы в дереве перетаскиваются: внутрь, рядом, в корень и в проект", async ({ page, request }) => {
   await reset(request);
   const home = await makePage(request, "Кизуна");

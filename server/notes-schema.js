@@ -16,6 +16,9 @@
 //   parent_key — где этот порядок: 'root', 'project:<имя>', 'inbox' или id
 //   страницы. Переложили страницу — старая строка просто перестаёт
 //   участвовать: порядок читается по нынешнему месту.
+// - note_icons — эмодзи, выбранный человеком у страницы или проекта. node_key —
+//   id страницы или 'project:<имя>'. Строки нет — значок по типу: заметка,
+//   идея, проект.
 //
 // Модуль без зависимостей: его зовёт openDatabase, а логика страниц
 // (server/notes-tree.js) сама пользуется db.js — так не возникает цикла.
@@ -50,6 +53,13 @@ export function migrateNotesTree(db) {
       capture_id TEXT NOT NULL REFERENCES captures(id),
       position INTEGER NOT NULL,
       PRIMARY KEY(user_id, parent_key, capture_id)
+    );
+    CREATE TABLE IF NOT EXISTS note_icons (
+      user_id TEXT NOT NULL REFERENCES users(id),
+      node_key TEXT NOT NULL,
+      emoji TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(user_id, node_key)
     );`);
   db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(21, new Date().toISOString());
 }

@@ -9,6 +9,8 @@
 // - ссылки [[…]]. Собираются при каждом сохранении заметки; внизу страницы
 //   видно, кто на неё ссылается и кто упоминает её название без ссылки.
 // - базы — сохранённые виды списка страниц: фильтр, сортировка, раскладка.
+// - значок — эмодзи, выбранный человеком у страницы или проекта. Без выбора
+//   значок ставит клиент по типу, здесь хранится только сам выбор.
 //
 // Дела здесь не живут: дерево и базы показывают только заметки и идеи. Но
 // строку «- [ ] …» можно отправить на «Доску» — появится обычное дело, чья
@@ -172,6 +174,34 @@ function knownProjects(db, userId) {
     for (const name of parseJson(row.classification_json, {})?.entities?.projects || []) if (typeof name === 'string' && name.trim()) names.add(name.trim());
   }
   return [...names];
+}
+
+// ── значки ─────────────────────────────────────────────────────────────────
+// Значок — один эмодзи: с модификаторами кожи, флагами и склейками через ZWJ,
+// но без букв и слов. Ключ — id своей страницы или «project:<имя>» проекта,
+// который есть в журнале. Пустой эмодзи возвращает значок по типу.
+const ICON_CHARS = /^[\p{Extended_Pictographic}\p{Emoji_Component}\u200d\ufe0f\u20e3]{1,16}$/u;
+const ICON_SHAPE = /\p{Extended_Pictographic}|\p{Regional_Indicator}{2}|\u20e3/u;
+const graphemes = value => [...new Intl.Segmenter('ru', { granularity: 'grapheme' }).segment(value)].length;
+export function iconsOf(db, userId) {
+  return Object.fromEntries(db.prepare('SELECT node_key, emoji FROM note_icons WHERE user_id IS ?').all(userId).map(row => [row.node_key, row.emoji]));
+}
+export function setIcon(db, { userId, key, emoji }) {
+  if (typeof key !== 'string') return { error: 'not_found' };
+  if (key.startsWith('project:')) {
+    if (!knownProjects(db, userId).includes(key.slice(8))) return { error: 'not_found' };
+  } else if (!validId(key) || !db.prepare('SELECT 1 FROM captures WHERE id=? AND user_id IS ? AND deleted_at IS NULL').get(key, userId)) {
+    return { error: 'not_found' };
+  }
+  if (emoji === null || emoji === undefined || emoji === '') {
+    db.prepare('DELETE FROM note_icons WHERE user_id IS ? AND node_key=?').run(userId, key);
+    return { key, icon: null };
+  }
+  const value = typeof emoji === 'string' ? emoji.trim() : '';
+  if (!ICON_CHARS.test(value) || !ICON_SHAPE.test(value) || graphemes(value) !== 1) return { error: 'invalid_icon' };
+  db.prepare(`INSERT INTO note_icons(user_id, node_key, emoji, updated_at) VALUES(?,?,?,?)
+    ON CONFLICT(user_id, node_key) DO UPDATE SET emoji=excluded.emoji, updated_at=excluded.updated_at`).run(userId, key, value, now());
+  return { key, icon: value };
 }
 
 // ── ссылки ─────────────────────────────────────────────────────────────────
@@ -448,6 +478,7 @@ export function pagesOverview(db, userId) {
     projects: [...projects.entries()].map(([name, count]) => ({ name, count })).sort((left, right) => left.name.localeCompare(right.name, 'ru')),
     allProjects: knownProjects(db, userId).sort((left, right) => left.localeCompare(right, 'ru')),
     bases: listBases(db, userId),
+    icons: iconsOf(db, userId),
   };
 }
 
@@ -623,6 +654,7 @@ const ERRORS = {
   invalid_base_name: [400, `Название базы — от 1 до ${BASE_NAME_LIMIT} символов.`],
   bases_limit: [409, `Баз может быть не больше ${BASES_LIMIT}.`],
   base_not_found: [404, 'База не найдена.'],
+  invalid_icon: [400, 'Значок — один эмодзи.'],
 };
 function reply(res, result, status = 200) {
   if (result?.error) {
@@ -675,6 +707,11 @@ export function registerNotesRoutes(app, { db, notifyJournal = () => {}, queueCa
   app.post('/api/pages/bases', guard((req, res) => reply(res, createBase(db, { userId: req.user.id, name: req.body?.name, view: req.body?.view }), 201)));
   app.patch('/api/pages/bases/:id', guard((req, res) => reply(res, updateBase(db, { userId: req.user.id, baseId: req.params.id, name: req.body?.name, view: req.body?.view }))));
   app.delete('/api/pages/bases/:id', guard((req, res) => reply(res, deleteBase(db, { userId: req.user.id, baseId: req.params.id }))));
+  app.put('/api/pages/icons', guard((req, res) => {
+    const result = setIcon(db, { userId: req.user.id, key: req.body?.key, emoji: req.body?.emoji });
+    if (!result.error) notifyJournal('page');
+    reply(res, result);
+  }));
   app.get('/api/pages/:id', guard((req, res) => {
     const detail = pageDetail(db, req.user.id, req.params.id);
     if (!detail) return reply(res, { error: 'not_found' });

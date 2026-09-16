@@ -243,3 +243,27 @@ test('dragging sets the order next to each other and moves a page into a new pla
   await api.put(`/api/pages/${inner.id}/place`).send({ parent: first.id, order: 'не список' }).expect(400);
   await api.put(`/api/pages/${first.id}/place`).send({ parent: second.id, order: [first.id] }).expect(409);
 });
+
+test('a page and a project keep the emoji a person chose; an empty one brings the type icon back', async () => {
+  const instance = app();
+  const api = authed(instance);
+  const made = await page(api, 'Планы на осень');
+  await capture(api, 'Архитектура Hub на листке');
+  assert.deepEqual((await overview(api)).icons, {});
+
+  assert.deepEqual((await api.put('/api/pages/icons').send({ key: made.id, emoji: '🚀' }).expect(200)).body, { key: made.id, icon: '🚀' });
+  await api.put('/api/pages/icons').send({ key: 'project:Hub', emoji: '🧩' }).expect(200);
+  await api.put('/api/pages/icons').send({ key: made.id, emoji: '👨‍👩‍👧' }).expect(200);
+  assert.deepEqual((await overview(api)).icons, { [made.id]: '👨‍👩‍👧', 'project:Hub': '🧩' });
+
+  // Значок — только эмодзи; чужая страница и выдуманный проект не находятся.
+  assert.equal((await api.put('/api/pages/icons').send({ key: made.id, emoji: 'ракета' }).expect(400)).body.error.code, 'invalid_icon');
+  await api.put('/api/pages/icons').send({ key: made.id, emoji: '🚀🚀🚀🚀🚀🚀🚀🚀🚀' }).expect(400);
+  await api.put('/api/pages/icons').send({ key: 'project:Нет такого', emoji: '🧩' }).expect(404);
+  const stranger = authed(instance, { email: 'stranger@kizuna.test', role: 'user' });
+  await stranger.put('/api/pages/icons').send({ key: made.id, emoji: '💀' }).expect(404);
+  assert.deepEqual((await overview(stranger)).icons, {});
+
+  await api.put('/api/pages/icons').send({ key: made.id, emoji: null }).expect(200);
+  assert.deepEqual((await overview(api)).icons, { 'project:Hub': '🧩' });
+});

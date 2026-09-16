@@ -147,6 +147,17 @@ main:has(> #notes:not([hidden])) {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+/* Значок страницы, проекта и раздела — эмодзи; линии остались у действий. */
+.notes-emo {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  font-size: 15px;
+  line-height: 1;
+}
+.notes-emo::before { content: attr(data-emoji); }
 .notes-caret .notes-ico { width: 14px; height: 14px; transition: transform 0.12s ease; }
 .notes-caret .notes-ico svg { width: 12px; height: 12px; stroke-width: 1.8; }
 .notes-caret.is-open .notes-ico { transform: rotate(90deg); }
@@ -281,8 +292,24 @@ a.notes-crumb:hover { background: var(--nt-hover); color: var(--nt-text); }
 }
 .notes-sheet.is-wide { max-width: 1160px; }
 .notes-head { display: grid; gap: 10px; margin-bottom: 14px; }
-.notes-head-ico { width: 44px; height: 44px; color: var(--nt-tertiary); }
-.notes-head-ico svg { width: 40px; height: 40px; stroke-width: 1; }
+/* Значок над заголовком — эмодзи крупно, как в Notion; у страницы и проекта
+   это кнопка выбора, у разделов — просто знак. */
+.notes-head-emo {
+  justify-self: start;
+  display: inline-grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  margin-left: -6px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  font-size: 56px;
+  line-height: 1;
+}
+button.notes-head-emo { cursor: pointer; }
+button.notes-head-emo:hover { background: var(--nt-hover); }
 .notes-title {
   margin: 0;
   font-size: 40px;
@@ -502,7 +529,7 @@ a.notes-crumb:hover { background: var(--nt-hover); color: var(--nt-text); }
   padding: 12px 6px;
   border-bottom: 1px solid var(--nt-divider);
 }
-.notes-inbox-row > .notes-ico { margin-top: 3px; color: var(--nt-tertiary); }
+.notes-inbox-row > .notes-emo { margin-top: 2px; }
 .notes-inbox-main { display: grid; gap: 2px; color: var(--nt-text); text-decoration: none; min-width: 0; }
 .notes-inbox-main b { font-weight: 600; }
 .notes-inbox-main:hover b { text-decoration: underline; text-decoration-color: var(--nt-divider); text-underline-offset: 3px; }
@@ -563,7 +590,7 @@ a.notes-crumb:hover { background: var(--nt-hover); color: var(--nt-text); }
 .notes-table tbody tr { cursor: pointer; }
 .notes-table tbody tr:hover td { background: var(--nt-hover); }
 .notes-table-name a { display: inline-flex; align-items: center; gap: 6px; color: var(--nt-text); font-weight: 600; text-decoration: none; }
-.notes-table-name .notes-ico { color: var(--nt-tertiary); }
+.notes-table-name .notes-emo { font-size: 14px; }
 .notes-table-dim { color: var(--nt-secondary); white-space: nowrap; }
 .notes-table-num { color: var(--nt-secondary); text-align: right; font-variant-numeric: tabular-nums; }
 .notes-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
@@ -590,7 +617,7 @@ a.notes-crumb:hover { background: var(--nt-hover); color: var(--nt-text); }
 }
 .notes-card-body { display: grid; gap: 4px; padding: 10px 14px 12px; }
 .notes-card-title { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 14.5px; }
-.notes-card-title .notes-ico { color: var(--nt-tertiary); }
+.notes-card-title .notes-emo { font-size: 14px; }
 .notes-card-meta { font-size: 12px; color: var(--nt-tertiary); }
 .notes-list { display: grid; }
 .notes-list-row {
@@ -604,7 +631,7 @@ a.notes-crumb:hover { background: var(--nt-hover); color: var(--nt-text); }
   text-decoration: none;
 }
 .notes-list-row:hover { background: var(--nt-hover); }
-.notes-list-row > .notes-ico { margin-top: 2px; color: var(--nt-tertiary); }
+.notes-list-row > .notes-emo { margin-top: 1px; }
 .notes-list-text { display: grid; gap: 2px; min-width: 0; }
 .notes-list-text b { font-weight: 600; }
 .notes-list-excerpt { font-size: 13.5px; color: var(--nt-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -717,6 +744,39 @@ a.notes-crumb:hover { background: var(--nt-hover); color: var(--nt-text); }
 .notes-picker-row:focus-visible { background: var(--n-25-a8); }
 .notes-picker-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .notes-picker-hint { font-size: 12px; color: var(--muted); white-space: nowrap; max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
+.notes-picker-row .notes-emo { width: 18px; font-size: 14px; }
+/* Выбор значка: сетка эмодзи, свой эмодзи и возврат к значку по типу. */
+.notes-emoji-picker { grid-template-rows: auto auto; max-height: none; padding: 8px; }
+.notes-emoji-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 2px; }
+.notes-emoji-cell {
+  display: grid;
+  place-items: center;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font-size: 21px;
+  line-height: 1;
+  cursor: pointer;
+}
+.notes-emoji-cell:hover,
+.notes-emoji-cell:focus-visible { background: var(--n-25-a8); outline: none; }
+.notes-emoji-cell.is-current { box-shadow: inset 0 0 0 1.5px var(--coral); }
+.notes-emoji-foot { display: flex; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.notes-emoji-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--wash);
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+}
+.notes-emoji-picker .notes-act { border-color: var(--line); background: var(--paper); color: var(--ink); }
+.notes-emoji-picker .notes-act:hover { background: var(--n-25-a8); }
 
 /* ── узкий экран: дерево выезжает поверх страницы ── */
 @media (max-width: 900px) {

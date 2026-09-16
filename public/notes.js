@@ -28,12 +28,6 @@ const DEED_ANCHOR = /(?:^|\s)\^(task-[0-9a-f]{8})\s*$/;
 
 // Значки — тонкая линия в 16px, как у видов «Доски».
 const ICONS = {
-  page: '<path d="M4 1.8h5.2L12.5 5v9.2H4z"/><path d="M9 1.8V5h3.5M6 8h4.5M6 10.5h4.5"/>',
-  idea: '<path d="M8 1.8a4.3 4.3 0 0 0-2.4 7.9c.5.4.8.9.8 1.5v.6h3.2v-.6c0-.6.3-1.1.8-1.5A4.3 4.3 0 0 0 8 1.8z"/><path d="M6.4 13.8h3.2"/>',
-  project: '<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v6.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 12.5z"/>',
-  inbox: '<path d="M2 9.5 3.8 3h8.4L14 9.5V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/><path d="M2 9.5h3.5l1 1.8h3l1-1.8H14"/>',
-  base: '<rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M2 6h12M6.5 6v7.5"/>',
-  all: '<path d="M2.5 4h11M2.5 8h11M2.5 12h11"/>',
   plus: '<path d="M8 3v10M3 8h10"/>',
   caret: '<path d="M6 4l4 4-4 4"/>',
   menu: '<path d="M2.5 4h11M2.5 8h11M2.5 12h11"/>',
@@ -69,6 +63,14 @@ function el(tag, className, text) {
 function icon(name, extra = "") {
   const span = el("span", `notes-ico notes-ico-${name} ${extra}`.trim());
   span.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true">${ICONS[name]}</svg>`;
+  return span;
+}
+// Эмодзи рисуется из data-атрибута: в текст строки он не попадает — ни при
+// копировании названия, ни в поиске по странице.
+function emoji(value, extra = "") {
+  const span = el("span", `notes-emo ${extra}`.trim());
+  span.dataset.emoji = value;
+  span.setAttribute("aria-hidden", "true");
   return span;
 }
 function button(text, className, onClick, { title } = {}) {
@@ -122,7 +124,14 @@ const plural = (count, one, few, many) => {
   return mod10 === 1 && mod100 !== 11 ? one : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14) ? few : many;
 };
 const pageById = (id) => state.overview?.pages.find((page) => page.id === id) || null;
-const typeIcon = (page) => (page?.type === "idea_question" ? "idea" : "page");
+// Значки страниц — эмодзи, как в Notion: у страницы и проекта свой, выбранный
+// человеком, а без выбора — по типу. Линиями остались только действия.
+const EMOJI = { page: "📝", idea: "💡", project: "📁", inbox: "📥", all: "🗂️", base: "🗃️", missing: "📄" };
+const EMOJI_CHOICES = ["📝", "💡", "📌", "📎", "📋", "📁", "🗂️", "🔑", "🤖", "🧩", "📡", "🎧", "🎙️", "💬", "📞", "📅", "✅", "🎯", "🚀", "🔥", "⭐", "💰", "📈", "📊", "🧪", "🛠️", "⚙️", "🐛", "🔒", "🌐", "🏠", "🌱", "☕", "🎨", "📚", "🧠", "❤️", "🙂", "👥", "🏷️", "✈️", "🛒", "🎁", "🎵", "🏃", "🧘", "🍀", "🌙"];
+const chosenIcon = (key) => state.overview?.icons?.[key] || null;
+const typeEmoji = (type) => (type === "idea_question" ? EMOJI.idea : EMOJI.page);
+const pageEmoji = (page) => chosenIcon(page?.id) || typeEmoji(page?.type);
+const projectEmoji = (name) => chosenIcon(`project:${name}`) || EMOJI.project;
 function hashFor(route) {
   const params = new URLSearchParams();
   if (route.kind === "page") params.set("page", route.id);
@@ -261,7 +270,7 @@ function activeKey() {
   if (route.kind === "base") return `base:${route.id}`;
   return route.kind;
 }
-function treeRow({ key, title, iconName, href, depth, count = 0, hasChildren = false, addParent = null, kind = null }) {
+function treeRow({ key, title, mark, href, depth, count = 0, hasChildren = false, addParent = null, kind = null }) {
   const row = el("div", "notes-row");
   row.dataset.key = key;
   row.setAttribute("role", "treeitem");
@@ -279,7 +288,7 @@ function treeRow({ key, title, iconName, href, depth, count = 0, hasChildren = f
   if (!hasChildren) caret.tabIndex = -1;
   const link = el("a", "notes-link");
   link.href = href;
-  link.append(icon(iconName), el("span", "notes-link-title", title));
+  link.append(emoji(mark), el("span", "notes-link-title", title));
   row.append(caret, link);
   if (kind === "page") { link.draggable = false; draggablePage(row, key); }
   if (kind === "page" || kind === "project") dropTarget(row, kind, key);
@@ -297,7 +306,7 @@ function treeNode(item, depth, parentList) {
   if (!kids.length || !state.expanded.has(item.key)) return;
   const group = el("div", "notes-group");
   group.setAttribute("role", "group");
-  for (const page of kids) treeNode({ key: page.id, title: page.title, iconName: typeIcon(page), href: hashFor({ kind: "page", id: page.id }), addParent: page.id, kind: "page" }, depth + 1, group);
+  for (const page of kids) treeNode({ key: page.id, title: page.title, mark: pageEmoji(page), href: hashFor({ kind: "page", id: page.id }), addParent: page.id, kind: "page" }, depth + 1, group);
   parentList.append(group);
 }
 function renderSide() {
@@ -326,7 +335,7 @@ function renderSide() {
     for (const page of found) {
       const link = el("a", "notes-found-row");
       link.href = hashFor({ kind: "page", id: page.id });
-      link.append(icon(typeIcon(page)), el("span", "notes-found-title", page.title), el("span", "notes-found-where", placeLabel(page.parentKey)));
+      link.append(emoji(pageEmoji(page)), el("span", "notes-found-title", page.title), el("span", "notes-found-where", placeLabel(page.parentKey)));
       list.append(link);
     }
     if (!found.length) list.append(el("p", "notes-empty", "Ничего не нашлось."));
@@ -336,7 +345,7 @@ function renderSide() {
     const top = el("div", "notes-tree");
     top.setAttribute("role", "tree");
     top.setAttribute("aria-label", "Разделы заметок");
-    const inbox = treeRow({ key: "inbox", title: "Входящие", iconName: "inbox", href: hashFor({ kind: "inbox" }), depth: 0, count: inboxCount });
+    const inbox = treeRow({ key: "inbox", title: "Входящие", mark: EMOJI.inbox, href: hashFor({ kind: "inbox" }), depth: 0, count: inboxCount });
     if (inboxCount) inbox.querySelector(".notes-count").classList.add("is-hot");
     top.append(inbox);
     side.append(top);
@@ -354,9 +363,9 @@ function renderSide() {
     tree.setAttribute("aria-label", "Страницы");
     // Узлы проектов — первыми: это полки, на которых лежат заметки по делу.
     for (const project of state.overview.projects)
-      treeNode({ key: `project:${project.name}`, title: project.name, iconName: "project", href: hashFor({ kind: "project", name: project.name }), addParent: `project:${project.name}`, kind: "project" }, 0, tree);
+      treeNode({ key: `project:${project.name}`, title: project.name, mark: projectEmoji(project.name), href: hashFor({ kind: "project", name: project.name }), addParent: `project:${project.name}`, kind: "project" }, 0, tree);
     for (const page of childrenOf(null))
-      treeNode({ key: page.id, title: page.title, iconName: typeIcon(page), href: hashFor({ kind: "page", id: page.id }), addParent: page.id, kind: "page" }, 0, tree);
+      treeNode({ key: page.id, title: page.title, mark: pageEmoji(page), href: hashFor({ kind: "page", id: page.id }), addParent: page.id, kind: "page" }, 0, tree);
     if (!state.overview.projects.length && !childrenOf(null).length)
       tree.append(el("p", "notes-empty", "Страниц пока нет. «+» заводит новую, а заметки с «Сегодня» появятся сами."));
     side.append(tree);
@@ -368,9 +377,9 @@ function renderSide() {
     basesHead.append(addBase);
     side.append(basesHead);
     const bases = el("div", "notes-tree");
-    bases.append(treeRow({ key: "all", title: "Все заметки", iconName: "all", href: hashFor({ kind: "all" }), depth: 0 }));
+    bases.append(treeRow({ key: "all", title: "Все заметки", mark: EMOJI.all, href: hashFor({ kind: "all" }), depth: 0 }));
     for (const base of state.overview.bases)
-      bases.append(treeRow({ key: `base:${base.id}`, title: base.name, iconName: "base", href: hashFor({ kind: "base", id: base.id }), depth: 0 }));
+      bases.append(treeRow({ key: `base:${base.id}`, title: base.name, mark: EMOJI.base, href: hashFor({ kind: "base", id: base.id }), depth: 0 }));
     side.append(bases);
   }
   if (searchHadFocus) {
@@ -524,10 +533,10 @@ function mainShell() {
   bar.append(tail);
   return { main, bar, crumbs, tail };
 }
-function crumbLink(text, route, iconName) {
+function crumbLink(text, route, mark) {
   const link = el("a", "notes-crumb");
   link.href = hashFor(route);
-  if (iconName) link.append(icon(iconName));
+  if (mark) link.append(emoji(mark));
   link.append(el("span", undefined, text));
   return link;
 }
@@ -578,7 +587,7 @@ function renderPage({ quiet }) {
   const sheet = el("article", "notes-sheet");
   sheet.dataset.page = page.id;
   const head = el("div", "notes-head");
-  head.append(icon(typeIcon(page), "notes-head-ico"));
+  head.append(iconButton(page.id, () => pageEmoji(page), "Значок страницы"));
   const title = el("h1", "notes-title", page.title);
   title.contentEditable = "true";
   title.spellcheck = true;
@@ -612,7 +621,7 @@ function fillBar(detail, crumbs, tail) {
   for (const [index, step] of detail.trail.entries()) {
     if (index) crumbs.append(el("span", "notes-crumb-sep", "/"));
     const route = step.key === "inbox" ? { kind: "inbox" } : step.key.startsWith("project:") ? { kind: "project", name: step.title } : { kind: "page", id: step.key };
-    crumbs.append(crumbLink(step.title, route, step.key === "inbox" ? "inbox" : step.key.startsWith("project:") ? "project" : step.type === "idea_question" ? "idea" : "page"));
+    crumbs.append(crumbLink(step.title, route, step.key === "inbox" ? EMOJI.inbox : step.key.startsWith("project:") ? projectEmoji(step.title) : chosenIcon(step.key) || typeEmoji(step.type)));
   }
   if (detail.trail.length) crumbs.append(el("span", "notes-crumb-sep", "/"));
   crumbs.append(el("span", "notes-crumb is-current", page.title));
@@ -968,7 +977,7 @@ function sectionHead(text, count, key) {
 function pageRow(page, extra) {
   const link = el("a", "notes-page-row");
   link.href = hashFor({ kind: "page", id: page.id });
-  link.append(icon(typeIcon(page)), el("span", "notes-page-row-title", page.title));
+  link.append(emoji(pageEmoji(page)), el("span", "notes-page-row-title", page.title));
   if (extra) link.append(el("span", "notes-page-row-meta", extra));
   return link;
 }
@@ -1049,7 +1058,7 @@ function renderProject() {
   crumbs.append(el("span", "notes-crumb is-current", name));
   const sheet = el("article", "notes-sheet");
   const head = el("div", "notes-head");
-  head.append(icon("project", "notes-head-ico"), el("h1", "notes-title is-static", name));
+  head.append(iconButton(`project:${name}`, () => projectEmoji(name), "Значок проекта"), el("h1", "notes-title is-static", name));
   const all = state.overview.pages.filter((page) => page.project === name);
   const inside = childrenOf(`project:${name}`);
   sheet.append(head, el("p", "notes-lead", all.length ? `Проект · ${all.length} ${plural(all.length, "заметка", "заметки", "заметок")}. Заметка с этим проектом без своего места ложится сюда сама.` : "В проекте пока нет заметок."));
@@ -1072,7 +1081,7 @@ function renderInbox() {
   crumbs.append(el("span", "notes-crumb is-current", "Входящие"));
   const sheet = el("article", "notes-sheet");
   const head = el("div", "notes-head");
-  head.append(icon("inbox", "notes-head-ico"), el("h1", "notes-title is-static", "Входящие"));
+  head.append(emoji(EMOJI.inbox, "notes-head-emo"), el("h1", "notes-title is-static", "Входящие"));
   sheet.append(head, el("p", "notes-lead", "Заметки с «Сегодня» и из голоса, которым не нашлось места: без проекта и без [[страницы]] в тексте."));
   const rows = state.overview.pages.filter((page) => page.parentKey === "inbox").sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   const list = el("div", "notes-inbox");
@@ -1090,7 +1099,7 @@ function renderInbox() {
     const actions = el("div", "notes-inbox-actions");
     if (page.suggest) actions.append(button(`В «${page.suggest.title}»`, "notes-act is-primary", () => applyPlace(page, page.suggest.key)));
     actions.append(button("Выбрать место", "notes-act", (event) => openPicker(event.currentTarget, page)), button("В корень", "notes-act", () => applyPlace(page, "root")));
-    row.append(icon(typeIcon(page)), text, actions);
+    row.append(emoji(pageEmoji(page)), text, actions);
     list.append(row);
   }
   sheet.append(list);
@@ -1104,7 +1113,7 @@ function renderMissing() {
   crumbs.append(el("span", "notes-crumb is-current", title));
   const sheet = el("article", "notes-sheet");
   const head = el("div", "notes-head");
-  head.append(icon("page", "notes-head-ico"), el("h1", "notes-title is-static", title));
+  head.append(emoji(EMOJI.missing, "notes-head-emo"), el("h1", "notes-title is-static", title));
   const parent = from && pageById(from) ? pageById(from).parentKey : "root";
   const actions = el("div", "notes-missing-actions");
   actions.append(
@@ -1150,7 +1159,7 @@ function renderBase() {
   crumbs.append(el("span", "notes-crumb is-current", base ? base.name : "Все заметки"));
   const sheet = el("article", "notes-sheet is-wide");
   const head = el("div", "notes-head");
-  head.append(icon(base ? "base" : "all", "notes-head-ico"));
+  head.append(emoji(base ? EMOJI.base : EMOJI.all, "notes-head-emo"));
   const title = el("h1", "notes-title", base ? base.name : "Все заметки");
   if (base) {
     title.contentEditable = "true";
@@ -1253,7 +1262,7 @@ function baseContent(view, rows) {
       const cover = el("span", "notes-card-cover", page.excerpt && page.excerpt !== page.title ? page.excerpt : "");
       const body = el("span", "notes-card-body");
       const name = el("span", "notes-card-title");
-      name.append(icon(typeIcon(page)), el("span", undefined, page.title));
+      name.append(emoji(pageEmoji(page)), el("span", undefined, page.title));
       body.append(name);
       const meta = el("span", "notes-card-meta", [placeLabel(page.parentKey), when(page.updatedAt, { time: false })].join(" · "));
       body.append(meta);
@@ -1275,7 +1284,7 @@ function baseContent(view, rows) {
       const text = el("span", "notes-list-text");
       text.append(el("b", undefined, page.title));
       if (page.excerpt && page.excerpt !== page.title) text.append(el("span", "notes-list-excerpt", page.excerpt));
-      row.append(icon(typeIcon(page)), text, el("span", "notes-list-when", when(page.updatedAt, { time: false })));
+      row.append(emoji(pageEmoji(page)), text, el("span", "notes-list-when", when(page.updatedAt, { time: false })));
       list.append(row);
     }
     return list;
@@ -1292,7 +1301,7 @@ function baseContent(view, rows) {
     const nameCell = el("td", "notes-table-name");
     const link = el("a");
     link.href = hashFor({ kind: "page", id: page.id });
-    link.append(icon(typeIcon(page)), el("span", undefined, page.title));
+    link.append(emoji(pageEmoji(page)), el("span", undefined, page.title));
     nameCell.append(link);
     const tags = el("td");
     for (const tag of page.tags) tags.append(el("span", "notes-tag", `#${tag}`));
@@ -1335,10 +1344,10 @@ function openPicker(anchor, page) {
   node.append(input, list);
   const blocked = descendantsOf(page.id);
   const options = [
-    { key: "root", title: "В корень", hint: "страница верхнего уровня", iconName: "page" },
-    { key: "auto", title: "По правилу", hint: page.project ? `под проект «${page.project}»` : "во «Входящие»", iconName: "inbox" },
-    ...state.overview.allProjects.map((name) => ({ key: `project:${name}`, title: name, hint: "проект", iconName: "project" })),
-    ...state.overview.pages.filter((item) => !blocked.has(item.id)).map((item) => ({ key: item.id, title: item.title, hint: placeLabel(item.parentKey), iconName: typeIcon(item) })),
+    { key: "root", title: "В корень", hint: "страница верхнего уровня", mark: EMOJI.missing },
+    { key: "auto", title: "По правилу", hint: page.project ? `под проект «${page.project}»` : "во «Входящие»", mark: EMOJI.inbox },
+    ...state.overview.allProjects.map((name) => ({ key: `project:${name}`, title: name, hint: "проект", mark: projectEmoji(name) })),
+    ...state.overview.pages.filter((item) => !blocked.has(item.id)).map((item) => ({ key: item.id, title: item.title, hint: placeLabel(item.parentKey), mark: pageEmoji(item) })),
   ];
   const paint = () => {
     const query = input.value.trim().toLocaleLowerCase("ru-RU");
@@ -1347,7 +1356,7 @@ function openPicker(anchor, page) {
     for (const option of shown) {
       const row = button("", "notes-picker-row", () => { closePicker(); applyPlace(page, option.key); });
       row.setAttribute("role", "option");
-      row.append(icon(option.iconName), el("span", "notes-picker-title", option.title), el("span", "notes-picker-hint", option.hint));
+      row.append(emoji(option.mark), el("span", "notes-picker-title", option.title), el("span", "notes-picker-hint", option.hint));
       list.append(row);
     }
     if (!shown.length) list.append(el("p", "notes-empty", "Ничего не нашлось."));
@@ -1369,6 +1378,65 @@ function openPicker(anchor, page) {
   document.addEventListener("keydown", escape, true);
   picker = { node, outside, escape };
   input.focus();
+}
+// Крупный значок над заголовком — кнопка: нажатие открывает выбор эмодзи.
+function iconButton(key, current, label) {
+  const node = button(current(), "notes-head-emo", (event) => openEmojiPicker(event.currentTarget, key, current, label), { title: `${label} — сменить` });
+  node.setAttribute("aria-haspopup", "dialog");
+  return node;
+}
+function openEmojiPicker(anchor, key, current, label) {
+  closePicker();
+  const node = el("div", "notes-picker notes-emoji-picker");
+  node.setAttribute("role", "dialog");
+  node.setAttribute("aria-label", label);
+  const grid = el("div", "notes-emoji-grid");
+  const now = current();
+  for (const choice of EMOJI_CHOICES) {
+    const cell = button(choice, `notes-emoji-cell${choice === now ? " is-current" : ""}`, () => chooseIcon(anchor, key, choice, current));
+    cell.setAttribute("aria-label", choice);
+    grid.append(cell);
+  }
+  // Своего эмодзи нет в сетке — его можно вставить; «По умолчанию» возвращает
+  // значок по типу.
+  const foot = el("div", "notes-emoji-foot");
+  const input = el("input", "notes-emoji-input");
+  input.type = "text";
+  input.maxLength = 16;
+  input.placeholder = "Свой эмодзи и Enter";
+  input.setAttribute("aria-label", "Свой эмодзи");
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && input.value.trim()) { event.preventDefault(); chooseIcon(anchor, key, input.value.trim(), current); }
+  });
+  foot.append(input, button("По умолчанию", "notes-act", () => chooseIcon(anchor, key, null, current)));
+  node.append(grid, foot);
+  document.body.append(node);
+  const rect = anchor.getBoundingClientRect();
+  const width = Math.min(336, window.innerWidth - 32);
+  node.style.width = `${width}px`;
+  node.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - width - 16))}px`;
+  node.style.top = `${Math.max(16, Math.min(rect.bottom + 6, window.innerHeight - node.offsetHeight - 16))}px`;
+  const outside = (event) => { if (!node.contains(event.target) && event.target !== anchor) closePicker(); };
+  const escape = (event) => { if (event.key === "Escape") { event.stopPropagation(); closePicker(); anchor.focus(); } };
+  document.addEventListener("pointerdown", outside, true);
+  document.addEventListener("keydown", escape, true);
+  picker = { node, outside, escape };
+  (grid.querySelector(".is-current") || grid.firstElementChild)?.focus();
+}
+async function chooseIcon(anchor, key, value, current) {
+  closePicker();
+  try {
+    const result = await call("/api/pages/icons", "PUT", { key, emoji: value });
+    state.overview.icons = { ...(state.overview.icons || {}) };
+    if (result.icon) state.overview.icons[key] = result.icon;
+    else delete state.overview.icons[key];
+    anchor.textContent = current();
+    renderSide();
+    // Страница с полем не пересобирается — у неё значок уже поменян на месте;
+    // проект перерисовывается целиком: значок есть и в его списке.
+    if (state.route?.kind === "project") renderMain();
+    else anchor.focus();
+  } catch (error) { deps.toast(error.message || "Значок не сохранился"); }
 }
 async function applyPlace(page, key) {
   try {
