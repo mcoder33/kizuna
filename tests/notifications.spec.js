@@ -81,7 +81,7 @@ test("призыв всплывает в углу открытой вкладк�
   const general = rooms.find((room) => room.kind === "general");
   await anya.page.request.post(`/api/rooms/${general.id}/messages`, { data: { body: "@Саша, посмотри смету, пожалуйста" } });
 
-  const toastCard = page.locator(".notify-toast").filter({ hasText: "Аня зовёт вас в разговоре «Общий»" });
+  const toastCard = page.locator(".notify-toast").filter({ hasText: "Аня зовёт вас в разговоре «Хаб»" });
   await expect(toastCard).toBeVisible();
   // Призыв не ждёт ответа в строке — числа нет, есть точка.
   await expect(page.locator("#bell-count")).toBeHidden();

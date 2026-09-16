@@ -214,3 +214,15 @@ test('человека из приложения зовут поиском, а �
   await katya.post(`/api/circles/${circle.id}/leave`).send({}).expect(200);
   assert.deepEqual((await katya.get('/api/circles').expect(200)).body.circles,[]);
 });
+
+test('у человека в круге видно до трёх его открытых дел этого круга',async()=>{
+  const {sasha,anya,circle}=await pair();
+  await ask(sasha,'Ане — прислать смету по Хабу');
+  const people=(await sasha.get(`/api/circles/${circle.id}`).expect(200)).body.circle.members;
+  const hers=people.find(member=>member.name==='Аня');
+  assert.equal(hers.deeds.length,1);
+  assert.equal(hers.deeds[0].state,'pending');
+  assert.ok(hers.deeds[0].title);
+  assert.deepEqual(people.find(member=>member.name==='Саша').deeds,[]);
+  assert.ok(anya);
+});

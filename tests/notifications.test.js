@@ -101,7 +101,7 @@ test('призыв в разговоре — строка и телефон; о�
   let box = await feed(anya);
   assert.deepEqual(box.notifications.map(item => item.kind), ['call']);
   assert.deepEqual(box.counts, { waits: 0, unread: 1 }, 'призыв не ждёт ответа в строке — число на колокольчике его не считает');
-  assert.match(box.notifications[0].text, /^зовёт вас в разговоре «Общий»: «@Аня, посмотри смету»$/);
+  assert.match(box.notifications[0].text, /^зовёт вас в разговоре «Хаб»: «@Аня, посмотри смету»$/);
   assert.equal(push.sent.at(-1).payload.url, `/#circles?room=${general.id}`);
 
   // Включили «пишут без призыва» — три сообщения стали одной строкой, и телефон молчит.

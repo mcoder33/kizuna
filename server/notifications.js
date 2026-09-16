@@ -19,8 +19,12 @@ import { gateClassification } from './classifier.js';
 export const NOTIFICATION_KINDS = {
   request: { group: 'people', label: 'Просят сделать дело', hint: 'ждёт вашего ответа: беру или не я', bell: true, phone: true, waits: true },
   call: { group: 'people', label: 'Зовут по имени', hint: '@имя в обсуждении карточки или в разговоре круга', bell: true, phone: true },
+  reply: { group: 'people', label: 'Отвечают на ваше сообщение', hint: 'ответ цитатой в разговоре или обсуждении', bell: true, phone: true },
   answer: { group: 'people', label: 'Ответили на вашу просьбу', hint: 'берут, возвращают, сделали', bell: true, phone: false },
   circle: { group: 'people', label: 'Добавили в круг', hint: '', bell: true, phone: false },
+  room: { group: 'people', label: 'Позвали в комнату', hint: 'разговор части круга', bell: true, phone: false },
+  reaction: { group: 'people', label: 'Реакции на ваши сообщения', hint: 'одной строкой на разговор', bell: true, phone: false },
+  pin: { group: 'people', label: 'Закрепили сообщение', hint: 'в разговоре, где вы есть', bell: true, phone: false },
   chatter: { group: 'people', label: 'Пишут без призыва', hint: 'одной строкой на разговор, без числа', bell: false, phone: false },
   reminder: { group: 'time', label: 'Скоро срок дела или начало встречи', hint: 'за сколько — в «Напоминаниях»', bell: true, phone: true },
   invite: { group: 'time', label: 'Приглашение на встречу', hint: 'принять или отказаться прямо в строке', bell: true, phone: true, waits: true },

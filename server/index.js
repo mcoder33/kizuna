@@ -456,7 +456,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   const sharedEntry = (captureId, userId) => ({
     circles: circles.circlesForCapture(db, captureId),
     assignment: circles.assignmentFor(db, captureId),
-    comments: circles.comments(db, captureId),
+    comments: circles.comments(db, captureId, userId),
     callable: circles.callableFor(db, captureId, userId),
     participants: circles.captureParticipants(db, captureId),
     author: (() => { const owner = captureOwner(db, captureId); const user = owner && findUserById(db, owner); return user ? circles.publicUser(user) : null; })(),
@@ -555,7 +555,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     } catch (error) { next(error); }
   });
   // Одна запись целиком: карточка открывается по ссылке из уведомления.
-  app.get('/api/captures/:id',(req,res)=>{ if(!seesCapture(req,res,req.params.id))return; const row=getAggregate(db,req.params.id); if(!row)return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}}); circles.markMentionsSeen(db,req.params.id,req.user.id); res.json({ entry: { ...fullEntry(db,row), ...sharedEntry(req.params.id,req.user.id) } }); });
+  app.get('/api/captures/:id',(req,res)=>{ if(!seesCapture(req,res,req.params.id))return; const row=getAggregate(db,req.params.id); if(!row)return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}}); circles.markMentionsSeen(db,req.params.id,req.user.id); circles.markCommentsRead(db,req.params.id,req.user.id); res.json({ entry: { ...fullEntry(db,row), ...sharedEntry(req.params.id,req.user.id) } }); });
   // ── настройки ──
   app.get('/api/settings',(req,res)=>{
     res.json({ settings: publicSettings(stored, process.env, req.user), editable: editableSettings(req.user), voice: voice.status(), voices: VOICE_CHOICES, timeZone: configuredTimeZone, quota: voiceQuota(req.user), spend: spendState(req.user) });
@@ -618,6 +618,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     person_not_found:[404,'Такого человека в приложении нет.'], already_member:[409,'Этот человек уже в круге.'],
     self_assign:[400,'Себе дело ставят обычной записью.'], not_in_circle:[409,'Этого человека нет ни в одном общем с вами круге.'],
     already_answered:[409,'На эту просьбу уже ответили.'], invalid_comment:[400,'Сообщение — от 1 до 4000 символов.'], invalid_name_value:[400,'Имя — до 60 символов.'],
+    invalid_reaction:[400,'Такой реакции нет.'],
   };
   const circleError = (res, error) => { const [status, message] = CIRCLE_ERRORS[error] || [500, 'Ошибка круга.']; return res.status(status).json({ error:{ code:error, message } }); };
   const circleReply = (res, result, status = 200) => result.error ? circleError(res, result.error) : res.status(status).json(result);
@@ -649,9 +650,10 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
 
   // Обсуждение живёт в карточке записи, последним блоком после заметки.
   // Призыв @имя — единственное, что порождает у человека строку.
-  app.get('/api/captures/:id/comments',(req,res,next)=>{try{if(!seesCapture(req,res,req.params.id))return;circles.markMentionsSeen(db,req.params.id,req.user.id);res.json({comments:circles.comments(db,req.params.id),callable:circles.callableFor(db,req.params.id,req.user.id),participants:circles.captureParticipants(db,req.params.id)});}catch(error){next(error);}});
+  app.get('/api/captures/:id/comments',(req,res,next)=>{try{if(!seesCapture(req,res,req.params.id))return;circles.markMentionsSeen(db,req.params.id,req.user.id);circles.markCommentsRead(db,req.params.id,req.user.id);res.json({comments:circles.comments(db,req.params.id,req.user.id),callable:circles.callableFor(db,req.params.id,req.user.id),participants:circles.captureParticipants(db,req.params.id)});}catch(error){next(error);}});
   app.post('/api/captures/:id/comments',(req,res,next)=>{try{if(!seesCapture(req,res,req.params.id))return;const share=['yes','no'].includes(req.body?.share)?req.body.share:null;const result=circles.addComment(db,{captureId:req.params.id,authorId:req.user.id,body:req.body?.body,parentId:req.body?.parentId||null,share});if(result.error==='share_needed')return res.status(409).json({error:{code:'share_needed',message:'Позванные ещё не видят эту запись.'},people:result.people});if(result.error)return circleError(res,result.error);notifyCircle(req.params.id,[...result.comment.mentions.map(person=>person.id),...result.participants.map(person=>person.id)]);notifyJournal('comment');res.status(201).json(result);}catch(error){next(error);}});
   // Убрать человека из записи может автор; уйти сам («не следить») — любой позванный.
+  app.post('/api/captures/:id/comments/:commentId/reactions',(req,res,next)=>{try{if(!seesCapture(req,res,req.params.id))return;const result=circles.reactComment(db,req.params.id,req.params.commentId,req.user.id,req.body?.emoji);if(result.error)return circleError(res,result.error);notifyCircle(req.params.id,circles.captureParticipants(db,req.params.id).map(person=>person.id));res.json(result);}catch(error){next(error);}});
   app.delete('/api/captures/:id/people/:userId',(req,res,next)=>{try{if(!seesCapture(req,res,req.params.id))return;const result=circles.removeParticipant(db,req.params.id,req.user.id,req.params.userId);if(result.error)return circleError(res,result.error);notifyCircle(req.params.id,[req.params.userId]);res.json(result);}catch(error){next(error);}});
   app.get('/api/discussions',(req,res,next)=>{try{res.json({discussions:circles.discussions(db,req.user.id)});}catch(error){next(error);}});
 
@@ -667,6 +669,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     rooms_limit:[409,'Комнат в круге может быть не больше 20.'], room_needs_people:[400,'Комната — это разговор с кем-то: позовите хотя бы одного человека.'],
     general_room:[409,'Общий разговор круга не переименовать и не покинуть — он и есть круг.'],
     not_in_circle:[409,'Этого человека нет в круге.'], invalid_message:[400,'Сообщение — от 1 до 4000 символов.'],
+    invalid_reply:[400,'Ответить можно на сообщение из этого же разговора.'], invalid_reaction:[400,'Такой реакции нет.'],
   };
   const chatError = (res, error) => { const [status, message] = CHAT_ERRORS[error] || CIRCLE_ERRORS[error] || [500, 'Ошибка разговора.']; return res.status(status).json({ error:{ code:error, message } }); };
   const chatReply = (res, result, status = 200) => result.error ? chatError(res, result.error) : res.status(status).json(result);
@@ -681,8 +684,10 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   app.get('/api/rooms',(req,res,next)=>{try{res.json({rooms:chat.roomsOf(db,req.user.id,typeof req.query.circle==='string'?req.query.circle:null)});}catch(error){next(error);}});
   app.post('/api/circles/:id/rooms',(req,res,next)=>{try{const result=chat.createRoom(db,req.params.id,req.user.id,req.body?.name,Array.isArray(req.body?.members)?req.body.members:[]);if(result.error)return chatError(res,result.error);notifyRoom(result.room.id);chatReply(res,result,201);}catch(error){next(error);}});
   app.get('/api/rooms/:id/messages',(req,res,next)=>{try{const room=chat.findRoom(db,req.params.id);if(!room||!chat.inRoom(db,room,req.user.id))return chatError(res,'not_found');chat.markRead(db,req.params.id,req.user.id);const result=chat.messages(db,req.params.id,req.user.id,{before:typeof req.query.before==='string'?req.query.before:null});if(result.error)return chatError(res,result.error);res.json(result);}catch(error){next(error);}});
-  app.post('/api/rooms/:id/messages',(req,res,next)=>{try{const result=chat.say(db,req.params.id,req.user.id,req.body?.body);if(result.error)return chatError(res,result.error);notifyRoom(req.params.id,{except:req.user.id});res.status(201).json(result);}catch(error){next(error);}});
+  app.post('/api/rooms/:id/messages',(req,res,next)=>{try{const result=chat.say(db,req.params.id,req.user.id,req.body?.body,{replyTo:typeof req.body?.replyTo==='string'?req.body.replyTo:null});if(result.error)return chatError(res,result.error);notifyRoom(req.params.id,{except:req.user.id});res.status(201).json(result);}catch(error){next(error);}});
   app.delete('/api/rooms/:id/messages/:messageId',(req,res,next)=>{try{const result=chat.removeMessage(db,req.params.messageId,req.user.id);if(result.error)return chatError(res,result.error);notifyRoom(req.params.id,{except:req.user.id});res.json(result);}catch(error){next(error);}});
+  app.post('/api/rooms/:id/messages/:messageId/reactions',(req,res,next)=>{try{const result=chat.react(db,req.params.id,req.params.messageId,req.user.id,req.body?.emoji);if(result.error)return chatError(res,result.error);notifyRoom(req.params.id,{except:req.user.id});res.json(result);}catch(error){next(error);}});
+  app.post('/api/rooms/:id/pin',(req,res,next)=>{try{const result=chat.pin(db,req.params.id,req.user.id,typeof req.body?.messageId==='string'?req.body.messageId:null);if(result.error)return chatError(res,result.error);notifyRoom(req.params.id,{except:req.user.id});chatReply(res,result);}catch(error){next(error);}});
   app.post('/api/rooms/:id/read',(req,res,next)=>{try{const room=chat.findRoom(db,req.params.id);if(!room||!chat.inRoom(db,room,req.user.id))return chatError(res,'not_found');res.json(chat.markRead(db,req.params.id,req.user.id));}catch(error){next(error);}});
   app.patch('/api/rooms/:id',(req,res,next)=>{try{chatReply(res,chat.renameRoom(db,req.params.id,req.user.id,req.body?.name));}catch(error){next(error);}});
   app.post('/api/rooms/:id/members',(req,res,next)=>{try{const result=chat.addToRoom(db,req.params.id,req.user.id,req.body?.userId);if(result.error)return chatError(res,result.error);notifyRoom(req.params.id);chatReply(res,result);}catch(error){next(error);}});

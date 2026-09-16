@@ -84,3 +84,25 @@ test('позванный зовёт только своих, уходит сам
   await sasha.post('/api/reset').send({confirmation:'СБРОСИТЬ КИЗУНА'}).expect(200);
   await anya.get(`/api/captures/${entry.id}`).expect(404);
 });
+
+test('обсуждение как разговор: ответ цитатой, реакции, число непрочитанного и прочтение',async()=>{
+  const {sasha,anya,entry}=await trio();
+  const first=(await say(sasha,entry,'@Аня глянь второй лист','yes').expect(201)).body.comment;
+  const list=(await anya.get('/api/discussions').expect(200)).body.discussions;
+  assert.equal(list[0].unreadCount,1);
+  assert.ok(['todo','meeting','outcome','note','idea'].includes(list[0].kind),'тип записи словом для списка');
+  const answer=(await anya.post(`/api/captures/${entry.id}/comments`).send({body:'Глянула, цифры сходятся',parentId:first.id}).expect(201)).body.comment;
+  assert.equal(answer.replyTo.author.name,'Саша');
+  assert.equal(answer.replyTo.body,'@Аня глянь второй лист');
+  const his=(await sasha.get('/api/notifications').expect(200)).body.notifications;
+  assert.ok(his.some(item=>item.kind==='reply'&&/^отвечает вам в обсуждении/.test(item.text)));
+  // Открыла обсуждение — число погасло, а у Саши его сообщение стало прочитанным.
+  await anya.get(`/api/captures/${entry.id}/comments`).expect(200);
+  assert.equal((await anya.get('/api/discussions').expect(200)).body.discussions[0].unreadCount,0);
+  const own=(await sasha.get(`/api/captures/${entry.id}/comments`).expect(200)).body.comments.find(item=>item.id===first.id);
+  assert.equal(own.read,true);
+  const reacted=(await sasha.post(`/api/captures/${entry.id}/comments/${answer.id}/reactions`).send({emoji:'🙏'}).expect(200)).body;
+  assert.deepEqual(reacted.reactions.map(item=>[item.emoji,item.count,item.mine]),[['🙏',1,true]]);
+  assert.ok((await anya.get('/api/notifications').expect(200)).body.notifications.some(item=>item.kind==='reaction'));
+  await sasha.post(`/api/captures/${entry.id}/comments/${answer.id}/reactions`).send({emoji:'🦄'}).expect(400);
+});

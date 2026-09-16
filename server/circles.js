@@ -131,10 +131,16 @@ export function circleDetail(db, circleId, userId) {
   if (!row) return null;
   const open = db.prepare(`SELECT a.assignee_id, COUNT(*) AS n FROM assignments a WHERE a.circle_id=? AND a.state IN ('pending','accepted') GROUP BY a.assignee_id`).all(circleId);
   const byUser = new Map(open.map(item => [item.assignee_id, item.n]));
+  const deedsOf = db.prepare(`SELECT a.capture_id, a.state FROM assignments a JOIN captures c ON c.id=a.capture_id
+    WHERE a.circle_id=? AND a.assignee_id=? AND a.cancelled_at IS NULL AND c.deleted_at IS NULL AND a.state IN ('pending','accepted') ORDER BY a.created_at LIMIT 3`);
   return serializeCircle(row, {
     role: row.role,
     muted: Boolean(row.muted_at),
-    members: membersOf(db, circleId).map(member => ({ ...member, openDeeds: byUser.get(member.id) || 0 })),
+    members: membersOf(db, circleId).map(member => ({
+      ...member,
+      openDeeds: byUser.get(member.id) || 0,
+      deeds: deedsOf.all(circleId, member.id).map(deed => ({ captureId: deed.capture_id, title: titleOf(db, deed.capture_id), due: dueOf(db, deed.capture_id), state: deed.state })),
+    })),
     captureCount: db.prepare('SELECT COUNT(*) AS n FROM capture_circles WHERE circle_id=? AND removed_at IS NULL').get(circleId).n,
     invite: inviteState(db, circleId),
   });
@@ -420,11 +426,14 @@ export function assignmentsTo(db, userId, states = ['pending', 'accepted']) {
 
 // ── обсуждение и призыв ──
 
-export function comments(db, captureId) {
+export function comments(db, captureId, userId = null) {
   const rows = db
     .prepare(`SELECT m.*, u.email, u.display_name, u.avatar FROM comments m JOIN users u ON u.id=m.author_id
       WHERE m.capture_id=? AND m.deleted_at IS NULL ORDER BY m.created_at`)
     .all(captureId);
+  const byId = new Map(rows.map(row => [row.id, row]));
+  const reactions = reactionsOfComments(db, rows.map(row => row.id), userId);
+  const othersRead = userId ? db.prepare('SELECT MAX(last_read_at) AS at FROM comment_reads WHERE capture_id=? AND user_id!=?').get(captureId, userId).at || '' : '';
   const mentions = new Map();
   for (const row of db
     .prepare(`SELECT cm.comment_id, u.id, u.email, u.display_name, u.avatar FROM comment_mentions cm JOIN users u ON u.id=cm.user_id
@@ -433,14 +442,59 @@ export function comments(db, captureId) {
     if (!mentions.has(row.comment_id)) mentions.set(row.comment_id, []);
     mentions.get(row.comment_id).push(publicUser(row));
   }
-  return rows.map(row => ({
-    id: row.id,
-    body: row.body,
-    createdAt: row.created_at,
-    parentId: row.parent_id,
-    author: publicUser({ ...row, id: row.author_id }),
-    mentions: mentions.get(row.id) || [],
-  }));
+  return rows.map(row => {
+    const parent = row.parent_id ? byId.get(row.parent_id) : null;
+    return {
+      id: row.id,
+      body: row.body,
+      createdAt: row.created_at,
+      parentId: row.parent_id,
+      author: publicUser({ ...row, id: row.author_id }),
+      mentions: mentions.get(row.id) || [],
+      replyTo: row.parent_id ? (parent ? { id: parent.id, body: excerpt(parent.body), author: publicUser({ ...parent, id: parent.author_id }), removed: false } : { id: row.parent_id, body: '', author: null, removed: true }) : null,
+      reactions: reactions.get(row.id) || [],
+      read: userId && row.author_id === userId ? othersRead >= row.created_at : null,
+    };
+  });
+}
+const excerpt = text => (text.length > 140 ? `${text.slice(0, 139)}…` : text);
+// Те же шесть реакций, что в разговоре круга.
+export const COMMENT_REACTIONS = ['👍', '❤️', '🔥', '🙏', '👀', '✅'];
+function reactionsOfComments(db, ids, userId) {
+  const out = new Map();
+  if (!ids.length) return out;
+  for (const row of db
+    .prepare(`SELECT r.comment_id, r.emoji, r.user_id, u.email, u.display_name, u.avatar FROM comment_reactions r JOIN users u ON u.id=r.user_id
+      WHERE r.comment_id IN (${ids.map(() => '?').join(',')}) ORDER BY r.created_at`)
+    .iterate(...ids)) {
+    if (!out.has(row.comment_id)) out.set(row.comment_id, []);
+    const list = out.get(row.comment_id);
+    let entry = list.find(item => item.emoji === row.emoji);
+    if (!entry) { entry = { emoji: row.emoji, count: 0, mine: false, people: [] }; list.push(entry); }
+    entry.count += 1;
+    if (row.user_id === userId) entry.mine = true;
+    if (entry.people.length < 3) entry.people.push(publicUser({ ...row, id: row.user_id }));
+  }
+  return out;
+}
+export function reactComment(db, captureId, commentId, userId, emoji) {
+  const comment = db.prepare('SELECT * FROM comments WHERE id=? AND capture_id=? AND deleted_at IS NULL').get(commentId, captureId);
+  if (!comment) return { error: 'not_found' };
+  if (!COMMENT_REACTIONS.includes(emoji)) return { error: 'invalid_reaction' };
+  const exists = db.prepare('SELECT 1 FROM comment_reactions WHERE comment_id=? AND user_id=? AND emoji=?').get(commentId, userId, emoji);
+  const at = now();
+  if (exists) db.prepare('DELETE FROM comment_reactions WHERE comment_id=? AND user_id=? AND emoji=?').run(commentId, userId, emoji);
+  else {
+    db.prepare('INSERT INTO comment_reactions(comment_id,user_id,emoji,created_at) VALUES(?,?,?,?)').run(commentId, userId, emoji, at);
+    const circle = circlesForCapture(db, captureId)[0] || null;
+    notify(db, { userId: comment.author_id, kind: 'reaction', actorId: userId, captureId, circleId: circle?.id || null, text: `${emoji} на ваше сообщение в «${titleOf(db, captureId)}»: «${excerpt(comment.body)}»`, data: { circle, emoji }, group: `react:capture:${captureId}`, at });
+  }
+  return { reactions: reactionsOfComments(db, [commentId], userId).get(commentId) || [], added: !exists };
+}
+// Прочитанное обсуждение: число в списке разговоров считается от этой отметки.
+export function markCommentsRead(db, captureId, userId, at = now()) {
+  db.prepare(`INSERT INTO comment_reads(capture_id,user_id,last_read_at) VALUES(?,?,?)
+    ON CONFLICT(capture_id,user_id) DO UPDATE SET last_read_at=excluded.last_read_at`).run(captureId, userId, at);
 }
 // Кого можно призвать — тремя группами, в этом порядке: те, кто запись уже
 // видит (автор, позванные, круг записи), люди из моих кругов и все остальные
@@ -477,6 +531,7 @@ export function addComment(db, { captureId, authorId, body, parentId = null, sha
   if (strangers.length && share !== 'yes' && share !== 'no') return { error: 'share_needed', people: strangers.map(({ group, sees, ...person }) => person) };
   const commentId = id(), at = now();
   db.prepare('INSERT INTO comments(id,capture_id,author_id,body,parent_id,created_at) VALUES(?,?,?,?,?,?)').run(commentId, captureId, authorId, text, parentId, at);
+  markCommentsRead(db, captureId, authorId, at);
   const added = [];
   if (share === 'yes') for (const person of strangers) { addParticipant(db, captureId, person.id, authorId, at); added.push(person.id); }
   const insert = db.prepare('INSERT OR IGNORE INTO comment_mentions(comment_id,user_id,created_at) VALUES(?,?,?)');
@@ -493,6 +548,12 @@ export function addComment(db, { captureId, authorId, body, parentId = null, sha
     called.add(target.id);
     notify(db, { userId: target.id, kind: 'call', actorId: authorId, captureId, circleId: circle?.id || null, text: `зовёт вас в обсуждении «${title}»: «${excerpt}»`, data: { circle }, at });
   }
+  // Ответ цитатой — как призыв: тому, кому ответили, строка и телефон.
+  const parentAuthor = parentId ? db.prepare('SELECT author_id FROM comments WHERE id=?').get(parentId)?.author_id : null;
+  if (parentAuthor && parentAuthor !== authorId && !called.has(parentAuthor) && canSeeCapture(db, captureId, parentAuthor)) {
+    notify(db, { userId: parentAuthor, kind: 'reply', actorId: authorId, captureId, circleId: circle?.id || null, text: `отвечает вам в обсуждении «${title}»: «${excerpt}»`, data: { circle }, at });
+    called.add(parentAuthor);
+  }
   const participants = captureParticipants(db, captureId);
   const owner = db.prepare('SELECT user_id FROM captures WHERE id=?').get(captureId)?.user_id;
   const assignee = db.prepare('SELECT assignee_id FROM assignments WHERE capture_id=? AND cancelled_at IS NULL').get(captureId)?.assignee_id;
@@ -500,7 +561,7 @@ export function addComment(db, { captureId, authorId, body, parentId = null, sha
     if (follower === authorId || called.has(follower)) continue;
     notify(db, { userId: follower, kind: 'chatter', actorId: authorId, captureId, circleId: circle?.id || null, text: `в обсуждении «${title}»: «${excerpt}»`, data: { circle }, group: `comments:${captureId}`, at });
   }
-  return { comment: comments(db, captureId).find(item => item.id === commentId), added, participants };
+  return { comment: comments(db, captureId, authorId).find(item => item.id === commentId), added, participants };
 }
 export function unseenMentions(db, userId) {
   return db
@@ -575,18 +636,24 @@ export function discussions(db, userId) {
   const unseen = db.prepare(`SELECT COUNT(*) AS n FROM comment_mentions cm JOIN comments m ON m.id=cm.comment_id
     WHERE cm.user_id=? AND cm.seen_at IS NULL AND m.capture_id=? AND m.deleted_at IS NULL`);
   const owners = db.prepare('SELECT * FROM users WHERE id=?');
+  const readAt = db.prepare('SELECT last_read_at FROM comment_reads WHERE capture_id=? AND user_id=?');
+  const fresh = db.prepare('SELECT COUNT(*) AS n FROM comments WHERE capture_id=? AND deleted_at IS NULL AND author_id!=? AND created_at>?');
   return rows
     .map(row => {
       const message = last.get(row.id);
       return {
         captureId: row.id,
         title: titleOf(db, row.id, row.raw),
+        kind: captureKind(db, row.id),
+        due: dueOf(db, row.id),
+        circle: circlesForCapture(db, row.id)[0] || null,
         mine: row.user_id === userId,
         author: row.user_id ? publicUser(owners.get(row.user_id)) : null,
         people: captureParticipants(db, row.id),
         count: commentCounts(db, [row.id]).get(row.id) || 0,
         last: message ? { body: message.body.slice(0, 160), at: message.created_at, author: publicUser(message) } : null,
         unread: unseen.get(userId, row.id).n > 0,
+        unreadCount: fresh.get(row.id, userId, readAt.get(row.id, userId)?.last_read_at || '').n,
       };
     })
     .sort((left, right) => (right.last?.at || '').localeCompare(left.last?.at || ''))
@@ -641,6 +708,15 @@ export function inbox(db, userId, extraRows = []) {
   }
   return { rows: visible, folded };
 }
+// Тип записи словом, которым его рисует список разговоров.
+const KIND_OF_TYPE = { task: 'todo', meeting_event: 'meeting', outcome_decision: 'outcome', note: 'note', idea_question: 'idea' };
+export function captureKind(db, captureId) {
+  const row = db.prepare("SELECT i.classification_json FROM interpretations i WHERE i.capture_id=? AND i.status='active'").get(captureId);
+  if (!row) return 'note';
+  return KIND_OF_TYPE[JSON.parse(row.classification_json).primaryType] || 'note';
+}
+export const captureTitle = (db, captureId, fallback = '') => titleOf(db, captureId, fallback || db.prepare('SELECT raw FROM captures WHERE id=?').get(captureId)?.raw || '');
+export const captureDue = (db, captureId) => dueOf(db, captureId);
 function titleOf(db, captureId, fallback = '') {
   const row = db.prepare("SELECT i.classification_json FROM interpretations i WHERE i.capture_id=? AND i.status='active'").get(captureId);
   if (row) {

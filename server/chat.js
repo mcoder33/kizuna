@@ -9,7 +9,7 @@
 // уходит в личный журнал. Поэтому счётчик живёт только здесь, на комнате, а в
 // день попадает одно: призыв `@имя`. Обычное сообщение не дёргает никого.
 import crypto from 'node:crypto';
-import { displayName, publicUser, circlesOf, membership, membersOf } from './circles.js';
+import { displayName, publicUser, circlesOf, membership, membersOf, captureTitle, captureDue } from './circles.js';
 import { notify } from './notifications.js';
 
 const now = () => new Date().toISOString();
@@ -20,6 +20,13 @@ export const MESSAGE_LIMIT = 4000;
 export const ROOMS_PER_CIRCLE = 20;
 export const PAGE_SIZE = 50;
 export const GENERAL_NAME = 'Общий';
+// Реакций немного и они одни на всё приложение: это не набор эмодзи, а способ
+// ответить «видел», «согласен», «сделано», не заводя сообщение ради «ок».
+export const REACTIONS = ['👍', '❤️', '🔥', '🙏', '👀', '✅'];
+const excerptOf = text => (text.length > 140 ? `${text.slice(0, 139)}…` : text);
+// Как разговор называется у человека в списке: «Общий» круга зовётся именем
+// круга, комната — своим. Уведомление говорит тем же словом, что и страница.
+const chatTitle = (room, circle) => (room.kind === 'general' ? circle?.name || room.name : room.name);
 
 const normalizeName = value => String(value || '').normalize('NFKC').toLocaleLowerCase('ru-RU').replace(/ё/g, 'е').trim();
 function sameName(left, right) {
@@ -66,10 +73,25 @@ function unreadOf(db, room, userId) {
 }
 function lastOf(db, room) {
   const row = db
-    .prepare(`SELECT m.body, m.created_at, m.kind, u.email, u.display_name FROM chat_messages m LEFT JOIN users u ON u.id=m.author_id
+    .prepare(`SELECT m.body, m.created_at, m.kind, m.author_id, u.email, u.display_name, u.avatar FROM chat_messages m LEFT JOIN users u ON u.id=m.author_id
       WHERE m.room_id=? AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1`)
     .get(room.id);
-  return row ? { body: row.body, createdAt: row.created_at, kind: row.kind, author: row.email ? displayName(row) : null } : null;
+  const said = row ? { body: row.body, createdAt: row.created_at, kind: row.kind, author: row.email ? displayName(row) : null, by: row.email ? publicUser({ ...row, id: row.author_id }) : null } : null;
+  if (room.kind !== 'general') return said;
+  const deed = db
+    .prepare(`SELECT a.capture_id, a.created_at, u.id, u.email, u.display_name, u.avatar FROM assignments a JOIN captures c ON c.id=a.capture_id JOIN users u ON u.id=a.assigner_id
+      WHERE a.circle_id=? AND a.cancelled_at IS NULL AND c.deleted_at IS NULL ORDER BY a.created_at DESC LIMIT 1`)
+    .get(room.circle_id);
+  if (!deed || (said && said.createdAt >= deed.created_at)) return said;
+  return { body: `Дело: ${captureTitle(db, deed.capture_id)}`, createdAt: deed.created_at, kind: 'deed', author: displayName(deed), by: publicUser(deed) };
+}
+function pinnedOf(db, room) {
+  if (!room.pinned_message_id) return null;
+  const row = db
+    .prepare(`SELECT m.id, m.body, m.created_at, m.author_id, u.email, u.display_name, u.avatar FROM chat_messages m LEFT JOIN users u ON u.id=m.author_id
+      WHERE m.id=? AND m.deleted_at IS NULL`)
+    .get(room.pinned_message_id);
+  return row ? { id: row.id, body: row.body.slice(0, 300), createdAt: row.created_at, author: row.email ? publicUser({ ...row, id: row.author_id }) : null, pinnedAt: room.pinned_at } : null;
 }
 function serializeRoom(db, room, userId) {
   return {
@@ -81,7 +103,11 @@ function serializeRoom(db, room, userId) {
     createdAt: room.created_at,
     members: roomMembers(db, room),
     unread: unreadOf(db, room, userId),
+    // «@» в списке разговоров: здесь позвали меня, и я ещё не открывал.
+    called: Boolean(db.prepare(`SELECT 1 FROM chat_mentions cm JOIN chat_messages m ON m.id=cm.message_id
+      WHERE cm.user_id=? AND cm.seen_at IS NULL AND m.room_id=? AND m.deleted_at IS NULL LIMIT 1`).get(userId, room.id)),
     last: lastOf(db, room),
+    pinned: pinnedOf(db, room),
   };
 }
 
@@ -114,7 +140,12 @@ export function createRoom(db, circleId, userId, name, memberIds = []) {
   // Первая строка комнаты — не сообщение, а факт: кто её завёл и с кем.
   const others = wanted.filter(person => person !== userId).map(person => displayName(db.prepare('SELECT * FROM users WHERE id=?').get(person)));
   system(db, roomId, userId, 'joined', `завёл комнату${others.length ? ` с ${others.join(', ')}` : ''}`);
+  for (const person of wanted) roomCall(db, findRoom(db, roomId), userId, person, at);
   return { room: serializeRoom(db, findRoom(db, roomId), userId) };
+}
+function roomCall(db, room, actorId, personId, at = now()) {
+  const circle = db.prepare('SELECT id, name, color FROM circles WHERE id=?').get(room.circle_id) || null;
+  notify(db, { userId: personId, kind: 'room', actorId, roomId: room.id, circleId: room.circle_id, text: `зовёт вас в комнату «${room.name}»`, data: { circle, roomName: room.name }, at });
 }
 function system(db, roomId, userId, kind, body) {
   db.prepare('INSERT INTO chat_messages(id,room_id,author_id,body,kind,created_at) VALUES(?,?,?,?,?,?)').run(id(), roomId, userId, body, kind, now());
@@ -140,6 +171,7 @@ export function addToRoom(db, roomId, userId, personId) {
   db.prepare(`INSERT INTO chat_room_members(room_id,user_id,added_by,joined_at) VALUES(?,?,?,?)
     ON CONFLICT(room_id,user_id) DO UPDATE SET left_at=NULL, joined_at=excluded.joined_at`).run(roomId, personId, userId, at);
   system(db, roomId, userId, 'added', `позвал(а) в комнату: ${displayName(db.prepare('SELECT * FROM users WHERE id=?').get(personId))}`);
+  roomCall(db, room, userId, personId, at);
   return { room: serializeRoom(db, findRoom(db, roomId), userId) };
 }
 export function leaveRoom(db, roomId, userId) {
@@ -151,6 +183,55 @@ export function leaveRoom(db, roomId, userId) {
   // Комната без людей закрывается: пустая комната в списке — мусор.
   if (!roomMembers(db, findRoom(db, roomId)).length) db.prepare('UPDATE chat_rooms SET archived_at=? WHERE id=?').run(now(), roomId);
   return { left: true };
+}
+
+// Реакции одним списком на сообщение: какая, сколько, моя ли и первые лица.
+function reactionsOf(db, table, column, ids, userId) {
+  const out = new Map();
+  if (!ids.length) return out;
+  for (const row of db
+    .prepare(`SELECT r.${column} AS item_id, r.emoji, r.user_id, u.email, u.display_name, u.avatar FROM ${table} r JOIN users u ON u.id=r.user_id
+      WHERE r.${column} IN (${ids.map(() => '?').join(',')}) ORDER BY r.created_at`)
+    .iterate(...ids)) {
+    if (!out.has(row.item_id)) out.set(row.item_id, []);
+    const list = out.get(row.item_id);
+    let entry = list.find(item => item.emoji === row.emoji);
+    if (!entry) { entry = { emoji: row.emoji, count: 0, mine: false, people: [] }; list.push(entry); }
+    entry.count += 1;
+    if (row.user_id === userId) entry.mine = true;
+    if (entry.people.length < 3) entry.people.push(publicUser({ ...row, id: row.user_id }));
+  }
+  return out;
+}
+export const chatReactionsOf = (db, ids, userId) => reactionsOf(db, 'chat_reactions', 'message_id', ids, userId);
+export const commentReactionsOf = (db, ids, userId) => reactionsOf(db, 'comment_reactions', 'comment_id', ids, userId);
+
+// Дело, отданное человеку круга, встаёт в «Общий» карточкой: разговор и работа
+// идут в одном месте. Карточка не сообщение — она не считается непрочитанной и
+// всегда показывает, что с делом сейчас.
+function deedsBetween(db, room, userId, from, to) {
+  if (room.kind !== 'general') return [];
+  return db
+    .prepare(`SELECT a.* FROM assignments a JOIN captures c ON c.id=a.capture_id
+      WHERE a.circle_id=? AND a.cancelled_at IS NULL AND c.deleted_at IS NULL AND a.created_at>=? AND a.created_at<? ORDER BY a.created_at`)
+    .all(room.circle_id, from, to)
+    .map(row => {
+      const assigner = db.prepare('SELECT * FROM users WHERE id=?').get(row.assigner_id);
+      const assignee = db.prepare('SELECT * FROM users WHERE id=?').get(row.assignee_id);
+      return {
+        id: `deed:${row.id}`,
+        kind: 'deed',
+        createdAt: row.created_at,
+        author: assigner ? publicUser(assigner) : null,
+        mine: row.assigner_id === userId,
+        mentions: [],
+        reactions: [],
+        deed: {
+          assignmentId: row.id, captureId: row.capture_id, title: captureTitle(db, row.capture_id), due: captureDue(db, row.capture_id), state: row.state,
+          assigner: assigner ? publicUser(assigner) : null, assignee: assignee ? publicUser(assignee) : null, forMe: row.assignee_id === userId,
+        },
+      };
+    });
 }
 
 export function messages(db, roomId, userId, { before = null, limit = PAGE_SIZE } = {}) {
@@ -170,28 +251,49 @@ export function messages(db, roomId, userId, { before = null, limit = PAGE_SIZE 
       if (!mentions.has(row.message_id)) mentions.set(row.message_id, []);
       mentions.get(row.message_id).push(publicUser(row));
     }
+  const reactions = chatReactionsOf(db, ids, userId);
+  // Ответ показывает, на что отвечали, даже если исходное сообщение ушло со
+  // страницы или его убрали: цитата без текста честно говорит «убрано».
+  const replyIds = [...new Set(rows.map(row => row.reply_to).filter(Boolean))];
+  const quoted = new Map();
+  if (replyIds.length)
+    for (const row of db
+      .prepare(`SELECT m.id, m.body, m.deleted_at, m.author_id, u.email, u.display_name, u.avatar FROM chat_messages m LEFT JOIN users u ON u.id=m.author_id
+        WHERE m.id IN (${replyIds.map(() => '?').join(',')})`)
+      .iterate(...replyIds))
+      quoted.set(row.id, { id: row.id, body: row.deleted_at ? '' : excerptOf(row.body), removed: Boolean(row.deleted_at), author: row.email ? publicUser({ ...row, id: row.author_id }) : null });
+  // Две галочки — кто-то из разговора дочитал до этого сообщения.
+  const othersRead = db.prepare('SELECT MAX(last_read_at) AS at FROM chat_reads WHERE room_id=? AND user_id!=?').get(roomId, userId).at || '';
+  const said = rows.reverse().map(row => ({
+    id: row.id,
+    body: row.body,
+    kind: row.kind,
+    createdAt: row.created_at,
+    author: row.email ? publicUser({ ...row, id: row.author_id }) : null,
+    mine: row.author_id === userId,
+    mentions: mentions.get(row.id) || [],
+    replyTo: row.reply_to ? quoted.get(row.reply_to) || { id: row.reply_to, body: '', removed: true, author: null } : null,
+    reactions: reactions.get(row.id) || [],
+    read: row.author_id === userId ? othersRead >= row.created_at : null,
+  }));
+  const more = rows.length === limit;
+  const deeds = deedsBetween(db, room, userId, more ? said[0].createdAt : '', before || '9999');
   return {
     room: serializeRoom(db, room, userId),
-    messages: rows.reverse().map(row => ({
-      id: row.id,
-      body: row.body,
-      kind: row.kind,
-      createdAt: row.created_at,
-      author: row.email ? publicUser({ ...row, id: row.author_id }) : null,
-      mine: row.author_id === userId,
-      mentions: mentions.get(row.id) || [],
-    })),
-    more: rows.length === limit,
+    messages: [...said, ...deeds].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
+    more,
   };
 }
 
-export function say(db, roomId, userId, body) {
+export function say(db, roomId, userId, body, { replyTo = null } = {}) {
   const room = findRoom(db, roomId);
   if (!room || !inRoom(db, room, userId)) return { error: 'not_found' };
   const text = String(body ?? '').trim();
   if (!text || text.length > MESSAGE_LIMIT) return { error: 'invalid_message' };
+  const reply = replyTo ? db.prepare("SELECT id, author_id FROM chat_messages WHERE id=? AND room_id=? AND deleted_at IS NULL AND kind='said'").get(replyTo, roomId) : null;
+  if (replyTo && !reply) return { error: 'invalid_reply' };
   const messageId = id(), at = now();
-  db.prepare("INSERT INTO chat_messages(id,room_id,author_id,body,kind,created_at) VALUES(?,?,?,?,'said',?)").run(messageId, roomId, userId, text, at);
+  db.prepare("INSERT INTO chat_messages(id,room_id,author_id,body,kind,created_at,reply_to) VALUES(?,?,?,?,'said',?,?)").run(messageId, roomId, userId, text, at, reply?.id || null);
   // Призвать можно только того, кто в этой комнате: звать в пустоту и ждать
   // ответа — худшее, что может сделать интерфейс.
   const people = roomMembers(db, room).filter(person => person.id !== userId);
@@ -202,23 +304,66 @@ export function say(db, roomId, userId, body) {
     if (target && !called.some(person => person.id === target.id)) { insert.run(messageId, target.id, at); called.push(target); }
   }
   markRead(db, roomId, userId, at);
-  // Призыв — повод для колокольчика и телефона; обычное сообщение ложится одной
-  // тихой строкой на разговор, и то если человек сам включил такой повод.
+  // Призыв и ответ цитатой — поводы для колокольчика и телефона; обычное
+  // сообщение ложится одной тихой строкой на разговор, и то если человек сам
+  // включил такой повод. Позванному и тому, кому ответили, строка одна.
   const circle = db.prepare('SELECT id, name, color FROM circles WHERE id=?').get(room.circle_id) || null;
-  const excerpt = text.length > 140 ? `${text.slice(0, 139)}…` : text;
+  const excerpt = excerptOf(text);
   for (const person of people) {
     const call = called.some(item => item.id === person.id);
+    const answered = reply?.author_id === person.id;
     notify(db, call
-      ? { userId: person.id, kind: 'call', actorId: userId, roomId, circleId: room.circle_id, text: `зовёт вас в разговоре «${room.name}»: «${excerpt}»`, meta: [], data: { circle, roomName: room.name }, at }
-      : { userId: person.id, kind: 'chatter', actorId: userId, roomId, circleId: room.circle_id, text: `в разговоре «${room.name}»: «${excerpt}»`, meta: [], data: { circle, roomName: room.name }, group: `chat:${roomId}`, at });
+      ? { userId: person.id, kind: 'call', actorId: userId, roomId, circleId: room.circle_id, text: `зовёт вас в разговоре «${chatTitle(room, circle)}»: «${excerpt}»`, meta: [], data: { circle, roomName: chatTitle(room, circle) }, at }
+      : answered
+        ? { userId: person.id, kind: 'reply', actorId: userId, roomId, circleId: room.circle_id, text: `отвечает вам в разговоре «${chatTitle(room, circle)}»: «${excerpt}»`, meta: [], data: { circle, roomName: chatTitle(room, circle) }, at }
+        : { userId: person.id, kind: 'chatter', actorId: userId, roomId, circleId: room.circle_id, text: `в разговоре «${chatTitle(room, circle)}»: «${excerpt}»`, meta: [], data: { circle, roomName: chatTitle(room, circle) }, group: `chat:${roomId}`, at });
   }
-  return { message: messages(db, roomId, userId, { limit: 1 }).messages[0], called, room: serializeRoom(db, room, userId) };
+  return { message: messages(db, roomId, userId, { limit: 1 }).messages.find(item => item.id === messageId), called, room: serializeRoom(db, room, userId) };
+}
+
+// Реакция ставится и снимается одним нажатием. Автору сообщения — тихая
+// склеенная строка на разговор: десять «👍» не должны звенеть десять раз.
+export function react(db, roomId, messageId, userId, emoji) {
+  const room = findRoom(db, roomId);
+  if (!room || !inRoom(db, room, userId)) return { error: 'not_found' };
+  const message = db.prepare("SELECT * FROM chat_messages WHERE id=? AND room_id=? AND deleted_at IS NULL AND kind='said'").get(messageId, roomId);
+  if (!message) return { error: 'not_found' };
+  if (!REACTIONS.includes(emoji)) return { error: 'invalid_reaction' };
+  const exists = db.prepare('SELECT 1 FROM chat_reactions WHERE message_id=? AND user_id=? AND emoji=?').get(messageId, userId, emoji);
+  const at = now();
+  if (exists) db.prepare('DELETE FROM chat_reactions WHERE message_id=? AND user_id=? AND emoji=?').run(messageId, userId, emoji);
+  else {
+    db.prepare('INSERT INTO chat_reactions(message_id,user_id,emoji,created_at) VALUES(?,?,?,?)').run(messageId, userId, emoji, at);
+    const circle = db.prepare('SELECT id, name, color FROM circles WHERE id=?').get(room.circle_id) || null;
+    if (message.author_id) notify(db, { userId: message.author_id, kind: 'reaction', actorId: userId, roomId, circleId: room.circle_id, text: `${emoji} на ваше сообщение в «${chatTitle(room, circle)}»: «${excerptOf(message.body)}»`, data: { circle, roomName: chatTitle(room, circle), emoji }, group: `react:${roomId}`, at });
+  }
+  return { reactions: chatReactionsOf(db, [messageId], userId).get(messageId) || [], added: !exists };
+}
+
+// Закрепить может любой, кто в разговоре: это не власть, а общая памятка —
+// «демо в четверг в 11». Закреп один; новый заменяет прежний.
+export function pin(db, roomId, userId, messageId = null) {
+  const room = findRoom(db, roomId);
+  if (!room || !inRoom(db, room, userId)) return { error: 'not_found' };
+  if (!messageId) {
+    db.prepare('UPDATE chat_rooms SET pinned_message_id=NULL, pinned_by=NULL, pinned_at=NULL WHERE id=?').run(roomId);
+    return { room: serializeRoom(db, findRoom(db, roomId), userId) };
+  }
+  const message = db.prepare("SELECT * FROM chat_messages WHERE id=? AND room_id=? AND deleted_at IS NULL AND kind='said'").get(messageId, roomId);
+  if (!message) return { error: 'not_found' };
+  const at = now();
+  db.prepare('UPDATE chat_rooms SET pinned_message_id=?, pinned_by=?, pinned_at=? WHERE id=?').run(messageId, userId, at, roomId);
+  const circle = db.prepare('SELECT id, name, color FROM circles WHERE id=?').get(room.circle_id) || null;
+  for (const person of roomMembers(db, room))
+    notify(db, { userId: person.id, kind: 'pin', actorId: userId, roomId, circleId: room.circle_id, text: `закрепляет в «${chatTitle(room, circle)}»: «${excerptOf(message.body)}»`, data: { circle, roomName: chatTitle(room, circle) }, group: `pin:${roomId}`, at });
+  return { room: serializeRoom(db, findRoom(db, roomId), userId) };
 }
 // Своё сообщение можно убрать: свои слова — свои. Чужие остаются.
 export function removeMessage(db, messageId, userId) {
   const row = db.prepare('SELECT * FROM chat_messages WHERE id=? AND deleted_at IS NULL').get(messageId);
   if (!row || row.author_id !== userId) return { error: 'not_found' };
   db.prepare('UPDATE chat_messages SET deleted_at=? WHERE id=?').run(now(), messageId);
+  db.prepare('UPDATE chat_rooms SET pinned_message_id=NULL, pinned_by=NULL, pinned_at=NULL WHERE pinned_message_id=?').run(messageId);
   return { removed: true };
 }
 export function markRead(db, roomId, userId, at = now()) {

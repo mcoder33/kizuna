@@ -5,6 +5,9 @@ import { test, expect } from "@playwright/test";
 import { E2E_EMAIL, E2E_PASSWORD } from "./fixtures/e2e-account.js";
 
 const ANYA = { email: "anya@kizuna.test", password: "anya-very-long-password" };
+// Ящики «Сегодня» открываются по часам: вечером открыт «Что делал», и дела в
+// «Дне» не видны. Оба человека видят один и тот же день — 13:00, фаза «день».
+const dayAt = (hour) => { const at = new Date(); at.setHours(hour, 0, 0, 0); return at; };
 
 async function dissolveCircles(request) {
   const circles = (await (await request.get("/api/circles")).json()).circles || [];
@@ -13,6 +16,7 @@ async function dissolveCircles(request) {
 async function loginAs(browser, { email, password }) {
   const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
   const page = await context.newPage();
+  await page.clock.install({ time: dayAt(13) });
   await page.goto("/login");
   await page.locator("#auth-email").fill(email);
   await page.locator("#auth-password").fill(password);
@@ -36,17 +40,19 @@ test("круг: приглашение, просьба, «беру» и разг
   await request.patch("/api/account", { data: { name: "Саша" } });
 
   // ── круг заводится и зовёт ссылкой ──
+  await page.clock.install({ time: dayAt(13) });
   await page.goto("/#circles");
-  await page.locator("#circle-new-name").fill("Хаб");
-  await page.getByRole("button", { name: "+ Круг" }).click();
-  // Круг открывается разговором; люди и граница — вторая половина страницы.
-  await expect(page.locator(".room-pane .room-title")).toContainText("Общий");
-  await page.getByRole("button", { name: /Люди и граница/ }).click();
-  const card = page.locator(".circle-card").filter({ hasText: "Хаб" });
-  await expect(card).toBeVisible();
-  await expect(card.locator(".people-name")).toContainText("Саша");
-  await card.getByRole("button", { name: "Завести ссылку" }).click();
-  const invite = await card.locator(".invite-link").inputValue();
+  await page.locator(".kc-list-head .kc-icon, .kc-empty-card .kc-btn").first().click();
+  await page.locator("#kc-modal-name").fill("Хаб");
+  await page.getByRole("dialog").getByRole("button", { name: "Завести круг" }).click();
+  // Круг открывается разговором с кольцом лиц, и сразу — «Позвать».
+  await expect(page.locator(".kc-hero .kc-hero-name")).toHaveText("Хаб");
+  await expect(page.locator(".kc-hero .kc-seat:not(.empty)")).toHaveCount(1);
+  await expect(page.locator(".kc-intro")).toContainText("В круге пока только вы");
+  await page.getByRole("button", { name: "Завести ссылку" }).click();
+  // Ссылка видна только сейчас: ждём настоящую, а не маску.
+  await expect(page.locator(".kc-linkrow code:not(.masked)")).toContainText("#join/");
+  const invite = await page.locator(".kc-linkrow code:not(.masked)").textContent();
   expect(invite).toContain("#join/");
 
   // ── Аня входит по ссылке ──
@@ -55,8 +61,8 @@ test("круг: приглашение, просьба, «беру» и разг
   await anya.page.goto(`/${invite.slice(invite.indexOf("#"))}`);
   await expect(anya.page.locator(".invite-card")).toContainText("Саша зовёт вас в круг «Хаб»");
   await anya.page.getByRole("button", { name: "Войти в круг" }).click();
-  await anya.page.getByRole("button", { name: /Люди и граница/ }).click();
-  await expect(anya.page.locator(".circle-card").filter({ hasText: "Хаб" }).locator(".people-name")).toHaveCount(2);
+  await anya.page.locator(".kc-hero-tools").getByRole("button", { name: "Информация" }).click();
+  await expect(anya.page.locator(".kc-info .kc-person")).toHaveCount(2);
 
   // ── дело уходит фразой ──
   await page.goto("/#today");
@@ -131,10 +137,17 @@ test("круг: приглашение, просьба, «беру» и разг
   await expect(waiting.locator(".wait-who")).toContainText("Аня");
   await expect(waiting.locator(".wait-state")).toContainText("взято");
 
+  // ── в «Общем» круга дело стоит карточкой, и видно, что его взяли ──
+  await page.goto("/#circles");
+  await expect(page.locator(".kc-deed").filter({ hasText: "смету" }).locator(".kc-state")).toHaveText("взято");
+
   // ── круг выключается: дела уходят из списков, просьбы сворачиваются ──
   await anya.page.goto("/#circles");
-  await anya.page.getByRole("button", { name: /Люди и граница/ }).click();
-  await anya.page.locator(".circle-card").filter({ hasText: "Хаб" }).locator(".switch-row input").check();
+  // «Информация» переживает уход со страницы — открыта с прошлого раза.
+  if (!(await anya.page.locator(".kc-info").isVisible())) await anya.page.locator(".kc-hero-tools").getByRole("button", { name: "Информация" }).click();
+  const muted = anya.page.waitForResponse((response) => response.url().endsWith("/mute") && response.request().method() === "POST");
+  await anya.page.locator(".kc-switch").click();
+  expect((await muted).ok()).toBe(true);
   await anya.page.goto("/#today");
   await expect(anya.page.locator("#todo .entry").filter({ hasText: "смету" })).toHaveCount(0);
   await expect(anya.page.locator(".day-muted")).toContainText("выключен");

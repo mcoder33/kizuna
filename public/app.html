@@ -296,13 +296,11 @@
         <div id="board-columns" class="board-columns" aria-label="Колонки доски"></div>
       </section>
 
-      <!-- Круги: люди и граница. Ни ленты, ни своей доски — иначе круг
-           превращается во второй дом, от которого мы отказались. -->
-      <section id="circles" class="app-page circles-page" hidden>
-        <div class="page-heading">
-          <p class="eyebrow">ОБЩЕЕ · КРУГИ</p>
-          <h2>Круги</h2>
-        </div>
+      <!-- Круги: разговоры как в Телеграме — папки, список, разговор и
+           «Информация» с людьми и границей. Ни ленты, ни своей доски. Страницу
+           собирает public/app.js (renderCircles). -->
+      <section id="circles" class="app-page circles-page" hidden aria-labelledby="circles-title">
+        <h2 id="circles-title" class="sr-only">Круги</h2>
         <div id="circles-body" class="circles-body"></div>
       </section>
 

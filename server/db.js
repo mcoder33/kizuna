@@ -453,6 +453,7 @@ function migrateUsers(db) {
   if (!briefColumns.has('user_id')) migrateDailyBriefsPerUser(db);
   migrateCircles(db);
   migrateCaptureParticipants(db);
+  migrateConversation(db);
 }
 // Участники записи: кого позвали в обсуждение одной записи без круга. Позванный
 // видит эту запись и её разговор — и больше ничего из журнала автора.
@@ -463,6 +464,42 @@ function migrateCaptureParticipants(db) {
       PRIMARY KEY(capture_id, user_id));
     CREATE INDEX IF NOT EXISTS capture_people_user ON capture_people(user_id, removed_at);`);
   db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(19, now());
+}
+// Миграция 20: разговор как в мессенджере. Ответ цитатой, реакции и
+// закреплённое сообщение — в разговорах кругов; реакции и «прочитано» — в
+// обсуждениях записей. Прочитанное обсуждение нужно для числа в списке
+// разговоров: раньше там была только точка непрочитанного призыва. Уже идущие
+// обсуждения при переходе считаются прочитанными — иначе после выкладки все
+// старые разговоры разом загорелись бы числами.
+function migrateConversation(db) {
+  const messageColumns = new Set(db.prepare('PRAGMA table_info(chat_messages)').all().map(column => column.name));
+  if (!messageColumns.has('reply_to')) db.exec('ALTER TABLE chat_messages ADD COLUMN reply_to TEXT');
+  const roomColumns = new Set(db.prepare('PRAGMA table_info(chat_rooms)').all().map(column => column.name));
+  for (const [name, definition] of [['pinned_message_id', 'TEXT'], ['pinned_by', 'TEXT'], ['pinned_at', 'TEXT']])
+    if (!roomColumns.has(name)) db.exec(`ALTER TABLE chat_rooms ADD COLUMN ${name} ${definition}`);
+  const fresh = !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='comment_reads'").get();
+  db.exec(`CREATE TABLE IF NOT EXISTS chat_reactions (
+      message_id TEXT NOT NULL REFERENCES chat_messages(id), user_id TEXT NOT NULL REFERENCES users(id),
+      emoji TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(message_id, user_id, emoji));
+    CREATE INDEX IF NOT EXISTS chat_reactions_message ON chat_reactions(message_id);
+    CREATE TABLE IF NOT EXISTS comment_reactions (
+      comment_id TEXT NOT NULL REFERENCES comments(id), user_id TEXT NOT NULL REFERENCES users(id),
+      emoji TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(comment_id, user_id, emoji));
+    CREATE INDEX IF NOT EXISTS comment_reactions_comment ON comment_reactions(comment_id);
+    CREATE TABLE IF NOT EXISTS comment_reads (
+      capture_id TEXT NOT NULL REFERENCES captures(id), user_id TEXT NOT NULL REFERENCES users(id),
+      last_read_at TEXT NOT NULL, PRIMARY KEY(capture_id, user_id));`);
+  if (fresh) {
+    const at = now();
+    db.prepare(`INSERT OR IGNORE INTO comment_reads(capture_id,user_id,last_read_at)
+      SELECT DISTINCT seen.capture_id, seen.user_id, ? FROM (
+        SELECT c.id AS capture_id, c.user_id FROM captures c WHERE c.user_id IS NOT NULL AND c.id IN (SELECT capture_id FROM comments)
+        UNION SELECT p.capture_id, p.user_id FROM capture_people p WHERE p.capture_id IN (SELECT capture_id FROM comments)
+        UNION SELECT cc.capture_id, m.user_id FROM capture_circles cc JOIN circle_members m ON m.circle_id=cc.circle_id
+          WHERE cc.capture_id IN (SELECT capture_id FROM comments)
+      ) seen JOIN users u ON u.id=seen.user_id`).run(at);
+  }
+  db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(20, now());
 }
 // Круги: общая полка поверх личных журналов. Запись остаётся у автора, в круг
 // её кладёт отдельная строка `capture_circles` — так «убрать из круга» не
@@ -1246,6 +1283,8 @@ const ownedRows = {
   assignments: [MINE, 1],
   comments: [MINE, 1],
   comment_mentions: ['comment_id IN (SELECT id FROM comments WHERE ' + MINE + ')', 1],
+  comment_reactions: ['comment_id IN (SELECT id FROM comments WHERE ' + MINE + ')', 1],
+  comment_reads: [MINE, 1],
   capture_people: [MINE, 1],
 };
 const mineWhere = table => 'WHERE ' + ownedRows[table][0];
@@ -1281,7 +1320,7 @@ export function resetLedger(db, userId = null) {
     db.exec('DROP TRIGGER IF EXISTS ledger_events_no_update; DROP TRIGGER IF EXISTS ledger_events_no_delete;');
     try {
       // Порядок важен: сначала то, что ссылается, потом то, на что ссылаются.
-      for (const table of ['agent_memories','activity_events','reminder_sends','daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','comment_mentions','comments','capture_people','assignments','capture_circles','interpretations','capture_attachments','capture_notes','usage_events','board_placements','board_columns','calendar_links','calendar_events','calendar_accounts','captures']) db.prepare(`DELETE FROM ${table} ${mineWhere(table)}`).run(userId);
+      for (const table of ['agent_memories','activity_events','reminder_sends','daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','comment_mentions','comment_reactions','comment_reads','comments','capture_people','assignments','capture_circles','interpretations','capture_attachments','capture_notes','usage_events','board_placements','board_columns','calendar_links','calendar_events','calendar_accounts','captures']) db.prepare(`DELETE FROM ${table} ${mineWhere(table)}`).run(userId);
     } finally { createLedgerEventGuards(db); }
   });
 }

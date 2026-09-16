@@ -5397,267 +5397,220 @@ function boardWaitingEl(waiting) {
   wrap.append(node("p", "Напоминать за вас приложение не будет: это факт в вашем списке, а не письмо человеку в спину.", "board-waiting-hint"));
   return wrap;
 }
-// ── разговор круга ──
-// Общий разговор и комнаты подмножеством живут на той же странице, что и люди:
-// круг — это люди, граница и разговор, больше в нём ничего нет. Счётчик
-// непрочитанного стоит на комнате и нигде больше: в день попадает только
-// призыв, иначе личный журнал превращается в мессенджер со значком на вкладке.
-const chatState = { rooms: [], activeRoomId: null, messages: [], more: false, loading: false, adding: null, drafts: {} };
-const roomsOfCircle = (circleId) => chatState.rooms.filter((room) => room.circleId === circleId);
-const activeRoom = () => chatState.rooms.find((room) => room.id === chatState.activeRoomId) || null;
-async function loadRooms({ keepActive = true } = {}) {
-  const data = await request("/api/rooms");
-  chatState.rooms = data.rooms || [];
-  if (!keepActive || !activeRoom()) chatState.activeRoomId = chatState.rooms[0]?.id || null;
-  return chatState.rooms;
+// ── разговоры кругов: как в Телеграме, а над разговором — кольцо лиц ──
+// Слева папки (все, новые, по кругу, записи), дальше список разговоров, справа
+// сам разговор. Разговор — это «Общий» круга, комната подмножеством или
+// обсуждение записи: у всех трёх одна раскладка, пузыри и одно поле. Над
+// разговором кольцо: кто здесь и кого позвать. «Информация» — люди, ссылка и
+// граница круга — выезжает справа, как у группы в Телеграме.
+//
+// Счётчик непрочитанного по-прежнему живёт только на этой странице: в день
+// попадает призыв, а не каждое сообщение.
+const chatState = { rooms: [], messages: [], more: false, loading: false, drafts: {} };
+const kc = {
+  folder: "all", chat: null, pane: null, info: null, person: null, hero: true, menu: false, ctx: null,
+  reply: null, share: null, query: "", newFrom: null, talk: null, modal: null, invite: null,
+  fresh: false, focusField: false,
+};
+const KC_REACTIONS = ["👍", "❤️", "🔥", "🙏", "👀", "✅"];
+// Тип записи — цвет и слово для строки обсуждения.
+const KC_KIND = { todo: ["violet", "дело"], meeting: ["orange", "встреча"], outcome: ["blue", "результат"], note: ["teal", "заметка"], idea: ["pink", "идея"] };
+const KC_NAME_TONES = ["violet", "blue", "teal", "orange", "pink", "red"];
+function kcStored(key, fallback) {
+  try { const value = localStorage.getItem(key); return value === null ? fallback : JSON.parse(value); } catch { return fallback; }
 }
-async function openRoom(roomId, { render = true } = {}) {
-  markNotificationsRead({ roomId });
-  const hadUnread = (chatState.rooms.find((room) => room.id === roomId)?.unread || 0) > 0;
-  chatState.activeRoomId = roomId;
-  chatState.loading = true;
-  if (render) renderCircles();
-  try {
-    const data = await request(`/api/rooms/${roomId}/messages`);
-    chatState.messages = data.messages || [];
-    chatState.more = Boolean(data.more);
-    const room = chatState.rooms.find((item) => item.id === roomId);
-    if (room) { room.unread = 0; Object.assign(room, data.room); }
-  } catch (error) {
-    chatState.messages = [];
-    toast(error.message || "Комната не открылась");
-  } finally {
-    chatState.loading = false;
-  }
-  renderCircles();
-  scrollThreadDown();
-  if (hadUnread) load().catch(() => {});
+function kcStore(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
 }
-function scrollThreadDown() {
-  const list = $("#room-thread");
-  if (list) list.scrollTop = list.scrollHeight;
-}
-// Ссылка из полосы «к вам»: открыть комнату, где позвали.
-// «Вас добавили в круг»: открыть — значит прочитать, строка гаснет.
-async function openCircleFromInbox(circleId) {
-  location.hash = "#circles";
-  try { await request(`/api/circles/${circleId}/seen`, { method: "POST", body: JSON.stringify({}) }); } catch {}
-  const room = chatState.rooms.find((item) => item.circleId === circleId && item.kind === "general");
-  await loadCircles(room ? { then: () => openRoom(room.id) } : {});
-  load().catch(() => {});
-}
-async function openRoomFromInbox(roomId) {
-  location.hash = "#circles";
-  await loadCircles({ then: () => openRoom(roomId) });
-}
-async function sendToRoom(field, button) {
-  const room = activeRoom();
-  const body = field.value.trim();
-  if (!room || !body) return;
-  button.disabled = true;
-  try {
-    const result = await request(`/api/rooms/${room.id}/messages`, { method: "POST", body: JSON.stringify({ body }) });
-    chatState.messages = [...chatState.messages, result.message];
-    field.value = "";
-    delete chatState.drafts[room.id];
-    field.style.height = "auto";
-    renderCircles();
-    scrollThreadDown();
-    if (result.called?.length) toast(`Призвали: ${result.called.map((person) => person.name).join(", ")}`);
-  } catch (error) {
-    toast(error.message || "Сообщение не ушло");
-  } finally {
-    button.disabled = false;
-    $("#room-input")?.focus();
-  }
-}
-const sameMinute = (left, right) => Math.abs(Date.parse(left) - Date.parse(right)) < 5 * 60000;
-function roomMessageEl(message, previous) {
-  if (message.kind !== "said") {
-    const line = node("p", `${message.author?.name || "Кто-то"} ${message.body}`, "room-system");
-    return line;
-  }
-  const dense = previous && previous.kind === "said" && previous.author?.id === message.author?.id && sameMinute(previous.createdAt, message.createdAt);
-  const row = node("div", undefined, `msg room-msg${dense ? " dense" : ""}`);
-  row.append(dense ? node("span", undefined, "ava spacer") : avatarEl(message.author));
-  const main = node("div", undefined, "msg-main");
-  if (!dense) {
-    const head = node("p", undefined, "msg-head");
-    head.append(node("b", message.author?.name || "Кто-то"), node("span", entryClockLabel(message.createdAt)));
-    main.append(head);
-  }
-  main.append(commentText(message.body, message.mentions));
-  row.append(main);
-  const acts = node("div", undefined, "msg-acts");
-  const deed = node("button", "В дело", "mini");
-  deed.type = "button";
-  deed.addEventListener("click", () => {
-    location.hash = "#today";
-    prefillCapture(message.body.replace(/@[\p{L}\p{N}_-]+/gu, "").trim(), "todo");
-  });
-  acts.append(deed);
-  if (message.mine) {
-    const remove = node("button", "Убрать", "mini");
-    remove.type = "button";
-    remove.addEventListener("click", async () => {
-      try {
-        await request(`/api/rooms/${chatState.activeRoomId}/messages/${message.id}`, { method: "DELETE" });
-        chatState.messages = chatState.messages.filter((item) => item.id !== message.id);
-        renderCircles();
-      } catch (error) { toast(error.message || "Не получилось"); }
-    });
-    acts.append(remove);
-  }
-  row.append(acts);
-  return row;
-}
-function roomPaneEl(circle) {
-  const room = activeRoom();
-  const pane = node("section", undefined, "room-pane");
-  if (!room) {
-    pane.append(node("p", "Выберите разговор слева.", "empty"));
-    return pane;
-  }
-  const head = node("div", undefined, "room-head");
-  const title = node("h3", undefined, "room-title");
-  title.append(node("span", room.kind === "general" ? "#" : "#", "room-hash"), node("span", room.name));
-  head.append(title);
-  const who = node("span", `${room.members.length} ${pluralRu(room.members.length, "человек", "человека", "человек")}: ${room.members.map((member) => member.name).join(", ")}`, "room-who");
-  head.append(who);
-  const tools = node("div", undefined, "room-tools");
-  if (room.kind === "room") {
-    const add = node("button", "Позвать", "mini");
-    add.type = "button";
-    add.addEventListener("click", () => { chatState.adding = chatState.adding === room.id ? null : room.id; renderCircles(); });
-    const leave = node("button", "Выйти", "mini");
-    leave.type = "button";
-    leave.addEventListener("click", async () => {
-      if (!confirm(`Выйти из комнаты «${room.name}»? Она пропадёт из списка, а разговор останется у остальных.`)) return;
-      try { await request(`/api/rooms/${room.id}/leave`, { method: "POST", body: JSON.stringify({}) }); chatState.activeRoomId = null; await loadCircles(); }
-      catch (error) { toast(error.message || "Не получилось"); }
-    });
-    tools.append(add, leave);
-  }
-  head.append(tools);
-  pane.append(head);
-  // Кого позвать: только люди круга, которых в комнате ещё нет.
-  if (chatState.adding === room.id) {
-    const inRoom = new Set(room.members.map((member) => member.id));
-    const rest = (circle?.members || []).filter((member) => !inRoom.has(member.id));
-    const box = node("div", undefined, "room-add");
-    if (!rest.length) box.append(node("span", "В комнате уже весь круг.", "empty"));
-    for (const person of rest) {
-      const button = node("button", undefined, "mini");
-      button.type = "button";
-      button.append(avatarEl(person, { size: "mini" }), node("span", person.name));
-      button.addEventListener("click", async () => {
-        try { await request(`/api/rooms/${room.id}/members`, { method: "POST", body: JSON.stringify({ userId: person.id }) }); chatState.adding = null; await loadCircles({ then: () => openRoom(room.id) }); }
-        catch (error) { toast(error.message || "Не получилось"); }
-      });
-      box.append(button);
-    }
-    pane.append(box);
-  }
-  const list = node("div", undefined, "room-thread");
-  list.id = "room-thread";
-  if (chatState.loading) list.append(node("p", "Читаю…", "empty"));
-  else if (!chatState.messages.length) list.append(node("p", room.kind === "general" ? "Здесь пока тихо. Это общий разговор круга — его видят все, кто в нём." : "Здесь пока тихо. Комнату видят только те, кто в ней.", "empty"));
-  let previous = null;
-  for (const message of chatState.messages) { list.append(roomMessageEl(message, previous)); previous = message; }
-  pane.append(list);
+kc.hero = kcStored("pagent.circles-ring", true) !== false;
+kc.folder = kcStored("pagent.circles-folder", "all") || "all";
 
-  const composer = node("div", undefined, "thread-composer room-composer");
-  const field = node("textarea", undefined, "thread-input");
-  field.id = "room-input";
-  field.rows = 1;
-  field.placeholder = "Написать… @ — призвать";
-  field.setAttribute("aria-label", `Сообщение в «${room.name}»`);
-  field.value = chatState.drafts[room.id] || "";
-  const send = node("button", "Отправить", "mini primary");
-  send.type = "button";
-  send.addEventListener("click", () => sendToRoom(field, send));
-  field.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey) { event.preventDefault(); sendToRoom(field, send); }
-  });
-  field.addEventListener("input", () => {
-    chatState.drafts[room.id] = field.value;
-    field.style.height = "auto";
-    field.style.height = `${Math.min(field.scrollHeight, 160)}px`;
-  });
-  composer.append(field, mentionPopup(field, room.members.filter((member) => member.id !== circlesState.me?.id), () => {}), send);
-  pane.append(composer);
-  return pane;
+const KC_ICON = {
+  chats: '<path d="M2.2 4.6a2 2 0 0 1 2-2h7.6a2 2 0 0 1 2 2v4.6a2 2 0 0 1-2 2H7.4l-3 2.4v-2.4h-.2a2 2 0 0 1-2-2Z"/><path d="M5.2 6.2h5.6M5.2 8.4h3.4"/>',
+  unread: '<path d="M9.8 2.6H4.6a2.2 2.2 0 0 0-2.2 2.2v4.4a2.2 2.2 0 0 0 2.2 2.2v2.4l3.2-2.4h3.8a2.2 2.2 0 0 0 2.2-2.2V6.8"/><circle cx="12.6" cy="3.4" r="1.9" fill="currentColor" stroke="none"/>',
+  talk: '<path d="M3 3.2h10a1.6 1.6 0 0 1 1.6 1.6v5.4a1.6 1.6 0 0 1-1.6 1.6H8l-3.3 2.5v-2.5H3a1.6 1.6 0 0 1-1.6-1.6V4.8A1.6 1.6 0 0 1 3 3.2Z"/>',
+  plus: '<path d="M8 3.2v9.6M3.2 8h9.6"/>',
+  plusCircle: '<circle cx="8" cy="8" r="6"/><path d="M8 5.2v5.6M5.2 8h5.6"/>',
+  send: '<path d="M8 13V3.4M3.8 7.4 8 3.2l4.2 4.2"/>',
+  people: '<circle cx="6" cy="5.6" r="2.3"/><path d="M1.9 13.2c.6-2.4 2.2-3.6 4.1-3.6s3.5 1.2 4.1 3.6"/><circle cx="11.4" cy="6.2" r="1.8"/><path d="M11 9.7c1.8.1 3 1.2 3.4 3.1"/>',
+  bound: '<circle cx="8" cy="8" r="5.8" stroke-dasharray="2.4 2.1"/><circle cx="8" cy="8" r="1.6"/>',
+  back: '<path d="M10 3 5 8l5 5"/>',
+  close: '<path d="m4 4 8 8M12 4l-8 8"/>',
+  dots: '<circle cx="3.4" cy="8" r="1.1" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="1.1" fill="currentColor" stroke="none"/><circle cx="12.6" cy="8" r="1.1" fill="currentColor" stroke="none"/>',
+  reply: '<path d="M6.4 4 2.6 7.6l3.8 3.6"/><path d="M2.8 7.6h6.4a4.2 4.2 0 0 1 4.2 4.2v.8"/>',
+  deed: '<path d="M4 3v5.3A1.7 1.7 0 0 0 5.7 10h6.8M10 7.5l2.5 2.5-2.5 2.5"/>',
+  copy: '<rect x="5.5" y="5.5" width="8" height="8" rx="1.6"/><path d="M10.5 5.5V4a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/>',
+  trash: '<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.6 4.5l.6 8.3a1 1 0 0 0 1 .9h3.6a1 1 0 0 0 1-.9l.6-8.3"/>',
+  pin: '<path d="M9.8 2.4 13.6 6.2l-1.7.7-2.2 2.2.2 2.5-1 1-5.5-5.5 1-1 2.5.2 2.2-2.2Z"/><path d="m5.9 10.1-3.2 3.2"/>',
+  chevUp: '<path d="m3.5 10 4.5-4.5 4.5 4.5"/>',
+  chevDown: '<path d="m3.5 6 4.5 4.5L12.5 6"/>',
+  chev: '<path d="m6 3.5 4.5 4.5L6 12.5"/>',
+  link: '<path d="M6.8 9.2a2.6 2.6 0 0 0 3.7 0l2-2a2.6 2.6 0 0 0-3.7-3.7l-.8.8"/><path d="M9.2 6.8a2.6 2.6 0 0 0-3.7 0l-2 2a2.6 2.6 0 0 0 3.7 3.7l.8-.8"/>',
+  bell: '<path d="M8 2.2a3.6 3.6 0 0 0-3.6 3.6v2.3l-1.3 2.6h9.8l-1.3-2.6V5.8A3.6 3.6 0 0 0 8 2.2Z"/><path d="M6.5 12.9a1.6 1.6 0 0 0 3 0"/>',
+  personAdd: '<circle cx="6.4" cy="5.4" r="2.6"/><path d="M1.8 13.6c.6-2.6 2.4-4 4.6-4s4 1.4 4.6 4M12.6 4.6v4M10.6 6.6h4"/>',
+  exit: '<path d="M6.4 2.6H4a1.4 1.4 0 0 0-1.4 1.4v8A1.4 1.4 0 0 0 4 13.4h2.4M10.4 11l3-3-3-3M13.2 8H6.2"/>',
+  doc: '<path d="M4 1.8h5.2L12.6 5v8.2a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1Z"/><path d="M9 1.8V5h3.6M5.4 8.2h5.2M5.4 10.8h3.4"/>',
+  eye: '<path d="M1.5 8S3.9 3.6 8 3.6 14.5 8 14.5 8 12.1 12.4 8 12.4 1.5 8 1.5 8Z"/><circle cx="8" cy="8" r="2"/>',
+  lock: '<rect x="3.4" y="7" width="9.2" height="6.6" rx="1.6"/><path d="M5.4 7V5.3a2.6 2.6 0 0 1 5.2 0V7"/>',
+  check: '<path d="M3.5 8.4 6.5 11.3 12.5 5"/>',
+  search: '<circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/>',
+  muted: '<path d="M2.5 6h2.2L8 3.3v9.4L4.7 10H2.5Z"/><path d="m11 6.2 3 3.6M14 6.2l-3 3.6"/>',
+  todo: '<circle cx="8" cy="8" r="5.8"/><path d="m5.5 8.1 1.8 1.8 3.3-3.5"/>',
+  meeting: '<rect x="2.4" y="3.4" width="11.2" height="10.2" rx="2"/><path d="M2.4 6.6h11.2M5.4 2v2.8M10.6 2v2.8"/>',
+  outcome: '<path d="M3 8.5 6.2 11.6 13 4.6"/>',
+  note: '<path d="M3.5 2.5h9v11h-9Z"/><path d="M5.8 5.5h4.4M5.8 8h4.4M5.8 10.5h2.4"/>',
+  idea: '<path d="M8 2.2a4 4 0 0 0-2.3 7.3c.4.3.6.7.6 1.2v.8h3.4v-.8c0-.5.2-.9.6-1.2A4 4 0 0 0 8 2.2Z"/><path d="M6.4 13.8h3.2"/>',
+};
+function kcIcon(name, className = "kc-ico") {
+  const holder = node("span", undefined, className);
+  holder.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${KC_ICON[name] || ""}</svg>`;
+  return holder;
 }
-// Полоса слева: круги, их разговоры и непрочитанное. Это единственное место,
-// где в приложении есть счётчик, и он не выходит за пределы этой страницы.
-function circleRailEl() {
-  const rail = node("aside", undefined, "circles-rail");
-  for (const circle of circlesState.circles) {
-    const head = node("div", undefined, "rail-circle");
-    head.append(node("i", undefined, `circle-dot ${CIRCLE_TONES[circle.color] || "violet"}`), node("span", circle.name, "rail-name"));
-    if (circle.muted) head.append(node("span", "выключен", "rail-muted"));
-    rail.append(head);
-    for (const room of roomsOfCircle(circle.id)) {
-      const button = node("button", undefined, `rail-room${room.id === chatState.activeRoomId ? " on" : ""}`);
-      button.type = "button";
-      button.append(node("span", "#", "room-hash"), node("span", room.name, "rail-room-name"));
-      if (room.unread) button.append(node("span", String(room.unread), "rail-unread"));
-      button.addEventListener("click", () => openRoom(room.id));
-      rail.append(button);
-    }
-    const add = node("button", "+ комната", "rail-add");
-    add.type = "button";
-    add.addEventListener("click", () => openRoomAdder(circle));
-    rail.append(add);
-  }
-  return rail;
+// Галочки прочтения — своя сетка: две галки шире одной.
+function kcReadMark(read) {
+  const holder = node("span", undefined, `kc-read${read ? " on" : ""}`);
+  holder.innerHTML = read
+    ? '<svg viewBox="0 0 16 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m1.4 6.4 2.6 2.6L9.4 3.4M7.4 8.6l.4.4 5.4-5.6"/></svg>'
+    : '<svg viewBox="0 0 16 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3 6.4 2.6 2.6L11 3.4"/></svg>';
+  holder.setAttribute("role", "img");
+  holder.setAttribute("aria-label", read ? "прочитано" : "отправлено");
+  return holder;
 }
-// Комната заводится с людьми: разговор с самим собой — это заметка, а не
-// комната, поэтому пустую комнату завести нельзя.
-function openRoomAdder(circle) {
-  const body = $("#circles-body");
-  const form = node("form", undefined, "room-new");
-  const name = node("input");
-  name.placeholder = `Комната в круге «${circle.name}» — «Смета», «Релиз»`;
-  name.maxLength = 40;
-  name.setAttribute("aria-label", "Название комнаты");
-  const people = node("div", undefined, "room-new-people");
-  const chosen = new Set();
-  for (const member of circle.members.filter((person) => person.id !== circlesState.me?.id)) {
-    const chip = node("button", undefined, "mini");
-    chip.type = "button";
-    chip.setAttribute("aria-pressed", "false");
-    chip.append(avatarEl(member, { size: "mini" }), node("span", member.name));
-    chip.addEventListener("click", () => {
-      if (chosen.has(member.id)) chosen.delete(member.id); else chosen.add(member.id);
-      chip.setAttribute("aria-pressed", String(chosen.has(member.id)));
-    });
-    people.append(chip);
+// Разметка собирается узлами: имена, названия и сообщения — чужой текст.
+function kcEl(tag, className, ...children) {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  for (const child of children.flat(Infinity)) {
+    if (child === null || child === undefined || child === false || child === "") continue;
+    element.append(child instanceof Node ? child : document.createTextNode(String(child)));
   }
-  const submit = node("button", "Завести", "mini primary");
-  submit.type = "submit";
-  const cancel = node("button", "Отмена", "mini");
-  cancel.type = "button";
-  cancel.addEventListener("click", () => renderCircles());
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    if (!name.value.trim()) return;
-    if (!chosen.size) { toast("Комната — это разговор с кем-то: позовите хотя бы одного человека"); return; }
+  return element;
+}
+function kcButton(className, content, onClick, attrs = {}) {
+  const button = kcEl("button", className, content);
+  button.type = "button";
+  for (const [key, value] of Object.entries(attrs)) if (value !== null && value !== undefined) button.setAttribute(key, value);
+  if (onClick) button.addEventListener("click", onClick);
+  return button;
+}
+const kcTone = (color) => `tone-${CIRCLE_TONES[color] || "violet"}`;
+const kcInitial = (name) => (String(name || "").trim()[0] || "·").toUpperCase();
+const kcSeal = (content, tone, extra = "") => kcEl("span", `kc-seal ${tone}${extra ? ` ${extra}` : ""}`, content);
+// Цвет имени в пузыре — у каждого свой и один и тот же во всех разговорах.
+function kcNameTone(personId) {
+  let hash = 0;
+  for (const char of String(personId || "")) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return KC_NAME_TONES[hash % KC_NAME_TONES.length];
+}
+// Время в пузыре и в списке — только часы: день уже сказан плашкой над
+// сообщениями или словом «вчера».
+function kcClock(iso) {
+  try { return new Intl.DateTimeFormat("ru-RU", { timeZone: TODAY_ZONE, hour: "2-digit", minute: "2-digit" }).format(new Date(iso)); } catch { return ""; }
+}
+function kcWhen(iso) {
+  if (!iso) return "";
+  const day = zoneDate(new Date(iso));
+  const today = currentDayDate || zoneDate(new Date());
+  if (day === today) return kcClock(iso);
+  if (day === shiftDate(today, -1)) return "вчера";
+  return reportDateLabel(day, { day: "numeric", month: "short" });
+}
+function kcDayLabel(day) {
+  const today = currentDayDate || zoneDate(new Date());
+  if (day === today) return "Сегодня";
+  if (day === shiftDate(today, -1)) return "Вчера";
+  return reportDateLabel(day, { weekday: "long", day: "numeric", month: "long" });
+}
+const kcDue = (due) => (due?.date ? `${reportDateLabel(due.date, { day: "numeric", month: "short" })}${due.time ? `, ${due.time}` : ""}` : "");
+
+// ── какие разговоры есть и какой открыт ──
+function kcThreads() {
+  const list = [];
+  for (const room of chatState.rooms) {
+    const circle = circlesState.circles.find((item) => item.id === room.circleId);
+    if (!circle) continue;
+    list.push({ key: `room:${room.id}`, kind: "room", room, circle, title: room.kind === "general" ? circle.name : room.name, at: room.last?.createdAt || room.createdAt, unread: room.unread || 0, called: Boolean(room.called), muted: Boolean(circle.muted) });
+  }
+  for (const talk of circlesState.discussions || []) {
+    const circle = talk.circle ? circlesState.circles.find((item) => item.id === talk.circle.id) || talk.circle : null;
+    list.push({ key: `talk:${talk.captureId}`, kind: "talk", talk, circle, title: talk.title, at: talk.last?.at || "", unread: talk.unreadCount || 0, called: Boolean(talk.unread), muted: Boolean(circle?.muted) });
+  }
+  return list.sort((left, right) => String(right.at).localeCompare(String(left.at)));
+}
+function kcFolderThreads(folder = kc.folder) {
+  const all = kcThreads();
+  if (folder === "all") return all;
+  if (folder === "unread") return all.filter((item) => item.unread || item.called || item.key === kc.chat);
+  if (folder === "talks") return all.filter((item) => item.kind === "talk");
+  return all.filter((item) => item.circle?.id === folder);
+}
+const kcCurrent = () => kcThreads().find((item) => item.key === kc.chat) || null;
+const kcNarrow = () => window.matchMedia("(max-width: 760px)").matches;
+// С какого сообщения начинается непрочитанное: столько чужих сообщений от
+// конца, сколько было на счётчике до открытия.
+function kcNewFrom(items, unread) {
+  let left = unread;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item.kind === "said" && item.author?.id !== currentUser?.id && --left === 0) return item.id;
+  }
+  return null;
+}
+function kcTalkItems(comments) {
+  for (const comment of comments) comment.kind = "said";
+  return comments;
+}
+
+async function kcOpen(key, { quiet = false } = {}) {
+  const changed = kc.chat !== key;
+  if (changed) {
+    kc.newFrom = null;
+    kc.ctx = null;
+    kc.menu = false;
+    kc.share = null;
+    if (kc.reply?.chat !== key) kc.reply = null;
+    if (kc.info && kc.info !== "main") kc.info = "main";
+    kc.fresh = true;
+  }
+  kc.chat = key;
+  kcStore("pagent.circles-chat", key);
+  if (!quiet) kc.pane = "chat";
+  if (key.startsWith("room:")) {
+    const roomId = key.slice(5);
+    markNotificationsRead({ roomId });
+    const room = chatState.rooms.find((item) => item.id === roomId);
+    const unread = room?.unread || 0;
+    if (changed) { chatState.loading = true; kc.talk = null; renderCircles(); }
     try {
-      const result = await request(`/api/circles/${circle.id}/rooms`, { method: "POST", body: JSON.stringify({ name: name.value.trim(), members: [...chosen] }) });
-      await loadCircles({ then: () => openRoom(result.room.id) });
-      toast(`Комната «${result.room.name}» заведена`);
-    } catch (error) { toast(error.message || "Комната не завелась"); }
-  });
-  form.append(node("p", "Новая комната — разговор подмножеством: её видят только те, кто в ней.", "room-new-hint"), name, people, node("div", undefined, "room-new-acts"));
-  form.lastChild.append(submit, cancel);
-  clear(body);
-  body.append(form);
-  name.focus();
+      const data = await request(`/api/rooms/${roomId}/messages`);
+      chatState.messages = data.messages || [];
+      chatState.more = Boolean(data.more);
+      if (room) Object.assign(room, data.room, { unread: 0, called: false });
+      if (changed && unread) kc.newFrom = kcNewFrom(chatState.messages, unread);
+    } catch (error) {
+      chatState.messages = [];
+      toast(error.message || "Разговор не открылся");
+    } finally { chatState.loading = false; }
+    if (unread) load().catch(() => {});
+  } else {
+    const captureId = key.slice(5);
+    markNotificationsRead({ captureId });
+    const talk = (circlesState.discussions || []).find((item) => item.captureId === captureId);
+    const unread = talk?.unreadCount || 0;
+    if (changed) { chatState.loading = true; chatState.messages = []; renderCircles(); }
+    try {
+      const data = await request(`/api/captures/${captureId}/comments`);
+      kc.talk = { captureId, comments: kcTalkItems(data.comments || []), callable: data.callable || [], participants: data.participants || [] };
+      if (talk) { talk.unreadCount = 0; talk.unread = false; }
+      if (changed && unread) kc.newFrom = kcNewFrom(kc.talk.comments, unread);
+    } catch (error) {
+      kc.talk = { captureId, comments: [], callable: [], participants: [] };
+      toast(error.message || "Обсуждение не открылось");
+    } finally { chatState.loading = false; }
+  }
+  renderCircles({ toBottom: true });
 }
-// ── страница кругов ──
-// Нужна ровно для двух вещей: кто здесь и что отсюда видно. Ни ленты, ни своей
-// доски, ни настроек на каждый чих — иначе круг превращается во второй дом.
+
 async function loadCircles({ then = null } = {}) {
   // Загрузка уже идёт — но она могла уйти до правки (новый круг, человек в
   // круге). Второй вызов не теряется: круги перечитываются, как только первая
@@ -5665,15 +5618,25 @@ async function loadCircles({ then = null } = {}) {
   if (circlesState.loading) { circlesState.again = { then: then || circlesState.again?.then || null }; return; }
   circlesState.loading = true;
   try {
-    const [data] = await Promise.all([request("/api/circles"), loadRooms()]);
+    const [data, rooms, talks] = await Promise.all([request("/api/circles"), request("/api/rooms"), request("/api/discussions").catch(() => ({ discussions: [] }))]);
     circlesState.circles = data.circles || [];
     circlesState.me = data.me || null;
+    chatState.rooms = rooms.rooms || [];
+    circlesState.discussions = talks.discussions || [];
+    if (kc.pane === null) kc.pane = kcNarrow() ? "list" : "chat";
+    if (kc.folder !== "all" && kc.folder !== "unread" && kc.folder !== "talks" && !circlesState.circles.some((circle) => circle.id === kc.folder)) kc.folder = "all";
     renderCircles();
-    refreshDiscussions();
-    // Первый заход открывает первый разговор сам: пустая правая половина
-    // страницы не говорит человеку, что здесь вообще разговаривают.
     if (then) await then();
-    else if (chatState.activeRoomId && !chatState.messages.length) await openRoom(chatState.activeRoomId, { render: false });
+    else {
+      // Открывается разговор, на котором остановились. Нет его — самый свежий
+      // из прочитанных: открыть разговор значит прочитать его, и то, где ждут
+      // непрочитанные или позвали, страница сама не открывает.
+      const threads = kcThreads();
+      const wanted = kc.chat || kcStored("pagent.circles-chat", null);
+      const target = threads.find((item) => item.key === wanted) || (kcNarrow() ? null : threads.find((item) => !item.unread && !item.called));
+      if (target) await kcOpen(target.key, { quiet: true });
+      else { kc.chat = null; renderCircles(); }
+    }
   } catch (error) {
     const body = $("#circles-body");
     if (body) { clear(body); body.append(node("p", error.message || "Не удалось загрузить круги", "empty")); }
@@ -5684,326 +5647,1024 @@ async function loadCircles({ then = null } = {}) {
     if (again) await loadCircles(again);
   }
 }
-async function createCircle(name) {
+// Ссылка из полосы «к вам» и из колокольчика: открыть разговор, где позвали.
+// «Вас добавили в круг»: открыть — значит прочитать, строка гаснет.
+async function openCircleFromInbox(circleId) {
+  location.hash = "#circles";
+  try { await request(`/api/circles/${circleId}/seen`, { method: "POST", body: JSON.stringify({}) }); } catch {}
+  await loadCircles({ then: async () => {
+    const room = chatState.rooms.find((item) => item.circleId === circleId && item.kind === "general");
+    if (room) await kcOpen(`room:${room.id}`);
+  } });
+  load().catch(() => {});
+}
+async function openRoomFromInbox(roomId) {
+  location.hash = "#circles";
+  await loadCircles({ then: () => kcOpen(`room:${roomId}`) });
+}
+
+// ── страница ──
+function renderCircles({ toBottom = false } = {}) {
+  const body = $("#circles-body");
+  if (!body) return;
+  const active = document.activeElement;
+  const focusId = active && body.contains(active) && active.id ? active.id : null;
+  const selection = focusId && typeof active.selectionStart === "number" ? [active.selectionStart, active.selectionEnd] : null;
+  const oldList = $("#kc-msgs");
+  const keep = oldList && !toBottom ? oldList.scrollTop : null;
+  const scrolls = [".kc-chats", ".kc-info-body", ".kc-folders"].map((selector) => [selector, body.querySelector(selector)?.scrollTop || 0]);
+  clear(body);
+  if (kc.joining) { body.append(kcInviteCard()); return; }
+  body.append(circlesState.circles.length || (circlesState.discussions || []).length ? kcLayout() : kcEmptyPage());
+  const list = $("#kc-msgs");
+  if (list) list.scrollTop = keep === null ? list.scrollHeight : keep;
+  for (const [selector, top] of scrolls) { const element = body.querySelector(selector); if (element && top) element.scrollTop = top; }
+  if (focusId) {
+    const element = document.getElementById(focusId);
+    if (element) {
+      element.focus({ preventScroll: true });
+      if (selection && element.setSelectionRange) { try { element.setSelectionRange(selection[0], selection[1]); } catch {} }
+    }
+  }
+  const field = $("#kc-field");
+  if (field) kcAutosize(field);
+  if (kc.focusField && field) {
+    field.focus({ preventScroll: true });
+    field.setSelectionRange(field.value.length, field.value.length);
+    kc.focusField = false;
+  }
+  if (kc.modal && kc.modal.focus) { $("#kc-modal-name")?.focus(); kc.modal.focus = false; }
+  kc.fresh = false;
+  kcFit();
+}
+// Страница кругов занимает окно по высоте: прокручивается разговор, а не
+// страница, — шапка разговора и поле стоят на месте.
+function kcFit() {
+  const box = $("#circles-body > .kc");
+  if (!box) return;
+  const top = box.getBoundingClientRect().top + window.scrollY;
+  const gap = kcNarrow() ? 0 : 20;
+  box.style.height = `${Math.max(kcNarrow() ? 420 : 520, window.innerHeight - top - gap)}px`;
+}
+window.addEventListener("resize", () => { if (!$("#circles")?.hidden) kcFit(); });
+function kcAutosize(field) {
+  field.style.height = "auto";
+  field.style.height = `${Math.min(field.scrollHeight, 160)}px`;
+}
+function kcLayout() {
+  const current = kcCurrent();
+  const root = kcEl("div", `kc pane-${kc.pane || "chat"}${kc.info && current ? " info-open" : ""}`);
+  root.append(kcFolders(), kcList(), kcChatPane(current));
+  if (kc.info && current) root.append(kcInfo(current));
+  const modal = kcModal();
+  if (modal) root.append(modal);
+  return root;
+}
+
+// ── папки ──
+const kcFolderCount = (folder) => kcFolderThreads(folder).filter((item) => (item.unread || item.called) && item.key !== kc.chat).length;
+function kcSetFolder(folder) {
+  kc.folder = folder;
+  kcStore("pagent.circles-folder", folder);
+  renderCircles();
+}
+function kcFolders() {
+  // Не <nav>: общее правило шапки для nav уводит элемент из сетки в центр окна.
+  const nav = kcEl("div", "kc-folders");
+  nav.setAttribute("role", "navigation");
+  nav.setAttribute("aria-label", "Папки разговоров");
+  // У «Все» числа нет: оно всегда совпадало бы с «Новыми».
+  const item = (id, label, face) => {
+    const count = id === "all" ? 0 : kcFolderCount(id);
+    return kcButton(`kc-fold${kc.folder === id ? " on" : ""}`, [kcEl("span", "kc-fold-face", face), kcEl("span", "kc-fold-label", label), count ? kcEl("span", "kc-badge", String(count)) : null], () => kcSetFolder(id), { "aria-pressed": String(kc.folder === id), title: label });
+  };
+  nav.append(item("all", "Все", kcIcon("chats")), item("unread", "Новые", kcIcon("unread")));
+  for (const circle of circlesState.circles) nav.append(item(circle.id, circle.name, kcSeal(kcInitial(circle.name), kcTone(circle.color), "round")));
+  if ((circlesState.discussions || []).length) nav.append(item("talks", "Записи", kcIcon("talk")));
+  nav.append(kcEl("span", "kc-fold-space"), kcButton("kc-fold", [kcEl("span", "kc-fold-face", kcIcon("plusCircle")), kcEl("span", "kc-fold-label", "Круг")], () => kcModalOpen("circle"), { title: "Новый круг" }));
+  return nav;
+}
+function kcFolderTabs() {
+  const tabs = kcEl("div", "kc-ftabs");
+  tabs.setAttribute("role", "tablist");
+  const tab = (id, label) => {
+    const count = id === "all" ? 0 : kcFolderCount(id);
+    return kcButton(`kc-ftab${kc.folder === id ? " on" : ""}`, [label, count ? kcEl("span", "kc-badge", String(count)) : null], () => kcSetFolder(id), { role: "tab", "aria-selected": String(kc.folder === id) });
+  };
+  tabs.append(tab("all", "Все"), tab("unread", "Новые"));
+  for (const circle of circlesState.circles) tabs.append(tab(circle.id, circle.name));
+  if ((circlesState.discussions || []).length) tabs.append(tab("talks", "Записи"));
+  return tabs;
+}
+
+// ── список разговоров ──
+function kcAvatar(item) {
+  if (item.kind === "talk") {
+    const kind = KC_KIND[item.talk.kind] ? item.talk.kind : "note";
+    return kcSeal(kcIcon(kind), `tone-${KC_KIND[kind][0]}`, "round");
+  }
+  if (item.room.kind === "general") return kcSeal(kcInitial(item.circle.name), kcTone(item.circle.color), "round");
+  return kcSeal([kcInitial(item.room.name), kcEl("i", "kc-hash", "#")], kcTone(item.circle.color), "round room");
+}
+function kcPreview(item) {
+  if (item.kind === "talk") {
+    const last = item.talk.last;
+    return last ? { by: last.author, text: last.body, at: last.at } : { text: "обсуждение записи", at: "" };
+  }
+  const last = item.room.last;
+  if (!last) return { text: item.room.kind === "general" ? "общий разговор круга" : "комната круга", at: item.room.createdAt };
+  if (last.kind === "said" || last.kind === "deed") return { by: last.by, text: last.body, at: last.createdAt };
+  return { text: `${last.author || "Кто-то"} ${last.body}`, at: last.createdAt };
+}
+function kcChatRow(item) {
+  const on = kc.chat === item.key;
+  const preview = kcPreview(item);
+  const showTag = ["all", "unread", "talks"].includes(kc.folder) && !(item.kind === "room" && item.room.kind === "general");
+  const tag = showTag ? (item.circle ? kcEl("span", `kc-ftag ${kcTone(item.circle.color)}`, item.circle.name) : kcEl("span", "kc-ftag none", "без круга")) : null;
+  const counts = [];
+  if (item.called && !on) counts.push(kcEl("span", "kc-cnt at", "@"));
+  if (item.unread && !on) counts.push(kcEl("span", `kc-cnt${item.muted ? " muted" : ""}`, String(item.unread)));
+  const row = kcButton(`kc-chat${on ? " on" : ""}`, [
+    kcAvatar(item),
+    kcEl("span", "kc-chat-main",
+      kcEl("span", "kc-chat-l1", kcEl("span", "kc-chat-title", item.title), item.muted ? kcIcon("muted", "kc-ico kc-muted") : null, tag, kcEl("time", null, kcWhen(preview.at))),
+      preview.by ? kcEl("span", "kc-chat-l2", avatarEl(preview.by, { size: "mini" }), kcEl("span", null, preview.by.id === currentUser?.id ? "Вы" : preview.by.name)) : null,
+      kcEl("span", "kc-chat-l3", kcEl("span", "kc-prev", preview.text), counts)),
+  ], () => kcOpen(item.key), { "aria-current": on ? "true" : null });
+  row.dataset.chat = item.key;
+  return row;
+}
+function kcList() {
+  const section = kcEl("section", "kc-list");
+  section.setAttribute("aria-label", "Разговоры");
+  const folderCircle = circlesState.circles.find((circle) => circle.id === kc.folder);
+  const title = { all: "Разговоры", unread: "Непрочитанные", talks: "Обсуждения в записях" }[kc.folder] || folderCircle?.name || "Разговоры";
+  const head = kcEl("div", "kc-list-head", kcEl("h3", null, title), kcButton("kc-icon", kcIcon("plusCircle"), () => kcModalOpen("circle"), { "aria-label": "Новый круг", title: "Новый круг" }));
+  const search = kcEl("label", "kc-search", kcIcon("search"));
+  const input = kcEl("input");
+  input.id = "kc-search";
+  input.type = "search";
+  input.placeholder = "Поиск";
+  input.value = kc.query;
+  input.setAttribute("aria-label", "Найти разговор");
+  input.addEventListener("input", () => { kc.query = input.value; renderCircles(); });
+  search.append(input);
+  const chats = kcEl("div", "kc-chats");
+  const needle = kc.query.trim().toLowerCase();
+  const rows = kcFolderThreads().filter((item) => !needle || item.title.toLowerCase().includes(needle) || String(item.circle?.name || "").toLowerCase().includes(needle));
+  if (!rows.length) chats.append(kcEl("p", "kc-hint kc-pad", needle ? "Ничего не нашлось." : "Здесь пока пусто."));
+  for (const item of rows) chats.append(kcChatRow(item));
+  section.append(head, kcFolderTabs(), search, chats);
+  return section;
+}
+
+// ── разговор ──
+function kcTalkPeople(item) {
+  const people = new Map();
+  const add = (person) => { if (person?.id && !people.has(person.id)) people.set(person.id, person); };
+  add(item.talk.author);
+  for (const person of kc.talk?.participants || item.talk.people || []) add(person);
+  for (const person of kc.talk?.callable || []) if (person.group === "record") add(person);
+  add(circlesState.me || currentUser);
+  return [...people.values()];
+}
+function kcFact(count, word) {
+  return kcEl("span", "kc-fact", kcEl("b", null, String(count)), ` ${word}`);
+}
+function kcCircleFacts(circle) {
+  const open = circle.members.reduce((sum, member) => sum + (member.openDeeds || 0), 0);
+  const today = currentDayDate || zoneDate(new Date());
+  const late = circle.members.reduce((sum, member) => sum + (member.deeds || []).filter((deed) => deed.due?.date && deed.due.date < today).length, 0);
+  const facts = [kcFact(circle.members.length, pluralRu(circle.members.length, "человек", "человека", "человек")), open ? kcFact(open, pluralRu(open, "открытое дело", "открытых дела", "открытых дел")) : kcEl("span", "kc-fact", "дел в круге нет")];
+  if (late) facts.push(kcEl("span", "kc-fact late", kcEl("b", null, String(late)), " просрочено"));
+  if (circle.invite && !circle.invite.expired) facts.push(kcEl("span", "kc-fact opt", "ссылка до ", kcEl("b", null, reportDateLabel(circle.invite.expiresAt.slice(0, 10), { day: "numeric", month: "short" }))));
+  if (circle.muted) facts.push(kcEl("span", "kc-fact opt", "не показывается у вас в дне"));
+  return facts;
+}
+// Кольцо: люди сидят вокруг знака, свободное место с плюсом зовёт человека.
+// Больше девяти лиц не сядет — дальше «+N».
+function kcRing(people, { tone, center, onEmpty, onPerson, onMore }) {
+  const shown = people.length > 9 ? people.slice(0, 8) : people;
+  const more = people.length - shown.length;
+  const seats = [...shown.map((person) => ({ person })), ...(more ? [{ more }] : [])];
+  for (let left = Math.max(1, 6 - seats.length); left > 0; left -= 1) seats.push({ empty: true });
+  const ring = kcEl("div", `kc-ring ${tone}${kc.fresh && motionAllowed() ? " fresh" : ""}`, kcEl("span", "kc-ring-halo"), kcSeal(center, tone, "kc-ring-seal"));
+  seats.forEach((seat, index) => {
+    const angle = ((-90 + (index * 360) / seats.length) * Math.PI) / 180;
+    let button;
+    if (seat.empty) button = kcButton("kc-seat empty", kcIcon("plus"), onEmpty, { "aria-label": "Позвать человека", title: "Позвать человека" });
+    else if (seat.more) button = kcButton("kc-seat more", `+${seat.more}`, onMore, { "aria-label": "Все люди" });
+    else button = kcButton("kc-seat", avatarEl(seat.person), () => onPerson?.(seat.person), { "aria-label": seat.person.name, title: seat.person.name });
+    button.style.left = `${(50 + 39.2 * Math.cos(angle)).toFixed(2)}%`;
+    button.style.top = `${(50 + 39.2 * Math.sin(angle)).toFixed(2)}%`;
+    button.style.animationDelay = `${index * 45}ms`;
+    ring.append(button);
+  });
+  return ring;
+}
+const kcInfoToggle = () => kcButton("kc-icon", kcIcon("people"), () => (kc.info ? kcInfoClose() : kcInfoOpen("main")), { "aria-label": "Информация", title: "Информация", "aria-pressed": String(Boolean(kc.info)) });
+const kcMenuToggle = () => {
+  const button = kcButton("kc-icon", kcIcon("dots"), () => { kc.menu = !kc.menu; kc.ctx = null; renderCircles(); }, { "aria-label": "Ещё", title: "Ещё", "aria-pressed": String(kc.menu), "aria-haspopup": "menu" });
+  button.dataset.kcMenu = "1";
+  return button;
+};
+const kcBack = () => kcButton("kc-icon kc-back", kcIcon("back"), () => { kc.pane = "list"; kc.info = null; renderCircles(); }, { "aria-label": "К разговорам" });
+function kcSubtitle(item) {
+  if (item.kind === "talk") {
+    const [, word] = KC_KIND[item.talk.kind] || KC_KIND.note;
+    const count = kcTalkPeople(item).length;
+    return `${word}${item.talk.due?.date ? ` · до ${kcDue(item.talk.due)}` : ""} · ${count} ${pluralRu(count, "участник", "участника", "участников")}`;
+  }
+  const count = item.room.members.length;
+  const people = `${count} ${pluralRu(count, "участник", "участника", "участников")}`;
+  return item.room.kind === "general" ? `${people}${item.circle.muted ? " · не показывается в дне" : ""}` : `${item.circle.name} · ${people}`;
+}
+function kcHero(item) {
+  let ring, kicker, name, facts, acts;
+  if (item.kind === "talk") {
+    const talk = item.talk;
+    const kind = KC_KIND[talk.kind] ? talk.kind : "note";
+    const [tone, word] = KC_KIND[kind];
+    const people = kcTalkPeople(item);
+    ring = kcRing(people, { tone: `tone-${tone}`, center: kcIcon(kind), onEmpty: () => kcInsertCall(""), onPerson: (person) => { if (person.id !== currentUser?.id) kcInsertCall(person.name); }, onMore: () => kcInfoOpen("main") });
+    kicker = `Обсуждение записи · ${word}${talk.due?.date ? ` · до ${kcDue(talk.due)}` : ""}`;
+    name = talk.title;
+    facts = [kcFact(people.length, pluralRu(people.length, "участник", "участника", "участников")), item.circle ? circleChip(item.circle, { small: true }) : kcEl("span", "kc-fact", "без круга")];
+    acts = [kcButton("kc-btn primary", [kcIcon("doc"), "Открыть карточку"], () => openSharedCard(talk.captureId, { talk: true })), kcButton("kc-btn tone", "@ Позвать", () => kcInsertCall(""))];
+  } else if (item.room.kind === "general") {
+    const circle = item.circle;
+    const owner = circle.members.find((member) => member.role === "owner");
+    ring = kcRing(circle.members, { tone: kcTone(circle.color), center: kcInitial(circle.name), onEmpty: () => kcInfoOpen("invite"), onPerson: (person) => kcInfoOpen("person", person.id), onMore: () => kcInfoOpen("main") });
+    kicker = circle.role === "owner" ? `Ваш круг · с ${reportDateLabel(zoneDate(new Date(circle.createdAt)), { day: "numeric", month: "long" })}` : `Круг · хозяин — ${owner?.name || "—"}`;
+    name = circle.name;
+    facts = kcCircleFacts(circle);
+    acts = [kcButton("kc-btn primary", [kcIcon("plus"), "Позвать"], () => kcInfoOpen("invite")), kcButton("kc-btn tone", [kcIcon("bound"), kcEl("span", "kc-wide", "Граница")], () => kcInfoOpen("bound"), { "aria-label": "Граница круга" })];
+  } else {
+    const room = item.room, circle = item.circle;
+    ring = kcRing(room.members, { tone: kcTone(circle.color), center: `#${kcInitial(room.name)}`, onEmpty: () => kcInfoOpen("roomadd"), onPerson: (person) => kcInfoOpen("person", person.id), onMore: () => kcInfoOpen("main") });
+    kicker = `Комната в круге «${circle.name}»`;
+    name = room.name;
+    facts = [kcFact(room.members.length, pluralRu(room.members.length, "человек", "человека", "человек")), kcEl("span", "kc-fact", "видят только они")];
+    acts = [kcButton("kc-btn primary", [kcIcon("plus"), "Позвать в комнату"], () => kcInfoOpen("roomadd")), kcButton("kc-btn tone", [kcIcon("exit"), kcEl("span", "kc-wide", "Выйти")], () => kcLeaveRoom(room), { "aria-label": "Выйти из комнаты" })];
+  }
+  return kcEl("div", "kc-hero",
+    kcBack(),
+    ring,
+    kcEl("div", "kc-hero-text", kcEl("div", "kc-kicker", kicker), kcEl("h2", "kc-hero-name", name), kcEl("div", "kc-facts", facts), kcEl("div", "kc-hero-acts", acts)),
+    kcEl("div", "kc-hero-tools", kcInfoToggle(), kcMenuToggle(), kcButton("kc-icon", kcIcon("chevUp"), () => { kc.hero = false; kcStore("pagent.circles-ring", false); renderCircles(); }, { "aria-label": "Свернуть кольцо", title: "Свернуть кольцо" })));
+}
+function kcHead(item) {
+  return kcEl("div", "kc-head",
+    kcBack(),
+    kcButton("kc-who", [kcAvatar(item), kcEl("span", "kc-who-text", kcEl("b", null, item.title), kcEl("small", null, kcSubtitle(item)))], () => kcInfoOpen("main")),
+    kcInfoToggle(),
+    kcMenuToggle(),
+    kcButton("kc-icon", kcIcon("chevDown"), () => { kc.hero = true; kc.fresh = true; kcStore("pagent.circles-ring", true); renderCircles(); }, { "aria-label": "Показать кольцо", title: "Показать кольцо" }));
+}
+function kcPinned(item) {
+  if (item.kind !== "room" || !item.room.pinned) return null;
+  const pinned = item.room.pinned;
+  const bar = kcEl("div", "kc-pinned");
+  const jump = kcButton("kc-pinned-main", [kcEl("span", "kc-pinned-bar"), kcEl("span", "kc-pinned-text", kcEl("b", null, "Закреплённое сообщение"), kcEl("span", null, pinned.body))], () => {
+    const target = document.querySelector(`#kc-msgs [data-id="${CSS.escape(pinned.id)}"]`);
+    if (!target) { toast("Сообщение выше — прокрутите разговор"); return; }
+    target.scrollIntoView({ block: "center", behavior: motionAllowed() ? "smooth" : "auto" });
+    target.classList.add("flash");
+    setTimeout(() => target.classList.remove("flash"), 1400);
+  });
+  bar.append(jump, kcButton("kc-icon", kcIcon("close"), () => kcPin(item, null), { "aria-label": "Открепить", title: "Открепить" }));
+  return bar;
+}
+function kcChatPane(item) {
+  const section = kcEl("section", "kc-chat-pane");
+  section.setAttribute("aria-label", "Разговор");
+  if (!item) {
+    section.append(kcEl("div", "kc-empty-chat", kcEl("p", "kc-pill", "Выберите разговор")));
+    return section;
+  }
+  section.classList.add(item.circle ? kcTone(item.circle.color) : `tone-${(KC_KIND[item.talk.kind] || KC_KIND.note)[0]}`);
+  section.append(kc.hero ? kcHero(item) : kcHead(item));
+  const pinned = kcPinned(item);
+  if (pinned) section.append(pinned);
+  const list = kcEl("div", "kc-msgs");
+  list.id = "kc-msgs";
+  list.setAttribute("role", "log");
+  const alone = item.kind === "room" && item.room.kind === "general" && item.circle.members.length === 1;
+  if (chatState.loading) list.append(kcEl("p", "kc-pill", "Читаю…"));
+  else if (item.kind === "room") kcRoomMessages(list, item, alone);
+  else kcTalkMessages(list, item);
+  if (alone && !chatState.loading) list.append(kcIntro());
+  section.append(list);
+  section.append(alone ? kcEl("div", "kc-compose", kcButton("kc-bottom-btn", "Позвать людей", () => kcInfoOpen("invite"))) : kcComposer(item));
+  if (kc.ctx) { const menu = kcContextMenu(item); if (menu) section.append(menu); }
+  if (kc.menu) section.append(kcHeadMenu(item));
+  return section;
+}
+// Новый круг из одного человека: вместо пустого разговора — что круг умеет и
+// как позвать людей, как у новой группы в Телеграме.
+function kcIntro() {
+  return kcEl("div", "kc-intro",
+    kcEl("h4", null, "В круге пока только вы"),
+    kcEl("p", null, "Круг — это люди, граница и разговор:"),
+    kcEl("ul", null,
+      kcEl("li", null, kcIcon("check"), "общий разговор и комнаты подмножеством"),
+      kcEl("li", null, kcIcon("check"), "дело человеку фразой — «Ане — прислать смету»"),
+      kcEl("li", null, kcIcon("check"), "@ зовёт в разговор или в запись"),
+      kcEl("li", null, kcIcon("check"), "видно только то, что отдали в круг")),
+    kcEl("div", "kc-intro-acts", kcButton("kc-kbd", "Позвать людей", () => kcInfoOpen("invite")), kcButton("kc-kbd", "Ссылка-приглашение", () => kcInfoOpen("invite"))));
+}
+function kcRoomMessages(list, item, alone) {
+  const owner = item.circle.members.find((member) => member.role === "owner")?.id;
+  kcBubbles(list, chatState.messages, { owner, ownerWord: "хозяин" });
+  if (!chatState.messages.length && !alone) list.append(kcEl("p", "kc-pill", item.room.kind === "general" ? "Здесь пока тихо — это общий разговор круга, его видят все, кто в нём" : "Здесь пока тихо — комнату видят только те, кто в ней"));
+}
+function kcTalkMessages(list, item) {
+  const talk = kc.talk?.captureId === item.talk.captureId ? kc.talk : { comments: [], participants: [] };
+  // «Аня — в обсуждении» стоит там, где человека позвали: видно, с какого
+  // места он читает разговор вместе со всеми.
+  const joins = talk.participants.map((person) => ({ id: `join:${person.id}`, kind: "line", createdAt: person.addedAt, text: `${person.id === currentUser?.id ? "Вы" : person.name} — в обсуждении` }));
+  const items = [...talk.comments, ...joins].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  kcBubbles(list, items, { owner: item.talk.author?.id, ownerWord: "автор" });
+  if (!talk.comments.length) list.append(kcEl("p", "kc-pill", "Пока тихо. Напишите — и позовите, кто нужен, через @имя"));
+}
+const kcAuthorOf = (message) => (message.kind === "deed" ? message.deed.assigner : message.author);
+function kcBubbles(list, items, { owner, ownerWord }) {
+  let day = null, index = 0;
+  while (index < items.length) {
+    const message = items[index];
+    const messageDay = zoneDate(new Date(message.createdAt));
+    if (messageDay !== day) { day = messageDay; list.append(kcEl("div", "kc-pill kc-day", kcDayLabel(day))); }
+    if (message.id === kc.newFrom) list.append(kcEl("div", "kc-unread-bar", "Непрочитанные сообщения"));
+    if (message.kind !== "said" && message.kind !== "deed") {
+      list.append(kcEl("div", "kc-pill", message.kind === "line" ? message.text : `${message.author?.name || "Кто-то"} ${message.body}`));
+      index += 1;
+      continue;
+    }
+    const by = kcAuthorOf(message);
+    const mine = by?.id === currentUser?.id;
+    const bubbles = kcEl("div", "kc-bubbles");
+    let first = true;
+    while (index < items.length) {
+      const next = items[index];
+      if (next.kind !== "said" && next.kind !== "deed") break;
+      if (kcAuthorOf(next)?.id !== by?.id) break;
+      if (!first && (next.id === kc.newFrom || zoneDate(new Date(next.createdAt)) !== day)) break;
+      bubbles.append(...[next.kind === "deed" ? kcDeedBubble(next) : kcBubble(next, { first, mine, owner, ownerWord })].flat());
+      first = false;
+      index += 1;
+    }
+    const group = kcEl("div", `kc-grp${mine ? " out" : ""}`);
+    if (!mine) group.append(avatarEl(by));
+    group.append(bubbles);
+    list.append(group);
+  }
+}
+function kcQuote(replyTo) {
+  const quote = kcButton("kc-quote", [kcEl("b", null, replyTo.author ? (replyTo.author.id === currentUser?.id ? "Вы" : replyTo.author.name) : "Сообщение"), kcEl("span", null, replyTo.removed ? "сообщение убрано" : replyTo.body)], () => {
+    const target = document.querySelector(`#kc-msgs [data-id="${CSS.escape(replyTo.id)}"]`);
+    if (!target) return;
+    target.scrollIntoView({ block: "center", behavior: motionAllowed() ? "smooth" : "auto" });
+    target.classList.add("flash");
+    setTimeout(() => target.classList.remove("flash"), 1400);
+  });
+  if (replyTo.author) quote.style.setProperty("--quote", `var(--circle-${kcNameTone(replyTo.author.id)})`);
+  return quote;
+}
+function kcBubble(message, { first, mine, owner, ownerWord }) {
+  const bubble = kcEl("div", "kc-bb");
+  bubble.dataset.id = message.id;
+  if (!mine && first) {
+    const name = kcEl("span", "kc-name", kcEl("span", null, message.author?.name || "Кто-то"), message.author?.id && message.author.id === owner ? kcEl("i", null, ownerWord) : null);
+    name.style.color = `var(--circle-${kcNameTone(message.author?.id)})`;
+    bubble.append(name);
+  }
+  if (message.replyTo) bubble.append(kcQuote(message.replyTo));
+  const text = commentText(message.body, message.mentions);
+  text.className = "kc-tx";
+  const meta = kcEl("span", "kc-meta", kcClock(message.createdAt), mine ? kcReadMark(Boolean(message.read)) : null);
+  const reactions = (message.reactions || []).filter((reaction) => reaction.count);
+  if (reactions.length) bubble.append(text, kcEl("div", "kc-reacts", reactions.map((reaction) => kcReactChip(message, reaction)), meta));
+  else { text.append(meta); bubble.append(text); }
+  bubble.addEventListener("contextmenu", (event) => { event.preventDefault(); kcCtxOpen(message.id, event.clientX, event.clientY); });
+  const more = kcButton("kc-bb-act", kcIcon("dots"), (event) => { const box = event.currentTarget.getBoundingClientRect(); kcCtxOpen(message.id, box.left, box.bottom + 4); }, { "aria-label": "Ещё" });
+  more.dataset.kcMenu = "1";
+  return kcEl("div", "kc-bb-wrap", bubble, kcEl("span", "kc-bb-acts", kcButton("kc-bb-act", kcIcon("reply"), () => kcReplyTo(message), { "aria-label": "Ответить" }), more));
+}
+function kcReactChip(message, reaction) {
+  const faces = reaction.count <= 2 && reaction.people?.length ? kcEl("span", "kc-react-faces", reaction.people.slice(0, 2).map((person) => avatarEl(person, { size: "mini" }))) : kcEl("span", null, String(reaction.count));
+  const names = (reaction.people || []).map((person) => person.name).join(", ");
+  return kcButton(`kc-react${reaction.mine ? " mine" : ""}`, [reaction.emoji, faces], () => kcReact(message, reaction.emoji), { "aria-label": `${reaction.emoji} ${reaction.count}`, title: names });
+}
+function kcDeedBubble(message) {
+  const deed = message.deed;
+  const [stateClass, stateWord] = { pending: ["wait", "ждёт ответа"], accepted: ["took", "взято"], declined: ["back", "отказ"], done: ["done", "сделано"] }[deed.state] || ["wait", deed.state];
+  const me = currentUser?.id;
+  const bubble = kcEl("div", "kc-bb kc-deed",
+    kcEl("span", "kc-deed-kind", kcIcon("todo"), "Дело"),
+    kcButton("kc-deed-title", deed.title, () => openSharedCard(deed.captureId)),
+    kcEl("div", "kc-deed-meta", avatarEl(deed.assigner, { size: "mini" }), deed.assigner?.id === me ? "вы" : deed.assigner?.name, " → ", avatarEl(deed.assignee, { size: "mini" }), deed.forMe ? "вам" : deed.assignee?.name, deed.due?.date ? ` · до ${kcDue(deed.due)}` : ""),
+    kcEl("div", "kc-reacts", kcEl("span", `kc-state ${stateClass}`, stateWord), kcEl("span", "kc-meta", kcClock(message.createdAt))));
+  bubble.dataset.id = message.id;
+  const wrap = kcEl("div", "kc-bb-wrap", bubble);
+  if (!(deed.forMe && deed.state === "pending")) return wrap;
+  return [wrap, kcEl("div", "kc-kbd-row", kcButton("kc-kbd", "Беру", () => kcRespond(deed, true)), kcButton("kc-kbd", "Не я", () => kcRespond(deed, false)))];
+}
+function kcFindMessage(item, id) {
+  if (item.kind === "room") return chatState.messages.find((message) => message.id === id) || null;
+  return kc.talk?.comments.find((comment) => comment.id === id) || null;
+}
+
+// ── поле сообщения ──
+function kcComposer(item) {
+  const wrap = kcEl("div", "kc-compose");
+  const key = item.key;
+  if (kc.share?.chat === key) {
+    const names = kc.share.people.map((person) => person.name);
+    wrap.append(kcEl("div", "kc-share",
+      kcEl("p", null, kcEl("b", null, `${names.join(", ")} ${names.length > 1 ? "получат" : "получит"} доступ к этой записи`), ": заголовок, заметки, файлы и всё обсуждение."),
+      kcEl("div", "kc-share-acts",
+        kcButton("kc-btn sm primary", "Позвать и отправить", () => kcSend(item, "yes")),
+        kcButton("kc-btn sm", "Отправить без призыва", () => kcSend(item, "no")),
+        kcButton("kc-btn sm ghost", "Изменить", () => { kc.share = null; kc.focusField = true; renderCircles(); }))));
+  }
+  const target = kc.reply?.chat === key ? kcFindMessage(item, kc.reply.id) : null;
+  if (target) {
+    wrap.append(kcEl("div", "kc-replybar", kcIcon("reply"),
+      kcEl("span", "kc-replybar-q", kcEl("b", null, `Ответ: ${target.author?.id === currentUser?.id ? "себе" : target.author?.name || ""}`), kcEl("span", null, target.body)),
+      kcButton("kc-icon", kcIcon("close"), () => { kc.reply = null; kc.focusField = true; renderCircles(); }, { "aria-label": "Отменить ответ" })));
+  }
+  const field = kcEl("textarea");
+  field.id = "kc-field";
+  field.rows = 1;
+  field.placeholder = "Сообщение";
+  field.setAttribute("aria-label", `Сообщение в «${item.title}»`);
+  field.value = chatState.drafts[key] || "";
+  const callable = item.kind === "room" ? item.room.members.filter((member) => member.id !== currentUser?.id) : kc.talk?.captureId === item.talk.captureId ? kc.talk.callable : [];
+  const send = kcButton("kc-send", kcIcon("send"), () => kcSend(item), { "aria-label": "Отправить" });
+  send.disabled = !field.value.trim();
+  const changed = () => { chatState.drafts[key] = field.value; send.disabled = !field.value.trim(); kcAutosize(field); };
+  const pop = mentionPopup(field, callable, changed);
+  field.addEventListener("input", changed);
+  field.addEventListener("keydown", (event) => {
+    if (event.defaultPrevented) return;
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); kcSend(item); }
+    else if (event.key === "Escape" && kc.reply) { event.preventDefault(); kc.reply = null; renderCircles(); }
+  });
+  const at = kcButton("kc-round", "@", () => {
+    const position = field.selectionStart, before = field.value.slice(0, position);
+    const insert = before && !/\s$/.test(before) ? " @" : "@";
+    field.value = before + insert + field.value.slice(field.selectionEnd);
+    field.focus();
+    field.setSelectionRange(position + insert.length, position + insert.length);
+    field.dispatchEvent(new Event("input"));
+  }, { "aria-label": "Позвать через @", title: "Позвать через @" });
+  wrap.append(pop, at, kcEl("div", "kc-field", field), send);
+  return wrap;
+}
+// «@ Позвать» из кольца и карточки человека: имя встаёт в поле, дальше — как
+// обычный призыв.
+function kcInsertCall(name) {
+  const key = kc.chat;
+  if (!key) return;
+  const draft = (chatState.drafts[key] || "").replace(/\s+$/, "");
+  chatState.drafts[key] = `${draft ? `${draft} ` : ""}@${name}${name ? " " : ""}`;
+  kc.focusField = true;
+  if (kcNarrow()) kc.info = null;
+  renderCircles();
+  if (!name) $("#kc-field")?.dispatchEvent(new Event("input"));
+}
+function kcReplyTo(message) {
+  kc.reply = { chat: kc.chat, id: message.id };
+  kc.ctx = null;
+  kc.focusField = true;
+  renderCircles();
+}
+async function kcSend(item, share = null) {
+  const field = $("#kc-field");
+  const body = (share ? kc.share?.body : field?.value || "").trim();
+  if (!body) return;
+  const key = item.key;
+  const replyId = kc.reply?.chat === key ? kc.reply.id : null;
+  const send = $("#circles-body .kc-send");
+  if (send) send.disabled = true;
   try {
-    await request("/api/circles", { method: "POST", body: JSON.stringify({ name }) });
+    if (item.kind === "room") {
+      const result = await request(`/api/rooms/${item.room.id}/messages`, { method: "POST", body: JSON.stringify({ body, ...(replyId ? { replyTo: replyId } : {}) }) });
+      chatState.messages = [...chatState.messages, result.message];
+      if (result.room) Object.assign(item.room, result.room, { unread: 0 });
+      if (result.called?.length) toast(`Позвали: ${result.called.map((person) => person.name).join(", ")}`);
+    } else {
+      const response = await fetch(`/api/captures/${item.talk.captureId}/comments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body, ...(replyId ? { parentId: replyId } : {}), ...(share ? { share } : {}) }) });
+      const data = await response.json().catch(() => null);
+      if (response.status === 401) { location.replace("/login"); return; }
+      // Позвать того, кто запись ещё не видит, — значит поделиться ею: над
+      // полем встаёт выбор, молча журнал не открывается никому.
+      if (response.status === 409 && data?.error?.code === "share_needed") { kc.share = { chat: key, body, people: data.people || [] }; renderCircles(); return; }
+      if (!response.ok) throw new Error(data?.error?.message || "Сообщение не ушло");
+      kc.talk.comments = kcTalkItems([...kc.talk.comments, data.comment]);
+      kc.talk.participants = data.participants || kc.talk.participants;
+      item.talk.last = { body: data.comment.body.slice(0, 160), at: data.comment.createdAt, author: data.comment.author };
+      if (data.comment.mentions.length) toast(`Позвали: ${data.comment.mentions.map((person) => person.name).join(", ")}`);
+    }
+    kc.share = null;
+    kc.reply = null;
+    kc.newFrom = null;
+    chatState.drafts[key] = "";
+    kc.focusField = true;
+    renderCircles({ toBottom: true });
+  } catch (error) {
+    toast(error.message || "Сообщение не ушло");
+    if (send) send.disabled = false;
+  }
+}
+
+// ── меню сообщения и разговора ──
+function kcCtxOpen(id, x, y) {
+  const pane = $("#circles-body .kc-chat-pane");
+  if (!pane) return;
+  const box = pane.getBoundingClientRect();
+  kc.ctx = { id, x: Math.round(Math.max(8, Math.min(x - box.left, box.width - 250))), y: Math.round(Math.max(8, Math.min(y - box.top, box.height - 270))) };
+  kc.menu = false;
+  renderCircles();
+}
+function kcMenuRow(icon, label, run, { danger = false } = {}) {
+  return kcButton(`kc-menu-item${danger ? " danger" : ""}`, [kcIcon(icon), label], () => { kc.ctx = null; kc.menu = false; run(); }, { role: "menuitem" });
+}
+function kcContextMenu(item) {
+  const message = kcFindMessage(item, kc.ctx.id);
+  if (!message || message.kind === "deed") return null;
+  const mine = message.author?.id === currentUser?.id;
+  const menu = kcEl("div", "kc-menu kc-ctx");
+  menu.setAttribute("role", "menu");
+  menu.style.left = `${kc.ctx.x}px`;
+  menu.style.top = `${kc.ctx.y}px`;
+  menu.append(kcEl("div", "kc-ctx-reacts", KC_REACTIONS.map((emoji) => kcButton(`kc-ctx-react${(message.reactions || []).some((reaction) => reaction.emoji === emoji && reaction.mine) ? " on" : ""}`, emoji, () => kcReact(message, emoji), { "aria-label": `Реакция ${emoji}` }))));
+  menu.append(
+    kcMenuRow("reply", "Ответить", () => kcReplyTo(message)),
+    kcMenuRow("deed", "В дело", () => { location.hash = "#today"; prefillCapture(message.body.replace(/@[\p{L}\p{N}_-]+/gu, "").trim(), "todo"); }),
+    kcMenuRow("copy", "Скопировать текст", async () => {
+      try { await navigator.clipboard.writeText(message.body); toast("Текст скопирован"); } catch { toast("Скопировать не получилось"); }
+      renderCircles();
+    }));
+  if (item.kind === "room") {
+    const pinned = item.room.pinned?.id === message.id;
+    menu.append(kcMenuRow("pin", pinned ? "Открепить" : "Закрепить", () => kcPin(item, pinned ? null : message.id)));
+    if (mine) menu.append(kcMenuRow("trash", "Убрать", () => kcRemove(item, message), { danger: true }));
+  }
+  return menu;
+}
+function kcHeadMenu(item) {
+  const menu = kcEl("div", "kc-menu kc-head-menu");
+  menu.setAttribute("role", "menu");
+  menu.append(kcMenuRow("people", "Информация", () => kcInfoOpen("main")));
+  if (item.kind === "room") {
+    const circle = item.circle;
+    if (circle.members.length > 1) menu.append(kcMenuRow("plus", "Новая комната", () => kcModalOpen("room", { circleId: circle.id })));
+    menu.append(kcMenuRow("muted", circle.muted ? "Снова показывать в дне" : "Не показывать в дне", () => toggleCircleMute(circle.id, !circle.muted)));
+    menu.append(kcMenuRow("bound", "Граница круга", () => kcInfoOpen("bound")));
+    if (item.room.kind === "room") menu.append(kcMenuRow("exit", "Выйти из комнаты", () => kcLeaveRoom(item.room), { danger: true }));
+    menu.append(circle.role === "owner" ? kcMenuRow("exit", "Распустить круг", () => kcDissolve(circle), { danger: true }) : kcMenuRow("exit", "Покинуть круг", () => kcLeaveCircle(circle), { danger: true }));
+  } else {
+    menu.append(kcMenuRow("doc", "Открыть карточку", () => openSharedCard(item.talk.captureId, { talk: true })));
+    if (!item.talk.mine && (kc.talk?.participants || []).some((person) => person.id === currentUser?.id)) menu.append(kcMenuRow("exit", "Не следить", () => kcUnfollow(item), { danger: true }));
+  }
+  return menu;
+}
+async function kcReact(message, emoji) {
+  kc.ctx = null;
+  const item = kcCurrent();
+  if (!item) return;
+  const url = item.kind === "room" ? `/api/rooms/${item.room.id}/messages/${message.id}/reactions` : `/api/captures/${item.talk.captureId}/comments/${message.id}/reactions`;
+  try {
+    const result = await request(url, { method: "POST", body: JSON.stringify({ emoji }) });
+    message.reactions = result.reactions;
+  } catch (error) { toast(error.message || "Реакция не встала"); }
+  renderCircles();
+}
+async function kcPin(item, messageId) {
+  try {
+    const result = await request(`/api/rooms/${item.room.id}/pin`, { method: "POST", body: JSON.stringify(messageId ? { messageId } : {}) });
+    Object.assign(item.room, result.room, { unread: 0 });
+    toast(messageId ? "Сообщение закреплено — его видят все в разговоре" : "Сообщение откреплено");
+  } catch (error) { toast(error.message || "Не получилось"); }
+  renderCircles();
+}
+async function kcRemove(item, message) {
+  try {
+    await request(`/api/rooms/${item.room.id}/messages/${message.id}`, { method: "DELETE" });
+    chatState.messages = chatState.messages.filter((entry) => entry.id !== message.id);
+    if (item.room.pinned?.id === message.id) item.room.pinned = null;
+    toast("Сообщение убрано");
+  } catch (error) { toast(error.message || "Не получилось"); }
+  renderCircles();
+}
+async function kcRespond(deed, take) {
+  const reason = take ? "" : (prompt("Почему не вы? Можно не отвечать — причина уйдёт автору.") ?? "").trim();
+  try {
+    await request(`/api/assignments/${deed.assignmentId}/respond`, { method: "POST", body: JSON.stringify({ take, ...(reason ? { reason } : {}) }) });
+    toast(take ? "Взято — дело в вашем дне" : "Вернули автору");
+    await refreshRoomsQuietly();
+    load().catch(() => {});
+  } catch (error) { toast(error.message || "Не получилось ответить"); }
+}
+async function kcLeaveRoom(room) {
+  if (!confirm(`Выйти из комнаты «${room.name}»? Она пропадёт из списка, а разговор останется у остальных.`)) return;
+  try {
+    await request(`/api/rooms/${room.id}/leave`, { method: "POST", body: JSON.stringify({}) });
+    const general = chatState.rooms.find((item) => item.circleId === room.circleId && item.kind === "general");
+    kc.chat = general ? `room:${general.id}` : null;
+    kc.info = null;
+    await loadCircles();
+  } catch (error) { toast(error.message || "Не получилось"); }
+}
+async function kcDissolve(circle) {
+  if (!confirm(`Распустить круг «${circle.name}»? Записи останутся у авторов, но из круга уйдут, а неотвеченные просьбы снимутся.`)) return;
+  try {
+    await request(`/api/circles/${circle.id}`, { method: "DELETE" });
+    kc.chat = null;
+    kc.info = null;
     await loadCircles();
     await load();
-    toast(`Круг «${name}» заведён. Позовите людей ссылкой.`);
-  } catch (error) { toast(error.message || "Круг не завёлся"); }
+    toast(`Круг «${circle.name}» распущен`);
+  } catch (error) { toast(error.message || "Не получилось"); }
 }
-// Ссылка у круга одна и работает для многих: звать десятерых десятью ссылками
-// неудобно. Показывается она один раз — сам токен на сервере не хранится,
-// только его отпечаток; забыли — обновите, прежняя сразу перестанет работать.
-// Свежая ссылка показывается один раз, но не одним кадром: страница кругов
-// перерисовывается от живых событий, и ссылка, жившая только в разметке,
-// исчезала бы, пока её копируют. Поэтому она держится в памяти страницы.
-function paintFreshInvite(place, url, { focus = false } = {}) {
-  clear(place);
-  const link = node("input", undefined, "invite-link");
-  link.value = url;
-  link.readOnly = true;
-  link.addEventListener("focus", () => link.select());
-  const copy = node("button", "Скопировать", "mini primary");
-  copy.type = "button";
-  copy.addEventListener("click", async () => {
-    try { await navigator.clipboard.writeText(url); toast("Ссылка скопирована — передайте её сами: писем приложение не шлёт"); }
-    catch { link.select(); toast("Скопируйте ссылку из поля"); }
-  });
-  place.append(link, copy, node("span", "работает 7 дней для любого числа людей · видна только сейчас", "invite-hint"));
-  if (focus) link.focus();
+async function kcLeaveCircle(circle) {
+  if (!confirm(`Покинуть круг «${circle.name}»? Взятые дела останутся у вас — вы их взяли.`)) return;
+  try {
+    await request(`/api/circles/${circle.id}/leave`, { method: "POST", body: JSON.stringify({}) });
+    kc.chat = null;
+    kc.info = null;
+    await loadCircles();
+    await load();
+    toast("Вы вышли из круга");
+  } catch (error) { toast(error.message || "Не получилось"); }
 }
-async function inviteToCircle(circle, place, { refresh = false } = {}) {
+async function kcUnfollow(item) {
+  try {
+    await request(`/api/captures/${item.talk.captureId}/people/${currentUser.id}`, { method: "DELETE" });
+    toast("Запись убрана у вас: новый призыв вернёт её");
+    kc.chat = null;
+    kc.info = null;
+    await loadCircles();
+    load().catch(() => {});
+  } catch (error) { toast(error.message || "Не получилось"); }
+}
+
+// ── «Информация»: люди, ссылка и граница круга ──
+function kcInfoOpen(view, personId = null) {
+  if (!kc.info) kc.fresh = true;
+  kc.info = view;
+  if (personId) kc.person = personId;
+  if (view === "invite" && !kc.invite) kc.invite = { query: "", people: null, all: true };
+  kc.menu = false;
+  kc.ctx = null;
+  renderCircles();
+  if (view === "invite") kcSearchPeople();
+}
+function kcInfoClose() {
+  kc.info = null;
+  renderCircles();
+}
+function kcInfo(item) {
+  const aside = kcEl("aside", "kc-info");
+  aside.setAttribute("aria-label", "Информация");
+  const head = (title, back = false) => kcEl("div", "kc-info-head",
+    back ? kcButton("kc-icon", kcIcon("back"), () => { kc.info = "main"; renderCircles(); }, { "aria-label": "Назад" }) : null,
+    kcEl("h3", null, title),
+    kcButton("kc-icon", kcIcon("close"), kcInfoClose, { "aria-label": "Закрыть" }));
+  const body = kcEl("div", "kc-info-body");
+  if (item.kind === "talk") {
+    aside.append(head("Информация"), body);
+    kcTalkInfo(body, item);
+    return aside;
+  }
+  const circle = item.circle;
+  const member = kc.info === "person" ? circle.members.find((person) => person.id === kc.person) : null;
+  if (kc.info === "invite") { aside.append(head(`Позвать в «${circle.name}»`, true), body); body.append(kcInviteEl(circle)); }
+  else if (kc.info === "bound") { aside.append(head("Граница круга", true), body); body.append(kcBoundEl()); }
+  else if (member) { aside.append(head(member.name, true), body); body.append(kcPersonEl(item, member)); }
+  else if (kc.info === "roomadd" && item.room.kind === "room") { aside.append(head(`Позвать в «${item.room.name}»`, true), body); body.append(kcRoomAddEl(item)); }
+  else { aside.append(head("Информация"), body); body.append(...kcCircleInfo(item)); }
+  return aside;
+}
+function kcRow(icon, title, sub, onClick, { accent = false, danger = false, side = null } = {}) {
+  return kcButton(`kc-row${accent ? " accent" : ""}${danger ? " danger" : ""}`, [kcIcon(icon), kcEl("span", "kc-row-text", kcEl("span", "kc-row-title", title), sub ? kcEl("span", "kc-row-sub", sub) : null), side], onClick);
+}
+function kcCircleInfo(item) {
+  const circle = item.circle;
+  const people = circle.members.length;
+  const open = circle.members.reduce((sum, member) => sum + (member.openDeeds || 0), 0);
+  const profile = kcEl("div", `kc-profile ${kcTone(circle.color)}`,
+    kcRing(circle.members, { tone: kcTone(circle.color), center: kcInitial(circle.name), onEmpty: () => kcInfoOpen("invite"), onPerson: (person) => kcInfoOpen("person", person.id), onMore: () => {} }),
+    kcEl("b", null, circle.name),
+    kcEl("small", null, `${people} ${pluralRu(people, "участник", "участника", "участников")} · ${open ? `${open} ${pluralRu(open, "открытое дело", "открытых дела", "открытых дел")}` : "дел нет"}`));
+  const fresh = circlesState.links?.get(circle.id);
+  const invite = circle.invite && !circle.invite.expired ? circle.invite : null;
+  const link = kcRow("link", fresh ? kcEl("code", null, fresh) : invite ? "Ссылка-приглашение" : "Завести ссылку-приглашение",
+    invite ? `живёт до ${reportDateLabel(invite.expiresAt.slice(0, 10), { day: "numeric", month: "short" })} · вошли по ней: ${invite.uses}` : "одна на круг, 7 дней, для любого числа людей",
+    () => (fresh ? kcCopyLink(fresh) : kcInfoOpen("invite")), { side: fresh ? kcIcon("copy") : kcIcon("chev") });
+  // «Показывать в дне» — личное и обратимое: остальные ничего не замечают.
+  const show = kcEl("label", "kc-row kc-switch", kcIcon("bell"), kcEl("span", "kc-row-text", kcEl("span", "kc-row-title", "Показывать в дне"), kcEl("span", "kc-row-sub", "на доске и в календаре — только у вас")));
+  const box = kcEl("input");
+  box.type = "checkbox";
+  box.id = `kc-show-${circle.id}`;
+  box.checked = !circle.muted;
+  box.addEventListener("change", () => toggleCircleMute(circle.id, !box.checked));
+  show.append(box, kcEl("span", "kc-track"));
+  const settings = kcEl("div", "kc-sect", link, show, kcRow("bound", "Граница круга", "что видят участники", () => kcInfoOpen("bound"), { side: kcIcon("chev") }));
+  const members = kcEl("div", "kc-sect", kcEl("p", "kc-sect-cap", `${people} ${pluralRu(people, "участник", "участника", "участников")}`), kcRow("personAdd", "Позвать людей", null, () => kcInfoOpen("invite"), { accent: true }));
+  for (const member of circle.members) {
+    const deeds = member.openDeeds || 0;
+    members.append(kcButton("kc-row kc-person", [avatarEl(member), kcEl("span", "kc-row-text", kcEl("span", "kc-row-title", member.id === currentUser?.id ? `${member.name} · вы` : member.name), kcEl("span", "kc-row-sub", deeds ? `${deeds} ${pluralRu(deeds, "открытое дело", "открытых дела", "открытых дел")}` : "открытых дел нет")), member.role === "owner" ? kcEl("span", "kc-row-side", "хозяин") : null], () => kcInfoOpen("person", member.id)));
+  }
+  const leave = kcEl("div", "kc-sect", circle.role === "owner"
+    ? kcRow("exit", "Распустить круг", null, () => kcDissolve(circle), { danger: true })
+    : kcRow("exit", "Покинуть круг", null, () => kcLeaveCircle(circle), { danger: true }));
+  return [profile, settings, members, leave];
+}
+async function kcCopyLink(url) {
+  try { await navigator.clipboard.writeText(url); toast("Ссылка скопирована — передайте её сами: писем приложение не шлёт"); }
+  catch { toast("Скопируйте ссылку вручную"); }
+}
+// Ссылка у круга одна и работает для многих. Показывается она один раз — сам
+// токен на сервере не хранится; забыли — обновите, прежняя сразу перестанет
+// работать. Свежая держится в памяти страницы: перерисовка её не теряет.
+async function kcMakeLink(circle) {
+  const refresh = Boolean(circle.invite && !circle.invite.expired);
   try {
     const invite = await request(`/api/circles/${circle.id}/invite`, { method: "POST", body: JSON.stringify({}) });
     (circlesState.links ||= new Map()).set(circle.id, invite.url);
-    paintFreshInvite(place, invite.url, { focus: true });
-    if (refresh) toast("Новая ссылка готова, прежняя больше не работает");
     circle.invite = { createdAt: new Date().toISOString(), expiresAt: invite.expiresAt, uses: 0, expired: false };
+    toast(refresh ? "Новая ссылка готова, прежняя больше не работает" : "Ссылка заведена — она видна только сейчас");
   } catch (error) { toast(error.message || "Приглашение не создалось"); }
+  renderCircles();
 }
-// Того, кто уже есть в приложении, зовут поиском: ссылка ради соседа по
-// приложению — лишний шаг. Добавленный узнаёт об этом строкой «к вам» и может
-// выйти в одно нажатие, поэтому добавление не молчаливое.
-function invitePeopleEl(circle) {
-  const box = node("div", undefined, "invite-people");
-  const searchRow = node("label", undefined, "invite-search-row");
-  const glass = node("span", undefined, "invite-glass");
-  glass.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>';
-  const field = node("input", undefined, "invite-search");
-  field.type = "search";
-  field.placeholder = "Добавить человека — имя или почта";
-  field.setAttribute("aria-label", `Найти человека для круга «${circle.name}»`);
-  searchRow.append(glass, field);
-  const found = node("div", undefined, "invite-found");
-  let timer = 0, latest = 0;
-  // Ответы на поиск приходят в любом порядке: список меняется только ответом на
-  // последний запрос и не очищается заранее — иначе строка, по которой уже
-  // щёлкают, исчезала бы из-под курсора.
-  const search = async () => {
-    const query = field.value.trim();
-    const mine = ++latest;
-    try {
-      const data = await request(`/api/circles/${circle.id}/candidates?q=${encodeURIComponent(query)}`);
-      if (mine !== latest) return;
-      clear(found);
-      if (!data.people.length) {
-        found.append(node("span", data.all ? "Никого не нашлось. Если человека ещё нет в приложении — дайте ему ссылку ниже." : "В круге уже все, кто есть в приложении. Нового человека зовите ссылкой ниже.", "invite-hint"));
-        return;
-      }
-      for (const person of data.people) {
-        const row = node("button", undefined, "people-row candidate");
-        row.type = "button";
-        const who = node("span", undefined, "people-who");
-        who.append(node("p", person.name, "people-name"), node("p", person.email, "people-sub"));
-        row.append(avatarEl(person, { size: "big" }), who, node("span", "Позвать", "candidate-add"));
-        row.addEventListener("click", async () => {
-          row.disabled = true;
-          try {
-            await request(`/api/circles/${circle.id}/members`, { method: "POST", body: JSON.stringify({ userId: person.id }) });
-            field.value = "";
-            clear(found);
-            toast(`${person.name} в круге «${circle.name}»`);
-            await loadCircles();
-          } catch (error) { toast(error.message || "Не получилось добавить"); row.disabled = false; }
-        });
-        found.append(row);
-      }
-    } catch (error) { if (mine === latest) { clear(found); found.append(node("span", error.message || "Поиск не удался", "invite-hint")); } }
-  };
-  field.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(search, 220); });
-  // Список открывается сам, как только в поле встали: людей в приложении
-  // немного, и вспоминать почту соседа наизусть незачем.
-  field.addEventListener("focus", () => { clearTimeout(timer); search(); });
-  box.append(searchRow, found);
-  return box;
-}
-function circleCardEl(circle) {
-  const card = node("section", undefined, "circle-card");
-  const head = node("div", undefined, "circle-head");
-  const name = node("h3", undefined, "circle-name");
-  name.append(node("i", undefined, `circle-dot big ${CIRCLE_TONES[circle.color] || "violet"}`), node("span", circle.name));
-  head.append(name);
-  const tools = node("div", undefined, "circle-tools");
-  const invitePlace = node("div", undefined, "circle-invite");
-  if (circle.role === "owner") {
-    const dissolve = node("button", "Распустить", "mini");
-    dissolve.type = "button";
-    dissolve.addEventListener("click", async () => {
-      if (!confirm(`Распустить круг «${circle.name}»? Записи останутся у авторов, но из круга уйдут, а неотвеченные просьбы снимутся.`)) return;
-      try { await request(`/api/circles/${circle.id}`, { method: "DELETE" }); await loadCircles(); await load(); toast(`Круг «${circle.name}» распущен`); }
-      catch (error) { toast(error.message || "Не получилось"); }
-    });
-    tools.append(dissolve);
-  }
-  if (circle.role !== "owner" || circle.members.filter((member) => member.role === "owner").length > 1) {
-    const leave = node("button", "Покинуть", "mini");
-    leave.type = "button";
-    leave.addEventListener("click", async () => {
-      if (!confirm(`Покинуть круг «${circle.name}»? Взятые дела останутся у вас — вы их взяли.`)) return;
-      try { await request(`/api/circles/${circle.id}/leave`, { method: "POST", body: JSON.stringify({}) }); await loadCircles(); await load(); toast("Вы вышли из круга"); }
-      catch (error) { toast(error.message || "Не получилось"); }
-    });
-    tools.append(leave);
-  }
-  head.append(tools);
-  card.append(head, invitePeopleEl(circle));
-  // Ссылка — для тех, кого в приложении ещё нет. Она одна на круг, живёт неделю
-  // и работает для любого числа людей; её состояние видно, сам токен — нет.
-  const linkRow = node("div", undefined, "invite-link-row");
-  const state = circle.invite;
-  linkRow.append(node("span", state && !state.expired
-    ? `Ссылка живёт до ${reportDateLabel(state.expiresAt.slice(0, 10))} · вошли по ней: ${state.uses}`
-    : "Ссылки нет — заведите, если человека ещё нет в приложении", "invite-hint"));
-  const linkButton = node("button", state && !state.expired ? "Обновить ссылку" : "Завести ссылку", "mini");
-  linkButton.type = "button";
-  linkButton.addEventListener("click", () => inviteToCircle(circle, invitePlace, { refresh: Boolean(state && !state.expired) }));
-  linkRow.append(linkButton);
-  if (circlesState.links?.has(circle.id)) paintFreshInvite(invitePlace, circlesState.links.get(circle.id));
-  card.append(linkRow, invitePlace);
-  const people = node("div", undefined, "circle-people");
-  for (const member of circle.members) {
-    const row = node("div", undefined, "people-row");
-    row.append(avatarEl(member, { size: "big" }));
-    const who = node("div", undefined, "people-who");
-    who.append(node("p", member.id === circlesState.me?.id ? `${member.name} · вы` : member.name, "people-name"));
-    who.append(node("p", member.openDeeds ? `${member.openDeeds} ${pluralRu(member.openDeeds, "дело", "дела", "дел")} на нём` : "открытых дел нет", "people-sub"));
-    row.append(who, node("span", member.role === "owner" ? "хозяин" : "участник", "people-role"));
-    people.append(row);
-  }
-  card.append(people);
-  // Выключение — личное и обратимое: остальные ничего не замечают.
-  const switchRow = node("label", undefined, "switch-row");
-  const box = node("input");
-  box.type = "checkbox";
-  box.checked = Boolean(circle.muted);
-  box.addEventListener("change", () => toggleCircleMute(circle.id, box.checked));
-  const text = node("span", undefined, "sw-text");
-  text.append(node("span", "Не показывать круг в дне, на доске и в календаре"));
-  text.append(node("small", "Дела круга уйдут из списков. Просьбы к вам будут приходить свёрнутой строкой — обещание не пропадёт молча."));
-  switchRow.append(box, text);
-  card.append(switchRow);
-  return card;
-}
-function circleRulesEl() {
-  const rules = node("section", undefined, "circle-rules");
-  rules.append(node("h4", "Что попадает в круг"));
-  const list = node("ul");
-  for (const [strong, rest] of [
-    ["Только то, что вы туда отправили.", " Запись уходит в круг, если у неё исполнитель отсюда или в обсуждении призван участник. Всё остальное остаётся личным — по умолчанию, без переключателей."],
-    ["Видно карточку, а не журнал.", " Участники видят саму запись, её свойства и обсуждение. Ваш день, заметки, «Что делал», голос и расход не видны никому."],
-    ["Правит запись автор.", " Исполнитель закрывает дело и пишет в обсуждение; срок и заголовок меняет тот, кто записал."],
-    ["Платит тот, кто записал.", " Разбор моделью считается автору записи: потолок расходов остаётся личным."],
-  ]) {
-    const item = node("li");
-    item.append(node("b", strong), node("span", rest));
-    list.append(item);
-  }
-  rules.append(list);
-  return rules;
-}
-function renderCircles() {
-  const body = $("#circles-body");
-  if (!body) return;
-  const typing = document.activeElement === $("#room-input");
-  clear(body);
-  const lead = node("p", "Круг — не второй журнал, а общая полка: день у вас остаётся один. Здесь люди, граница и разговор.", "circles-lead");
-  body.append(lead);
-  body.append(tabsEl());
-  if (circlesState.tab === "talks") { body.append(discussionsEl()); return; }
-  if (!circlesState.circles.length)
-    body.append(node("p", "Кругов пока нет. Заведите первый — и позовите в него ссылкой того, с кем есть общее дело.", "empty"));
-  if (circlesState.circles.length) {
-    const circle = circlesState.circles.find((item) => item.id === activeRoom()?.circleId) || circlesState.circles[0];
-    if (circlesState.tab === "people") {
-      for (const item of circlesState.circles) body.append(circleCardEl(item));
-      body.append(circleRulesEl());
-    } else {
-      const layout = node("div", undefined, "circles-layout");
-      layout.append(circleRailEl(), roomPaneEl(circle));
-      body.append(layout);
-    }
-    const adder = node("form", undefined, "circle-add");
-    paintCircleAdder(adder);
-    body.append(adder);
-    if (typing) {
-      const field = $("#room-input");
-      if (field) { field.focus(); field.selectionStart = field.selectionEnd = field.value.length; }
-    }
-    return;
-  }
-  const adder = node("form", undefined, "circle-add");
-  const input = node("input");
-  input.id = "circle-new-name";
-  input.placeholder = "Название круга — «Хаб», «Дом»";
-  input.maxLength = 40;
-  input.setAttribute("aria-label", "Название нового круга");
-  const submit = node("button", "+ Круг", "mini primary");
-  submit.type = "submit";
-  adder.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const name = input.value.trim();
-    if (!name) return;
-    input.value = "";
-    createCircle(name);
-  });
-  adder.append(input, submit);
-  body.append(adder, circleRulesEl());
-}
-// Две половины одного круга — разговор и люди с границей — и третья вкладка
-// поверх кругов: «Обсуждения», разговоры в отдельных записях, в том числе без
-// круга. Больше на странице ничего не появится — ни ленты, ни своей доски.
-function tabsEl() {
-  const tabs = node("div", undefined, "circle-tabs");
-  const unread = circlesState.discussions.filter((item) => item.unread).length;
-  for (const [key, label] of [["chat", "Разговор"], ["people", "Люди и граница"], ["talks", "Обсуждения"]]) {
-    const button = node("button", label, `circle-tab${circlesState.tab === key ? " on" : ""}`);
-    if (key === "talks" && unread) button.append(node("span", String(unread), "circle-tab-count"));
-    button.dataset.tab = key;
-    button.type = "button";
-    button.addEventListener("click", () => { circlesState.tab = key; renderCircles(); });
-    tabs.append(button);
-  }
-  return tabs;
-}
-// «Обсуждения» подтягиваются отдельно и не перерисовывают страницу целиком:
-// иначе поле поиска или только что заведённая ссылка на другой вкладке
-// пропадали бы из-под рук.
-async function refreshDiscussions() {
+// Ответы на поиск приходят в любом порядке: список меняется только ответом на
+// последний запрос.
+let kcSearchTurn = 0, kcSearchTimer = 0;
+async function kcSearchPeople() {
+  const item = kcCurrent();
+  if (!item?.circle || !kc.invite) return;
+  const turn = ++kcSearchTurn;
   try {
-    const data = await request("/api/discussions");
-    circlesState.discussions = data.discussions || [];
-  } catch { return; }
-  const tab = document.querySelector('.circle-tab[data-tab="talks"]');
-  if (tab) {
-    tab.querySelector(".circle-tab-count")?.remove();
-    const unread = circlesState.discussions.filter((item) => item.unread).length;
-    if (unread) tab.append(node("span", String(unread), "circle-tab-count"));
+    const data = await request(`/api/circles/${item.circle.id}/candidates?q=${encodeURIComponent(kc.invite.query.trim())}`);
+    if (turn !== kcSearchTurn || !kc.invite) return;
+    kc.invite.people = data.people || [];
+    kc.invite.all = Boolean(data.all);
+  } catch (error) {
+    if (turn !== kcSearchTurn || !kc.invite) return;
+    kc.invite.people = [];
+    kc.invite.error = error.message || "Поиск не удался";
   }
-  const list = document.querySelector("#circles-body .talks");
-  if (list) list.replaceWith(discussionsEl());
+  if (kc.info === "invite") renderCircles();
 }
-// Все записи, где идёт разговор с людьми: куда позвали вас и куда позвали вы.
-// Строка «к вам» гаснет, как только призыв прочитан, — а запись отсюда не
-// пропадает.
-function discussionsEl() {
-  const wrap = node("section", undefined, "talks");
-  const items = circlesState.discussions;
-  if (!items.length) {
-    wrap.append(node("p", "Разговоров в записях пока нет. Откройте любую запись, нажмите «Обсудить» и позовите человека через @ — круг для этого не нужен.", "empty"));
-    return wrap;
+function kcInviteEl(circle) {
+  const wrap = kcEl("div", "kc-sub");
+  const state = kc.invite || (kc.invite = { query: "", people: null, all: true });
+  const search = kcEl("label", "kc-search", kcIcon("search"));
+  const input = kcEl("input");
+  input.id = "kc-invite-q";
+  input.type = "search";
+  input.placeholder = "Имя или почта";
+  input.value = state.query;
+  input.setAttribute("aria-label", `Найти человека для круга «${circle.name}»`);
+  input.addEventListener("input", () => { state.query = input.value; clearTimeout(kcSearchTimer); kcSearchTimer = setTimeout(kcSearchPeople, 220); });
+  search.append(input);
+  const found = kcEl("div", "kc-people");
+  if (state.people === null) found.append(kcEl("p", "kc-hint", "Ищу…"));
+  else if (!state.people.length) found.append(kcEl("p", "kc-hint", state.error || (state.all ? "Никого не нашлось. Если человека ещё нет в Кизуне — дайте ему ссылку ниже." : "В круге уже все, кто есть в Кизуне. Нового человека зовите ссылкой ниже.")));
+  for (const person of state.people || []) {
+    found.append(kcButton("kc-row kc-person", [avatarEl(person), kcEl("span", "kc-row-text", kcEl("span", "kc-row-title", person.name), kcEl("span", "kc-row-sub", person.email)), kcEl("span", "kc-row-side accent", "Позвать")], async (event) => {
+      event.currentTarget.disabled = true;
+      try {
+        await request(`/api/circles/${circle.id}/members`, { method: "POST", body: JSON.stringify({ userId: person.id }) });
+        toast(`${person.name} в круге «${circle.name}» — узнает строкой «к вам»`);
+        state.people = state.people.filter((entry) => entry.id !== person.id);
+        await loadCircles({ then: () => kcOpen(kc.chat, { quiet: true }) });
+      } catch (error) { toast(error.message || "Не получилось добавить"); }
+    }));
   }
-  for (const item of items) {
-    const row = node("button", undefined, `talk-row${item.unread ? " unread" : ""}`);
-    row.type = "button";
-    const dot = node("i", undefined, "talk-dot");
-    dot.setAttribute("aria-hidden", "true");
-    const main = node("span", undefined, "talk-main");
-    main.append(node("span", item.title, "talk-title"));
-    const meta = node("span", undefined, "talk-meta");
-    const whose = item.mine ? "ваша запись" : `запись ${item.author?.name || "другого человека"}`;
-    meta.append(node("span", item.last ? `${item.last.author.name}: «${item.last.body}»` : whose));
-    main.append(meta);
-    const side = node("span", undefined, "talk-side");
-    const faces = node("span", undefined, "talk-faces");
-    const people = [item.mine ? null : item.author, ...item.people].filter((person) => person && person.id !== currentUser?.id);
-    for (const person of people.slice(0, 3)) faces.append(avatarEl(person, { size: "mini" }));
-    side.append(faces, node("small", item.last ? agoWords(item.last.at) || "" : whose));
-    row.append(dot, main, side);
-    if (item.unread) row.setAttribute("aria-label", `${item.title} — есть новый призыв`);
-    row.addEventListener("click", () => openSharedCard(item.captureId, { talk: true }));
-    wrap.append(row);
-  }
+  const fresh = circlesState.links?.get(circle.id);
+  const invite = circle.invite && !circle.invite.expired ? circle.invite : null;
+  const card = kcEl("div", `kc-linkcard ${kcTone(circle.color)}`,
+    kcEl("div", "kc-linkrow",
+      kcEl("code", fresh ? null : "masked", fresh || "kizuna.app/#join/••••••••••"),
+      fresh ? kcButton("kc-btn sm primary", [kcIcon("copy"), "Скопировать"], () => kcCopyLink(fresh)) : kcButton(`kc-btn sm${invite ? "" : " primary"}`, invite ? "Обновить" : "Завести ссылку", () => kcMakeLink(circle))),
+    fresh ? kcEl("p", "kc-hint", "Ссылка видна только сейчас — сохраните её.") : null,
+    kcEl("p", "kc-hint", invite ? `Живёт до ${reportDateLabel(invite.expiresAt.slice(0, 10), { day: "numeric", month: "long" })} · вошли по ней: ${invite.uses}` : "Одна на круг · 7 дней · для любого числа людей"));
+  wrap.append(kcEl("p", "kc-sect-cap", "Из Кизуны"), search, found, kcEl("p", "kc-hint", "Позванный узнает строкой «к вам» и может выйти в одно нажатие."), kcEl("p", "kc-sect-cap", "Ещё нет в Кизуне"), card);
   return wrap;
 }
-// Поле «+ Круг» одно и то же в обоих видах страницы.
-function paintCircleAdder(adder) {
-  const input = node("input");
-  input.id = "circle-new-name";
-  input.placeholder = "Название круга — «Хаб», «Дом»";
-  input.maxLength = 40;
-  input.setAttribute("aria-label", "Название нового круга");
-  const submit = node("button", "+ Круг", "mini primary");
-  submit.type = "submit";
-  adder.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const name = input.value.trim();
-    if (!name) return;
-    input.value = "";
-    createCircle(name);
-  });
-  adder.append(input, submit);
+function kcBoundEl() {
+  return kcEl("div", "kc-sub",
+    kcEl("div", "kc-bound",
+      kcEl("div", "kc-bound-in", kcEl("h4", null, kcIcon("eye"), "Видит круг"), kcEl("ul", null,
+        kcEl("li", null, kcEl("b", null, "Записи с исполнителем"), " из круга"),
+        kcEl("li", null, kcEl("b", null, "Записи, где позвали"), " участника"),
+        kcEl("li", null, kcEl("b", null, "Разговоры"), " круга и комнат"))),
+      kcEl("div", "kc-bound-out", kcEl("h4", null, kcIcon("lock"), "Остаётся вашим"), kcEl("ul", null,
+        kcEl("li", null, "День, заметки, «Что делал»"),
+        kcEl("li", null, "Голос и расход на модели"),
+        kcEl("li", null, "Всё, что не отдали в круг")))),
+    kcEl("p", "kc-hint", kcEl("b", null, "Правит запись автор"), ", исполнитель закрывает дело и пишет в обсуждение. ", kcEl("b", null, "Разбор моделью"), " считается тому, кто записал."));
 }
+function kcPersonEl(item, member) {
+  const circle = item.circle;
+  const me = member.id === currentUser?.id;
+  const since = member.joinedAt ? reportDateLabel(zoneDate(new Date(member.joinedAt)), { day: "numeric", month: "long" }) : null;
+  const today = currentDayDate || zoneDate(new Date());
+  const deeds = member.deeds || [];
+  const list = kcEl("div", "kc-deeds");
+  if (!deeds.length) list.append(kcEl("p", "kc-hint", "Открытых дел в этом круге нет."));
+  for (const deed of deeds) {
+    const late = deed.due?.date && deed.due.date < today;
+    list.append(kcButton("kc-deed-row", [kcIcon("todo"), kcEl("span", "kc-deed-row-title", deed.title), kcEl("small", late ? "late" : null, late ? "просрочено" : deed.due?.date ? kcDue(deed.due) : deed.state === "pending" ? "ждёт ответа" : "")], () => openSharedCard(deed.captureId)));
+  }
+  const more = (member.openDeeds || 0) - deeds.length;
+  const acts = me ? null : kcEl("div", "kc-person-acts",
+    kcButton("kc-btn sm tone", "@ Позвать в разговоре", () => { kcInfoClose(); kcInsertCall(member.name); }),
+    kcButton("kc-btn sm", "Поставить дело", () => { location.hash = "#today"; prefillCapture(`${member.name} — `, "todo"); }));
+  const avatar = avatarEl(member);
+  avatar.classList.add("huge");
+  return kcEl("div", `kc-sub ${kcTone(circle.color)}`,
+    kcEl("div", "kc-person-head", avatar, kcEl("div", null, kcEl("b", null, me ? `${member.name} · вы` : member.name), kcEl("small", null, `${member.role === "owner" ? "хозяин круга" : "участник"}${since ? ` · в круге с ${since}` : ""}`))),
+    kcEl("p", "kc-sect-cap", `Дела в этом круге · ${member.openDeeds || 0}`),
+    list,
+    more > 0 ? kcEl("p", "kc-hint", `и ещё ${more} — на доске`) : null,
+    acts);
+}
+function kcRoomAddEl(item) {
+  const inRoom = new Set(item.room.members.map((person) => person.id));
+  const rest = item.circle.members.filter((person) => !inRoom.has(person.id));
+  const wrap = kcEl("div", "kc-sub", kcEl("p", "kc-hint", `Комнату видят только те, кто в ней. Позвать можно людей круга «${item.circle.name}».`));
+  const people = kcEl("div", "kc-people");
+  if (!rest.length) people.append(kcEl("p", "kc-hint", "В комнате уже весь круг."));
+  for (const person of rest) {
+    people.append(kcButton("kc-row kc-person", [avatarEl(person), kcEl("span", "kc-row-text", kcEl("span", "kc-row-title", person.name), kcEl("span", "kc-row-sub", person.email)), kcEl("span", "kc-row-side accent", "Позвать")], async (event) => {
+      event.currentTarget.disabled = true;
+      try {
+        await request(`/api/rooms/${item.room.id}/members`, { method: "POST", body: JSON.stringify({ userId: person.id }) });
+        toast(`${person.name} в комнате «${item.room.name}»`);
+        await loadCircles({ then: () => kcOpen(kc.chat, { quiet: true }) });
+      } catch (error) { toast(error.message || "Не получилось"); }
+    }));
+  }
+  wrap.append(people);
+  return wrap;
+}
+function kcTalkInfo(body, item) {
+  const talk = item.talk;
+  const kind = KC_KIND[talk.kind] ? talk.kind : "note";
+  const people = kcTalkPeople(item);
+  const seal = kcSeal(kcIcon(kind), `tone-${KC_KIND[kind][0]}`, "round big");
+  body.append(kcEl("div", `kc-profile tone-${KC_KIND[kind][0]}`, seal, kcEl("b", null, talk.title), kcEl("small", null, `обсуждение записи · ${people.length} ${pluralRu(people.length, "участник", "участника", "участников")}`)));
+  body.append(kcEl("div", "kc-sect", kcRow("doc", "Открыть карточку записи", null, () => openSharedCard(talk.captureId, { talk: true }), { accent: true })));
+  const list = kcEl("div", "kc-sect", kcEl("p", "kc-sect-cap", `${people.length} ${pluralRu(people.length, "участник", "участника", "участников")}`));
+  for (const person of people) {
+    const role = person.id === talk.author?.id ? "автор" : (kc.talk?.participants || []).some((entry) => entry.id === person.id) ? "позван" : "из круга";
+    list.append(kcEl("div", "kc-row kc-person", avatarEl(person), kcEl("span", "kc-row-text", kcEl("span", "kc-row-title", person.id === currentUser?.id ? `${person.name} · вы` : person.name), kcEl("span", "kc-row-sub", person.email || "")), kcEl("span", "kc-row-side", role)));
+  }
+  body.append(list);
+  body.append(kcEl("p", "kc-hint kc-pad", "Позвать ещё — напишите @имя в сообщении."));
+  if (!talk.mine && (kc.talk?.participants || []).some((person) => person.id === currentUser?.id))
+    body.append(kcEl("div", "kc-sect", kcRow("exit", "Не следить", "запись уйдёт из ваших «Обсуждений»", () => kcUnfollow(item), { danger: true })));
+}
+
+// ── новый круг и новая комната ──
+function kcModalOpen(kind, extra = {}) {
+  kc.modal = { kind, name: "", color: "violet", people: [], focus: true, ...extra };
+  kc.menu = false;
+  kc.ctx = null;
+  renderCircles();
+}
+function kcModal() {
+  if (!kc.modal) return null;
+  const modal = kc.modal;
+  const close = () => { kc.modal = null; renderCircles(); };
+  const scrim = kcEl("div", "kc-scrim");
+  scrim.addEventListener("click", close);
+  const box = kcEl("form", "kc-modal");
+  box.setAttribute("role", "dialog");
+  box.setAttribute("aria-modal", "true");
+  const input = kcEl("input");
+  input.id = "kc-modal-name";
+  input.type = "text";
+  input.maxLength = 40;
+  input.value = modal.name;
+  input.autocomplete = "off";
+  if (modal.kind === "circle") {
+    const preview = kcSeal(kcInitial(modal.name || "Круг"), kcTone(modal.color), "big");
+    const title = kcEl("b", null, modal.name.trim() || "Новый круг");
+    input.placeholder = "«Дача», «Книжный клуб», «Релиз»";
+    input.setAttribute("aria-label", "Название круга");
+    input.addEventListener("input", () => { modal.name = input.value; preview.textContent = kcInitial(input.value || "Круг"); title.textContent = input.value.trim() || "Новый круг"; });
+    const tones = kcEl("div", "kc-tones");
+    for (const color of Object.keys(CIRCLE_TONES)) {
+      tones.append(kcButton(`kc-tone-pick ${kcTone(color)}`, null, () => { modal.color = color; renderCircles(); }, { "aria-pressed": String(modal.color === color), "aria-label": { violet: "фиолетовый", blue: "синий", teal: "бирюзовый", orange: "янтарный", pink: "розовый", red: "коралловый" }[color] }));
+    }
+    box.append(
+      kcEl("div", "kc-modal-head", kcEl("h3", null, "Новый круг", kcEl("small", null, "Люди, граница и разговор — больше ничего")), kcButton("kc-icon", kcIcon("close"), close, { "aria-label": "Закрыть" })),
+      kcEl("div", `kc-modal-preview ${kcTone(modal.color)}`, preview, kcEl("div", null, title, kcEl("small", null, "людей позовёте следующим шагом"))),
+      kcEl("label", "kc-field-label", kcEl("span", null, "Название"), input),
+      kcEl("div", "kc-field-label", kcEl("span", null, "Цвет"), tones),
+      kcEl("div", "kc-modal-acts", kcButton("kc-btn ghost", "Отмена", close), kcEl("button", "kc-btn primary", "Завести круг")));
+    box.lastElementChild.lastElementChild.type = "submit";
+    box.addEventListener("submit", (event) => { event.preventDefault(); kcCreateCircle(); });
+  } else {
+    const circle = circlesState.circles.find((entry) => entry.id === modal.circleId);
+    if (!circle) return null;
+    input.placeholder = "«Смета», «Релиз»";
+    input.setAttribute("aria-label", "Название комнаты");
+    input.addEventListener("input", () => { modal.name = input.value; });
+    const people = kcEl("div", "kc-people");
+    for (const person of circle.members.filter((entry) => entry.id !== currentUser?.id)) {
+      const chosen = modal.people.includes(person.id);
+      people.append(kcButton("kc-row kc-person kc-pick", [avatarEl(person), kcEl("span", "kc-row-text", kcEl("span", "kc-row-title", person.name), kcEl("span", "kc-row-sub", person.email)), kcEl("span", "kc-checkbox", kcIcon("check"))], () => {
+        modal.people = chosen ? modal.people.filter((id) => id !== person.id) : [...modal.people, person.id];
+        renderCircles();
+      }, { "aria-pressed": String(chosen) }));
+    }
+    box.append(
+      kcEl("div", "kc-modal-head", kcEl("h3", null, `Комната в «${circle.name}»`, kcEl("small", null, "Разговор части круга: видят только те, кто в нём")), kcButton("kc-icon", kcIcon("close"), close, { "aria-label": "Закрыть" })),
+      kcEl("label", "kc-field-label", kcEl("span", null, "Название"), input),
+      kcEl("div", "kc-field-label", kcEl("span", null, "Кого позвать — пустую комнату не завести"), people),
+      kcEl("div", "kc-modal-acts", kcButton("kc-btn ghost", "Отмена", close), kcEl("button", "kc-btn primary", "Завести комнату")));
+    box.lastElementChild.lastElementChild.type = "submit";
+    box.addEventListener("submit", (event) => { event.preventDefault(); kcCreateRoom(circle); });
+  }
+  return kcEl("div", "kc-layer", scrim, box);
+}
+async function kcCreateCircle() {
+  const { name, color } = kc.modal;
+  const clean = name.trim();
+  if (!clean) { toast("Назовите круг — «Дача», «Книжный клуб»"); $("#kc-modal-name")?.focus(); return; }
+  try {
+    const result = await request("/api/circles", { method: "POST", body: JSON.stringify({ name: clean, color }) });
+    kc.modal = null;
+    kc.folder = "all";
+    await loadCircles({ then: async () => {
+      const room = chatState.rooms.find((entry) => entry.circleId === result.circle.id && entry.kind === "general");
+      if (room) await kcOpen(`room:${room.id}`);
+      kcInfoOpen("invite");
+    } });
+    load().catch(() => {});
+    toast(`Круг «${clean}» заведён — позовите людей`);
+  } catch (error) { toast(error.message || "Круг не завёлся"); }
+}
+async function kcCreateRoom(circle) {
+  const { name, people } = kc.modal;
+  const clean = name.trim();
+  if (!clean) { toast("Назовите комнату — «Смета», «Релиз»"); $("#kc-modal-name")?.focus(); return; }
+  if (!people.length) { toast("Комната — это разговор с кем-то: позовите хотя бы одного человека"); return; }
+  try {
+    const result = await request(`/api/circles/${circle.id}/rooms`, { method: "POST", body: JSON.stringify({ name: clean, members: people }) });
+    kc.modal = null;
+    await loadCircles({ then: () => kcOpen(`room:${result.room.id}`) });
+    toast(`Комната «${result.room.name}» заведена`);
+  } catch (error) { toast(error.message || "Комната не завелась"); }
+}
+function kcEmptyPage() {
+  const page = kcEl("div", "kc kc-empty-page",
+    kcEl("div", "kc-empty-card",
+      kcSeal(kcIcon("people"), "tone-violet", "round big"),
+      kcEl("h3", null, "Кругов пока нет"),
+      kcEl("p", null, "Круг — это люди, граница и разговор. Заведите первый и позовите того, с кем есть общее дело. Обсуждения записей тоже появятся здесь."),
+      kcButton("kc-btn primary", [kcIcon("plus"), "Завести круг"], () => kcModalOpen("circle"))));
+  const modal = kcModal();
+  if (modal) page.append(modal);
+  return page;
+}
+
+// Меню закрывается щелчком мимо и клавишей Escape, как любое всплывающее.
+document.addEventListener("click", (event) => {
+  if (!kc.ctx && !kc.menu) return;
+  if ($("#circles")?.hidden) { kc.ctx = null; kc.menu = false; return; }
+  if (event.target.closest(".kc-menu, [data-kc-menu]")) return;
+  kc.ctx = null;
+  kc.menu = false;
+  renderCircles();
+}, true);
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || $("#circles")?.hidden) return;
+  if (kc.ctx || kc.menu) { kc.ctx = null; kc.menu = false; renderCircles(); }
+  else if (kc.modal) { kc.modal = null; renderCircles(); }
+  else if (kc.info && !event.target.closest?.("textarea, input")) kcInfoClose();
+});
+
 // Приглашение по ссылке: человек видит, кто зовёт и во что, ещё до согласия —
-// иначе он нажимает «войти» вслепую.
+// иначе он нажимает «войти» вслепую. Карточка держится в состоянии страницы:
+// круги грузятся параллельно и перерисовали бы её пустым списком.
 async function openInvite(token) {
   history.replaceState(null, "", "#circles");
   updatePageFromHash();
   let peek;
   try { peek = await request(`/api/circles/invite/${encodeURIComponent(token)}`); }
   catch (error) { toast(error.message || "Приглашение не найдено"); return; }
-  const body = $("#circles-body");
-  clear(body);
+  kc.joining = { token, peek };
+  renderCircles();
+}
+function kcInviteCard() {
+  const { token, peek } = kc.joining;
   const card = node("section", undefined, "circle-card invite-card");
   const name = node("h3", undefined, "circle-name");
   name.append(node("i", undefined, `circle-dot big ${CIRCLE_TONES[peek.circle.color] || "violet"}`), node("span", peek.circle.name));
@@ -6015,19 +6676,23 @@ async function openInvite(token) {
   accept.addEventListener("click", async () => {
     accept.disabled = true;
     try {
-      await request(`/api/circles/invite/${encodeURIComponent(token)}/accept`, { method: "POST", body: JSON.stringify({}) });
+      const result = await request(`/api/circles/invite/${encodeURIComponent(token)}/accept`, { method: "POST", body: JSON.stringify({}) });
+      kc.joining = null;
       toast(`Вы в круге «${peek.circle.name}»`);
-      await loadCircles();
+      await loadCircles({ then: async () => {
+        const room = chatState.rooms.find((item) => item.circleId === (result.circle?.id || peek.circle.id) && item.kind === "general");
+        if (room) await kcOpen(`room:${room.id}`);
+      } });
       await load();
     } catch (error) { toast(error.message || "Не получилось войти"); accept.disabled = false; }
   });
   const skip = node("button", "Не сейчас", "mini");
   skip.type = "button";
-  skip.addEventListener("click", () => loadCircles());
+  skip.addEventListener("click", () => { kc.joining = null; loadCircles(); });
   const acts = node("div", undefined, "circle-tools");
   acts.append(accept, skip);
   card.append(acts);
-  body.append(card);
+  return node("div", undefined, "kc-joining").appendChild(card).parentNode;
 }
 function boardCardStatus(card) {
   const today = boardState.data?.today || currentDayDate;
@@ -8125,7 +8790,7 @@ function notificationActions(item, { after = () => {} } = {}) {
       const result = await request(`/api/notifications/${item.id}/snooze`, { method: "POST", body: JSON.stringify({ minutes: 10 }) });
       done(`Напомню в ${notifyClock(result.snoozedUntil)}`);
     }));
-  } else if (item.kind === "call") {
+  } else if (item.kind === "call" || item.kind === "reply") {
     acts.append(notifyButton("Ответить", false, async () => { after(); openNotification(item); }));
   } else if (item.kind === "clarify" && !item.resolved) {
     acts.append(notifyButton("Уточнить", false, async () => { after(); openNotification(item); }));
@@ -8198,7 +8863,7 @@ function openNotification(item) {
   $("#bell-menu")?.removeAttribute("open");
   if (!item.read) markNotificationsRead({ ids: [item.id] });
   if (["reminder", "clarify"].includes(item.kind) && item.captureId) return openCaptureById(item.captureId);
-  if (item.captureId) return openSharedCard(item.captureId, { talk: item.kind === "call" });
+  if (item.captureId) return openSharedCard(item.captureId, { talk: ["call", "reply", "reaction", "chatter"].includes(item.kind) });
   if (item.roomId) return openRoomFromInbox(item.roomId);
   if (item.kind === "circle" && item.circleId) return openCircleFromInbox(item.circleId);
   const hash = { invite: "#calendar", event_added: "#calendar", event_changed: "#calendar", signup: "#admin", spend: "#settings", calendar_error: "#settings", digest: "#today" }[item.kind];
@@ -8336,20 +9001,32 @@ function paintNotifySettings() {
 }
 
 // Живое обновление разговора: сообщение приходит к остальным событием журнала,
-// и страница перечитывает комнаты и открытый разговор, не сбивая набранное.
+// и страница перечитывает список и открытый разговор, не сбивая набранное и не
+// дёргая прокрутку, если человек читает выше.
 async function refreshRoomsQuietly() {
-  if ($("#circles")?.hidden) return;
-  const atBottom = (() => { const list = $("#room-thread"); return !list || list.scrollHeight - list.scrollTop - list.clientHeight < 60; })();
+  if ($("#circles")?.hidden || circlesState.loading) return;
+  const list = $("#kc-msgs");
+  const atBottom = !list || list.scrollHeight - list.scrollTop - list.clientHeight < 80;
   try {
-    const [data] = await Promise.all([request("/api/circles"), loadRooms()]);
+    const [data, rooms, talks] = await Promise.all([request("/api/circles"), request("/api/rooms"), request("/api/discussions").catch(() => ({ discussions: circlesState.discussions || [] }))]);
     circlesState.circles = data.circles || [];
-    if (chatState.activeRoomId) {
-      const fresh = await request(`/api/rooms/${chatState.activeRoomId}/messages`);
-      chatState.messages = fresh.messages || [];
-      const room = chatState.rooms.find((item) => item.id === chatState.activeRoomId);
-      if (room) { room.unread = 0; Object.assign(room, fresh.room); }
+    chatState.rooms = rooms.rooms || [];
+    circlesState.discussions = talks.discussions || [];
+    if (kc.chat?.startsWith("room:")) {
+      const roomId = kc.chat.slice(5);
+      if (chatState.rooms.some((room) => room.id === roomId)) {
+        const fresh = await request(`/api/rooms/${roomId}/messages`);
+        chatState.messages = fresh.messages || [];
+        const room = chatState.rooms.find((item) => item.id === roomId);
+        if (room) Object.assign(room, fresh.room, { unread: 0, called: false });
+      } else kc.chat = null;
+    } else if (kc.chat?.startsWith("talk:")) {
+      const captureId = kc.chat.slice(5);
+      const fresh = await request(`/api/captures/${captureId}/comments`);
+      kc.talk = { captureId, comments: kcTalkItems(fresh.comments || []), callable: fresh.callable || [], participants: fresh.participants || [] };
+      const talk = circlesState.discussions.find((item) => item.captureId === captureId);
+      if (talk) { talk.unreadCount = 0; talk.unread = false; }
     }
   } catch { return; }
-  renderCircles();
-  if (atBottom) scrollThreadDown();
+  renderCircles({ toBottom: atBottom });
 }

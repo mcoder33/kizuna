@@ -66,12 +66,18 @@ test("обсуждение без круга: позванный видит од
   await expect(dialog.locator(".talk-who")).toContainText("вы и Илья");
   await page.locator("#review-close").click();
 
-  // ── Илья находит запись в «Обсуждениях», хотя круга у них нет ──
+  // ── Илья находит запись в «Записях» на странице разговоров, хотя круга у них нет ──
   await ilya.page.goto("/#circles");
-  await ilya.page.getByRole("button", { name: /Обсуждения/ }).click();
-  const row = ilya.page.locator(".talk-row").filter({ hasText: "карусель" });
-  await expect(row).toHaveClass(/unread/);
+  await ilya.page.locator(".kc-fold").filter({ hasText: "Записи" }).click();
+  const row = ilya.page.locator(".kc-chat").filter({ hasText: "карусель" });
+  // «@» — здесь позвали его, и он ещё не открывал.
+  await expect(row.locator(".kc-cnt.at")).toBeVisible();
   await row.click();
+  await expect(ilya.page.locator(".kc-hero .kc-kicker")).toContainText("Обсуждение записи");
+  await expect(ilya.page.locator(".kc-tx").first()).toContainText("Глянь сид");
+  await expect(ilya.page.locator(".kc-pill").filter({ hasText: "Илья — в обсуждении" })).toHaveCount(0);
+  await expect(ilya.page.locator(".kc-pill").filter({ hasText: "Вы — в обсуждении" })).toBeVisible();
+  await ilya.page.getByRole("button", { name: "Открыть карточку" }).click();
   const hers = ilya.page.locator("#review-dialog");
   await expect(hers.locator(".card-foreign")).toContainText("Вас позвали в обсуждение");
   await expect(hers.locator(".msg-text").first()).toContainText("Глянь сид");

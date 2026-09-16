@@ -96,3 +96,110 @@ test('своё сообщение убирается, чужое — нет; о�
   await sasha.patch(`/api/rooms/${general.id}`).send({name:'Не общий'}).expect(409);
   await sasha.post(`/api/rooms/${general.id}/leave`).send({}).expect(409);
 });
+
+// ── разговор как в мессенджере ──
+const feed=api=>api.get('/api/notifications').expect(200).then(res=>res.body.notifications);
+
+test('ответ цитатой: цитата видна всем, а тому, кому ответили, — строка «отвечает вам»',async()=>{
+  const {sasha,anya,lesha,general}=await circleOfThree();
+  const asked=(await lesha.post(`/api/rooms/${general.id}/messages`).send({body:'Нужен доступ к бою — кто выдаст?'}).expect(201)).body.message;
+  const answer=(await anya.post(`/api/rooms/${general.id}/messages`).send({body:'Выдала, проверь',replyTo:asked.id}).expect(201)).body.message;
+  assert.equal(answer.replyTo.id,asked.id);
+  assert.equal(answer.replyTo.author.name,'Лёша');
+  assert.equal(answer.replyTo.body,'Нужен доступ к бою — кто выдаст?');
+  const seen=(await sasha.get(`/api/rooms/${general.id}/messages`).expect(200)).body.messages;
+  assert.equal(seen.find(message=>message.id===answer.id).replyTo.author.name,'Лёша');
+  const hers=await feed(lesha);
+  assert.deepEqual(hers.map(item=>item.kind),['reply']);
+  assert.match(hers[0].text,/^отвечает вам в разговоре «Хаб»: «Выдала, проверь»$/,'«Общий» круга в уведомлении зовётся именем круга, как в списке разговоров');
+  // Саше ответ не адресован — ему ничего.
+  assert.equal((await feed(sasha)).length,0);
+  // Ответить можно только на сообщение из того же разговора.
+  const room=(await sasha.post(`/api/circles/${general.circleId}/rooms`).send({name:'Смета',members:[anya.user.id]}).expect(201)).body.room;
+  await anya.post(`/api/rooms/${room.id}/messages`).send({body:'не туда',replyTo:asked.id}).expect(400);
+  // Убранное исходное сообщение цитата честно называет убранным.
+  await lesha.delete(`/api/rooms/${general.id}/messages/${asked.id}`).expect(200);
+  const after=(await sasha.get(`/api/rooms/${general.id}/messages`).expect(200)).body.messages.find(message=>message.id===answer.id);
+  assert.equal(after.replyTo.removed,true);
+  assert.equal(after.replyTo.body,'');
+});
+
+test('реакции: ставятся и снимаются одним нажатием, автору — одна склеенная строка',async()=>{
+  const {sasha,anya,lesha,general}=await circleOfThree();
+  const said=(await sasha.post(`/api/rooms/${general.id}/messages`).send({body:'Демо в четверг в 11'}).expect(201)).body.message;
+  let result=(await anya.post(`/api/rooms/${general.id}/messages/${said.id}/reactions`).send({emoji:'👍'}).expect(200)).body;
+  assert.deepEqual(result.reactions.map(item=>[item.emoji,item.count,item.mine]),[['👍',1,true]]);
+  await lesha.post(`/api/rooms/${general.id}/messages/${said.id}/reactions`).send({emoji:'👍'}).expect(200);
+  await lesha.post(`/api/rooms/${general.id}/messages/${said.id}/reactions`).send({emoji:'🔥'}).expect(200);
+  const mine=(await sasha.get(`/api/rooms/${general.id}/messages`).expect(200)).body.messages.find(message=>message.id===said.id);
+  assert.deepEqual(mine.reactions.map(item=>[item.emoji,item.count,item.mine]),[['👍',2,false],['🔥',1,false]]);
+  assert.deepEqual(mine.reactions[0].people.map(person=>person.name),['Аня','Лёша']);
+  const rows=(await feed(sasha)).filter(item=>item.kind==='reaction');
+  assert.equal(rows.length,1,'реакции склеиваются в одну строку на разговор');
+  assert.equal(rows[0].count,3);
+  // Второе нажатие снимает реакцию.
+  result=(await anya.post(`/api/rooms/${general.id}/messages/${said.id}/reactions`).send({emoji:'👍'}).expect(200)).body;
+  assert.deepEqual(result.reactions.map(item=>[item.emoji,item.count,item.mine]),[['👍',1,false],['🔥',1,false]]);
+  // Произвольный символ реакцией не станет.
+  await anya.post(`/api/rooms/${general.id}/messages/${said.id}/reactions`).send({emoji:'💩'}).expect(400);
+});
+
+test('закреп один на разговор: заменяется, снимается и уходит вместе с сообщением',async()=>{
+  const {sasha,anya,lesha,general}=await circleOfThree();
+  const first=(await sasha.post(`/api/rooms/${general.id}/messages`).send({body:'Демо в четверг в 11'}).expect(201)).body.message;
+  const second=(await anya.post(`/api/rooms/${general.id}/messages`).send({body:'Стенд — Лёша, тексты — Катя'}).expect(201)).body.message;
+  await lesha.post(`/api/rooms/${general.id}/pin`).send({messageId:first.id}).expect(200);
+  let room=(await anya.get('/api/rooms').expect(200)).body.rooms.find(item=>item.id===general.id);
+  assert.equal(room.pinned.body,'Демо в четверг в 11');
+  assert.equal(room.pinned.author.name,'Саша');
+  assert.ok((await feed(anya)).some(item=>item.kind==='pin'),'закреп — повод для остальных в разговоре');
+  await sasha.post(`/api/rooms/${general.id}/pin`).send({messageId:second.id}).expect(200);
+  room=(await lesha.get('/api/rooms').expect(200)).body.rooms.find(item=>item.id===general.id);
+  assert.equal(room.pinned.id,second.id);
+  await anya.delete(`/api/rooms/${general.id}/messages/${second.id}`).expect(200);
+  room=(await lesha.get('/api/rooms').expect(200)).body.rooms.find(item=>item.id===general.id);
+  assert.equal(room.pinned,null);
+  await sasha.post(`/api/rooms/${general.id}/pin`).send({messageId:first.id}).expect(200);
+  await sasha.post(`/api/rooms/${general.id}/pin`).send({}).expect(200);
+  assert.equal((await lesha.get('/api/rooms').expect(200)).body.rooms.find(item=>item.id===general.id).pinned,null);
+});
+
+test('две галочки: своё сообщение прочитано, когда его дочитал кто-то ещё',async()=>{
+  const {sasha,anya,general}=await circleOfThree();
+  const said=(await sasha.post(`/api/rooms/${general.id}/messages`).send({body:'Кто посмотрит смету?'}).expect(201)).body.message;
+  assert.equal(said.read,false);
+  await anya.get(`/api/rooms/${general.id}/messages`).expect(200);
+  const again=(await sasha.get(`/api/rooms/${general.id}/messages`).expect(200)).body.messages.find(message=>message.id===said.id);
+  assert.equal(again.read,true);
+  // У чужих сообщений признака нет — это не моё дело, кто их прочитал.
+  assert.equal((await anya.get(`/api/rooms/${general.id}/messages`).expect(200)).body.messages.find(message=>message.id===said.id).read,null);
+});
+
+test('дело человеку круга встаёт в «Общий» карточкой и не считается непрочитанным',async()=>{
+  const {sasha,anya,lesha,general}=await circleOfThree();
+  const entry=(await sasha.post('/api/captures').send({raw:'Ане — прислать смету по Хабу'}).expect(201)).body.entry;
+  const card=(await lesha.get(`/api/rooms/${general.id}/messages`).expect(200)).body.messages.find(message=>message.kind==='deed');
+  assert.ok(card,'карточка дела видна всему кругу');
+  assert.equal(card.deed.captureId,entry.id);
+  assert.equal(card.deed.state,'pending');
+  assert.equal(card.deed.assignee.name,'Аня');
+  assert.equal(card.deed.forMe,false);
+  assert.equal((await anya.get('/api/rooms').expect(200)).body.rooms.find(room=>room.id===general.id).unread,0);
+  const hers=(await anya.get(`/api/rooms/${general.id}/messages`).expect(200)).body.messages.find(message=>message.kind==='deed');
+  assert.equal(hers.deed.forMe,true);
+  await anya.post(`/api/assignments/${hers.deed.assignmentId}/respond`).send({take:true}).expect(200);
+  assert.equal((await sasha.get(`/api/rooms/${general.id}/messages`).expect(200)).body.messages.find(message=>message.kind==='deed').deed.state,'accepted');
+  const last=(await lesha.get('/api/rooms').expect(200)).body.rooms.find(room=>room.id===general.id).last;
+  assert.equal(last.kind,'deed');
+  assert.equal(last.by.name,'Саша');
+});
+
+test('позвали в комнату — строка за колокольчиком',async()=>{
+  const {sasha,anya,lesha,general}=await circleOfThree();
+  const room=(await sasha.post(`/api/circles/${general.circleId}/rooms`).send({name:'Смета',members:[anya.user.id]}).expect(201)).body.room;
+  assert.match((await feed(anya)).find(item=>item.kind==='room').text,/^зовёт вас в комнату «Смета»$/);
+  await anya.post(`/api/rooms/${room.id}/members`).send({userId:lesha.user.id}).expect(200);
+  const his=(await feed(lesha)).find(item=>item.kind==='room');
+  assert.equal(his.roomId,room.id);
+  assert.equal((await feed(sasha)).filter(item=>item.kind==='room').length,0,'себя не зовут');
+});
