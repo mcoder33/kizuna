@@ -588,6 +588,12 @@ function appendEntries(container, entries, emptyText, options) {
 // «Заметки» — записанное за день, что не дело, не встреча и не итог.
 const TODAY_ZONE = "Europe/Samara";
 const circlesState = { circles: [], me: null, loading: false, tab: "chat", discussions: [] };
+// Перечитывание разговоров (refreshRoomsQuietly): идёт ли, нужно ли ещё раз и
+// счётчик своих правок, по которому узнаётся устаревший ответ. Объявлено здесь,
+// а не у страницы кругов: переход по адресу при загрузке зовёт loadCircles
+// раньше, чем исполнится её код.
+const roomsRefresh = { running: false, again: false, edits: 0 };
+function kcEdited() { roomsRefresh.edits += 1; }
 const todayState = {
   view: 0,            // смещение дня, показанного в «Дне», от сегодняшнего
   journalView: 0,     // то же для «Что делал»: у ящиков свои дни
@@ -5597,6 +5603,8 @@ async function kcOpen(key, { quiet = false } = {}) {
     if (changed) { chatState.loading = true; kc.talk = null; renderCircles(); }
     try {
       const data = await request(`/api/rooms/${roomId}/messages`);
+      // Пока шёл ответ, человек открыл другой разговор — этот уже не нужен.
+      if (kc.chat !== key) return;
       chatState.messages = data.messages || [];
       chatState.more = Boolean(data.more);
       if (room) Object.assign(room, data.room, { unread: 0, called: false });
@@ -5614,6 +5622,7 @@ async function kcOpen(key, { quiet = false } = {}) {
     if (changed) { chatState.loading = true; chatState.messages = []; renderCircles(); }
     try {
       const data = await request(`/api/captures/${captureId}/comments`);
+      if (kc.chat !== key) return;
       kc.talk = { captureId, comments: kcTalkItems(data.comments || []), callable: data.callable || [], participants: data.participants || [] };
       if (talk) { talk.unreadCount = 0; talk.unread = false; }
       if (changed && unread) kc.newFrom = kcNewFrom(kc.talk.comments, unread);
@@ -5631,6 +5640,7 @@ async function loadCircles({ then = null } = {}) {
   // закончится, иначе на экране оставался бы список до правки.
   if (circlesState.loading) { circlesState.again = { then: then || circlesState.again?.then || null }; return; }
   circlesState.loading = true;
+  kcEdited();
   try {
     const [data, rooms, talks] = await Promise.all([request("/api/circles"), request("/api/rooms"), request("/api/discussions").catch(() => ({ discussions: [] }))]);
     circlesState.circles = data.circles || [];
@@ -5659,6 +5669,7 @@ async function loadCircles({ then = null } = {}) {
     const again = circlesState.again;
     circlesState.again = null;
     if (again) await loadCircles(again);
+    else if (roomsRefresh.again && !roomsRefresh.running) { roomsRefresh.again = false; await refreshRoomsQuietly(); }
   }
 }
 // Ссылка из полосы «к вам» и из колокольчика: открыть разговор, где позвали.
@@ -6164,8 +6175,10 @@ async function kcSend(item, share = null) {
   try {
     if (item.kind === "room") {
       const result = await request(`/api/rooms/${item.room.id}/messages`, { method: "POST", body: JSON.stringify({ body, ...(replyId ? { replyTo: replyId } : {}) }) });
-      chatState.messages = [...chatState.messages, result.message];
-      if (result.room) Object.assign(item.room, result.room, { unread: 0 });
+      kcEdited();
+      if (kc.chat === key && !chatState.messages.some((message) => message.id === result.message.id)) chatState.messages = [...chatState.messages, result.message];
+      const room = chatState.rooms.find((entry) => entry.id === item.room.id);
+      if (result.room && room) Object.assign(room, result.room, { unread: 0 });
       if (result.called?.length) toast(`Позвали: ${result.called.map((person) => person.name).join(", ")}`);
     } else {
       const response = await fetch(`/api/captures/${item.talk.captureId}/comments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body, ...(replyId ? { parentId: replyId } : {}), ...(share ? { share } : {}) }) });
@@ -6175,9 +6188,13 @@ async function kcSend(item, share = null) {
       // полем встаёт выбор, молча журнал не открывается никому.
       if (response.status === 409 && data?.error?.code === "share_needed") { kc.share = { chat: key, body, people: data.people || [] }; renderCircles(); return; }
       if (!response.ok) throw new Error(data?.error?.message || "Сообщение не ушло");
-      kc.talk.comments = kcTalkItems([...kc.talk.comments, data.comment]);
-      kc.talk.participants = data.participants || kc.talk.participants;
-      item.talk.last = { body: data.comment.body.slice(0, 160), at: data.comment.createdAt, author: data.comment.author };
+      kcEdited();
+      if (kc.talk?.captureId === item.talk.captureId) {
+        if (!kc.talk.comments.some((comment) => comment.id === data.comment.id)) kc.talk.comments = kcTalkItems([...kc.talk.comments, data.comment]);
+        kc.talk.participants = data.participants || kc.talk.participants;
+      }
+      const talk = (circlesState.discussions || []).find((entry) => entry.captureId === item.talk.captureId) || item.talk;
+      talk.last = { body: data.comment.body.slice(0, 160), at: data.comment.createdAt, author: data.comment.author };
       if (data.comment.mentions.length) toast(`Позвали: ${data.comment.mentions.map((person) => person.name).join(", ")}`);
     }
     kc.share = null;
@@ -6251,14 +6268,18 @@ async function kcReact(message, emoji) {
   const url = item.kind === "room" ? `/api/rooms/${item.room.id}/messages/${message.id}/reactions` : `/api/captures/${item.talk.captureId}/comments/${message.id}/reactions`;
   try {
     const result = await request(url, { method: "POST", body: JSON.stringify({ emoji }) });
-    message.reactions = result.reactions;
+    kcEdited();
+    const current = kcCurrent();
+    const target = (current && kcFindMessage(current, message.id)) || message;
+    target.reactions = result.reactions;
   } catch (error) { toast(error.message || "Реакция не встала"); }
   renderCircles();
 }
 async function kcPin(item, messageId) {
   try {
     const result = await request(`/api/rooms/${item.room.id}/pin`, { method: "POST", body: JSON.stringify(messageId ? { messageId } : {}) });
-    Object.assign(item.room, result.room, { unread: 0 });
+    kcEdited();
+    Object.assign(chatState.rooms.find((entry) => entry.id === item.room.id) || item.room, result.room, { unread: 0 });
     toast(messageId ? "Сообщение закреплено — его видят все в разговоре" : "Сообщение откреплено");
   } catch (error) { toast(error.message || "Не получилось"); }
   renderCircles();
@@ -6266,8 +6287,10 @@ async function kcPin(item, messageId) {
 async function kcRemove(item, message) {
   try {
     await request(`/api/rooms/${item.room.id}/messages/${message.id}`, { method: "DELETE" });
+    kcEdited();
     chatState.messages = chatState.messages.filter((entry) => entry.id !== message.id);
-    if (item.room.pinned?.id === message.id) item.room.pinned = null;
+    const room = chatState.rooms.find((entry) => entry.id === item.room.id) || item.room;
+    if (room.pinned?.id === message.id) room.pinned = null;
     toast("Сообщение убрано");
   } catch (error) { toast(error.message || "Не получилось"); }
   renderCircles();
@@ -6276,6 +6299,7 @@ async function kcRespond(deed, take) {
   const reason = take ? "" : (prompt("Почему не вы? Можно не отвечать — причина уйдёт автору.") ?? "").trim();
   try {
     await request(`/api/assignments/${deed.assignmentId}/respond`, { method: "POST", body: JSON.stringify({ take, ...(reason ? { reason } : {}) }) });
+    kcEdited();
     toast(take ? "Взято — дело в вашем дне" : "Вернули автору");
     await refreshRoomsQuietly();
     load().catch(() => {});
@@ -9017,30 +9041,47 @@ function paintNotifySettings() {
 // Живое обновление разговора: сообщение приходит к остальным событием журнала,
 // и страница перечитывает список и открытый разговор, не сбивая набранное и не
 // дёргая прокрутку, если человек читает выше.
+//
+// Перечитывание идёт одно за раз, и событие не теряется: пришло, пока грузятся
+// круги или идёт прошлое перечитывание, — страница перечитает ещё раз, когда
+// те закончатся. Ответ, ушедший раньше своей правки человека (сообщение,
+// реакция, закреп, фото круга) или перехода в другой разговор, устарел: он
+// выбрасывается, и разговор перечитывается заново. Иначе закреп у автора
+// пропадал, а число у разговора, куда только что написали, не появлялось до
+// следующего события.
 async function refreshRoomsQuietly() {
-  if ($("#circles")?.hidden || circlesState.loading) return;
+  if ($("#circles")?.hidden) return;
+  if (circlesState.loading || roomsRefresh.running) { roomsRefresh.again = true; return; }
+  roomsRefresh.running = true;
+  try { await refreshRoomsOnce(); }
+  finally { roomsRefresh.running = false; }
+  if (roomsRefresh.again) { roomsRefresh.again = false; await refreshRoomsQuietly(); }
+}
+async function refreshRoomsOnce() {
+  const key = kc.chat, edits = roomsRefresh.edits;
+  let data, rooms, talks, fresh = null;
+  try {
+    [data, rooms, talks] = await Promise.all([request("/api/circles"), request("/api/rooms"), request("/api/discussions").catch(() => ({ discussions: circlesState.discussions || [] }))]);
+    if (key?.startsWith("room:") && (rooms.rooms || []).some((room) => room.id === key.slice(5))) fresh = await request(`/api/rooms/${key.slice(5)}/messages`);
+    else if (key?.startsWith("talk:")) fresh = await request(`/api/captures/${key.slice(5)}/comments`);
+  } catch { return; }
+  if (key !== kc.chat || edits !== roomsRefresh.edits) { roomsRefresh.again = true; return; }
   const list = $("#kc-msgs");
   const atBottom = !list || list.scrollHeight - list.scrollTop - list.clientHeight < 80;
-  try {
-    const [data, rooms, talks] = await Promise.all([request("/api/circles"), request("/api/rooms"), request("/api/discussions").catch(() => ({ discussions: circlesState.discussions || [] }))]);
-    circlesState.circles = data.circles || [];
-    chatState.rooms = rooms.rooms || [];
-    circlesState.discussions = talks.discussions || [];
-    if (kc.chat?.startsWith("room:")) {
-      const roomId = kc.chat.slice(5);
-      if (chatState.rooms.some((room) => room.id === roomId)) {
-        const fresh = await request(`/api/rooms/${roomId}/messages`);
-        chatState.messages = fresh.messages || [];
-        const room = chatState.rooms.find((item) => item.id === roomId);
-        if (room) Object.assign(room, fresh.room, { unread: 0, called: false });
-      } else kc.chat = null;
-    } else if (kc.chat?.startsWith("talk:")) {
-      const captureId = kc.chat.slice(5);
-      const fresh = await request(`/api/captures/${captureId}/comments`);
-      kc.talk = { captureId, comments: kcTalkItems(fresh.comments || []), callable: fresh.callable || [], participants: fresh.participants || [] };
-      const talk = circlesState.discussions.find((item) => item.captureId === captureId);
-      if (talk) { talk.unreadCount = 0; talk.unread = false; }
-    }
-  } catch { return; }
+  circlesState.circles = data.circles || [];
+  chatState.rooms = rooms.rooms || [];
+  circlesState.discussions = talks.discussions || [];
+  if (key?.startsWith("room:")) {
+    if (fresh) {
+      chatState.messages = fresh.messages || [];
+      const room = chatState.rooms.find((item) => item.id === key.slice(5));
+      if (room) Object.assign(room, fresh.room, { unread: 0, called: false });
+    } else kc.chat = null;
+  } else if (key?.startsWith("talk:")) {
+    const captureId = key.slice(5);
+    kc.talk = { captureId, comments: kcTalkItems(fresh.comments || []), callable: fresh.callable || [], participants: fresh.participants || [] };
+    const talk = circlesState.discussions.find((item) => item.captureId === captureId);
+    if (talk) { talk.unreadCount = 0; talk.unread = false; }
+  }
   renderCircles({ toBottom: atBottom });
 }
