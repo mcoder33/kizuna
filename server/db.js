@@ -4,6 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { makeProjections, gateClassification, shouldMaterializeProjections, actionClassification, settleCompleted } from './classifier.js';
 import { occursOn, nextOccurrence } from './repeat.js';
+import { migrateNotifications } from './notifications.js';
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -11,6 +12,7 @@ export function openDatabase(filename) {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   migrate(db);
+  migrateNotifications(db);
   settleCompletedRecords(db);
   repairMissingProjections(db);
   return db;

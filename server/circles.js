@@ -12,6 +12,7 @@
 // «ждёт ответа», а не выдуманное «в работе».
 import crypto from 'node:crypto';
 import { avatarUrl } from './avatars.js';
+import { notify, resolveNotifications } from './notifications.js';
 
 const now = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
@@ -228,6 +229,8 @@ export function addMember(db, circleId, userId, personId) {
   const existing = db.prepare('SELECT 1 FROM circle_members WHERE circle_id=? AND user_id=?').get(circleId, personId);
   if (existing) db.prepare('UPDATE circle_members SET left_at=NULL, joined_at=?, muted_at=NULL, added_by=?, seen_at=NULL WHERE circle_id=? AND user_id=?').run(at, userId, circleId, personId);
   else db.prepare("INSERT INTO circle_members(circle_id,user_id,role,joined_at,added_by) VALUES(?,?,'member',?,?)").run(circleId, personId, at, userId);
+  const brief = circleBrief(db, circleId);
+  notify(db, { userId: personId, kind: 'circle', actorId: userId, circleId, text: `добавляет вас в круг «${brief?.name || ''}»`, meta: ['видно только то, что в круг отдали'], data: { circle: brief }, at });
   return { circle: circleDetail(db, circleId, userId), person: publicUser(person) };
 }
 // Пока человек не открыл круг, в который его добавили, об этом говорит строка
@@ -350,9 +353,13 @@ export function assign(db, { captureId, assigneeId, assignerId, circleId = null 
   if (!circle) return { error: 'not_in_circle' };
   const at = now();
   db.prepare('UPDATE assignments SET cancelled_at=? WHERE capture_id=? AND cancelled_at IS NULL').run(at, captureId);
+  resolveNotifications(db, { kind: 'request', captureId, at });
   const assignmentId = id();
   db.prepare("INSERT INTO assignments(id,capture_id,circle_id,assignee_id,assigner_id,state,created_at) VALUES(?,?,?,?,?,'pending',?)").run(assignmentId, captureId, circle, assigneeId, assignerId, at);
   shareCapture(db, captureId, circle, assignerId);
+  // Просьба ждёт ответа — и в полосе «к вам», и за колокольчиком, и на
+  // телефоне, если человек не у экрана.
+  notify(db, { userId: assigneeId, kind: 'request', actorId: assignerId, captureId, circleId: circle, assignmentId, text: `просит: «${titleOf(db, captureId)}»`, meta: [dueWords(dueOf(db, captureId))], data: { circle: circleBrief(db, circle), due: dueOf(db, captureId) }, at });
   return { assignment: assignmentFor(db, captureId) };
 }
 export function unassign(db, captureId, userId) {
@@ -361,6 +368,7 @@ export function unassign(db, captureId, userId) {
   const current = db.prepare('SELECT * FROM assignments WHERE capture_id=? AND cancelled_at IS NULL').get(captureId);
   if (!current) return { assignment: null };
   db.prepare('UPDATE assignments SET cancelled_at=? WHERE id=?').run(now(), current.id);
+  resolveNotifications(db, { kind: 'request', assignmentId: current.id });
   if (current.circle_id) unshareCapture(db, captureId, current.circle_id);
   return { assignment: null };
 }
@@ -371,8 +379,13 @@ export function respond(db, assignmentId, userId, take, reason = null) {
   if (!row || row.assignee_id !== userId) return { error: 'not_found' };
   if (row.state !== 'pending') return { error: 'already_answered' };
   const at = now();
+  const why = take ? null : String(reason || '').trim().slice(0, DECLINE_REASON_LIMIT) || null;
   db.prepare('UPDATE assignments SET state=?, responded_at=?, reason=? WHERE id=?')
-    .run(take ? 'accepted' : 'declined', at, take ? null : String(reason || '').trim().slice(0, DECLINE_REASON_LIMIT) || null, assignmentId);
+    .run(take ? 'accepted' : 'declined', at, why, assignmentId);
+  resolveNotifications(db, { kind: 'request', assignmentId, at });
+  const title = titleOf(db, row.capture_id);
+  notify(db, { userId: row.assigner_id, kind: 'answer', actorId: userId, captureId: row.capture_id, circleId: row.circle_id, assignmentId,
+    text: take ? `берёт «${title}»` : `возвращает «${title}»${why ? `: «${why}»` : ''}`, meta: [take ? 'ваша просьба' : 'просьба вернулась к вам'], data: { circle: circleBrief(db, row.circle_id), state: take ? 'accepted' : 'declined' }, at });
   return { assignment: assignmentFor(db, row.capture_id) };
 }
 // Закрытое дело закрывает и просьбу: автор узнаёт об этом в «Я жду», а в свой
@@ -380,7 +393,10 @@ export function respond(db, assignmentId, userId, take, reason = null) {
 export function noteCompletion(db, captureId, completed) {
   const row = db.prepare('SELECT * FROM assignments WHERE capture_id=? AND cancelled_at IS NULL').get(captureId);
   if (!row) return;
-  if (completed && row.state === 'accepted') db.prepare("UPDATE assignments SET state='done', done_at=? WHERE id=?").run(now(), row.id);
+  if (completed && row.state === 'accepted') {
+    db.prepare("UPDATE assignments SET state='done', done_at=? WHERE id=?").run(now(), row.id);
+    notify(db, { userId: row.assigner_id, kind: 'answer', actorId: row.assignee_id, captureId, circleId: row.circle_id, assignmentId: row.id, text: `отмечает сделанным «${titleOf(db, captureId)}»`, meta: ['ваша просьба закрыта'], data: { circle: circleBrief(db, row.circle_id), state: 'done' } });
+  }
   if (!completed && row.state === 'done') db.prepare("UPDATE assignments SET state='accepted', done_at=NULL WHERE id=?").run(row.id);
 }
 
@@ -464,11 +480,27 @@ export function addComment(db, { captureId, authorId, body, parentId = null, sha
   const added = [];
   if (share === 'yes') for (const person of strangers) { addParticipant(db, captureId, person.id, authorId, at); added.push(person.id); }
   const insert = db.prepare('INSERT OR IGNORE INTO comment_mentions(comment_id,user_id,created_at) VALUES(?,?,?)');
+  // Призванному — строка за колокольчиком и телефон. Тем, кто следит за
+  // записью (автор, исполнитель, позванные в неё), — тихая склеенная строка на
+  // обсуждение, если они сами включили «пишут без призыва».
+  const title = titleOf(db, captureId);
+  const circle = circlesForCapture(db, captureId)[0] || null;
+  const excerpt = text.length > 140 ? `${text.slice(0, 139)}…` : text;
+  const called = new Set();
   for (const target of targets.values()) {
     if (share !== 'yes' && strangers.includes(target)) continue;
     insert.run(commentId, target.id, at);
+    called.add(target.id);
+    notify(db, { userId: target.id, kind: 'call', actorId: authorId, captureId, circleId: circle?.id || null, text: `зовёт вас в обсуждении «${title}»: «${excerpt}»`, data: { circle }, at });
   }
-  return { comment: comments(db, captureId).find(item => item.id === commentId), added, participants: captureParticipants(db, captureId) };
+  const participants = captureParticipants(db, captureId);
+  const owner = db.prepare('SELECT user_id FROM captures WHERE id=?').get(captureId)?.user_id;
+  const assignee = db.prepare('SELECT assignee_id FROM assignments WHERE capture_id=? AND cancelled_at IS NULL').get(captureId)?.assignee_id;
+  for (const follower of new Set([owner, assignee, ...participants.map(person => person.id)].filter(Boolean))) {
+    if (follower === authorId || called.has(follower)) continue;
+    notify(db, { userId: follower, kind: 'chatter', actorId: authorId, captureId, circleId: circle?.id || null, text: `в обсуждении «${title}»: «${excerpt}»`, data: { circle }, group: `comments:${captureId}`, at });
+  }
+  return { comment: comments(db, captureId).find(item => item.id === commentId), added, participants };
 }
 export function unseenMentions(db, userId) {
   return db
@@ -616,6 +648,13 @@ function titleOf(db, captureId, fallback = '') {
     if (classification.summary) return classification.summary;
   }
   return String(fallback || '').slice(0, 200);
+}
+const circleBrief = (db, circleId) => (circleId ? db.prepare('SELECT id, name, color FROM circles WHERE id=?').get(circleId) || null : null);
+// Срок словами для строки уведомления и push: «до 19.09, 15:00». Дни недели и
+// «завтра» дорисовывает браузер — он знает, какой сегодня день у человека.
+function dueWords(due) {
+  if (!due?.date) return null;
+  return `до ${due.date.slice(8, 10)}.${due.date.slice(5, 7)}${due.time ? `, ${due.time}` : ''}`;
 }
 function dueOf(db, captureId) {
   const row = db.prepare("SELECT i.classification_json FROM interpretations i WHERE i.capture_id=? AND i.status='active'").get(captureId);

@@ -1,5 +1,5 @@
 // Разговор круга глазами троих: общий видят все, комнату — только те, кто в
-// ней, а призыв приходит в ту же полосу «к вам», что просьбы. Плюс то, ради
+// ней, а призыв приходит за колокольчик, как и остальные уведомления. Плюс то, ради
 // чего люди заводят круг: позвать человека, который уже есть в приложении, —
 // поиском, а не ссылкой.
 import { test, expect } from "@playwright/test";
@@ -109,18 +109,20 @@ test("разговор круга: общий, комната подмножес
   await page.locator(".rail-room").filter({ hasText: "Смета" }).click();
   await expect(page.locator(".room-pane .room-title")).toContainText("Смета");
 
-  // ── призыв из разговора приходит в полосу «к вам» ──
+  // ── призыв из разговора приходит за колокольчик ──
   await page.locator("#room-input").fill("@Аня, посмотришь смету до пятницы?");
   await page.locator("#room-input").press("Enter");
   await expect(page.locator(".msg-text .call").last()).toHaveText("@Аня");
   await anya.page.goto("/#today");
-  const call = anya.page.locator(".inbox-row.chat").first();
-  await expect(call).toContainText("Саша зовёт");
-  await expect(call).toContainText("разговор «Смета»");
-  await call.getByRole("button", { name: "Открыть" }).click();
+  await expect(anya.page.locator(".inbox-row.chat")).toHaveCount(0);
+  await anya.page.locator("#bell-summary").click();
+  const call = anya.page.locator(".bell-row").filter({ hasText: "Саша зовёт вас в разговоре «Смета»" }).first();
+  await expect(call).toBeVisible();
+  await call.getByRole("button", { name: "Ответить" }).click();
   await expect(anya.page.locator(".room-pane .room-title")).toContainText("Смета");
   await anya.page.goto("/#today");
-  await expect(anya.page.locator(".inbox-row.chat")).toHaveCount(0);
+  await anya.page.locator("#bell-summary").click();
+  await expect(anya.page.locator(".bell-row").filter({ hasText: "разговоре «Смета»" })).not.toHaveClass(/unread/);
 
   await anya.context.close();
   await lesha.context.close();
@@ -134,7 +136,7 @@ test("разговор круга: общий, комната подмножес
   }
 });
 
-test("человека из приложения зовут поиском, и он узнаёт об этом строкой «к вам»", async ({ page, request, browser }) => {
+test("человека из приложения зовут поиском, и он узнаёт об этом за колокольчиком", async ({ page, request, browser }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   await dissolveCircles(request);
   await request.patch("/api/account", { data: { name: "Саша" } });
@@ -151,21 +153,24 @@ test("человека из приложения зовут поиском, и �
   await expect(card.locator(".people-row.candidate").filter({ hasText: "chat-anya" })).toBeVisible();
   // Ссылка не нужна: человек уже в приложении — его находят по имени или почте.
   await card.locator(".invite-search").fill("chat-anya");
-  const suggestion = card.locator(".people-row.candidate").first();
-  await expect(suggestion).toBeVisible();
-  await suggestion.click();
+  // Ждём отфильтрованный список: в приложении могут быть и другие люди.
+  await expect(card.locator(".people-row.candidate")).toHaveCount(1);
+  const added = page.waitForResponse((response) => response.url().endsWith("/members") && response.request().method() === "POST");
+  await card.locator(".people-row.candidate").filter({ hasText: "chat-anya" }).click();
+  expect((await added).ok()).toBe(true);
   await expect(card.locator(".people-name")).toHaveCount(2);
 
   const anya = await loginAs(browser, ANYA, "Аня");
   await anya.page.goto("/#today");
-  const row = anya.page.locator(".inbox-row.circle").first();
-  await expect(row).toContainText("добавил");
-  await expect(row).toContainText("«Дом»");
-  await row.getByRole("button", { name: "Открыть" }).click();
+  await anya.page.locator("#bell-summary").click();
+  const row = anya.page.locator(".bell-row").filter({ hasText: "добавляет вас в круг «Дом»" }).first();
+  await expect(row).toBeVisible();
+  await row.click();
   await expect(anya.page.locator(".room-pane .room-title")).toContainText("Общий");
-  // Открыл — значит прочитал: строка больше не висит.
+  // Открыл — значит прочитал: строка больше не непрочитанная.
   await anya.page.goto("/#today");
-  await expect(anya.page.locator(".inbox-row.circle")).toHaveCount(0);
+  await anya.page.locator("#bell-summary").click();
+  await expect(anya.page.locator(".bell-row").filter({ hasText: "«Дом»" })).not.toHaveClass(/unread/);
 
   await anya.context.close();
   const circleId = (await (await request.get("/api/circles")).json()).circles[0].id;

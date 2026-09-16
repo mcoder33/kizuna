@@ -16,6 +16,7 @@ import QRCode from 'qrcode';
 import express from 'express';
 import { monthlySpend } from './db.js';
 import { avatarUrl, avatarPresets, choosePreset, saveAvatarImage, avatarImage, forgetAvatar, AVATAR_IMAGE_LIMIT } from './avatars.js';
+import { notify } from './notifications.js';
 import {
   createUser, findUserByEmail, findUserById, countUsers, listUsers, updateUser, adoptOrphanRecords,
   createSession, findSessionUser, touchSession, deleteSession, deleteUserSessions, purgeExpiredSessions, countUserSessions,
@@ -194,6 +195,10 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
         // Первого администратора незачем заставлять входить ещё раз — он уже
         // доказал, что знает пароль, придумав его минуту назад.
         if (result.first) { setSessionCookie(res, issueSession(result.user, { userAgent: req.get('user-agent') })); return res.status(201).json({ user: publicUser(findUserById(db, result.user.id)), first: true }); }
+        // Заявку разбирает администратор — и узнаёт о ней сразу, а не когда
+        // случайно заглянет в «Пользователей».
+        for (const admin of listUsers(db).filter(user => user.role === 'admin' && user.status === 'active'))
+          notify(db, { userId: admin.id, kind: 'signup', lead: 'Новая заявка на вход:', text: result.user.email, meta: ['доступ открывает администратор'], data: { url: '/#admin' } });
         res.status(201).json({ user: publicUser(result.user), first: false, message: 'Заявка отправлена. Доступ откроет администратор.' });
       } catch (error) { next(error); }
     });
@@ -423,6 +428,7 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
         // она никому не видна и ничего не уточняет.
         db.prepare('DELETE FROM agent_memories WHERE user_id=?').run(target.id);
         forgetAvatar(db, target.id);
+        db.prepare('DELETE FROM notifications WHERE user_id=?').run(target.id);
         db.prepare('DELETE FROM users WHERE id=?').run(target.id);
         logAuthEvent(db, { email: target.email, event: 'admin_delete', result: 'succeeded', detail: `от ${req.user.email}` });
         res.json({ ok: true });

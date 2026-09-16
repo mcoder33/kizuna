@@ -64,6 +64,16 @@
           <a class="ai-menu-more" href="#settings">Все настройки →</a>
         </div>
       </details>
+      <!-- Колокольчик хранит историю уведомлений; число на нём — только то,
+           что ждёт вашего ответа, остальное непрочитанное — точкой. -->
+      <details class="bell-menu" id="bell-menu">
+        <summary id="bell-summary" aria-label="Уведомления"
+          ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+            ><path d="M12 3.4a5.4 5.4 0 0 0-5.4 5.4v3.4l-1.9 3.9h14.6l-1.9-3.9V8.8A5.4 5.4 0 0 0 12 3.4Z" /><path d="M9.8 19.2a2.3 2.3 0 0 0 4.4 0" /></svg
+          ><span class="bell-count" id="bell-count" hidden></span><span class="bell-dot" id="bell-dot" hidden></span
+        ></summary>
+        <div class="bell-popover" id="bell-popover"></div>
+      </details>
       <a class="settings-link" href="#settings" aria-label="Настройки">
         <svg
           viewBox="0 0 24 24"
@@ -697,13 +707,36 @@
                 <option value="20:00">в 20:00</option>
               </select></label
             >
+            <p class="setting-hint" id="reminders-upcoming"></p>
+          </fieldset>
+
+          <fieldset class="settings-group" id="notify-settings">
+            <legend>Уведомления</legend>
+            <p class="setting-hint">
+              Что попадает за колокольчик и что приходит на телефон. По умолчанию на
+              телефон — только то, что ждёт вашего ответа или горит по времени;
+              остальное тихо ложится в ленту. Пока Кизуна открыта, вместо push —
+              всплывашка в углу.
+            </p>
+            <div class="notify-table" id="notify-table"></div>
+            <label class="setting" for="setting-quietHours"
+              ><span class="setting-name">Тихие часы</span
+              ><select id="setting-quietHours">
+                <option value="22:00-08:00">с 22:00 до 08:00</option>
+                <option value="23:00-07:00">с 23:00 до 07:00</option>
+                <option value="21:00-09:00">с 21:00 до 09:00</option>
+                <option value="00:00-08:00">с 00:00 до 08:00</option>
+                <option value="off">не молчать</option>
+              </select></label
+            >
+            <p class="setting-hint">Ночью телефон молчит; пришедшее ждёт за колокольчиком и в утренней сводке.</p>
             <p class="setting-hint" id="push-state">Проверяем…</p>
             <div class="setting-actions">
               <button id="push-enable" class="secondary" type="button">Включить на этом устройстве</button>
               <button id="push-disable" class="secondary" type="button" hidden>Выключить на этом устройстве</button>
               <button id="push-test" class="secondary" type="button" hidden>Проверить</button>
             </div>
-            <p class="setting-hint" id="reminders-upcoming"></p>
+            <p class="setting-hint">На iPhone push приходит, только если Кизуна добавлена на экран «Домой».</p>
           </fieldset>
 
           <fieldset class="settings-group">
@@ -1004,6 +1037,8 @@
       </form>
     </dialog>
     <div id="toast" role="status" aria-live="polite"></div>
+    <!-- Всплывашка уведомления — в углу, с теми же кнопками, что в строке ленты. -->
+    <div id="notify-toasts" class="notify-toasts" aria-live="polite"></div>
     <script type="module" src="/public/app.js"></script>
     <script type="module" src="/public/daily-brief.js"></script>
   </body>

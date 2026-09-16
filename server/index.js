@@ -22,6 +22,8 @@ import * as chat from './chat.js';
 import { createSecretBox } from './secrets.js';
 import { createReminderService, ReminderWorker, validRemind, validRemindHour, REMIND_MAX_MINUTES } from './reminders.js';
 import { createPushService } from './push.js';
+import { NOTIFICATION_KINDS, DEFAULT_QUIET_HOURS, validNotifyPrefs, validQuietHours, notify, setNotificationSink, notificationPrefs, quietHoursOf, isQuiet, serializeNotification, listNotifications, notificationCounts, readNotifications, resolveNotifications, findNotification, snoozeNotification, wakeSnoozed, purgeNotifications } from './notifications.js';
+import { zonedToUtc } from './ics.js';
 import { validRepeat, validSkip, normalizeRepeat, normalizeSkip, scheduleDisplay, dayDiff } from './repeat.js';
 import { captureOwner, attachmentOwner, projectionOwner, undoGroupOwner, openVoiceSession, closeVoiceSession, closeStaleVoiceSessions, voiceSpend, monthlySpend, findUserById, countUsers } from './db.js';
 
@@ -109,6 +111,10 @@ const SETTINGS = {
   // не напоминать) и в какой час — о деле без времени.
   remindDefault: { personal:true, check:value => value === 'off' || (/^\d+$/.test(String(value)) && Number(value) <= REMIND_MAX_MINUTES) },
   remindHour: { personal:true, check:value => validRemindHour(String(value)) },
+  // Уведомления: по какому поводу — за колокольчик, на телефон или никуда
+  // (хранится только изменённое), и тихие часы, когда телефон молчит.
+  notifyPrefs: { personal:true, check:value => typeof value === 'string' && value.length <= 2000 && validNotifyPrefs(value) },
+  quietHours: { personal:true, check:value => typeof value === 'string' && validQuietHours(value) },
   // ── предел расхода на разговор ──
   // Звук идёт мимо сервера, поэтому денег мы не видим: считаем минуты и
   // умножаем на заданную цену. Предел по минутам работает и без цены — это
@@ -134,7 +140,7 @@ const SETTINGS = {
 };
 // Голоса по умолчанию те же, что и у самой службы: без них выпадающий список
 // открывался бы пустым, хотя разговор уже идёт каким-то голосом.
-const SETTING_DEFAULTS = { sleepAfterSeconds:'25', remindDefault:'15', remindHour:'09:00', wakeWord:'кизуна', voiceName:'coral', geminiVoiceName:'Leda', systemPrompt:DEFAULT_VOICE_CHARACTER, voiceModel:'gpt-realtime', geminiVoiceModel:'models/gemini-3.1-flash-live-preview', theme:'system',
+const SETTING_DEFAULTS = { notifyPrefs:'{}', quietHours:DEFAULT_QUIET_HOURS, sleepAfterSeconds:'25', remindDefault:'15', remindHour:'09:00', wakeWord:'кизуна', voiceName:'coral', geminiVoiceName:'Leda', systemPrompt:DEFAULT_VOICE_CHARACTER, voiceModel:'gpt-realtime', geminiVoiceModel:'models/gemini-3.1-flash-live-preview', theme:'system',
   // Цены по умолчанию нет намеренно: выдумать её значит показать человеку
   // сумму, которой он не платил. Пока цену не задали, работает предел по
   // минутам, а деньги честно показываются как неизвестные.
@@ -225,7 +231,7 @@ function scheduleFromPatch(next,original){
   return {state:date&&time?'ok':'ambiguous',date,time,...(end?{end}:{}),...remindPatch(next,original),...(repeat?{repeat}:{}),...(repeat&&skip.length?{skip}:{}),sortAt:date?`${date}T${time||'23:59'}:00`:null,display:scheduleDisplay({date,time,end,repeat})};
 }
 function correctedClassification(original,patch){const entities={...original.entities,projects:patch.project===undefined?original.entities.projects:(patch.project?[patch.project.trim()]:[]),people:patch.people===undefined?original.entities.people:patch.people.map(person=>person.trim()).filter(Boolean),followUp:patch.followUp===undefined?original.entities.followUp:(patch.followUp?.trim()||null),schedule:patch.schedule===undefined?original.entities.schedule:scheduleFromPatch(patch.schedule,original.entities.schedule)};const clearsAmbiguity=Boolean(original.ambiguity)&&patch[{type:'primaryType',schedule:'schedule',projects:'project',people:'people',followUp:'followUp'}[original.ambiguity.field]||'primaryType']!==undefined;const classification={...original,primaryType:patch.primaryType||original.primaryType,summary:patch.summary===undefined?original.summary:patch.summary.trim(),entities,completed:patch.completed!==undefined?patch.completed:(patch.primaryType!==undefined?patch.primaryType==='outcome_decision':Boolean(original.completed)),unclassified:original.unclassified&&patch.primaryType===undefined?true:undefined,ambiguity:clearsAmbiguity?null:(original.ambiguity??null),conflicts:{projects:patch.project!==undefined?false:original.conflicts?.projects,schedule:patch.schedule!==undefined?false:original.conflicts?.schedule},claims:(original.claims||[]).map(claim=>{const map={type:'primaryType',projects:'project',people:'people',followUp:'followUp',schedule:'schedule'};return patch[map[claim.field]]!==undefined?{...claim,value:claim.field==='type'?(patch.primaryType||original.primaryType):entities[claim.field],confidence:1,kind:'fact',provenance:{source:'raw',evidence:'manual correction'}}:claim})};classification.confidence=Object.fromEntries(classification.claims.map(claim=>[claim.field,claim.confidence]));return settleCompleted(classification);}
-function applyCorrection(db,req,res,next,notify=()=>{}){try{const active=getAggregate(db,req.params.id);if(!active)return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}});const body=req.body||{},patch=body.patch||body,providedKey=req.get('Idempotency-Key');if(providedKey!==undefined&&!validIdempotencyKey(providedKey))return res.status(400).json({error:{code:'invalid_idempotency_key',message:'Некорректный ключ идемпотентности.'}});if(patch.primaryType!==undefined&&!['meeting_event','task','note','outcome_decision','idea_question'].includes(patch.primaryType))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректный тип записи.'}});if(patch.schedule!==undefined&&!validSchedule(patch.schedule))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректная дата или время.'}});if(patch.project!==undefined&&patch.project!==null&&(typeof patch.project!=='string'||patch.project.length>120))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректный проект.'}});if(patch.people!==undefined&&(!Array.isArray(patch.people)||patch.people.length>8||patch.people.some(person=>typeof person!=='string'||person.length>120)))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректные участники.'}});if(patch.followUp!==undefined&&patch.followUp!==null&&(typeof patch.followUp!=='string'||patch.followUp.length>500))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректное действие.'}}); if(patch.completed!==undefined&&typeof patch.completed!=='boolean')return res.status(400).json({error:{code:'invalid_patch',message:'Некорректный признак выполнения.'}});if(patch.summary!==undefined&&(typeof patch.summary!=='string'||!patch.summary.trim()||patch.summary.trim().length>500))return res.status(400).json({error:{code:'invalid_patch',message:'Заголовок — от 1 до 500 символов.'}});const requestFingerprint=correctionRequestFingerprint(patch),operationKey=providedKey||`correction-${requestFingerprint}`,original=JSON.parse(active.classification_json),classification=correctedClassification(original,patch),review=gateClassification(classification),replacement=replaceInterpretation(db,req.params.id,classification,'manual',{...patch,patch,operationKey,requestFingerprint},shouldMaterializeProjections(classification));if(replacement?.conflict)return res.status(409).json({error:{code:'idempotency_conflict',message:'Ключ уже использован для другого уточнения.'}});
+function applyCorrection(db,req,res,next,notify=()=>{}){try{const active=getAggregate(db,req.params.id);if(!active)return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}});const body=req.body||{},patch=body.patch||body,providedKey=req.get('Idempotency-Key');if(providedKey!==undefined&&!validIdempotencyKey(providedKey))return res.status(400).json({error:{code:'invalid_idempotency_key',message:'Некорректный ключ идемпотентности.'}});if(patch.primaryType!==undefined&&!['meeting_event','task','note','outcome_decision','idea_question'].includes(patch.primaryType))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректный тип записи.'}});if(patch.schedule!==undefined&&!validSchedule(patch.schedule))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректная дата или время.'}});if(patch.project!==undefined&&patch.project!==null&&(typeof patch.project!=='string'||patch.project.length>120))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректный проект.'}});if(patch.people!==undefined&&(!Array.isArray(patch.people)||patch.people.length>8||patch.people.some(person=>typeof person!=='string'||person.length>120)))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректные участники.'}});if(patch.followUp!==undefined&&patch.followUp!==null&&(typeof patch.followUp!=='string'||patch.followUp.length>500))return res.status(400).json({error:{code:'invalid_patch',message:'Некорректное действие.'}}); if(patch.completed!==undefined&&typeof patch.completed!=='boolean')return res.status(400).json({error:{code:'invalid_patch',message:'Некорректный признак выполнения.'}});if(patch.summary!==undefined&&(typeof patch.summary!=='string'||!patch.summary.trim()||patch.summary.trim().length>500))return res.status(400).json({error:{code:'invalid_patch',message:'Заголовок — от 1 до 500 символов.'}});const requestFingerprint=correctionRequestFingerprint(patch),operationKey=providedKey||`correction-${requestFingerprint}`,original=JSON.parse(active.classification_json),classification=correctedClassification(original,patch),review=gateClassification(classification),replacement=replaceInterpretation(db,req.params.id,classification,'manual',{...patch,patch,operationKey,requestFingerprint},shouldMaterializeProjections(classification));if(replacement?.conflict)return res.status(409).json({error:{code:'idempotency_conflict',message:'Ключ уже использован для другого уточнения.'}});if(review.level==='high')resolveNotifications(db,{userId:req.user.id,kind:'clarify',captureId:req.params.id});
   // Поправка — это урок: в следующий раз такую же запись разбирают уже
   // правильно, и человек не решает то же самое дважды. Повтор того же запроса
   // (replayed) ничему не учит — он ничего и не менял.
@@ -302,11 +308,125 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   const push = createPushService({ db, now, audit, ...(pushTransport ? { transport: pushTransport } : {}), subject: process.env.PAGENT_PUSH_SUBJECT || (process.env.PAGENT_PUBLIC_URL && /^https:/.test(process.env.PAGENT_PUBLIC_URL) ? process.env.PAGENT_PUBLIC_URL : 'mailto:kizuna@example.com') });
   const reminders = createReminderService({ db, now, audit, timeZone: () => configuredTimeZone,
     settingsFor: userId => { const env = environment(); return { minutes: settingValue(stored, env, 'remindDefault', userId), hour: settingValue(stored, env, 'remindHour', userId) }; },
+    // Напоминание — такой же повод, как остальные: строка за колокольчиком и
+    // доставка по общим правилам. Push у него прежний — заголовок записи и
+    // ссылка на её карточку.
     deliver: async ({ userId, reminder }) => {
-      notifyUser(userId, 'reminder', reminder);
-      await push.send(userId, { kind: 'reminder', title: reminder.title, body: reminder.body, tag: `reminder:${reminder.captureId}`, url: `/#today?open=${reminder.captureId}` });
+      const row = notify(db, reminderNotification(userId, reminder));
+      if (row) await deliveries.get(row.id);
     } });
-  const reminderWorker = new ReminderWorker({ service: reminders, audit, ...reminderWorkerOptions });
+  // Обход раз в полминуты общий: напоминания, отложенные уведомления, чистка
+  // ленты, утренняя сводка и пороги расходов.
+  const reminderWorker = new ReminderWorker({ service: { tick: async () => { const sent = await reminders.tick(); await notificationTick(); return sent; } }, audit, ...reminderWorkerOptions });
+
+  // ── уведомления ──
+  // Строка ленты уже сохранена; здесь решается, как о ней сказать. В открытые
+  // вкладки — событием потока: браузер покажет всплывашку, если повод из тех,
+  // что идут на телефон. На телефон — push, только если вкладок нет и сейчас
+  // не тихие часы: у экрана человек и так всё увидит.
+  const deliveries = new Map();
+  const notificationView = row => {
+    const view = serializeNotification(row);
+    return { ...view, actors: view.actorIds.map(id => findUserById(db, id)).filter(Boolean).map(user => circles.publicUser(user)) };
+  };
+  const notificationUrl = view => view.data.url
+    || (view.captureId ? `/#today?open=${view.captureId}` : view.roomId ? `/#circles?room=${view.roomId}` : view.circleId ? '/#circles'
+      : ['invite', 'event_added', 'event_changed'].includes(view.kind) ? `/#calendar${view.data.date ? `?date=${view.data.date}` : ''}`
+      : view.kind === 'signup' ? '/#admin' : ['spend', 'calendar_error'].includes(view.kind) ? '/#settings' : '/#today');
+  const pushOf = view => {
+    const who = view.actors.length ? view.actors.map(person => person.name).join(' и ') : view.lead || '';
+    return { kind: view.kind, title: view.data.pushTitle || [who, view.text].filter(Boolean).join(' '), body: view.data.pushBody || view.meta.join(' · '), tag: `${view.kind}:${view.id}`, url: notificationUrl(view) };
+  };
+  setNotificationSink(db, (row, { merged }) => {
+    const prefs = notificationPrefs(db, row.user_id)[row.kind];
+    const view = notificationView(row);
+    notifyUser(row.user_id, 'notification', { notification: view, counts: notificationCounts(db, row.user_id), toast: prefs.phone && !merged });
+    const listening = [...journalListeners].some(listener => listener.userId === row.user_id);
+    if (!prefs.phone || merged || listening || isQuiet(quietHoursOf(db, row.user_id), now(), configuredTimeZone)) return;
+    const sending = push.send(row.user_id, pushOf(view)).catch(() => {}).finally(() => deliveries.delete(row.id));
+    deliveries.set(row.id, sending);
+  });
+  app.notificationsDelivered = () => Promise.all([...deliveries.values()]);
+  const capitalized = value => (value ? value[0].toUpperCase() + value.slice(1) : value);
+  function reminderNotification(userId, reminder) {
+    const raw = db.prepare('SELECT raw FROM captures WHERE id=?').get(reminder.captureId)?.raw || '';
+    const meeting = reminder.type === 'meeting_event';
+    const startAt = reminder.time ? zonedToUtc({ year: Number(reminder.date.slice(0, 4)), month: Number(reminder.date.slice(5, 7)), day: Number(reminder.date.slice(8, 10)), hour: Number(reminder.time.slice(0, 2)), minute: Number(reminder.time.slice(3, 5)) }, configuredTimeZone).toISOString() : null;
+    return { userId, kind: 'reminder', captureId: reminder.captureId, lead: capitalized(reminder.lead) || 'Срок сегодня', text: `— «${reminder.title}»`, meta: [reminder.when, meeting ? 'встреча' : 'дело'],
+      data: { startAt, date: reminder.date, joinUrl: meeting ? (raw.match(/https:\/\/[^\s)>\]»"]+/) || [null])[0] : null, pushTitle: reminder.title, pushBody: reminder.body, url: `/#today?open=${reminder.captureId}` } };
+  }
+  // Отложенное напоминание возвращается с честным «через сколько»: за десять
+  // минут «через 15 минут» превратилось бы в неправду.
+  function refreshSnoozed(row) {
+    const data = JSON.parse(row.data_json || '{}');
+    if (row.kind !== 'reminder' || !data.startAt) return row;
+    const minutes = Math.round((Date.parse(data.startAt) - now().getTime()) / 60000);
+    return { ...row, lead: minutes > 0 ? `Через ${minutes} мин` : minutes === 0 ? 'Сейчас' : 'Уже началось' };
+  }
+  const plural = (count, one, few, many) => { const mod10 = count % 10, mod100 = count % 100; return mod10 === 1 && mod100 !== 11 ? one : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14) ? few : many; };
+  const clockIn = (at, timeZone) => new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(at);
+  // Утренняя сводка — в час напоминаний о делах без времени (09:00 по
+  // умолчанию), одна на день и только если есть что сказать. Проспал сервер
+  // утро — сводка догоняет до обеда, вечером она уже не утренняя.
+  const digestTried = new Map();
+  function morningDigest(user, at) {
+    const date = dateInTimeZone(at, configuredTimeZone);
+    const setting = settingValue(stored, process.env, 'remindHour', user.id);
+    const hour = setting && setting !== 'off' && validRemindHour(setting) ? setting : '09:00';
+    const clock = clockIn(at, configuredTimeZone);
+    const until = `${String(Math.min(23, Number(hour.slice(0, 2)) + 4)).padStart(2, '0')}${hour.slice(2)}`;
+    if (clock < hour || clock >= until) return;
+    if (db.prepare('SELECT 1 FROM notifications WHERE user_id=? AND group_key=?').get(user.id, `digest:${date}`)) return;
+    // Сказать было нечего — следующая попытка через десять минут, а не на каждом
+    // обходе: за утро в журнале может что-то появиться, но не каждые полминуты.
+    if (at.getTime() - (digestTried.get(user.id) || 0) < 10 * 60 * 1000) return;
+    digestTried.set(user.id, at.getTime());
+    const overview = journalOverview(db, { userId: user.id, now: at, timeZone: configuredTimeZone });
+    const own = overview.horizon.today;
+    const meetingsOwn = own.filter(item => item.type === 'встреча').length;
+    const deeds = own.length - meetingsOwn;
+    let external = 0;
+    try { const view = calendar.view({ userId: user.id, from: date, to: date }); external = (view.external || []).filter(item => item.me?.status !== 'declined').length; } catch {}
+    const meetings = meetingsOwn + external;
+    const waits = db.prepare('SELECT * FROM notifications WHERE user_id=? AND waits=1 AND resolved_at IS NULL ORDER BY created_at').all(user.id);
+    const calls = db.prepare("SELECT COUNT(*) AS n FROM notifications WHERE user_id=? AND kind='call' AND read_at IS NULL").get(user.id).n;
+    const overdue = overview.totals.overdue;
+    if (!meetings && !deeds && !overdue && !waits.length && !calls) return;
+    const today = [meetings ? `${meetings} ${plural(meetings, 'встреча', 'встречи', 'встреч')}` : null, deeds ? `${deeds} ${plural(deeds, 'дело', 'дела', 'дел')} на сегодня` : null].filter(Boolean).join(' и ') || 'на сегодня ничего не назначено';
+    const firstWait = waits[0] ? notificationView(waits[0]) : null;
+    const lines = [
+      overdue ? (overdue === 1 ? 'Одно дело просрочено.' : `${overdue} ${plural(overdue, 'дело', 'дела', 'дел')} просрочено.`) : null,
+      firstWait ? (waits.length === 1
+        ? (firstWait.kind === 'invite' ? `${firstWait.lead} ждёт ответа на приглашение ${firstWait.text.replace(/^зовёт на встречу /, '')}.` : `${firstWait.actors[0]?.name || 'Кто-то'} ждёт ответа: ${firstWait.text.replace(/^просит: /, '')}.`)
+        : `Ждут вашего ответа: ${waits.length}.`) : null,
+      calls ? `${calls} ${plural(calls, 'призыв', 'призыва', 'призывов')} без ответа.` : null,
+    ].filter(Boolean);
+    notify(db, { userId: user.id, kind: 'digest', lead: 'Доброе утро:', text: today, meta: lines, data: { date, pushTitle: `Доброе утро: ${today}`, pushBody: lines.join(' ') || 'Хорошего дня.', url: '/#today' }, group: `digest:${date}`, once: true, at: at.toISOString() });
+  }
+  // Потолок расходов: одно уведомление на порог в месяц — на 80% и на 100%.
+  function spendThresholds(user) {
+    const state = spendState(user);
+    if (!state.limitUsd) return;
+    const share = state.totalUsd / state.limitUsd * 100;
+    const month = dateInTimeZone(now(), configuredTimeZone).slice(0, 7);
+    const money = value => `$${value < 10 ? value.toFixed(2) : Math.round(value)}`;
+    for (const threshold of [100, 80]) {
+      if (share < threshold) continue;
+      notify(db, { userId: user.id, kind: 'spend', lead: `Потрачено ${threshold}%`, text: threshold === 100 ? 'месячного потолка — дальше записи разбираются по правилам' : 'месячного потолка на модели', meta: [`${money(state.totalUsd)} из ${money(state.limitUsd)}`], group: `spend:${month}:${threshold}`, once: true });
+      break;
+    }
+  }
+  async function notificationTick() {
+    const at = now();
+    try { wakeSnoozed(db, at, refreshSnoozed); } catch {}
+    try { purgeNotifications(db, at); } catch {}
+    for (const user of db.prepare("SELECT * FROM users WHERE status='active'").all()) {
+      try { morningDigest(user, at); } catch {}
+      try { spendThresholds(user); } catch {}
+    }
+    await Promise.all([...deliveries.values()]);
+  }
+  app.notificationTick = notificationTick;
   app.push = push; app.reminders = reminders; app.reminderWorker = reminderWorker;
   // Внутренние ручки для тестов и для запуска: наружу по HTTP они не выходят.
   app.accounts = accounts;
@@ -367,6 +487,54 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   };
   // ── напоминания и push ──
   app.get('/api/reminders/upcoming',(req,res)=>{ res.json({ reminders: reminders.upcoming(req.user.id, { limit: 20 }) }); });
+  // ── лента уведомлений ──
+  // Ждущее ответа сверяется с самим делом при каждом чтении: просьбу могли
+  // снять, на приглашение — ответить в самом календаре.
+  const stillWaits = row => {
+    if (row.kind === 'request') return Boolean(db.prepare("SELECT 1 FROM assignments WHERE id=? AND state='pending' AND cancelled_at IS NULL").get(row.assignment_id));
+    if (row.kind === 'invite') return calendar.inviteStatus?.({ accountId: row.account_id, uid: row.event_uid }) === 'needs-action';
+    return true;
+  };
+  const countsChanged = userId => notifyUser(userId, 'notifications', { counts: notificationCounts(db, userId) });
+  app.get('/api/notifications',(req,res,next)=>{try{
+    const before = typeof req.query.before === 'string' && req.query.before ? req.query.before : null;
+    const page = listNotifications(db, req.user.id, { before, stillWaits });
+    res.json({ notifications: page.notifications.map(notificationView), nextCursor: page.nextCursor, counts: notificationCounts(db, req.user.id),
+      kinds: Object.entries(NOTIFICATION_KINDS).filter(([, rule]) => !rule.admin || req.user.role === 'admin').map(([key, rule]) => ({ key, group: rule.group, label: rule.label, hint: rule.hint, default: rule.phone ? 'phone' : rule.bell ? 'bell' : 'off' })) });
+  }catch(error){next(error);}});
+  // Прочитано: списком, всё сразу или всё, что касается записи или комнаты, —
+  // открыл карточку или разговор, значит прочитал.
+  app.post('/api/notifications/read',(req,res,next)=>{try{
+    const body = req.body || {};
+    const options = Array.isArray(body.ids) ? { ids: body.ids } : typeof body.captureId === 'string' ? { captureId: body.captureId } : typeof body.roomId === 'string' ? { roomId: body.roomId } : body.all === true ? {} : null;
+    if (!options) return res.status(400).json({ error: { code: 'invalid_read', message: 'Что отметить прочитанным: ids, captureId, roomId или all.' } });
+    const changed = readNotifications(db, req.user.id, options);
+    if (changed) countsChanged(req.user.id);
+    res.json({ changed, counts: notificationCounts(db, req.user.id) });
+  }catch(error){next(error);}});
+  app.post('/api/notifications/:id/snooze',(req,res,next)=>{try{
+    const result = snoozeNotification(db, req.user.id, req.params.id, Number(req.body?.minutes ?? 10), now());
+    if (result.error === 'not_found') return res.status(404).json({ error: { code: 'not_found', message: 'Уведомление не найдено.' } });
+    if (result.error) return res.status(400).json({ error: { code: result.error, message: 'Отложить можно на срок от минуты до суток.' } });
+    countsChanged(req.user.id);
+    res.json({ ...result, counts: notificationCounts(db, req.user.id) });
+  }catch(error){next(error);}});
+  // Ответ на приглашение прямо из строки. Событие в кэше календаря
+  // переписывается при каждой синхронизации, поэтому оно ищется заново — по
+  // учётной записи и UID, а не по идентификатору, который был при уведомлении.
+  app.post('/api/notifications/:id/respond',async(req,res,next)=>{try{
+    const row = findNotification(db, req.params.id);
+    if (!row || row.user_id !== req.user.id || row.kind !== 'invite') return res.status(404).json({ error: { code: 'not_found', message: 'Приглашение не найдено.' } });
+    const status = req.body?.status;
+    if (!['accepted', 'declined', 'tentative'].includes(status)) return res.status(400).json({ error: { code: 'invalid_status', message: 'Ответ — accepted, declined или tentative.' } });
+    const event = db.prepare('SELECT id FROM calendar_events WHERE account_id=? AND uid=? ORDER BY start_at LIMIT 1').get(row.account_id, row.event_uid);
+    if (!event) { resolveNotifications(db, { userId: req.user.id, kind: 'invite', accountId: row.account_id, eventUid: row.event_uid }); countsChanged(req.user.id); return res.status(409).json({ error: { code: 'event_gone', message: 'Встречи больше нет в календаре.' } }); }
+    const result = await calendar.respondExternalEvent({ userId: req.user.id, id: `ext:${event.id}`, status });
+    if (result.error) return calendarError(res, result);
+    resolveNotifications(db, { userId: req.user.id, kind: 'invite', accountId: row.account_id, eventUid: row.event_uid });
+    countsChanged(req.user.id);
+    res.json({ counts: notificationCounts(db, req.user.id) });
+  }catch(error){next(error);}});
   app.get('/api/push/key',(req,res)=>{ res.json({ publicKey: push.publicKey(), subscriptions: push.list(req.user.id) }); });
   app.post('/api/push/subscriptions',(req,res)=>{
     const result = push.subscribe({ userId: req.user.id, subscription: req.body?.subscription, userAgent: req.get('user-agent') });
@@ -755,7 +923,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     if(result.error==='unknown_type')return res.status(400).json({error:{code:'unknown_type',message:'Неизвестный тип записи.'}});
     res.json(result);
   }catch(error){next(error);}});
-  app.post('/api/reset',(req,res,next)=>{if(req.body?.confirmation!=='СБРОСИТЬ КИЗУНА')return res.status(400).json({error:{code:'invalid_confirmation',message:'Требуется точная фраза подтверждения.'}});try{const mine=db.prepare('SELECT a.id FROM capture_attachments a JOIN captures c ON c.id=a.capture_id WHERE c.user_id IS ?').all(req.user.id);resetLedger(db,req.user.id);for(const row of mine){try{fs.rmSync(attachmentPath(row.id),{force:true});}catch{}}reportAudit(audit,{event:'local_data_reset',result:'succeeded'});notifyJournal('reset');res.json({ok:true});}catch(error){reportAudit(audit,{event:'local_data_reset',result:'failed',errorCode:'storage_error'});next(error);}});
+  app.post('/api/reset',(req,res,next)=>{if(req.body?.confirmation!=='СБРОСИТЬ КИЗУНА')return res.status(400).json({error:{code:'invalid_confirmation',message:'Требуется точная фраза подтверждения.'}});try{const mine=db.prepare('SELECT a.id FROM capture_attachments a JOIN captures c ON c.id=a.capture_id WHERE c.user_id IS ?').all(req.user.id);resetLedger(db,req.user.id);db.prepare('DELETE FROM notifications WHERE user_id=?').run(req.user.id);for(const row of mine){try{fs.rmSync(attachmentPath(row.id),{force:true});}catch{}}reportAudit(audit,{event:'local_data_reset',result:'succeeded'});notifyJournal('reset');res.json({ok:true});}catch(error){reportAudit(audit,{event:'local_data_reset',result:'failed',errorCode:'storage_error'});next(error);}});
   // ── вложения ──
   // Тело приходит сырыми байтами: base64 в JSON раздул бы запрос на треть, а
   // multipart потребовал бы зависимости ради одного поля.

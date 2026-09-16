@@ -17,6 +17,7 @@ import { buildEvent, excludeInstance, findJoinUrl, localDateTime, overrideInstan
 import { replaceInterpretation } from './db.js';
 import { shouldMaterializeProjections } from './classifier.js';
 import { describeRepeat, occurrenceDates, repeatRrule, normalizeSkip, scheduleDisplay } from './repeat.js';
+import { notify, resolveNotifications } from './notifications.js';
 
 export const PROVIDERS = ['caldav', 'google'];
 export const ACCOUNT_MODES = ['full', 'busy'];
@@ -40,6 +41,7 @@ export const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 export const DEFAULT_MEETING_MINUTES = 60;
 export const DEFAULT_TASK_MINUTES = 30;
 const RANGE_LIMIT_DAYS = 62;
+const NOTICE_WINDOW_MS = 48 * 60 * 60 * 1000;
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
 const nowIso = () => new Date().toISOString();
@@ -206,9 +208,51 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
   }
   // Кэш окна переписывается целиком: одна учётная запись, сотни событий — диф
   // не окупается, а «пропало у них — пропало у нас» получается само.
+  // Что поменялось в календаре — повод сказать человеку. Новая встреча, перенос
+  // и отмена — только на ближайшие двое суток: иначе синхронизация большого
+  // календаря засыпала бы ленту сотней строк. Приглашение — на любой день окна:
+  // на него отвечают. Первая синхронизация молчит — в ней «новое» всё, а
+  // события, которые Кизуна отправила сама, новыми не считаются.
+  function noticeChanges(row, before, after) {
+    if (!row.synced_at || row.mode === 'busy') return;
+    const tz = timeZone();
+    const at = now().getTime();
+    const soon = event => { const start = Date.parse(event.start_at); return start >= at && start < at + NOTICE_WINDOW_MS; };
+    const key = event => `${event.uid}|${event.instance_key || ''}`;
+    const was = new Map(before.map(event => [key(event), event]));
+    const is = new Map(after.map(event => [key(event), event]));
+    const ours = new Set(db.prepare('SELECT uid FROM calendar_links WHERE account_id=?').all(row.id).map(link => link.uid));
+    const login = String(row.username || '').toLowerCase();
+    const when = event => {
+      const start = localDateTime(new Date(event.start_at), tz), end = localDateTime(new Date(event.end_at), tz);
+      const day = `${start.date.slice(8, 10)}.${start.date.slice(5, 7)}`;
+      return event.all_day ? `${day}, весь день` : `${day}, ${start.time}${end.date === start.date ? `–${end.time}` : ''}`;
+    };
+    const mine = event => JSON.parse(event.attendees_json || '[]').find(person => person.self || (login && String(person.email || '').toLowerCase() === login)) || null;
+    const base = event => ({ userId: row.user_id, accountId: row.id, eventUid: event.uid, data: { date: localDateTime(new Date(event.start_at), tz).date } });
+    for (const [id, event] of is) {
+      if (ours.has(event.uid) || Date.parse(event.end_at) <= at) continue;
+      const me = mine(event);
+      if (me?.status === 'needs-action' && !me.organizer) {
+        const organizer = event.organizer_json ? JSON.parse(event.organizer_json) : null;
+        notify(db, { ...base(event), kind: 'invite', lead: organizer?.name || organizer?.email || 'Вас', text: `зовёт на встречу «${event.title}»`, meta: [when(event), row.label], group: `invite:${row.id}:${event.uid}`, once: true });
+        continue;
+      }
+      const old = was.get(id);
+      if (!old && soon(event)) notify(db, { ...base(event), kind: 'event_added', lead: 'Появилась встреча', text: `в «${row.label}»: «${event.title}»`, meta: [when(event)] });
+      else if (old && (old.start_at !== event.start_at || old.end_at !== event.end_at) && (soon(old) || soon(event)))
+        notify(db, { ...base(event), kind: 'event_changed', lead: 'Встречу перенесли:', text: `«${event.title}» — теперь ${when(event)}`, meta: [`было ${when(old)}`, row.label] });
+    }
+    for (const [id, old] of was) {
+      if (is.has(id) || ours.has(old.uid) || !soon(old)) continue;
+      notify(db, { ...base(old), kind: 'event_changed', lead: 'Встречу отменили:', text: `«${old.title}»`, meta: [when(old), row.label] });
+      resolveNotifications(db, { userId: row.user_id, kind: 'invite', accountId: row.id, eventUid: old.uid });
+    }
+  }
   function storeEvents(row, window, events) {
     const insert = db.prepare('INSERT INTO calendar_events(id,account_id,calendar_id,uid,instance_key,title,description,location,start_at,end_at,all_day,busy,join_url,etag,href,updated_at,attendees_json,organizer_json,repeat,url,sequence,series_uid) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
     const at = nowIso();
+    const before = db.prepare('SELECT uid, instance_key, title, start_at, end_at, all_day, attendees_json, organizer_json FROM calendar_events WHERE account_id=? AND end_at>? AND start_at<?').all(row.id, window.from.toISOString(), window.to.toISOString());
     const apply = db.transaction(() => {
       db.prepare('DELETE FROM calendar_events WHERE account_id=? AND end_at>? AND start_at<?').run(row.id, window.from.toISOString(), window.to.toISOString());
       db.prepare('DELETE FROM calendar_events WHERE account_id=? AND end_at<=?').run(row.id, window.from.toISOString());
@@ -219,6 +263,19 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
       db.prepare('UPDATE calendar_accounts SET synced_at=?, sync_error=NULL WHERE id=?').run(at, row.id);
     });
     apply();
+    resolveNotifications(db, { userId: row.user_id, kind: 'calendar_error', accountId: row.id });
+    try {
+      noticeChanges(row, before, events.map(event => ({ uid: event.uid, instance_key: event.instanceKey || null, title: event.title, start_at: event.start.toISOString(), end_at: event.end.toISOString(), all_day: event.allDay ? 1 : 0, attendees_json: event.attendees?.length ? JSON.stringify(event.attendees) : null, organizer_json: event.organizer ? JSON.stringify(event.organizer) : null })));
+    } catch (error) { report({ event: 'calendar_notice_failed', errorCode: error?.code || 'notice_error' }); }
+  }
+  // Моё участие во встрече: «needs-action» — ещё не ответил. Нужно ленте, чтобы
+  // приглашение, на которое ответили в самом календаре, перестало ждать.
+  function inviteStatus({ accountId, uid }) {
+    const event = db.prepare('SELECT e.attendees_json, a.username FROM calendar_events e JOIN calendar_accounts a ON a.id=e.account_id WHERE e.account_id=? AND e.uid=? ORDER BY e.start_at LIMIT 1').get(accountId, uid);
+    if (!event) return null;
+    const login = String(event.username || '').toLowerCase();
+    const me = JSON.parse(event.attendees_json || '[]').find(person => person.self || (login && String(person.email || '').toLowerCase() === login));
+    return me?.status || null;
   }
   const syncing = new Set();
   async function syncAccount(id, { userId = undefined } = {}) {
@@ -236,6 +293,9 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     } catch (error) {
       const message = String(error?.message || 'Синхронизация не удалась.').slice(0, 300);
       db.prepare('UPDATE calendar_accounts SET sync_error=?, synced_at=? WHERE id=?').run(message, nowIso(), id);
+      // Одна строка на поломку: пока её не починили, повторные неудачи молчат.
+      if (!db.prepare("SELECT 1 FROM notifications WHERE user_id=? AND kind='calendar_error' AND account_id=? AND resolved_at IS NULL").get(row.user_id, id))
+        notify(db, { userId: row.user_id, kind: 'calendar_error', accountId: id, lead: `${row.label} не обновляется:`, text: error?.code === 'unauthorized' ? 'пароль приложения или доступ больше не подходит' : message, meta: ['события в сетке — на момент последней синхронизации'], data: { url: '/#settings' } });
       report({ event: 'calendar_sync_failed', provider: row.provider, errorCode: error?.code || 'sync_error' });
       return { account: rowToAccount(db.prepare('SELECT * FROM calendar_accounts WHERE id=?').get(id)), error: error?.code === 'unauthorized' ? 'unauthorized' : 'sync_error', message };
     } finally { syncing.delete(id); }
@@ -778,7 +838,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
   }
   function externalEvent({ userId, id }) { const row = externalRow(userId, id); return row && !row.disabled_at ? externalInfo(row) : null; }
 
-  return { listAccounts, addCaldavAccount, updateAccount, removeAccount, googleReady, googleStart, googleFinish, syncAccount, syncDue, view, exportCapture, removeExport, autoExport, wakeAutoExport, updateExternalEvent, deleteExternalEvent, respondExternalEvent, moveExternalEvent, externalEvent, applySchedule, presets: Object.fromEntries(Object.entries(CALDAV_PRESETS).map(([key, preset]) => [key, { label: preset.label, serverUrl: preset.serverUrl }])) };
+  return { inviteStatus, listAccounts, addCaldavAccount, updateAccount, removeAccount, googleReady, googleStart, googleFinish, syncAccount, syncDue, view, exportCapture, removeExport, autoExport, wakeAutoExport, updateExternalEvent, deleteExternalEvent, respondExternalEvent, moveExternalEvent, externalEvent, applySchedule, presets: Object.fromEntries(Object.entries(CALDAV_PRESETS).map(([key, preset]) => [key, { label: preset.label, serverUrl: preset.serverUrl }])) };
 }
 
 // Фоновая синхронизация: раз в минуту смотрит, у кого прошло пять минут с

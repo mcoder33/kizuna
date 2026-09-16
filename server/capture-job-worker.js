@@ -3,6 +3,7 @@ import { claimCaptureJob, completeCaptureJob, failCaptureJob, releaseCaptureJob,
 import { autoAssign } from './circles.js';
 import { applyUserOverrides } from './classifier.js';
 import { memoryPrompt } from './memory.js';
+import { noticeUnclear } from './notifications.js';
 
 const safeErrorCodes = new Set(['unavailable','busy','timeout','aborted','nonzero','malformed_output','absent_output','oversize_output','schema_invalid','rate_limited','invalid_provider','not_configured']);
 
@@ -79,6 +80,8 @@ export class CaptureJobWorker {
         // Просьба уходит человеку и тогда, когда разбор закончился в фоне:
         // иначе «Ане — прислать смету» из очереди не дошло бы ни до кого.
         try { autoAssign(this.db, { captureId:claim.capture_id, userId:claim.user_id ?? null, classification:result.classification }); } catch {}
+        // Разобрано в фоне, а человек мог уже уйти: неясная запись ждёт его за колокольчиком.
+        try { noticeUnclear(this.db, { userId:claim.user_id ?? null, captureId:claim.capture_id, classification:result.classification, raw:claim.raw }); } catch {}
         this.report({event:'capture_job_succeeded',jobId:claim.id,provider:claim.selected_provider,usedProvider:result.usedProvider||result.provider,fallbackReason:result.fallbackReason||null,durationMs:Date.now()-startedAt});
       }
     } catch (error) {

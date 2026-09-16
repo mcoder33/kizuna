@@ -106,11 +106,13 @@ test("круг: приглашение, просьба, «беру» и разг
   await anya.page.locator("#review-close").click();
 
   await page.reload();
-  const call = page.locator(".inbox-row.call").first();
+  // Призыв живёт за колокольчиком: полоса «к вам» — только для того, что ждёт решения.
+  await expect(page.locator(".inbox-row.call")).toHaveCount(0);
+  await page.locator("#bell-summary").click();
+  const call = page.locator(".bell-row").filter({ hasText: "Аня зовёт вас в обсуждении" }).first();
   await expect(call).toBeVisible();
-  await expect(call).toContainText("Аня зовёт");
   // Открыл карточку — значит прочитал: строка гаснет сама.
-  await call.getByRole("button", { name: "Открыть" }).click();
+  await call.getByRole("button", { name: "Ответить" }).click();
   // Открыли по призыву — разговор выехал сам.
   await expect(page.locator("#review-dialog .msg-text")).toBeVisible();
   await expect(page.locator("#review-dialog .msg-text")).toContainText("Половина готова");
@@ -119,7 +121,9 @@ test("круг: приглашение, просьба, «беру» и разг
   await expect(page.locator("#review-dialog")).toBeVisible();
   await page.locator("#review-close").click();
   await page.reload();
-  await expect(page.locator(".inbox-row.call")).toHaveCount(0);
+  await page.locator("#bell-summary").click();
+  await expect(page.locator(".bell-row").filter({ hasText: "Аня зовёт вас в обсуждении" })).not.toHaveClass(/unread/);
+  await page.locator("#bell-summary").click();
 
   // ── «Я жду»: четыре состояния и ни одного лишнего ──
   await page.goto("/#board?view=waiting");

@@ -189,6 +189,9 @@ function updatePageFromHash() {
   // Ссылка из уведомления: открыть карточку записи и убрать параметр из адреса.
   const openId = params.get("open");
   if (openId) { params.delete("open"); history.replaceState(null, "", `#${activePage}${params.size ? `?${params}` : ""}`); openCaptureById(openId); }
+  // Ссылка из push о разговоре: открыть комнату круга.
+  const roomId = params.get("room");
+  if (roomId) { params.delete("room"); history.replaceState(null, "", `#${activePage}${params.size ? `?${params}` : ""}`); openRoomFromInbox(roomId); }
   for (const section of document.querySelectorAll(".app-page"))
     section.hidden = section.id !== activePage;
   for (const link of document.querySelectorAll("nav a"))
@@ -1208,12 +1211,22 @@ function inboxFoldedRow(item) {
   element.append(node("span", undefined, "inbox-mark"), main, acts);
   return element;
 }
+// Лента уведомлений (подробности — в разделе «уведомления» ниже). Состояние
+// объявлено здесь, до первого разбора адреса: он случается во время чтения
+// файла, и `const` ниже по тексту попал бы в мёртвую зону.
+const bellState = { items: [], counts: { waits: 0, unread: 0 }, kinds: [], filter: "all", loaded: false };
+const bellDone = new Map();
+// Полоса «к вам» — только то, что ждёт вашего решения: просьбы и приглашения
+// на встречи. Призывы, добавление в круг и остальные новости живут за
+// колокольчиком: день не должен превращаться в ленту событий.
 function paintInbox(container) {
-  const rows = todayState.inbox || [], folded = todayState.inboxFolded || [];
-  if (!rows.length && !folded.length) return;
-  container.append(node("div", `к вам · ${rows.length + folded.reduce((total, item) => total + item.count, 0)}`, "day-group inbox-group"));
+  const rows = (todayState.inbox || []).filter((row) => row.kind === "request"), folded = todayState.inboxFolded || [];
+  const invites = bellState.items.filter((item) => item.kind === "invite" && item.waits);
+  if (!rows.length && !invites.length && !folded.length) return;
+  container.append(node("div", `к вам · ${rows.length + invites.length + folded.reduce((total, item) => total + item.count, 0)}`, "day-group inbox-group"));
   const strip = node("div", undefined, "inbox");
   for (const row of rows) strip.append(inboxRow(row));
+  for (const item of invites) strip.append(inviteRow(item));
   for (const item of folded) strip.append(inboxFoldedRow(item));
   container.append(strip);
 }
@@ -2731,6 +2744,8 @@ function showCorrection(
   // заметку, и красная строка «выберите тип» была бы ложной тревогой.
   review = { level: "medium", question: null },
 ) {
+  // Открыл карточку — прочитал уведомления о ней; ждущее ответа остаётся ждать.
+  if (entry?.id) markNotificationsRead({ captureId: entry.id });
   showReview(entry, review, entry.projections[0]?.undoGroupId);
 }
 async function reclassifyEntry(entry) {
@@ -3637,7 +3652,7 @@ async function bootstrap() {
     bootstrapQueued = false;
     bootstrapInFlight = true;
     try {
-      await Promise.all([status(), load(), loadSettings()]);
+      await Promise.all([status(), load(), loadSettings(), loadNotifications()]);
       resumeCapture();
       syncPushSubscription();
     } catch {
@@ -3669,6 +3684,7 @@ const SETTING_FIELDS = [
   "timeZone",
   "remindDefault",
   "remindHour",
+  "quietHours",
   "theme",
   "voiceEnabled",
   "voiceLimitWindow",
@@ -3853,6 +3869,7 @@ function paintSettings(payload) {
     paintThemeButton();
   }
   paintVoiceQuota(payload.quota);
+  paintNotifySettings();
   paintSpend(payload.spend);
 }
 // Расходы: сколько ушло токенов и денег. Показываем три окна — сутки, неделя,
@@ -4261,12 +4278,26 @@ function listenToJournal() {
     return;
   }
   journalStream.addEventListener("journal", reloadJournalSoon);
-  // Напоминание в открытую вкладку: тост с «Открыть». Системное уведомление
-  // сюда не дублируется — на закрытую вкладку и телефон его несёт push.
-  journalStream.addEventListener("reminder", (event) => {
+  // Уведомление в открытую вкладку: строка за колокольчиком и, если повод из
+  // тех, что идут на телефон, всплывашка в углу. Push сюда не дублируется —
+  // сервер шлёт его, только когда вкладок нет.
+  journalStream.addEventListener("notification", (event) => {
     try {
-      const reminder = JSON.parse(event.data);
-      toast(`${reminder.title} — ${reminder.body}`, { label: "Открыть", run: () => openCaptureById(reminder.captureId) });
+      const { notification, counts, toast: pop } = JSON.parse(event.data);
+      bellState.counts = counts || bellState.counts;
+      bellState.items = [notification, ...bellState.items.filter((item) => item.id !== notification.id)];
+      bellDone.delete(notification.id);
+      paintBell();
+      if (notification.kind === "invite") renderToday();
+      if (pop) showNotificationToast(notification);
+    } catch {}
+  });
+  // Прочитали или ответили в другой вкладке — число на колокольчике здесь то же.
+  journalStream.addEventListener("notifications", (event) => {
+    try {
+      bellState.counts = JSON.parse(event.data).counts || bellState.counts;
+      paintBell();
+      if ($("#bell-menu")?.open) loadNotifications();
     } catch {}
   });
   // Между загрузкой страницы и подключением к потоку журнал мог измениться:
@@ -5344,6 +5375,7 @@ async function loadRooms({ keepActive = true } = {}) {
   return chatState.rooms;
 }
 async function openRoom(roomId, { render = true } = {}) {
+  markNotificationsRead({ roomId });
   const hadUnread = (chatState.rooms.find((room) => room.id === roomId)?.unread || 0) > 0;
   chatState.activeRoomId = roomId;
   chatState.loading = true;
@@ -5590,7 +5622,10 @@ function openRoomAdder(circle) {
 // Нужна ровно для двух вещей: кто здесь и что отсюда видно. Ни ленты, ни своей
 // доски, ни настроек на каждый чих — иначе круг превращается во второй дом.
 async function loadCircles({ then = null } = {}) {
-  if (circlesState.loading) return;
+  // Загрузка уже идёт — но она могла уйти до правки (новый круг, человек в
+  // круге). Второй вызов не теряется: круги перечитываются, как только первая
+  // закончится, иначе на экране оставался бы список до правки.
+  if (circlesState.loading) { circlesState.again = { then: then || circlesState.again?.then || null }; return; }
   circlesState.loading = true;
   try {
     const [data] = await Promise.all([request("/api/circles"), loadRooms()]);
@@ -5605,7 +5640,12 @@ async function loadCircles({ then = null } = {}) {
   } catch (error) {
     const body = $("#circles-body");
     if (body) { clear(body); body.append(node("p", error.message || "Не удалось загрузить круги", "empty")); }
-  } finally { circlesState.loading = false; }
+  } finally {
+    circlesState.loading = false;
+    const again = circlesState.again;
+    circlesState.again = null;
+    if (again) await loadCircles(again);
+  }
 }
 async function createCircle(name) {
   try {
@@ -5618,22 +5658,29 @@ async function createCircle(name) {
 // Ссылка у круга одна и работает для многих: звать десятерых десятью ссылками
 // неудобно. Показывается она один раз — сам токен на сервере не хранится,
 // только его отпечаток; забыли — обновите, прежняя сразу перестанет работать.
+// Свежая ссылка показывается один раз, но не одним кадром: страница кругов
+// перерисовывается от живых событий, и ссылка, жившая только в разметке,
+// исчезала бы, пока её копируют. Поэтому она держится в памяти страницы.
+function paintFreshInvite(place, url, { focus = false } = {}) {
+  clear(place);
+  const link = node("input", undefined, "invite-link");
+  link.value = url;
+  link.readOnly = true;
+  link.addEventListener("focus", () => link.select());
+  const copy = node("button", "Скопировать", "mini primary");
+  copy.type = "button";
+  copy.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(url); toast("Ссылка скопирована — передайте её сами: писем приложение не шлёт"); }
+    catch { link.select(); toast("Скопируйте ссылку из поля"); }
+  });
+  place.append(link, copy, node("span", "работает 7 дней для любого числа людей · видна только сейчас", "invite-hint"));
+  if (focus) link.focus();
+}
 async function inviteToCircle(circle, place, { refresh = false } = {}) {
   try {
     const invite = await request(`/api/circles/${circle.id}/invite`, { method: "POST", body: JSON.stringify({}) });
-    clear(place);
-    const link = node("input", undefined, "invite-link");
-    link.value = invite.url;
-    link.readOnly = true;
-    link.addEventListener("focus", () => link.select());
-    const copy = node("button", "Скопировать", "mini primary");
-    copy.type = "button";
-    copy.addEventListener("click", async () => {
-      try { await navigator.clipboard.writeText(invite.url); toast("Ссылка скопирована — передайте её сами: писем приложение не шлёт"); }
-      catch { link.select(); toast("Скопируйте ссылку из поля"); }
-    });
-    place.append(link, copy, node("span", "работает 7 дней для любого числа людей · видна только сейчас", "invite-hint"));
-    link.focus();
+    (circlesState.links ||= new Map()).set(circle.id, invite.url);
+    paintFreshInvite(place, invite.url, { focus: true });
     if (refresh) toast("Новая ссылка готова, прежняя больше не работает");
     circle.invite = { createdAt: new Date().toISOString(), expiresAt: invite.expiresAt, uses: 0, expired: false };
   } catch (error) { toast(error.message || "Приглашение не создалось"); }
@@ -5652,12 +5699,17 @@ function invitePeopleEl(circle) {
   field.setAttribute("aria-label", `Найти человека для круга «${circle.name}»`);
   searchRow.append(glass, field);
   const found = node("div", undefined, "invite-found");
-  let timer = 0;
+  let timer = 0, latest = 0;
+  // Ответы на поиск приходят в любом порядке: список меняется только ответом на
+  // последний запрос и не очищается заранее — иначе строка, по которой уже
+  // щёлкают, исчезала бы из-под курсора.
   const search = async () => {
     const query = field.value.trim();
-    clear(found);
+    const mine = ++latest;
     try {
       const data = await request(`/api/circles/${circle.id}/candidates?q=${encodeURIComponent(query)}`);
+      if (mine !== latest) return;
+      clear(found);
       if (!data.people.length) {
         found.append(node("span", data.all ? "Никого не нашлось. Если человека ещё нет в приложении — дайте ему ссылку ниже." : "В круге уже все, кто есть в приложении. Нового человека зовите ссылкой ниже.", "invite-hint"));
         return;
@@ -5680,7 +5732,7 @@ function invitePeopleEl(circle) {
         });
         found.append(row);
       }
-    } catch (error) { found.append(node("span", error.message || "Поиск не удался", "invite-hint")); }
+    } catch (error) { if (mine === latest) { clear(found); found.append(node("span", error.message || "Поиск не удался", "invite-hint")); } }
   };
   field.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(search, 220); });
   // Список открывается сам, как только в поле встали: людей в приложении
@@ -5730,6 +5782,7 @@ function circleCardEl(circle) {
   linkButton.type = "button";
   linkButton.addEventListener("click", () => inviteToCircle(circle, invitePlace, { refresh: Boolean(state && !state.expired) }));
   linkRow.append(linkButton);
+  if (circlesState.links?.has(circle.id)) paintFreshInvite(invitePlace, circlesState.links.get(circle.id));
   card.append(linkRow, invitePlace);
   const people = node("div", undefined, "circle-people");
   for (const member of circle.members) {
@@ -7841,6 +7894,336 @@ async function openCaptureById(id) {
 $("#push-enable")?.addEventListener("click", () => enablePush().catch((error) => { toast(error.message || "Не удалось включить уведомления"); paintPush(); }));
 $("#push-disable")?.addEventListener("click", () => disablePush().catch((error) => toast(error.message)));
 $("#push-test")?.addEventListener("click", testPush);
+
+// ── уведомления ──────────────────────────────────────────────────────────────
+// Колокольчик в шапке хранит историю: что случилось, пока вас не было. Число на
+// нём — только то, что ждёт вашего ответа (просьба, приглашение), остальное
+// непрочитанное — тихой точкой: колокольчик сообщает, а не подгоняет. Полоса
+// «к вам» на «Сегодня» показывает то же ждущее, поэтому ответ в одном месте
+// гасит строку в обоих.
+const NOTIFY_FILTERS = [["all", "Все"], ["waits", "Ждут ответа"], ["people", "Люди"], ["time", "Сроки и встречи"], ["other", "Остальное"]];
+const NOTIFY_GLYPHS = {
+  clock: '<circle cx="8" cy="8" r="5.8"/><path d="M8 4.9V8l2.1 1.4"/>',
+  calendar: '<rect x="2.4" y="3.4" width="11.2" height="10.2" rx="2"/><path d="M2.4 6.6h11.2M5.4 2v2.8M10.6 2v2.8"/>',
+  spark: '<path d="M8 2.4c.5 2.9 1.9 4.3 4.8 4.8-2.9.5-4.3 1.9-4.8 4.8-.5-2.9-1.9-4.3-4.8-4.8 2.9-.5 4.3-1.9 4.8-4.8Z"/>',
+  warn: '<path d="M8 2.6 14.2 13H1.8Z"/><path d="M8 6.5v3"/><path d="M8 11.3h.01"/>',
+  gauge: '<path d="M2.6 11.4a5.4 5.4 0 1 1 10.8 0"/><path d="M8 11.4l2.4-3.1"/>',
+  sun: '<circle cx="8" cy="8" r="2.8"/><path d="M8 1.8v1.5M8 12.7v1.5M1.8 8h1.5M12.7 8h1.5M3.6 3.6l1 1M11.4 11.4l1 1M12.4 3.6l-1 1M4.6 11.4l-1 1"/>',
+  door: '<path d="M3.5 13.5V3.4a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v10.1"/><path d="M2 13.5h12M10 8h.01"/>',
+};
+const NOTIFY_FACES = {
+  reminder: ["clock", "coral"], invite: ["calendar", "blue"], event_added: ["calendar", "blue"], event_changed: ["calendar", "blue"],
+  digest: ["sun", "amber"], clarify: ["spark", "violet"], calendar_error: ["warn", "amber"], spend: ["gauge", "muted"], signup: ["door", "teal"],
+};
+const notifyDay = (iso) => new Intl.DateTimeFormat("en-CA", { timeZone: TODAY_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
+const notifyClock = (iso) => new Intl.DateTimeFormat("ru-RU", { timeZone: TODAY_ZONE, hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
+function notifyTime(iso) {
+  const today = currentDayDate || notifyDay(new Date().toISOString());
+  const day = notifyDay(iso);
+  if (day === today) return notifyClock(iso);
+  if (day === shiftDate(today, -1)) return `вчера, ${notifyClock(iso)}`;
+  return `${day.slice(8, 10)}.${day.slice(5, 7)}`;
+}
+function notifyPeople(actors) {
+  const names = actors.map((person) => person.name);
+  if (names.length <= 2) return names.join(" и ");
+  return `${names.slice(0, 2).join(", ")} и ещё ${names.length - 2}`;
+}
+
+async function loadNotifications() {
+  let data;
+  try { data = await request("/api/notifications"); } catch { return; }
+  const invitesBefore = bellState.items.filter((item) => item.kind === "invite" && item.waits).map((item) => item.id).join();
+  bellState.items = data.notifications || [];
+  bellState.counts = data.counts || bellState.counts;
+  bellState.kinds = data.kinds || [];
+  bellState.loaded = true;
+  paintBell();
+  paintNotifySettings();
+  // Приглашения живут и в полосе «к вам»: изменились — день перерисовывается.
+  if (bellState.items.filter((item) => item.kind === "invite" && item.waits).map((item) => item.id).join() !== invitesBefore) renderToday();
+}
+function paintBell() {
+  const count = $("#bell-count"), dot = $("#bell-dot"), summary = $("#bell-summary");
+  if (!count || !dot || !summary) return;
+  const { waits, unread } = bellState.counts;
+  count.hidden = !waits;
+  count.textContent = waits > 99 ? "99+" : String(waits);
+  dot.hidden = Boolean(waits) || !unread;
+  summary.setAttribute("aria-label", waits ? `Уведомления: ждут ответа — ${waits}` : unread ? "Уведомления: есть непрочитанные" : "Уведомления");
+  if ($("#bell-menu")?.open) renderBellPanel();
+}
+function notificationFace(item) {
+  if (item.actors?.length > 1) {
+    const faces = node("span", undefined, "bell-faces");
+    for (const person of item.actors.slice(0, 2)) faces.append(avatarEl(person, { size: "big" }));
+    return faces;
+  }
+  if (item.actors?.length) return avatarEl(item.actors[0], { size: "big" });
+  const [icon, tone] = NOTIFY_FACES[item.kind] || ["spark", "muted"];
+  const glyph = node("span", undefined, `bell-glyph ${tone}`);
+  glyph.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NOTIFY_GLYPHS[icon]}</svg>`;
+  return glyph;
+}
+function notificationText(item) {
+  const text = node("div", undefined, "bell-text");
+  const who = item.actors?.length ? notifyPeople(item.actors) : item.lead;
+  if (who) text.append(node("b", who), document.createTextNode(" "));
+  text.append(document.createTextNode(item.text));
+  return text;
+}
+function notificationMeta(item) {
+  const meta = node("div", undefined, "bell-meta");
+  if (item.kind === "chatter" && item.count > 1) meta.append(node("span", `${item.count} ${pluralRu(item.count, "сообщение", "сообщения", "сообщений")}`));
+  for (const piece of item.meta || []) meta.append(node("span", piece));
+  if (item.data?.circle) meta.append(circleChip(item.data.circle, { small: true }));
+  return meta;
+}
+function notifyButton(label, primary, run) {
+  const button = node("button", label, `bell-act${primary ? " primary" : ""}`);
+  button.type = "button";
+  button.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    button.disabled = true;
+    try { await run(); } catch (error) { toast(error.message || "Не получилось"); button.disabled = false; }
+  });
+  return button;
+}
+// Кнопки строки — те же, что в карточке и в полосе «к вам»: ответить можно, не
+// открывая запись. Сделанное остаётся в строке словами: что стало.
+function notificationActions(item, { after = () => {} } = {}) {
+  if (bellDone.has(item.id)) return node("div", bellDone.get(item.id), "bell-done");
+  const acts = node("div", undefined, "bell-acts");
+  const done = (words) => { bellDone.set(item.id, words); after(); loadNotifications(); };
+  if (item.kind === "request" && item.waits) {
+    acts.append(
+      notifyButton("Беру", true, async () => { await request(`/api/assignments/${item.assignmentId}/respond`, { method: "POST", body: JSON.stringify({ take: true }) }); done("Взято — дело в вашем дне"); load().catch(() => {}); }),
+      notifyButton("Не я", false, async () => {
+        const reason = (prompt("Почему не вы? Можно не отвечать — причина уйдёт автору.") ?? "").trim();
+        await request(`/api/assignments/${item.assignmentId}/respond`, { method: "POST", body: JSON.stringify({ take: false, ...(reason ? { reason } : {}) }) });
+        done("Вернули автору"); load().catch(() => {});
+      }),
+    );
+  } else if (item.kind === "invite" && item.waits) {
+    acts.append(
+      notifyButton("Приму", true, async () => { await answerInvite(item, "accepted"); done("Принято — встреча в календаре"); }),
+      notifyButton("Не смогу", false, async () => { await answerInvite(item, "declined"); done("Организатор узнает, что вас не будет"); }),
+    );
+  } else if (item.kind === "reminder" && (item.data?.startAt ? Date.parse(item.data.startAt) > Date.now() : notifyDay(item.updatedAt) === currentDayDate)) {
+    if (item.data?.joinUrl) acts.append(notifyButton("К звонку", true, async () => { window.open(item.data.joinUrl, "_blank", "noopener"); done("Звонок открыт в новой вкладке"); }));
+    acts.append(notifyButton("Через 10 минут", !item.data?.joinUrl, async () => {
+      const result = await request(`/api/notifications/${item.id}/snooze`, { method: "POST", body: JSON.stringify({ minutes: 10 }) });
+      done(`Напомню в ${notifyClock(result.snoozedUntil)}`);
+    }));
+  } else if (item.kind === "call") {
+    acts.append(notifyButton("Ответить", false, async () => { after(); openNotification(item); }));
+  } else if (item.kind === "clarify" && !item.resolved) {
+    acts.append(notifyButton("Уточнить", false, async () => { after(); openNotification(item); }));
+  } else if (item.kind === "calendar_error" && !item.resolved) {
+    acts.append(notifyButton("Переподключить", false, async () => { after(); openNotification(item); }));
+  }
+  return acts.childNodes.length ? acts : null;
+}
+async function answerInvite(item, status) {
+  await request(`/api/notifications/${item.id}/respond`, { method: "POST", body: JSON.stringify({ status }) });
+}
+function notificationRow(item) {
+  const row = node("div", undefined, `bell-row${item.read ? "" : " unread"}`);
+  row.dataset.id = item.id;
+  const main = node("div", undefined, "bell-main");
+  main.append(notificationText(item));
+  const meta = notificationMeta(item);
+  if (meta.childNodes.length) main.append(meta);
+  const acts = notificationActions(item, { after: () => $("#bell-menu")?.removeAttribute("open") });
+  if (acts) main.append(acts);
+  row.append(notificationFace(item), main, node("span", notifyTime(item.updatedAt), "bell-time"));
+  row.addEventListener("click", (event) => { if (!event.target.closest("button")) openNotification(item); });
+  return row;
+}
+function renderBellPanel() {
+  const panel = $("#bell-popover");
+  if (!panel) return;
+  clear(panel);
+  const head = node("div", undefined, "bell-head");
+  head.append(node("h3", "Уведомления"));
+  const readAll = node("button", "Прочитать всё", "linklike bell-read-all");
+  readAll.type = "button";
+  readAll.disabled = !bellState.counts.unread;
+  readAll.addEventListener("click", () => markNotificationsRead({ all: true }));
+  head.append(readAll);
+  const filters = node("div", undefined, "bell-filters");
+  for (const [key, label] of NOTIFY_FILTERS) {
+    const chip = node("button", label, "bell-filter");
+    chip.type = "button";
+    if (key === "waits" && bellState.counts.waits) chip.append(node("b", String(bellState.counts.waits)));
+    chip.setAttribute("aria-pressed", String(bellState.filter === key));
+    chip.addEventListener("click", () => { bellState.filter = key; renderBellPanel(); });
+    filters.append(chip);
+  }
+  const list = node("div", undefined, "bell-list");
+  const pick = (item) => bellState.filter === "all" || (bellState.filter === "waits" ? item.waits : item.group === bellState.filter);
+  const shown = bellState.items.filter(pick);
+  const pinned = bellState.filter === "all" ? shown.filter((item) => item.waits) : [];
+  const rest = shown.filter((item) => !pinned.includes(item));
+  const today = currentDayDate || notifyDay(new Date().toISOString()), yesterday = shiftDate(today, -1);
+  const group = (label, items, extra = "") => {
+    if (!items.length) return;
+    list.append(node("p", label, `bell-group${extra}`));
+    for (const item of items) list.append(notificationRow(item));
+  };
+  group("Ждут ответа", pinned, " waits");
+  group("Сегодня", rest.filter((item) => notifyDay(item.updatedAt) === today));
+  group("Вчера", rest.filter((item) => notifyDay(item.updatedAt) === yesterday));
+  group("Раньше", rest.filter((item) => notifyDay(item.updatedAt) < yesterday));
+  if (!list.childNodes.length) list.append(node("p", bellState.filter === "all" ? "Здесь пусто: всё прочитано и отвечено." : "По этому поводу ничего нет.", "bell-empty"));
+  const foot = node("div", undefined, "bell-foot");
+  const settings = node("a", "Настройки уведомлений →");
+  settings.href = "#settings";
+  settings.addEventListener("click", () => { $("#bell-menu")?.removeAttribute("open"); setTimeout(() => $("#notify-settings")?.scrollIntoView({ block: "start" }), 60); });
+  foot.append(node("span", "Хранится 30 дней"), settings);
+  panel.append(head, filters, list, foot);
+}
+// Открыть повод: карточку, разговор, круг или раздел — туда, где он случился.
+function openNotification(item) {
+  $("#bell-menu")?.removeAttribute("open");
+  if (!item.read) markNotificationsRead({ ids: [item.id] });
+  if (["reminder", "clarify"].includes(item.kind) && item.captureId) return openCaptureById(item.captureId);
+  if (item.captureId) return openSharedCard(item.captureId, { talk: item.kind === "call" });
+  if (item.roomId) return openRoomFromInbox(item.roomId);
+  if (item.kind === "circle" && item.circleId) return openCircleFromInbox(item.circleId);
+  const hash = { invite: "#calendar", event_added: "#calendar", event_changed: "#calendar", signup: "#admin", spend: "#settings", calendar_error: "#settings", digest: "#today" }[item.kind];
+  if (hash) location.hash = hash;
+}
+async function markNotificationsRead(body) {
+  const touches = (item) => body.all || body.ids?.includes(item.id) || (body.captureId && item.captureId === body.captureId && !item.waits) || (body.roomId && item.roomId === body.roomId);
+  if (!bellState.items.some((item) => !item.read && touches(item))) return;
+  for (const item of bellState.items) if (touches(item)) item.read = true;
+  try { bellState.counts = (await request("/api/notifications/read", { method: "POST", body: JSON.stringify(body) })).counts; } catch {}
+  paintBell();
+}
+$("#bell-menu")?.addEventListener("toggle", (event) => {
+  if (!event.target.open) return;
+  renderBellPanel();
+  loadNotifications();
+});
+
+// Всплывашка — в углу, с теми же кнопками, что в строке ленты. Вкладка в фоне —
+// системное уведомление через сервис-воркер: push не ушёл, потому что Кизуна
+// открыта, и человек не должен пропустить повод из-за свёрнутого окна.
+function showNotificationToast(item) {
+  const stack = $("#notify-toasts");
+  if (!stack) return;
+  if (document.visibilityState !== "visible" && "Notification" in window && Notification.permission === "granted") {
+    const who = item.actors?.length ? notifyPeople(item.actors) : item.lead;
+    navigator.serviceWorker?.ready
+      .then((registration) => registration.showNotification(item.data?.pushTitle || [who, item.text].filter(Boolean).join(" "), { body: item.data?.pushBody || (item.meta || []).join(" · "), tag: `${item.kind}:${item.id}`, data: { url: item.data?.url || location.href } }))
+      .catch(() => {});
+  }
+  stack.querySelector(`[data-id="${item.id}"]`)?.remove();
+  const card = node("div", undefined, "notify-toast");
+  card.dataset.id = item.id;
+  let timer = null;
+  const dismiss = () => { clearTimeout(timer); card.remove(); };
+  const main = node("div", undefined, "bell-main");
+  const text = notificationText(item);
+  text.addEventListener("click", () => { dismiss(); openNotification(item); });
+  main.append(text);
+  const meta = notificationMeta(item);
+  if (meta.childNodes.length) main.append(meta);
+  const acts = notificationActions(item, { after: dismiss });
+  if (acts) main.append(acts);
+  const close = node("button", "×", "notify-toast-close");
+  close.type = "button";
+  close.setAttribute("aria-label", "Скрыть");
+  close.addEventListener("click", dismiss);
+  card.append(notificationFace(item), main, close);
+  stack.prepend(card);
+  while (stack.children.length > 3) stack.lastElementChild.remove();
+  timer = setTimeout(dismiss, 12000);
+  card.addEventListener("mouseenter", () => clearTimeout(timer));
+  card.addEventListener("mouseleave", () => { timer = setTimeout(dismiss, 6000); });
+}
+
+// Приглашение в полосе «к вам»: ответ — прямо в строке, как у просьбы.
+function inviteRow(item) {
+  const element = node("div", undefined, "inbox-row invite");
+  const mark = node("span", undefined, "inbox-mark");
+  mark.append(node("i", undefined, "inbox-circle"));
+  const main = node("div", undefined, "inbox-main");
+  const title = node("button", [item.lead, item.text].filter(Boolean).join(" "), "inbox-title");
+  title.type = "button";
+  title.addEventListener("click", () => openNotification(item));
+  const meta = node("div", undefined, "inbox-meta");
+  for (const piece of item.meta || []) meta.append(node("span", piece, "inbox-who"));
+  main.append(title, meta);
+  const acts = node("div", undefined, "inbox-acts");
+  const answer = (label, className, status) => {
+    const button = node("button", label, className);
+    button.type = "button";
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try { await answerInvite(item, status); toast(status === "accepted" ? "Принято — встреча в календаре" : "Организатор узнает, что вас не будет"); await loadNotifications(); }
+      catch (error) { button.disabled = false; toast(error.message || "Не получилось ответить"); }
+    });
+    return button;
+  };
+  acts.append(answer("Приму", "inbox-take", "accepted"), answer("Не смогу", "inbox-not", "declined"));
+  element.append(mark, main, acts);
+  return element;
+}
+
+// Настройки поводов: колокольчик и телефон на каждый. Телефон без колокольчика
+// не бывает — выключенный повод никуда не ложится.
+function notifyPrefsNow() {
+  try { return JSON.parse(appSettings.notifyPrefs || "{}") || {}; } catch { return {}; }
+}
+function notifySwitch(id, label, checked, disabled, onChange) {
+  const button = node("button", undefined, "notify-switch");
+  button.type = "button";
+  button.id = id;
+  button.setAttribute("role", "switch");
+  button.setAttribute("aria-label", label);
+  button.setAttribute("aria-checked", String(checked));
+  button.disabled = disabled;
+  button.addEventListener("click", () => onChange(button.getAttribute("aria-checked") !== "true"));
+  return button;
+}
+function setNotifyMode(kind, mode) {
+  const prefs = notifyPrefsNow();
+  if (kind.default === mode) delete prefs[kind.key];
+  else prefs[kind.key] = mode;
+  appSettings.notifyPrefs = JSON.stringify(prefs);
+  paintNotifySettings();
+  saveSettings({ notifyPrefs: JSON.stringify(prefs) }, { announce: null });
+}
+function paintNotifySettings() {
+  const table = $("#notify-table");
+  if (!table || !bellState.kinds.length) return;
+  const prefs = notifyPrefsNow();
+  clear(table);
+  const cols = node("div", undefined, "notify-row notify-cols");
+  cols.append(node("span", "Повод"), node("span", "Колокольчик"), node("span", "Телефон"));
+  table.append(cols);
+  const titles = { people: "Люди и круги", time: "Сроки и встречи", other: "Записи и служебное" };
+  for (const group of ["people", "time", "other"]) {
+    const kinds = bellState.kinds.filter((kind) => kind.group === group);
+    if (!kinds.length) continue;
+    table.append(node("p", titles[group], "notify-group"));
+    for (const kind of kinds) {
+      const mode = ["off", "bell", "phone"].includes(prefs[kind.key]) ? prefs[kind.key] : kind.default;
+      const row = node("div", undefined, "notify-row");
+      const name = node("span", undefined, "notify-name");
+      name.append(document.createTextNode(kind.label));
+      if (kind.hint) name.append(node("span", kind.hint, "notify-hint"));
+      row.append(
+        name,
+        notifySwitch(`notify-bell-${kind.key}`, `${kind.label}: колокольчик`, mode !== "off", false, (on) => setNotifyMode(kind, on ? "bell" : "off")),
+        notifySwitch(`notify-phone-${kind.key}`, `${kind.label}: телефон`, mode === "phone", mode === "off", (on) => setNotifyMode(kind, on ? "phone" : "bell")),
+      );
+      table.append(row);
+    }
+  }
+}
 
 // Живое обновление разговора: сообщение приходит к остальным событием журнала,
 // и страница перечитывает комнаты и открытый разговор, не сбивая набранное.

@@ -10,6 +10,7 @@
 // день попадает одно: призыв `@имя`. Обычное сообщение не дёргает никого.
 import crypto from 'node:crypto';
 import { displayName, publicUser, circlesOf, membership, membersOf } from './circles.js';
+import { notify } from './notifications.js';
 
 const now = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
@@ -201,6 +202,16 @@ export function say(db, roomId, userId, body) {
     if (target && !called.some(person => person.id === target.id)) { insert.run(messageId, target.id, at); called.push(target); }
   }
   markRead(db, roomId, userId, at);
+  // Призыв — повод для колокольчика и телефона; обычное сообщение ложится одной
+  // тихой строкой на разговор, и то если человек сам включил такой повод.
+  const circle = db.prepare('SELECT id, name, color FROM circles WHERE id=?').get(room.circle_id) || null;
+  const excerpt = text.length > 140 ? `${text.slice(0, 139)}…` : text;
+  for (const person of people) {
+    const call = called.some(item => item.id === person.id);
+    notify(db, call
+      ? { userId: person.id, kind: 'call', actorId: userId, roomId, circleId: room.circle_id, text: `зовёт вас в разговоре «${room.name}»: «${excerpt}»`, meta: [], data: { circle, roomName: room.name }, at }
+      : { userId: person.id, kind: 'chatter', actorId: userId, roomId, circleId: room.circle_id, text: `в разговоре «${room.name}»: «${excerpt}»`, meta: [], data: { circle, roomName: room.name }, group: `chat:${roomId}`, at });
+  }
   return { message: messages(db, roomId, userId, { limit: 1 }).messages[0], called, room: serializeRoom(db, room, userId) };
 }
 // Своё сообщение можно убрать: свои слова — свои. Чужие остаются.

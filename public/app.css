@@ -3701,6 +3701,443 @@ dialog form > div {
   flex-wrap: wrap;
   gap: 10px;
 }
+/* ── уведомления ──
+   Колокольчик — история, число на нём — только ждущее ответа, точка — остальное
+   непрочитанное. Строка ленты и всплывашка в углу собраны из одних кусков. */
+.bell-menu {
+  position: relative;
+}
+.bell-menu > summary {
+  list-style: none;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+.bell-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.bell-menu > summary:hover,
+.bell-menu[open] > summary {
+  color: var(--ink);
+  border-color: var(--n-85);
+}
+.bell-menu > summary svg {
+  width: 18px;
+  height: 18px;
+}
+.bell-count {
+  position: absolute;
+  top: -6px;
+  right: -7px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 99px;
+  background: var(--coral);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 0 2px var(--n-100);
+}
+.bell-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--coral);
+  box-shadow: 0 0 0 2px var(--n-100);
+}
+.bell-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: -128px;
+  z-index: 12;
+  width: min(420px, calc(100vw - 24px));
+  max-height: min(640px, calc(100dvh - 96px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--n-100);
+  border: 1px solid var(--n-93);
+  border-radius: 16px;
+  box-shadow: 0 16px 40px var(--orange-21-a10);
+}
+.bell-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 6px;
+}
+.bell-head h3 {
+  margin: 0;
+  font-size: 15px;
+  flex: 1;
+}
+.bell-read-all {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.bell-read-all:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.bell-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 16px 8px;
+}
+.bell-filter,
+.bell-act {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  border-radius: 99px;
+  padding: 3px 11px;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.bell-filter:hover,
+.bell-act:hover {
+  background: var(--n-97);
+}
+.bell-filter[aria-pressed="true"],
+.bell-act.primary {
+  background: var(--pink);
+  color: var(--coral);
+  border-color: transparent;
+  font-weight: 600;
+}
+.bell-filter b {
+  font-variant-numeric: tabular-nums;
+}
+.bell-act:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.bell-group {
+  margin: 0;
+  padding: 10px 18px 4px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--n-66);
+}
+.bell-group.waits {
+  color: var(--coral);
+}
+.bell-list {
+  padding: 0 4px 6px;
+}
+.bell-row,
+.notify-toast {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 2px 10px;
+}
+.bell-row {
+  position: relative;
+  padding: 9px 12px 9px 16px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+.bell-row:hover {
+  background: var(--n-97);
+}
+.bell-row.unread::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 20px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--coral);
+}
+.bell-row .ava.big,
+.notify-toast .ava.big {
+  width: 28px;
+  height: 28px;
+}
+.bell-faces {
+  position: relative;
+  width: 28px;
+  height: 28px;
+}
+.bell-faces .ava.big {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+}
+.bell-faces .ava:first-child {
+  top: 0;
+  left: 0;
+}
+.bell-faces .ava:last-child {
+  right: 0;
+  bottom: 0;
+  box-shadow: 0 0 0 2px var(--n-100);
+}
+.bell-glyph {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+}
+.bell-glyph svg {
+  width: 15px;
+  height: 15px;
+}
+.bell-glyph.coral {
+  background: var(--pink);
+  color: var(--coral);
+}
+.bell-glyph.blue {
+  background: var(--tint-outcome);
+  color: var(--type-outcome);
+}
+.bell-glyph.violet {
+  background: var(--tint-todo);
+  color: var(--type-todo);
+}
+.bell-glyph.amber {
+  background: var(--tint-wait);
+  color: var(--type-meeting);
+}
+.bell-glyph.teal {
+  background: var(--tint-note);
+  color: var(--green);
+}
+.bell-glyph.muted {
+  background: var(--n-96);
+  color: var(--muted);
+}
+.bell-text {
+  font-size: 13.5px;
+  line-height: 1.4;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.bell-text b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.bell-row.unread .bell-text,
+.notify-toast .bell-text {
+  color: var(--ink);
+}
+.bell-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--n-66);
+}
+.bell-time {
+  font-size: 12px;
+  color: var(--n-66);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  padding-top: 1px;
+}
+.bell-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+.bell-done {
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--green);
+}
+.bell-done::before {
+  content: "✓ ";
+  font-weight: 700;
+}
+.bell-empty {
+  margin: 0;
+  padding: 18px;
+  text-align: center;
+  color: var(--n-66);
+  font-size: 13px;
+}
+.bell-foot {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 18px 12px;
+  border-top: 1px solid var(--hairline);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.bell-foot a {
+  color: var(--muted);
+  text-decoration: none;
+}
+.bell-foot a:hover {
+  color: var(--ink);
+}
+.notify-toasts {
+  position: fixed;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  z-index: 40;
+  display: grid;
+  gap: 8px;
+  width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.notify-toast {
+  pointer-events: auto;
+  padding: 12px 8px 12px 14px;
+  border-radius: 14px;
+  background: var(--n-100);
+  border: 1px solid var(--n-93);
+  box-shadow: 0 16px 40px var(--orange-21-a10);
+  animation: notify-in 0.18s ease-out;
+}
+.notify-toast .bell-text {
+  cursor: pointer;
+}
+.notify-toast-close {
+  appearance: none;
+  align-self: start;
+  border: 0;
+  background: none;
+  color: var(--n-66);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+}
+.notify-toast-close:hover {
+  color: var(--ink);
+}
+@keyframes notify-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .notify-toast {
+    animation: none;
+  }
+}
+/* Настройки поводов: колокольчик и телефон на каждый. */
+.notify-table {
+  display: grid;
+}
+.notify-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px 92px;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 0;
+  border-top: 1px solid var(--hairline);
+  font-size: 13.5px;
+}
+.notify-cols {
+  border-top: 0;
+  padding: 0 0 4px;
+  font-size: 11.5px;
+  color: var(--n-66);
+}
+.notify-cols span:not(:first-child) {
+  text-align: center;
+}
+.notify-group {
+  margin: 12px 0 2px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--n-66);
+}
+.notify-hint {
+  display: block;
+  margin-top: 1px;
+  font-size: 12px;
+  color: var(--n-66);
+}
+.notify-switch {
+  appearance: none;
+  justify-self: center;
+  position: relative;
+  width: 36px;
+  height: 21px;
+  border: 0;
+  border-radius: 99px;
+  background: var(--n-88);
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.notify-switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.15s;
+}
+.notify-switch[aria-checked="true"] {
+  background: var(--coral);
+}
+.notify-switch[aria-checked="true"]::after {
+  transform: translateX(15px);
+}
+.notify-switch:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+@media (max-width: 560px) {
+  .bell-popover {
+    position: fixed;
+    top: calc(58px + env(safe-area-inset-top, 0px));
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-height: calc(100dvh - 76px - env(safe-area-inset-top, 0px));
+  }
+  .notify-row {
+    grid-template-columns: minmax(0, 1fr) 58px 58px;
+  }
+  .notify-toasts {
+    left: 16px;
+    right: 16px;
+    width: auto;
+  }
+}
 @media (max-width: 620px) {
   .avatar-picker {
     flex-direction: column;
