@@ -287,6 +287,7 @@ export function canSeeCapture(db, captureId, userId) {
   const capture = db.prepare('SELECT user_id FROM captures WHERE id=?').get(captureId);
   if (!capture) return false;
   if (capture.user_id === userId) return true;
+  if (isParticipant(db, captureId, userId)) return true;
   return Boolean(db.prepare(`SELECT 1 FROM capture_circles cc JOIN circle_members m ON m.circle_id=cc.circle_id AND m.user_id=? AND m.left_at IS NULL
     WHERE cc.capture_id=? AND cc.removed_at IS NULL`).get(userId, captureId));
 }
@@ -425,33 +426,49 @@ export function comments(db, captureId) {
     mentions: mentions.get(row.id) || [],
   }));
 }
-// Призвать можно только того, кто в круге этой записи: звать в пустоту и ждать
-// ответа — худшее, что может сделать интерфейс.
+// Кого можно призвать — тремя группами, в этом порядке: те, кто запись уже
+// видит (автор, позванные, круг записи), люди из моих кругов и все остальные
+// в Кизуне. Круг для разговора не нужен: позванный получает доступ к одной
+// этой записи. Звать «всех в Кизуне» может только автор — позванный делится
+// чужой записью лишь с теми, кого знает сам.
 export function callableFor(db, captureId, userId) {
-  const circles = circlesForCapture(db, captureId).map(circle => circle.id);
   const seen = new Map();
-  for (const circleId of circles) for (const member of membersOf(db, circleId)) if (member.id !== userId) seen.set(member.id, member);
+  const put = (person, group) => { if (person && person.id !== userId && !seen.has(person.id)) seen.set(person.id, { ...person, group, sees: group === 'record' }); };
+  const owner = db.prepare('SELECT u.* FROM captures c JOIN users u ON u.id=c.user_id WHERE c.id=?').get(captureId);
+  if (owner && owner.status === 'active') put(publicUser(owner), 'record');
+  for (const person of captureParticipants(db, captureId)) put(person, 'record');
+  for (const circle of circlesForCapture(db, captureId)) for (const member of membersOf(db, circle.id)) put(member, 'record');
+  for (const circleId of circleIdsOf(db, userId)) for (const member of membersOf(db, circleId)) put(member, 'circles');
+  if (owner?.id === userId)
+    for (const row of db.prepare("SELECT * FROM users WHERE status='active' ORDER BY COALESCE(display_name, email) LIMIT 200").all()) put(publicUser(row), 'everyone');
   return [...seen.values()];
 }
-export function addComment(db, { captureId, authorId, body, parentId = null }) {
+// Сообщение с призывом того, кто запись ещё не видит, — это и есть «поделиться».
+// Молча это не происходит: без `share` сервер отвечает share_needed и
+// называет людей, а клиент спрашивает. `share: 'yes'` — позвать и открыть
+// запись, `share: 'no'` — отправить, а незнакомых оставить без призыва.
+export function addComment(db, { captureId, authorId, body, parentId = null, share = null }) {
   const text = String(body ?? '').trim();
   if (!text || text.length > COMMENT_BODY_LIMIT) return { error: 'invalid_comment' };
   if (parentId && !db.prepare('SELECT 1 FROM comments WHERE id=? AND capture_id=?').get(parentId, captureId)) return { error: 'not_found' };
-  const commentId = id(), at = now();
-  db.prepare('INSERT INTO comments(id,capture_id,author_id,body,parent_id,created_at) VALUES(?,?,?,?,?,?)').run(commentId, captureId, authorId, text, parentId, at);
-  const callable = [...callableFor(db, captureId, authorId), ...ownerAsCallable(db, captureId, authorId)];
-  const insert = db.prepare('INSERT OR IGNORE INTO comment_mentions(comment_id,user_id,created_at) VALUES(?,?,?)');
+  const callable = callableFor(db, captureId, authorId);
+  const targets = new Map();
   for (const name of text.match(/@[\p{L}\p{N}_.-]{2,40}/gu) || []) {
     const target = callable.find(person => sameName(name.slice(1), person.name) || normalizeName(name.slice(1)) === normalizeName(person.email));
-    if (target) insert.run(commentId, target.id, at);
+    if (target) targets.set(target.id, target);
   }
-  return { comment: comments(db, captureId).find(item => item.id === commentId) };
-}
-// Автор записи тоже призываем: он в разговоре главный, хотя в круге его может
-// и не быть — запись могли отдать в круг ради одного дела.
-function ownerAsCallable(db, captureId, authorId) {
-  const row = db.prepare('SELECT u.* FROM captures c JOIN users u ON u.id=c.user_id WHERE c.id=?').get(captureId);
-  return row && row.id !== authorId ? [publicUser(row)] : [];
+  const strangers = [...targets.values()].filter(person => !canSeeCapture(db, captureId, person.id));
+  if (strangers.length && share !== 'yes' && share !== 'no') return { error: 'share_needed', people: strangers.map(({ group, sees, ...person }) => person) };
+  const commentId = id(), at = now();
+  db.prepare('INSERT INTO comments(id,capture_id,author_id,body,parent_id,created_at) VALUES(?,?,?,?,?,?)').run(commentId, captureId, authorId, text, parentId, at);
+  const added = [];
+  if (share === 'yes') for (const person of strangers) { addParticipant(db, captureId, person.id, authorId, at); added.push(person.id); }
+  const insert = db.prepare('INSERT OR IGNORE INTO comment_mentions(comment_id,user_id,created_at) VALUES(?,?,?)');
+  for (const target of targets.values()) {
+    if (share !== 'yes' && strangers.includes(target)) continue;
+    insert.run(commentId, target.id, at);
+  }
+  return { comment: comments(db, captureId).find(item => item.id === commentId), added, participants: captureParticipants(db, captureId) };
 }
 export function unseenMentions(db, userId) {
   return db
@@ -459,6 +476,8 @@ export function unseenMentions(db, userId) {
       FROM comment_mentions cm JOIN comments m ON m.id=cm.comment_id JOIN captures c ON c.id=m.capture_id JOIN users u ON u.id=m.author_id
       WHERE cm.user_id=? AND cm.seen_at IS NULL AND m.deleted_at IS NULL AND c.deleted_at IS NULL ORDER BY m.created_at`)
     .all(userId)
+    // Убрали из записи — старый призыв не должен звать туда, куда не пустят.
+    .filter(row => canSeeCapture(db, row.capture_id, userId))
     .map(row => ({
       commentId: row.comment_id,
       captureId: row.capture_id,
@@ -477,6 +496,69 @@ export function commentCounts(db, captureIds) {
   return new Map(
     db.prepare(`SELECT capture_id, COUNT(*) AS n FROM comments WHERE deleted_at IS NULL AND capture_id IN (${marks}) GROUP BY capture_id`).all(...captureIds).map(row => [row.capture_id, row.n]),
   );
+}
+
+// ── участники записи ──
+
+// Позванный в запись видит эту одну запись — не круг и не журнал автора.
+// Строка не удаляется: «убрать» и «не следить» ставят removed_at, а новый
+// призыв возвращает человека.
+export function isParticipant(db, captureId, userId) {
+  return Boolean(db.prepare('SELECT 1 FROM capture_people WHERE capture_id=? AND user_id=? AND removed_at IS NULL').get(captureId, userId));
+}
+export function captureParticipants(db, captureId) {
+  return db
+    .prepare(`SELECT p.added_at, p.added_by, u.* FROM capture_people p JOIN users u ON u.id=p.user_id
+      WHERE p.capture_id=? AND p.removed_at IS NULL ORDER BY p.added_at`)
+    .all(captureId)
+    .map(row => ({ ...publicUser(row), addedAt: row.added_at, addedBy: row.added_by }));
+}
+function addParticipant(db, captureId, userId, addedBy, at = now()) {
+  db.prepare(`INSERT INTO capture_people(capture_id,user_id,added_by,added_at) VALUES(?,?,?,?)
+    ON CONFLICT(capture_id,user_id) DO UPDATE SET added_by=excluded.added_by, added_at=excluded.added_at, removed_at=NULL`).run(captureId, userId, addedBy, at);
+}
+// Убрать может автор записи; сам себя — любой позванный («не следить»).
+export function removeParticipant(db, captureId, actorId, personId) {
+  const capture = db.prepare('SELECT user_id FROM captures WHERE id=? AND deleted_at IS NULL').get(captureId);
+  if (!capture) return { error: 'not_found' };
+  if (capture.user_id !== actorId && actorId !== personId) return { error: 'not_owner' };
+  const result = db.prepare('UPDATE capture_people SET removed_at=? WHERE capture_id=? AND user_id=? AND removed_at IS NULL').run(now(), captureId, personId);
+  if (!result.changes) return { error: 'not_found' };
+  return { participants: captureParticipants(db, captureId) };
+}
+// «Обсуждения»: записи, где идёт разговор с людьми, — куда позвали меня, где я
+// позвал других, и записи моих кругов, в которых уже что-то написано. Свежие
+// сверху; точка — непрочитанный призыв.
+export function discussions(db, userId) {
+  const rows = db
+    .prepare(`SELECT c.id, c.raw, c.user_id FROM captures c WHERE c.deleted_at IS NULL AND (
+        c.id IN (SELECT capture_id FROM capture_people WHERE user_id=? AND removed_at IS NULL)
+        OR (c.user_id=? AND c.id IN (SELECT capture_id FROM capture_people WHERE removed_at IS NULL))
+        OR (c.id IN (SELECT cc.capture_id FROM capture_circles cc JOIN circle_members m ON m.circle_id=cc.circle_id
+              WHERE m.user_id=? AND m.left_at IS NULL AND cc.removed_at IS NULL)
+            AND c.id IN (SELECT capture_id FROM comments WHERE deleted_at IS NULL)))`)
+    .all(userId, userId, userId);
+  const last = db.prepare(`SELECT m.body, m.created_at, u.* FROM comments m JOIN users u ON u.id=m.author_id
+    WHERE m.capture_id=? AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1`);
+  const unseen = db.prepare(`SELECT COUNT(*) AS n FROM comment_mentions cm JOIN comments m ON m.id=cm.comment_id
+    WHERE cm.user_id=? AND cm.seen_at IS NULL AND m.capture_id=? AND m.deleted_at IS NULL`);
+  const owners = db.prepare('SELECT * FROM users WHERE id=?');
+  return rows
+    .map(row => {
+      const message = last.get(row.id);
+      return {
+        captureId: row.id,
+        title: titleOf(db, row.id, row.raw),
+        mine: row.user_id === userId,
+        author: row.user_id ? publicUser(owners.get(row.user_id)) : null,
+        people: captureParticipants(db, row.id),
+        count: commentCounts(db, [row.id]).get(row.id) || 0,
+        last: message ? { body: message.body.slice(0, 160), at: message.created_at, author: publicUser(message) } : null,
+        unread: unseen.get(userId, row.id).n > 0,
+      };
+    })
+    .sort((left, right) => (right.last?.at || '').localeCompare(left.last?.at || ''))
+    .slice(0, 100);
 }
 
 // ── полоса «к вам» ──

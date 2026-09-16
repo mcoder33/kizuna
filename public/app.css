@@ -7085,3 +7085,87 @@ body {
 .candidate-add { color: var(--coral); font-size: 12.5px; font-weight: 600; opacity: 0; flex: none; }
 .people-row.candidate:hover .candidate-add, .people-row.candidate:focus-visible .candidate-add { opacity: 1; }
 @media (hover: none) { .candidate-add { opacity: 1; } }
+
+/* ── участники записи: кто видит, подтверждение призыва, «Обсуждения» ──────── */
+.talk-faces { display: inline-flex; align-items: center; }
+.talk-faces .ava.mini { margin-left: -5px; box-shadow: 0 0 0 2px var(--paper); }
+.talk-faces .ava.mini:first-child { margin-left: 0; }
+#review-dialog .talk-faces .ava.mini { box-shadow: 0 0 0 2px var(--nt-bg); }
+#review-dialog .card-talk-open .talk-faces { margin-left: 2px; }
+#review-dialog .talk-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 8px;
+  padding: 3px 8px;
+  background: transparent;
+  color: var(--nt-secondary);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#review-dialog .talk-who:hover:not(:disabled) { background: var(--nt-hover); color: var(--nt-text); }
+#review-dialog .talk-who:disabled { cursor: default; color: var(--nt-tertiary); }
+#review-dialog .talk-people {
+  margin: 8px 0 0;
+  padding: 6px;
+  border: 1px solid var(--nt-divider);
+  border-radius: 12px;
+  background: var(--nt-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13.5px;
+}
+#review-dialog .talk-people[hidden] { display: none; }
+#review-dialog .talk-person { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 8px; }
+#review-dialog .talk-person-name { flex: 1; min-width: 0; color: var(--nt-text); }
+#review-dialog .talk-person small { color: var(--nt-tertiary); font-size: 12px; }
+#review-dialog .talk-person-act { font-size: 12.5px; color: var(--nt-red); }
+#review-dialog .talk-leave { align-self: flex-start; margin: 4px 6px 2px; font-size: 13px; color: var(--nt-red); }
+#review-dialog .talk-people-hint { margin: 4px 6px 2px; font-size: 12px; color: var(--nt-tertiary); }
+#review-dialog .talk-joined {
+  margin: 6px 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--nt-tertiary);
+}
+#review-dialog .talk-confirm {
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--nt-callout-yellow);
+  border-radius: 12px;
+  background: var(--nt-callout-yellow);
+  color: var(--nt-text);
+  font-size: 13.5px;
+}
+#review-dialog .talk-confirm[hidden] { display: none; }
+#review-dialog .talk-confirm p { margin: 0 0 8px; }
+#review-dialog .talk-confirm-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.mention-note { margin-left: auto; font-size: 11px; color: var(--n-66); }
+
+.circle-tab-count {
+  display: inline-block; margin-left: 6px; min-width: 16px; padding: 0 5px; border-radius: 999px;
+  background: var(--coral); color: #fff; font-size: 10.5px; font-weight: 700; line-height: 16px; text-align: center;
+}
+.talks { display: flex; flex-direction: column; margin-top: 14px; }
+.talk-row {
+  display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 12px;
+  width: 100%; padding: 11px 8px; border: 0; border-bottom: 1px solid var(--line); background: none;
+  font: inherit; color: var(--ink); text-align: left; cursor: pointer; border-radius: 0;
+}
+.talk-row:hover { background: var(--pop-tile); }
+.talk-dot { width: 7px; height: 7px; border-radius: 50%; }
+.talk-row.unread .talk-dot { background: var(--coral); }
+.talk-main { display: flex; flex-direction: column; min-width: 0; }
+.talk-title { font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.talk-row.unread .talk-title { font-weight: 600; }
+.talk-meta { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.talk-side { display: flex; align-items: center; gap: 8px; }
+.talk-side small { font-size: 12px; color: var(--muted); white-space: nowrap; }
+@media (max-width: 560px) { .talk-side small { display: none; } }

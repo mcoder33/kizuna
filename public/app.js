@@ -580,7 +580,7 @@ function appendEntries(container, entries, emptyText, options) {
 // и два ящика: «Что делал» и «День», где дела лежат вместе с календарём.
 // Заметок на главной нет: они живут в «Обзоре», поиске и карточке записи.
 const TODAY_ZONE = "Europe/Samara";
-const circlesState = { circles: [], me: null, loading: false, tab: "chat" };
+const circlesState = { circles: [], me: null, loading: false, tab: "chat", discussions: [] };
 const todayState = {
   view: 0,            // смещение дня, показанного в «Дне», от сегодняшнего
   journalView: 0,     // то же для «Что делал»: у ящиков свои дни
@@ -1790,6 +1790,7 @@ function circleRow(entry) {
 }
 // Призвать можно только того, кто в круге этой записи: звать в пустоту и ждать
 // ответа — худшее, что может сделать интерфейс, поэтому подсказка закрытая.
+const MENTION_GROUPS = { record: "в записи", circles: "из ваших кругов", everyone: "все в Кизуне" };
 function mentionPopup(field, callable, onPick) {
   const pop = node("div", undefined, "mention-pop");
   pop.hidden = true;
@@ -1797,14 +1798,23 @@ function mentionPopup(field, callable, onPick) {
   const close = () => { pop.hidden = true; from = -1; };
   const paint = (query) => {
     clear(pop);
-    items = callable.filter((person) => !query || person.name.toLowerCase().startsWith(query.toLowerCase()));
+    const needle = query.toLowerCase();
+    items = callable.filter((person) => !needle || person.name.toLowerCase().startsWith(needle) || String(person.email || "").toLowerCase().startsWith(needle)).slice(0, 8);
     if (!items.length) { close(); return; }
     active = Math.min(active, items.length - 1);
-    pop.append(node("p", "призвать", "mention-cap"));
+    // В карточке записи люди идут группами: кто запись уже видит, люди из
+    // ваших кругов и все остальные — позвать последних значит поделиться.
+    let group = null;
+    if (!items.some((person) => person.group)) pop.append(node("p", "призвать", "mention-cap"));
     items.forEach((person, index) => {
+      if (person.group && person.group !== group) {
+        group = person.group;
+        pop.append(node("p", MENTION_GROUPS[group] || "призвать", "mention-cap"));
+      }
       const row = node("button", undefined, `mention-row${index === active ? " on" : ""}`);
       row.type = "button";
       row.append(avatarEl(person, { size: "mini" }), node("span", person.name));
+      if (person.group && person.group !== "record") row.append(node("small", "увидит запись", "mention-note"));
       row.addEventListener("mousedown", (event) => { event.preventDefault(); pick(index); });
       pop.append(row);
     });
@@ -1877,10 +1887,10 @@ function dropCardTalk() {
 }
 function cardDiscussion(entry) {
   let comments = entry.comments || [];
+  let participants = entry.participants || [];
   const callable = entry.callable || [];
   const openNow = cardTalkOnOpen;
   cardTalkOnOpen = false;
-  if (!comments.length && !callable.length) return null;
   const dialog = $("#review-dialog");
   const opener = node("button", undefined, "card-talk-open");
   opener.type = "button";
@@ -1891,10 +1901,17 @@ function cardDiscussion(entry) {
   const scrim = node("div", undefined, "talk-scrim");
   const top = node("div", undefined, "talk-head");
   const head = node("p", undefined, "prop-section");
+  // Кто видит запись — всегда на виду: лица в шапке листа, по клику список,
+  // где автор убирает позванных, а позванный может уйти сам.
+  const whoButton = node("button", undefined, "talk-who");
+  whoButton.type = "button";
+  whoButton.setAttribute("aria-haspopup", "true");
+  const whoMenu = node("div", undefined, "talk-people");
+  whoMenu.hidden = true;
   const shut = node("button", undefined, "talk-close");
   shut.type = "button";
   shut.setAttribute("aria-label", "Свернуть обсуждение");
-  top.append(head, shut);
+  top.append(head, whoButton, shut);
   const grip = node("div", undefined, "talk-grip");
   grip.tabIndex = 0;
   grip.setAttribute("role", "separator");
@@ -1903,12 +1920,93 @@ function cardDiscussion(entry) {
   grip.title = "Потяните, чтобы изменить высоту · двойной клик — как было";
   const sizeTip = node("span", undefined, "talk-size");
   const list = node("div", undefined, "thread-list");
+  const myId = currentUser?.id;
+  const mine = entry.mine !== false;
+  const author = mine ? null : entry.author;
+  // Все, кто видит запись, кроме меня: автор чужой записи, позванные и круг.
+  const seers = () => {
+    const people = new Map();
+    if (author) people.set(author.id, author);
+    for (const person of participants) people.set(person.id, person);
+    for (const person of callable) if (person.group === "record") people.set(person.id, person);
+    people.delete(myId);
+    return [...people.values()];
+  };
+  const paintWho = () => {
+    const others = seers();
+    clear(whoButton);
+    if (!others.length) { whoButton.append(node("span", "видите только вы")); whoButton.disabled = true; whoMenu.hidden = true; return; }
+    whoButton.disabled = false;
+    const faces = node("span", undefined, "talk-faces");
+    for (const person of others.slice(0, 4)) faces.append(avatarEl(person, { size: "mini" }));
+    const names = others.map((person) => person.name);
+    whoButton.append(faces, node("span", names.length > 2 ? `вы, ${names[0]} и ещё ${names.length - 1}` : `вы и ${names.join(", ")}`));
+    clear(whoMenu);
+    const row = (person, note, action) => {
+      const line = node("div", undefined, "talk-person");
+      line.append(avatarEl(person, { size: "mini" }), node("span", person.name, "talk-person-name"));
+      if (action) {
+        const button = node("button", note, "text-button talk-person-act");
+        button.type = "button";
+        button.addEventListener("click", action);
+        line.append(button);
+      } else line.append(node("small", note));
+      whoMenu.append(line);
+    };
+    if (author) row(author, "автор");
+    for (const person of participants) {
+      if (person.id === myId) continue;
+      row(person, mine ? "убрать" : "позван", mine ? () => removePerson(person) : null);
+    }
+    const inRecord = new Set(participants.map((person) => person.id));
+    for (const person of callable) if (person.group === "record" && !inRecord.has(person.id) && person.id !== author?.id) row(person, "из круга");
+    if (!mine && participants.some((person) => person.id === myId)) {
+      const leave = node("button", "Не следить — убрать запись у себя", "text-button talk-leave");
+      leave.type = "button";
+      leave.addEventListener("click", () => removePerson({ id: myId }, { self: true }));
+      whoMenu.append(leave);
+    }
+    whoMenu.append(node("p", "Позвать ещё — напишите @имя в сообщении", "talk-people-hint"));
+  };
+  const removePerson = async (person, { self = false } = {}) => {
+    try {
+      const result = await request(`/api/captures/${entry.id}/people/${person.id}`, { method: "DELETE" });
+      if (self) {
+        toast("Запись убрана у вас: новый призыв вернёт её");
+        closeCard();
+        load();
+        return;
+      }
+      participants = result.participants;
+      entry.participants = participants;
+      toast(`${person.name} больше не видит запись`);
+      paint();
+    } catch (error) { toast(error.message || "Не получилось"); }
+  };
+  whoButton.addEventListener("click", () => { whoMenu.hidden = !whoMenu.hidden; });
+  const paintOpener = () => {
+    clear(opener);
+    opener.append(node("span", comments.length ? `Обсуждение · ${comments.length}` : "Обсудить"));
+    if (participants.length) {
+      const faces = node("span", undefined, "talk-faces");
+      for (const person of participants.filter((item) => item.id !== myId).slice(0, 3)) faces.append(avatarEl(person, { size: "mini" }));
+      if (faces.childElementCount) opener.append(faces);
+    }
+  };
   const paint = () => {
     head.textContent = comments.length ? `Обсуждение · ${comments.length}` : "Обсуждение";
-    opener.textContent = comments.length ? `Обсуждение · ${comments.length}` : "Обсудить";
+    paintOpener();
+    paintWho();
     clear(list);
-    if (!comments.length) list.append(node("p", "Пока тихо. Напишите — и позовите, кто нужен, через @имя.", "empty"));
-    for (const comment of comments) {
+    if (!comments.length)
+      list.append(node("p", seers().length ? "Пока тихо. Напишите — и позовите, кто нужен, через @имя." : "Это реплики для себя. Позовите кого-то через @ — и он увидит запись.", "empty"));
+    // Строка «Аня — в обсуждении» стоит в ленте там, где человека позвали:
+    // видно, с какого места он читает разговор вместе со всеми.
+    const joins = participants.map((person) => ({ at: person.addedAt, person }));
+    const timeline = [...comments.map((comment) => ({ at: comment.createdAt, comment })), ...joins].sort((left, right) => left.at.localeCompare(right.at) || (left.person ? -1 : 0) - (right.person ? -1 : 0));
+    for (const item of timeline) {
+      if (item.person) { list.append(node("p", `${item.person.id === myId ? "Вы" : item.person.name} — в обсуждении`, "talk-joined")); continue; }
+      const comment = item.comment;
       const row = node("div", undefined, `msg${comment.parentId ? " reply" : ""}`);
       row.append(avatarEl(comment.author));
       const main = node("div", undefined, "msg-main");
@@ -1937,45 +2035,74 @@ function cardDiscussion(entry) {
   const composer = node("div", undefined, "thread-composer");
   const field = node("textarea", undefined, "thread-input");
   field.rows = 1;
-  field.placeholder = callable.length ? "Написать… @ — призвать" : "Написать…";
+  field.placeholder = callable.length ? "Написать… @ — позвать" : "Написать…";
   field.setAttribute("aria-label", "Сообщение в обсуждение");
   const send = node("button", "Отправить", "mini primary");
   send.type = "button";
-  const submit = async () => {
-    const body = field.value.trim();
+  // Позвать того, кто запись ещё не видит, — значит поделиться ею. Сервер
+  // отвечает share_needed, и над полем встаёт строка с выбором: журнал
+  // личный, молча он не открывается никому.
+  const confirm = node("div", undefined, "talk-confirm");
+  confirm.hidden = true;
+  const askShare = (people, body) => {
+    clear(confirm);
+    const names = people.map((person) => person.name);
+    const text = node("p");
+    text.append(node("b", `${names.join(", ")} ${names.length > 1 ? "получат" : "получит"} доступ к этой записи`), document.createTextNode(": заголовок, заметки, файлы и всё обсуждение, включая прошлые реплики."));
+    const acts = node("div", undefined, "talk-confirm-acts");
+    const go = node("button", "Позвать и отправить", "mini primary");
+    const quiet = node("button", "Отправить без призыва", "mini");
+    const edit = node("button", "Изменить", "mini");
+    for (const button of [go, quiet, edit]) button.type = "button";
+    go.addEventListener("click", () => submit("yes", body));
+    quiet.addEventListener("click", () => submit("no", body));
+    edit.addEventListener("click", () => { confirm.hidden = true; field.focus(); });
+    acts.append(go, quiet, edit);
+    confirm.append(text, acts);
+    confirm.hidden = false;
+    go.focus();
+  };
+  const submit = async (share = null, sameBody = null) => {
+    const body = sameBody ?? field.value.trim();
     if (!body) return;
     send.disabled = true;
     try {
-      const result = await request(`/api/captures/${entry.id}/comments`, { method: "POST", body: JSON.stringify({ body }) });
-      comments = [...comments, result.comment];
+      const response = await fetch(`/api/captures/${entry.id}/comments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(share ? { body, share } : { body }) });
+      const data = await response.json().catch(() => null);
+      if (response.status === 401) { location.replace("/login"); return; }
+      if (response.status === 409 && data?.error?.code === "share_needed") { askShare(data.people || [], body); return; }
+      if (!response.ok) throw new Error(data?.error?.message || "Сообщение не ушло");
+      confirm.hidden = true;
+      comments = [...comments, data.comment];
       entry.comments = comments;
+      participants = data.participants || participants;
+      entry.participants = participants;
       field.value = "";
       field.style.height = "auto";
       paint();
       toBottom();
-      if (result.comment.mentions.length) toast(`Призвали: ${result.comment.mentions.map((person) => person.name).join(", ")}`);
+      if (data.comment.mentions.length) toast(`Позвали: ${data.comment.mentions.map((person) => person.name).join(", ")}`);
     } catch (error) { toast(error.message || "Сообщение не ушло"); }
-    finally { send.disabled = false; field.focus(); }
+    finally { send.disabled = false; if (confirm.hidden) field.focus(); }
   };
-  send.addEventListener("click", submit);
+  send.addEventListener("click", () => submit());
   field.addEventListener("keydown", (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); submit(); }
   });
   field.addEventListener("input", () => { field.style.height = "auto"; field.style.height = `${Math.min(field.scrollHeight, 200)}px`; });
   composer.append(field, mentionPopup(field, callable, () => {}), send);
-  wrap.append(grip, sizeTip, top, list);
+  wrap.append(grip, sizeTip, top, whoMenu, list);
   const applyHeight = (value) => {
     if (value == null) wrap.style.removeProperty("height");
     else wrap.style.height = `${value}%`;
     grip.setAttribute("aria-valuenow", String(Math.round(value ?? 0)));
   };
   applyHeight(storedTalkHeight());
-  // Из круга ушли — прочитать разговор можно, написать в него уже некому.
-  if (callable.length) wrap.append(composer);
+  wrap.append(confirm, composer);
   const setOpen = (open) => {
     dialog.classList.toggle("talk-open", open);
     opener.setAttribute("aria-expanded", String(open));
-    if (open) { toBottom(); if (callable.length) field.focus({ preventScroll: true }); }
+    if (open) { toBottom(); field.focus({ preventScroll: true }); }
     else opener.focus({ preventScroll: true });
   };
   opener.addEventListener("click", () => setOpen(true));
@@ -2485,9 +2612,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   flushCardProps = saveProps;
   // Enter в поле свойства раньше отправлял форму; отправлять больше нечего.
   form.addEventListener("submit", (event) => event.preventDefault());
-  const talk = cardDiscussion(entry);
-  if (!talk) dropCardTalk();
-  area.append(form, ...(talk ? [talk] : []), cardBody(entry));
+  area.append(form, cardDiscussion(entry), cardBody(entry));
   // Футер прижат к низу листа и собран в строку: вложения, «когда записано»,
   // источник и удаление — служебный подвал, а не столбик в теле карточки.
   const footer = node("div", undefined, "card-footer");
@@ -2578,8 +2703,9 @@ function showReview(entry, review, undoGroupId, provenance) {
   if (entry.mine === false) {
     for (const control of props.querySelectorAll("input, select, textarea, button")) control.disabled = true;
     remove.hidden = true;
-    const author = entry.assignment?.assigner?.name;
-    const line = node("p", `${author ? `Автор записи — ${author}. ` : ""}Правит её автор: что нужно поменять — скажите в обсуждении.`, "card-foreign");
+    const author = entry.author?.name || entry.assignment?.assigner?.name;
+    const called = !entry.assignment && (entry.participants || []).some((person) => person.id === currentUser?.id);
+    const line = node("p", `${author ? `Автор записи — ${author}. ` : ""}${called ? "Вас позвали в обсуждение: запись видна вам, правит её автор." : "Правит её автор: что нужно поменять — скажите в обсуждении."}`, "card-foreign");
     props.before(line);
   }
   // Отправить встречу во внешний календарь можно только отсюда, кнопкой:
@@ -5471,6 +5597,7 @@ async function loadCircles({ then = null } = {}) {
     circlesState.circles = data.circles || [];
     circlesState.me = data.me || null;
     renderCircles();
+    refreshDiscussions();
     // Первый заход открывает первый разговор сам: пустая правая половина
     // страницы не говорит человеку, что здесь вообще разговаривают.
     if (then) await then();
@@ -5652,11 +5779,12 @@ function renderCircles() {
   clear(body);
   const lead = node("p", "Круг — не второй журнал, а общая полка: день у вас остаётся один. Здесь люди, граница и разговор.", "circles-lead");
   body.append(lead);
+  body.append(tabsEl());
+  if (circlesState.tab === "talks") { body.append(discussionsEl()); return; }
   if (!circlesState.circles.length)
     body.append(node("p", "Кругов пока нет. Заведите первый — и позовите в него ссылкой того, с кем есть общее дело.", "empty"));
   if (circlesState.circles.length) {
     const circle = circlesState.circles.find((item) => item.id === activeRoom()?.circleId) || circlesState.circles[0];
-    body.append(tabsEl());
     if (circlesState.tab === "people") {
       for (const item of circlesState.circles) body.append(circleCardEl(item));
       body.append(circleRulesEl());
@@ -5692,17 +5820,71 @@ function renderCircles() {
   adder.append(input, submit);
   body.append(adder, circleRulesEl());
 }
-// Две половины одного круга: разговор и люди с границей. Больше на странице
-// круга ничего не появится — ни ленты, ни своей доски.
+// Две половины одного круга — разговор и люди с границей — и третья вкладка
+// поверх кругов: «Обсуждения», разговоры в отдельных записях, в том числе без
+// круга. Больше на странице ничего не появится — ни ленты, ни своей доски.
 function tabsEl() {
   const tabs = node("div", undefined, "circle-tabs");
-  for (const [key, label] of [["chat", "Разговор"], ["people", "Люди и граница"]]) {
+  const unread = circlesState.discussions.filter((item) => item.unread).length;
+  for (const [key, label] of [["chat", "Разговор"], ["people", "Люди и граница"], ["talks", "Обсуждения"]]) {
     const button = node("button", label, `circle-tab${circlesState.tab === key ? " on" : ""}`);
+    if (key === "talks" && unread) button.append(node("span", String(unread), "circle-tab-count"));
+    button.dataset.tab = key;
     button.type = "button";
     button.addEventListener("click", () => { circlesState.tab = key; renderCircles(); });
     tabs.append(button);
   }
   return tabs;
+}
+// «Обсуждения» подтягиваются отдельно и не перерисовывают страницу целиком:
+// иначе поле поиска или только что заведённая ссылка на другой вкладке
+// пропадали бы из-под рук.
+async function refreshDiscussions() {
+  try {
+    const data = await request("/api/discussions");
+    circlesState.discussions = data.discussions || [];
+  } catch { return; }
+  const tab = document.querySelector('.circle-tab[data-tab="talks"]');
+  if (tab) {
+    tab.querySelector(".circle-tab-count")?.remove();
+    const unread = circlesState.discussions.filter((item) => item.unread).length;
+    if (unread) tab.append(node("span", String(unread), "circle-tab-count"));
+  }
+  const list = document.querySelector("#circles-body .talks");
+  if (list) list.replaceWith(discussionsEl());
+}
+// Все записи, где идёт разговор с людьми: куда позвали вас и куда позвали вы.
+// Строка «к вам» гаснет, как только призыв прочитан, — а запись отсюда не
+// пропадает.
+function discussionsEl() {
+  const wrap = node("section", undefined, "talks");
+  const items = circlesState.discussions;
+  if (!items.length) {
+    wrap.append(node("p", "Разговоров в записях пока нет. Откройте любую запись, нажмите «Обсудить» и позовите человека через @ — круг для этого не нужен.", "empty"));
+    return wrap;
+  }
+  for (const item of items) {
+    const row = node("button", undefined, `talk-row${item.unread ? " unread" : ""}`);
+    row.type = "button";
+    const dot = node("i", undefined, "talk-dot");
+    dot.setAttribute("aria-hidden", "true");
+    const main = node("span", undefined, "talk-main");
+    main.append(node("span", item.title, "talk-title"));
+    const meta = node("span", undefined, "talk-meta");
+    const whose = item.mine ? "ваша запись" : `запись ${item.author?.name || "другого человека"}`;
+    meta.append(node("span", item.last ? `${item.last.author.name}: «${item.last.body}»` : whose));
+    main.append(meta);
+    const side = node("span", undefined, "talk-side");
+    const faces = node("span", undefined, "talk-faces");
+    const people = [item.mine ? null : item.author, ...item.people].filter((person) => person && person.id !== currentUser?.id);
+    for (const person of people.slice(0, 3)) faces.append(avatarEl(person, { size: "mini" }));
+    side.append(faces, node("small", item.last ? agoWords(item.last.at) || "" : whose));
+    row.append(dot, main, side);
+    if (item.unread) row.setAttribute("aria-label", `${item.title} — есть новый призыв`);
+    row.addEventListener("click", () => openSharedCard(item.captureId, { talk: true }));
+    wrap.append(row);
+  }
+  return wrap;
 }
 // Поле «+ Круг» одно и то же в обоих видах страницы.
 function paintCircleAdder(adder) {

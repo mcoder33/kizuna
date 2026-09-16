@@ -338,6 +338,8 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     assignment: circles.assignmentFor(db, captureId),
     comments: circles.comments(db, captureId),
     callable: circles.callableFor(db, captureId, userId),
+    participants: circles.captureParticipants(db, captureId),
+    author: (() => { const owner = captureOwner(db, captureId); const user = owner && findUserById(db, owner); return user ? circles.publicUser(user) : null; })(),
     myCircles: circles.circlesOf(db, userId),
     mine: captureOwner(db, captureId) === userId,
   });
@@ -479,8 +481,11 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
 
   // Обсуждение живёт в карточке записи, последним блоком после заметки.
   // Призыв @имя — единственное, что порождает у человека строку.
-  app.get('/api/captures/:id/comments',(req,res,next)=>{try{if(!seesCapture(req,res,req.params.id))return;circles.markMentionsSeen(db,req.params.id,req.user.id);res.json({comments:circles.comments(db,req.params.id),callable:circles.callableFor(db,req.params.id,req.user.id)});}catch(error){next(error);}});
-  app.post('/api/captures/:id/comments',(req,res,next)=>{try{if(!seesCapture(req,res,req.params.id))return;const result=circles.addComment(db,{captureId:req.params.id,authorId:req.user.id,body:req.body?.body,parentId:req.body?.parentId||null});if(result.error)return circleError(res,result.error);notifyCircle(req.params.id,result.comment.mentions.map(person=>person.id));notifyJournal('comment');res.status(201).json(result);}catch(error){next(error);}});
+  app.get('/api/captures/:id/comments',(req,res,next)=>{try{if(!seesCapture(req,res,req.params.id))return;circles.markMentionsSeen(db,req.params.id,req.user.id);res.json({comments:circles.comments(db,req.params.id),callable:circles.callableFor(db,req.params.id,req.user.id),participants:circles.captureParticipants(db,req.params.id)});}catch(error){next(error);}});
+  app.post('/api/captures/:id/comments',(req,res,next)=>{try{if(!seesCapture(req,res,req.params.id))return;const share=['yes','no'].includes(req.body?.share)?req.body.share:null;const result=circles.addComment(db,{captureId:req.params.id,authorId:req.user.id,body:req.body?.body,parentId:req.body?.parentId||null,share});if(result.error==='share_needed')return res.status(409).json({error:{code:'share_needed',message:'Позванные ещё не видят эту запись.'},people:result.people});if(result.error)return circleError(res,result.error);notifyCircle(req.params.id,[...result.comment.mentions.map(person=>person.id),...result.participants.map(person=>person.id)]);notifyJournal('comment');res.status(201).json(result);}catch(error){next(error);}});
+  // Убрать человека из записи может автор; уйти сам («не следить») — любой позванный.
+  app.delete('/api/captures/:id/people/:userId',(req,res,next)=>{try{if(!seesCapture(req,res,req.params.id))return;const result=circles.removeParticipant(db,req.params.id,req.user.id,req.params.userId);if(result.error)return circleError(res,result.error);notifyCircle(req.params.id,[req.params.userId]);res.json(result);}catch(error){next(error);}});
+  app.get('/api/discussions',(req,res,next)=>{try{res.json({discussions:circles.discussions(db,req.user.id)});}catch(error){next(error);}});
 
   // Имя человека: до кругов его не спрашивали, потому что некому было
   // показывать. Теперь оно стоит в «просит …» и в подсказке призыва.

@@ -450,6 +450,17 @@ function migrateUsers(db) {
   const briefColumns = new Set(db.prepare('PRAGMA table_info(daily_briefs)').all().map(column => column.name));
   if (!briefColumns.has('user_id')) migrateDailyBriefsPerUser(db);
   migrateCircles(db);
+  migrateCaptureParticipants(db);
+}
+// Участники записи: кого позвали в обсуждение одной записи без круга. Позванный
+// видит эту запись и её разговор — и больше ничего из журнала автора.
+function migrateCaptureParticipants(db) {
+  db.exec(`CREATE TABLE IF NOT EXISTS capture_people (
+      capture_id TEXT NOT NULL REFERENCES captures(id), user_id TEXT NOT NULL REFERENCES users(id),
+      added_by TEXT REFERENCES users(id), added_at TEXT NOT NULL, removed_at TEXT,
+      PRIMARY KEY(capture_id, user_id));
+    CREATE INDEX IF NOT EXISTS capture_people_user ON capture_people(user_id, removed_at);`);
+  db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(19, now());
 }
 // Круги: общая полка поверх личных журналов. Запись остаётся у автора, в круг
 // её кладёт отдельная строка `capture_circles` — так «убрать из круга» не
@@ -1233,6 +1244,7 @@ const ownedRows = {
   assignments: [MINE, 1],
   comments: [MINE, 1],
   comment_mentions: ['comment_id IN (SELECT id FROM comments WHERE ' + MINE + ')', 1],
+  capture_people: [MINE, 1],
 };
 const mineWhere = table => 'WHERE ' + ownedRows[table][0];
 function exportRowCount(db, userId) { return exportTables.reduce((total, table) => total + db.prepare(`SELECT COUNT(*) AS count FROM ${table} ${mineWhere(table)}`).get(userId).count, 0); }
@@ -1267,7 +1279,7 @@ export function resetLedger(db, userId = null) {
     db.exec('DROP TRIGGER IF EXISTS ledger_events_no_update; DROP TRIGGER IF EXISTS ledger_events_no_delete;');
     try {
       // Порядок важен: сначала то, что ссылается, потом то, на что ссылаются.
-      for (const table of ['agent_memories','activity_events','reminder_sends','daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','comment_mentions','comments','assignments','capture_circles','interpretations','capture_attachments','capture_notes','usage_events','board_placements','board_columns','calendar_links','calendar_events','calendar_accounts','captures']) db.prepare(`DELETE FROM ${table} ${mineWhere(table)}`).run(userId);
+      for (const table of ['agent_memories','activity_events','reminder_sends','daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','comment_mentions','comments','capture_people','assignments','capture_circles','interpretations','capture_attachments','capture_notes','usage_events','board_placements','board_columns','calendar_links','calendar_events','calendar_accounts','captures']) db.prepare(`DELETE FROM ${table} ${mineWhere(table)}`).run(userId);
     } finally { createLedgerEventGuards(db); }
   });
 }
