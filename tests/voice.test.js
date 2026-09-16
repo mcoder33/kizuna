@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server/index.js';
 import { authed } from './helpers/auth.js';
-import { createVoiceService, runVoiceTool, mockVoiceTurn, pickVoiceProvider, geminiTools, openaiVoiceModels, geminiVoiceModels, VOICE_TOOLS, VOICE_INSTRUCTIONS, GEMINI_LIVE_URL, RELAY_PATH } from '../server/voice.js';
+import { createVoiceService, runVoiceTool, mockVoiceTurn, pickVoiceProvider, geminiTools, openaiVoiceModels, geminiVoiceModels, voiceContext, VOICE_TOOLS, VOICE_INSTRUCTIONS, GEMINI_LIVE_URL, RELAY_PATH } from '../server/voice.js';
 import { openDatabase, createLedger } from '../server/db.js';
 import { normalizeClassification } from '../server/classifier.js';
 import { fakeModelService } from './helpers/fake-model.js';
@@ -41,6 +41,7 @@ test('voice tools are declared once and shared by both modes', () => {
   const names = VOICE_TOOLS.map((tool) => tool.name);
   assert.deepEqual(names, [
     'create_capture',
+    'current_time',
     'search_memory',
     'list_today',
     'journal_overview',
@@ -682,4 +683,19 @@ test('the models endpoint tells the browser what it can talk with', async () => 
   assert.ok(body.models.gemini.length, 'без ключа Google остаётся запасной список');
   // Ключ наружу не уходит и здесь.
   assert.equal(JSON.stringify(body).includes('sk-test-key'), false);
+});
+
+test('разговор знает, который сейчас час: в снимке и отдельным инструментом', () => {
+  const db = database();
+  const at = new Date('2026-09-16T10:25:00+04:00');
+  // Снимок журнала открывается временем, а не одной датой: «через час» и
+  // «до конца дня» иначе считаются наугад.
+  const context = voiceContext(db, { now: at, timeZone: 'Europe/Samara' });
+  assert.match(context.briefing, /\nСейчас среда, 16 сентября 2026, 10:25 \(Europe\/Samara\)\./);
+  // И то же самое — инструментом, потому что снимок стареет за разговор.
+  const clock = runVoiceTool(db, 'current_time', {}, { now: () => at, timeZone: 'Europe/Samara' });
+  assert.deepEqual(clock, { date: '2026-09-16', time: '10:25', weekday: 'среда', words: 'среда, 16 сентября 2026, 10:25', timeZone: 'Europe/Samara' });
+  // Инструмент объявлен модели, иначе она о нём не узнает.
+  assert.ok(VOICE_TOOLS.some(tool => tool.name === 'current_time'));
+  assert.match(VOICE_INSTRUCTIONS, /current_time/);
 });

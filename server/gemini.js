@@ -163,7 +163,7 @@ export function createGeminiProvider({ config, fetch: fetchImplementation = glob
         systemInstruction: { parts: [{ text: system }] },
         contents: [{ role: 'user', parts: [{ text: user }] }],
         generationConfig: {
-          temperature: 0,
+          temperature: config.tuning?.temperature ?? 0,
           maxOutputTokens: 3000,
           responseMimeType: 'application/json',
           responseSchema: geminiSchema(JSON.parse(schema)),

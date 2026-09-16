@@ -418,6 +418,32 @@ async function updateCompletion(projections, complete, button) {
 // «без срока» — у большинства, а время записи в списке дня не нужно вовсе, оно
 // есть в карточке. Двенадцать дел двухэтажными плашками читались как стена, и
 // встречи из-за них уезжали за нижний край экрана.
+// Быстрый срок: просроченное дело чаще всего просто переносят, и ради этого
+// открывать карточку незачем. Повтор сюда не попадает — там перенос значит
+// «сдвинуть серию», и это решение принимают в карточке.
+async function quickDue(entry, days) {
+  const schedule = entry.interpretation.classification.entities.schedule || null;
+  const date = days === null ? null : shiftDate(currentDayDate || zoneDate(new Date()), days);
+  try {
+    await request(`/api/captures/${entry.id}/corrections`, {
+      method: "POST",
+      body: JSON.stringify({ at: Date.now(), patch: { schedule: { date, time: date ? schedule?.time || null : null } } }),
+    });
+    toast(date ? `Срок: ${scheduleLabel({ state: "ok", date, time: null })}` : "Срок снят");
+    await load();
+  } catch (error) { toast(error.message || "Срок не изменился"); }
+}
+function quickDueEl(entry) {
+  const wrap = node("div", undefined, "quick-due");
+  for (const [label, days] of [["сегодня", 0], ["завтра", 1], ["без срока", null]]) {
+    const button = node("button", label, "quick-due-button");
+    button.type = "button";
+    button.title = days === null ? "Снять срок" : `Перенести на ${label}`;
+    button.addEventListener("click", (event) => { event.stopPropagation(); button.disabled = true; quickDue(entry, days); });
+    wrap.append(button);
+  }
+  return wrap;
+}
 function entryCard(entry, { overdue = false, compact = false, dense = false, atTime = false, on = null } = {}) {
   const c = entry.interpretation.classification,
     projections = completableProjections(entry),
@@ -473,6 +499,7 @@ function entryCard(entry, { overdue = false, compact = false, dense = false, atT
   for (const project of c.entities.projects)
     meta.append(node("span", project, "tag project"));
   // Круг виден меткой, а не местом: строка остаётся строкой дня.
+  if (overdue && !c.entities.schedule?.repeat && !completed) card.append(quickDueEl(entry));
   const mark = circleOf(entry);
   if (mark) meta.append(circleChip(mark, { small: true }));
   // Чьё это дело: взятое — «от Саши», отданное — «Аня · ждёт ответа». Второе и
@@ -553,7 +580,7 @@ function appendEntries(container, entries, emptyText, options) {
 // и два ящика: «Что делал» и «День», где дела лежат вместе с календарём.
 // Заметок на главной нет: они живут в «Обзоре», поиске и карточке записи.
 const TODAY_ZONE = "Europe/Samara";
-const circlesState = { circles: [], me: null, loading: false };
+const circlesState = { circles: [], me: null, loading: false, tab: "chat" };
 const todayState = {
   view: 0,            // смещение дня, показанного в «Дне», от сегодняшнего
   journalView: 0,     // то же для «Что делал»: у ящиков свои дни
@@ -1067,6 +1094,28 @@ function appendMore(container, hidden) {
 // обычными строками с меткой круга, отданное — счётчиком в хвосте. Переключателя
 // пространств нет: день у человека один.
 const CIRCLE_TONES = { violet: "violet", blue: "blue", teal: "teal", orange: "orange", pink: "pink", red: "red" };
+// Круглый значок человека: буква имени. Рисуется одним помощником — где бы
+// человек ни появился (карточка, круг, разговор, «я жду»), он выглядит
+// одинаково, и менять это придётся в одном месте.
+function avatarEl(person, { size = "" } = {}) {
+  const initial = person?.initial || (person?.name || "").slice(0, 1).toUpperCase() || "?";
+  const avatar = node("i", initial, `ava${size ? ` ${size}` : ""}`);
+  if (person?.name) avatar.title = person.name;
+  return pictureInto(avatar, person?.avatar);
+}
+// Лицо — картинкой поверх буквы: пока грузится или если не загрузилось,
+// видна буква, и пустого кружка не бывает.
+function pictureInto(holder, url) {
+  if (!url) return holder;
+  const picture = document.createElement("img");
+  picture.className = "ava-picture";
+  picture.alt = "";
+  picture.decoding = "async";
+  picture.addEventListener("error", () => picture.remove());
+  picture.src = url;
+  holder.append(picture);
+  return holder;
+}
 function circleChip(circle, { small = false } = {}) {
   const chip = node("span", undefined, `tag circle${small ? " small" : ""}`);
   chip.append(node("i", undefined, `circle-dot ${CIRCLE_TONES[circle.color] || "violet"}`), node("span", circle.name));
@@ -1106,11 +1155,17 @@ function inboxRow(row) {
   const mark = node("span", undefined, "inbox-mark");
   mark.append(node("i", undefined, row.kind === "call" ? "inbox-bubble" : "inbox-circle"));
   const main = node("div", undefined, "inbox-main");
-  const title = node("button", row.kind === "call" ? `${row.from.name} зовёт: «${row.body}»` : row.title, "inbox-title");
+  const label = row.kind === "request" ? row.title
+    : row.kind === "circle" ? `${row.from?.name || "Вас"} добавил${row.from ? "" : "и"} в круг «${row.circle.name}»`
+    : `${row.from.name} зовёт: «${row.kind === "chat" ? row.title : row.body}»`;
+  const open = () => (row.kind === "chat" ? openRoomFromInbox(row.roomId) : row.kind === "circle" ? openCircleFromInbox(row.circle.id) : openSharedCard(row.captureId));
+  const title = node("button", label, "inbox-title");
   title.type = "button";
-  title.addEventListener("click", () => openSharedCard(row.captureId));
+  title.addEventListener("click", open);
   const meta = node("div", undefined, "inbox-meta");
   if (row.kind === "request") meta.append(node("span", `просит ${row.from.name}`, "inbox-who"));
+  else if (row.kind === "chat") meta.append(node("span", `разговор «${row.roomName}»`, "inbox-who"));
+  else if (row.kind === "circle") meta.append(node("span", "общая полка: видно только то, что в неё отдали", "inbox-who"));
   else meta.append(node("span", `обсуждение «${row.title}»`, "inbox-who"));
   if (row.circle) meta.append(circleChip(row.circle, { small: true }));
   if (row.due) meta.append(node("span", `срок: ${scheduleLabel({ date: row.due.date, time: row.due.time }) || row.due.date}`, "inbox-due"));
@@ -1126,10 +1181,10 @@ function inboxRow(row) {
     not.addEventListener("click", () => respondRequest(row, false, not));
     acts.append(take, not);
   } else {
-    const open = node("button", "Открыть", "inbox-not");
-    open.type = "button";
-    open.addEventListener("click", () => openSharedCard(row.captureId));
-    acts.append(open);
+    const openButton = node("button", "Открыть", "inbox-not");
+    openButton.type = "button";
+    openButton.addEventListener("click", open);
+    acts.append(openButton);
   }
   element.append(mark, main, acts);
   return element;
@@ -1404,6 +1459,7 @@ async function load() {
   // при старте их собирает переход по хэшу.
   const page = document.querySelector(".app-page:not([hidden])")?.id;
   if (page === "board" && boardState.data) await loadBoard();
+  if (page === "circles") await refreshRoomsQuietly();
   if (page === "calendar" && calState.data) await loadCalendar();
   if (page === "reports" && reportsState.loaded) await loadReports();
 }
@@ -1745,7 +1801,7 @@ function mentionPopup(field, callable, onPick) {
     items.forEach((person, index) => {
       const row = node("button", undefined, `mention-row${index === active ? " on" : ""}`);
       row.type = "button";
-      row.append(node("i", person.initial, "ava mini"), node("span", person.name));
+      row.append(avatarEl(person, { size: "mini" }), node("span", person.name));
       row.addEventListener("mousedown", (event) => { event.preventDefault(); pick(index); });
       pop.append(row);
     });
@@ -1802,7 +1858,7 @@ function cardDiscussion(entry) {
     if (!comments.length) list.append(node("p", callable.length ? "Пока тихо. Напишите — и позовите, кто нужен, через @имя." : "Обсуждение появится, когда запись окажется в круге: сейчас её видите только вы.", "empty"));
     for (const comment of comments) {
       const row = node("div", undefined, `msg${comment.parentId ? " reply" : ""}`);
-      row.append(node("i", comment.author.initial, "ava"));
+      row.append(avatarEl(comment.author));
       const main = node("div", undefined, "msg-main");
       const line = node("p", undefined, "msg-head");
       line.append(node("b", comment.author.name), node("span", entryClockLabel(comment.createdAt)));
@@ -3357,6 +3413,9 @@ const SETTING_FIELDS = [
   "voiceLimitUsd",
   "voiceRateUsdPerMinute",
   "voiceGeminiRateUsdPerMinute",
+  "modelTemperature",
+  "modelMaxTokens",
+  "modelReasoning",
   "monthlyLimitUsd",
 ];
 const SECRET_FIELDS = ["openaiKey", "geminiKey", "openrouterKey", "googleClientSecret"];
@@ -4831,7 +4890,7 @@ function boardWaitingEl(waiting) {
   for (const item of [...open, ...closed]) {
     const row = node("div", undefined, "wait-row");
     const who = node("div", undefined, "wait-who");
-    who.append(node("i", item.assignee?.initial || "?", "ava"), node("span", item.assignee?.name || "—"));
+    who.append(avatarEl(item.assignee), node("span", item.assignee?.name || "—"));
     const main = node("div", undefined, "wait-main");
     const title = node("button", item.title || "Дело", "wait-title");
     title.type = "button";
@@ -4854,17 +4913,278 @@ function boardWaitingEl(waiting) {
   wrap.append(node("p", "Напоминать за вас приложение не будет: это факт в вашем списке, а не письмо человеку в спину.", "board-waiting-hint"));
   return wrap;
 }
+// ── разговор круга ──
+// Общий разговор и комнаты подмножеством живут на той же странице, что и люди:
+// круг — это люди, граница и разговор, больше в нём ничего нет. Счётчик
+// непрочитанного стоит на комнате и нигде больше: в день попадает только
+// призыв, иначе личный журнал превращается в мессенджер со значком на вкладке.
+const chatState = { rooms: [], activeRoomId: null, messages: [], more: false, loading: false, adding: null, drafts: {} };
+const roomsOfCircle = (circleId) => chatState.rooms.filter((room) => room.circleId === circleId);
+const activeRoom = () => chatState.rooms.find((room) => room.id === chatState.activeRoomId) || null;
+async function loadRooms({ keepActive = true } = {}) {
+  const data = await request("/api/rooms");
+  chatState.rooms = data.rooms || [];
+  if (!keepActive || !activeRoom()) chatState.activeRoomId = chatState.rooms[0]?.id || null;
+  return chatState.rooms;
+}
+async function openRoom(roomId, { render = true } = {}) {
+  const hadUnread = (chatState.rooms.find((room) => room.id === roomId)?.unread || 0) > 0;
+  chatState.activeRoomId = roomId;
+  chatState.loading = true;
+  if (render) renderCircles();
+  try {
+    const data = await request(`/api/rooms/${roomId}/messages`);
+    chatState.messages = data.messages || [];
+    chatState.more = Boolean(data.more);
+    const room = chatState.rooms.find((item) => item.id === roomId);
+    if (room) { room.unread = 0; Object.assign(room, data.room); }
+  } catch (error) {
+    chatState.messages = [];
+    toast(error.message || "Комната не открылась");
+  } finally {
+    chatState.loading = false;
+  }
+  renderCircles();
+  scrollThreadDown();
+  if (hadUnread) load().catch(() => {});
+}
+function scrollThreadDown() {
+  const list = $("#room-thread");
+  if (list) list.scrollTop = list.scrollHeight;
+}
+// Ссылка из полосы «к вам»: открыть комнату, где позвали.
+// «Вас добавили в круг»: открыть — значит прочитать, строка гаснет.
+async function openCircleFromInbox(circleId) {
+  location.hash = "#circles";
+  try { await request(`/api/circles/${circleId}/seen`, { method: "POST", body: JSON.stringify({}) }); } catch {}
+  const room = chatState.rooms.find((item) => item.circleId === circleId && item.kind === "general");
+  await loadCircles(room ? { then: () => openRoom(room.id) } : {});
+  load().catch(() => {});
+}
+async function openRoomFromInbox(roomId) {
+  location.hash = "#circles";
+  await loadCircles({ then: () => openRoom(roomId) });
+}
+async function sendToRoom(field, button) {
+  const room = activeRoom();
+  const body = field.value.trim();
+  if (!room || !body) return;
+  button.disabled = true;
+  try {
+    const result = await request(`/api/rooms/${room.id}/messages`, { method: "POST", body: JSON.stringify({ body }) });
+    chatState.messages = [...chatState.messages, result.message];
+    field.value = "";
+    delete chatState.drafts[room.id];
+    field.style.height = "auto";
+    renderCircles();
+    scrollThreadDown();
+    if (result.called?.length) toast(`Призвали: ${result.called.map((person) => person.name).join(", ")}`);
+  } catch (error) {
+    toast(error.message || "Сообщение не ушло");
+  } finally {
+    button.disabled = false;
+    $("#room-input")?.focus();
+  }
+}
+const sameMinute = (left, right) => Math.abs(Date.parse(left) - Date.parse(right)) < 5 * 60000;
+function roomMessageEl(message, previous) {
+  if (message.kind !== "said") {
+    const line = node("p", `${message.author?.name || "Кто-то"} ${message.body}`, "room-system");
+    return line;
+  }
+  const dense = previous && previous.kind === "said" && previous.author?.id === message.author?.id && sameMinute(previous.createdAt, message.createdAt);
+  const row = node("div", undefined, `msg room-msg${dense ? " dense" : ""}`);
+  row.append(dense ? node("span", undefined, "ava spacer") : avatarEl(message.author));
+  const main = node("div", undefined, "msg-main");
+  if (!dense) {
+    const head = node("p", undefined, "msg-head");
+    head.append(node("b", message.author?.name || "Кто-то"), node("span", entryClockLabel(message.createdAt)));
+    main.append(head);
+  }
+  main.append(commentText(message.body, message.mentions));
+  row.append(main);
+  const acts = node("div", undefined, "msg-acts");
+  const deed = node("button", "В дело", "mini");
+  deed.type = "button";
+  deed.addEventListener("click", () => {
+    location.hash = "#today";
+    prefillCapture(message.body.replace(/@[\p{L}\p{N}_-]+/gu, "").trim(), "todo");
+  });
+  acts.append(deed);
+  if (message.mine) {
+    const remove = node("button", "Убрать", "mini");
+    remove.type = "button";
+    remove.addEventListener("click", async () => {
+      try {
+        await request(`/api/rooms/${chatState.activeRoomId}/messages/${message.id}`, { method: "DELETE" });
+        chatState.messages = chatState.messages.filter((item) => item.id !== message.id);
+        renderCircles();
+      } catch (error) { toast(error.message || "Не получилось"); }
+    });
+    acts.append(remove);
+  }
+  row.append(acts);
+  return row;
+}
+function roomPaneEl(circle) {
+  const room = activeRoom();
+  const pane = node("section", undefined, "room-pane");
+  if (!room) {
+    pane.append(node("p", "Выберите разговор слева.", "empty"));
+    return pane;
+  }
+  const head = node("div", undefined, "room-head");
+  const title = node("h3", undefined, "room-title");
+  title.append(node("span", room.kind === "general" ? "#" : "#", "room-hash"), node("span", room.name));
+  head.append(title);
+  const who = node("span", `${room.members.length} ${pluralRu(room.members.length, "человек", "человека", "человек")}: ${room.members.map((member) => member.name).join(", ")}`, "room-who");
+  head.append(who);
+  const tools = node("div", undefined, "room-tools");
+  if (room.kind === "room") {
+    const add = node("button", "Позвать", "mini");
+    add.type = "button";
+    add.addEventListener("click", () => { chatState.adding = chatState.adding === room.id ? null : room.id; renderCircles(); });
+    const leave = node("button", "Выйти", "mini");
+    leave.type = "button";
+    leave.addEventListener("click", async () => {
+      if (!confirm(`Выйти из комнаты «${room.name}»? Она пропадёт из списка, а разговор останется у остальных.`)) return;
+      try { await request(`/api/rooms/${room.id}/leave`, { method: "POST", body: JSON.stringify({}) }); chatState.activeRoomId = null; await loadCircles(); }
+      catch (error) { toast(error.message || "Не получилось"); }
+    });
+    tools.append(add, leave);
+  }
+  head.append(tools);
+  pane.append(head);
+  // Кого позвать: только люди круга, которых в комнате ещё нет.
+  if (chatState.adding === room.id) {
+    const inRoom = new Set(room.members.map((member) => member.id));
+    const rest = (circle?.members || []).filter((member) => !inRoom.has(member.id));
+    const box = node("div", undefined, "room-add");
+    if (!rest.length) box.append(node("span", "В комнате уже весь круг.", "empty"));
+    for (const person of rest) {
+      const button = node("button", undefined, "mini");
+      button.type = "button";
+      button.append(avatarEl(person, { size: "mini" }), node("span", person.name));
+      button.addEventListener("click", async () => {
+        try { await request(`/api/rooms/${room.id}/members`, { method: "POST", body: JSON.stringify({ userId: person.id }) }); chatState.adding = null; await loadCircles({ then: () => openRoom(room.id) }); }
+        catch (error) { toast(error.message || "Не получилось"); }
+      });
+      box.append(button);
+    }
+    pane.append(box);
+  }
+  const list = node("div", undefined, "room-thread");
+  list.id = "room-thread";
+  if (chatState.loading) list.append(node("p", "Читаю…", "empty"));
+  else if (!chatState.messages.length) list.append(node("p", room.kind === "general" ? "Здесь пока тихо. Это общий разговор круга — его видят все, кто в нём." : "Здесь пока тихо. Комнату видят только те, кто в ней.", "empty"));
+  let previous = null;
+  for (const message of chatState.messages) { list.append(roomMessageEl(message, previous)); previous = message; }
+  pane.append(list);
+
+  const composer = node("div", undefined, "thread-composer room-composer");
+  const field = node("textarea", undefined, "thread-input");
+  field.id = "room-input";
+  field.rows = 1;
+  field.placeholder = "Написать… @ — призвать";
+  field.setAttribute("aria-label", `Сообщение в «${room.name}»`);
+  field.value = chatState.drafts[room.id] || "";
+  const send = node("button", "Отправить", "mini primary");
+  send.type = "button";
+  send.addEventListener("click", () => sendToRoom(field, send));
+  field.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey) { event.preventDefault(); sendToRoom(field, send); }
+  });
+  field.addEventListener("input", () => {
+    chatState.drafts[room.id] = field.value;
+    field.style.height = "auto";
+    field.style.height = `${Math.min(field.scrollHeight, 160)}px`;
+  });
+  composer.append(field, mentionPopup(field, room.members.filter((member) => member.id !== circlesState.me?.id), () => {}), send);
+  pane.append(composer);
+  return pane;
+}
+// Полоса слева: круги, их разговоры и непрочитанное. Это единственное место,
+// где в приложении есть счётчик, и он не выходит за пределы этой страницы.
+function circleRailEl() {
+  const rail = node("aside", undefined, "circles-rail");
+  for (const circle of circlesState.circles) {
+    const head = node("div", undefined, "rail-circle");
+    head.append(node("i", undefined, `circle-dot ${CIRCLE_TONES[circle.color] || "violet"}`), node("span", circle.name, "rail-name"));
+    if (circle.muted) head.append(node("span", "выключен", "rail-muted"));
+    rail.append(head);
+    for (const room of roomsOfCircle(circle.id)) {
+      const button = node("button", undefined, `rail-room${room.id === chatState.activeRoomId ? " on" : ""}`);
+      button.type = "button";
+      button.append(node("span", "#", "room-hash"), node("span", room.name, "rail-room-name"));
+      if (room.unread) button.append(node("span", String(room.unread), "rail-unread"));
+      button.addEventListener("click", () => openRoom(room.id));
+      rail.append(button);
+    }
+    const add = node("button", "+ комната", "rail-add");
+    add.type = "button";
+    add.addEventListener("click", () => openRoomAdder(circle));
+    rail.append(add);
+  }
+  return rail;
+}
+// Комната заводится с людьми: разговор с самим собой — это заметка, а не
+// комната, поэтому пустую комнату завести нельзя.
+function openRoomAdder(circle) {
+  const body = $("#circles-body");
+  const form = node("form", undefined, "room-new");
+  const name = node("input");
+  name.placeholder = `Комната в круге «${circle.name}» — «Смета», «Релиз»`;
+  name.maxLength = 40;
+  name.setAttribute("aria-label", "Название комнаты");
+  const people = node("div", undefined, "room-new-people");
+  const chosen = new Set();
+  for (const member of circle.members.filter((person) => person.id !== circlesState.me?.id)) {
+    const chip = node("button", undefined, "mini");
+    chip.type = "button";
+    chip.setAttribute("aria-pressed", "false");
+    chip.append(avatarEl(member, { size: "mini" }), node("span", member.name));
+    chip.addEventListener("click", () => {
+      if (chosen.has(member.id)) chosen.delete(member.id); else chosen.add(member.id);
+      chip.setAttribute("aria-pressed", String(chosen.has(member.id)));
+    });
+    people.append(chip);
+  }
+  const submit = node("button", "Завести", "mini primary");
+  submit.type = "submit";
+  const cancel = node("button", "Отмена", "mini");
+  cancel.type = "button";
+  cancel.addEventListener("click", () => renderCircles());
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!name.value.trim()) return;
+    if (!chosen.size) { toast("Комната — это разговор с кем-то: позовите хотя бы одного человека"); return; }
+    try {
+      const result = await request(`/api/circles/${circle.id}/rooms`, { method: "POST", body: JSON.stringify({ name: name.value.trim(), members: [...chosen] }) });
+      await loadCircles({ then: () => openRoom(result.room.id) });
+      toast(`Комната «${result.room.name}» заведена`);
+    } catch (error) { toast(error.message || "Комната не завелась"); }
+  });
+  form.append(node("p", "Новая комната — разговор подмножеством: её видят только те, кто в ней.", "room-new-hint"), name, people, node("div", undefined, "room-new-acts"));
+  form.lastChild.append(submit, cancel);
+  clear(body);
+  body.append(form);
+  name.focus();
+}
 // ── страница кругов ──
 // Нужна ровно для двух вещей: кто здесь и что отсюда видно. Ни ленты, ни своей
 // доски, ни настроек на каждый чих — иначе круг превращается во второй дом.
-async function loadCircles() {
+async function loadCircles({ then = null } = {}) {
   if (circlesState.loading) return;
   circlesState.loading = true;
   try {
-    const data = await request("/api/circles");
+    const [data] = await Promise.all([request("/api/circles"), loadRooms()]);
     circlesState.circles = data.circles || [];
     circlesState.me = data.me || null;
     renderCircles();
+    // Первый заход открывает первый разговор сам: пустая правая половина
+    // страницы не говорит человеку, что здесь вообще разговаривают.
+    if (then) await then();
+    else if (chatState.activeRoomId && !chatState.messages.length) await openRoom(chatState.activeRoomId, { render: false });
   } catch (error) {
     const body = $("#circles-body");
     if (body) { clear(body); body.append(node("p", error.message || "Не удалось загрузить круги", "empty")); }
@@ -4878,7 +5198,10 @@ async function createCircle(name) {
     toast(`Круг «${name}» заведён. Позовите людей ссылкой.`);
   } catch (error) { toast(error.message || "Круг не завёлся"); }
 }
-async function inviteToCircle(circle, place) {
+// Ссылка у круга одна и работает для многих: звать десятерых десятью ссылками
+// неудобно. Показывается она один раз — сам токен на сервере не хранится,
+// только его отпечаток; забыли — обновите, прежняя сразу перестанет работать.
+async function inviteToCircle(circle, place, { refresh = false } = {}) {
   try {
     const invite = await request(`/api/circles/${circle.id}/invite`, { method: "POST", body: JSON.stringify({}) });
     clear(place);
@@ -4892,9 +5215,51 @@ async function inviteToCircle(circle, place) {
       try { await navigator.clipboard.writeText(invite.url); toast("Ссылка скопирована — передайте её сами: писем приложение не шлёт"); }
       catch { link.select(); toast("Скопируйте ссылку из поля"); }
     });
-    place.append(link, copy, node("span", `живёт 7 дней · одна ссылка — один человек`, "invite-hint"));
+    place.append(link, copy, node("span", "работает 7 дней для любого числа людей · видна только сейчас", "invite-hint"));
     link.focus();
+    if (refresh) toast("Новая ссылка готова, прежняя больше не работает");
+    circle.invite = { createdAt: new Date().toISOString(), expiresAt: invite.expiresAt, uses: 0, expired: false };
   } catch (error) { toast(error.message || "Приглашение не создалось"); }
+}
+// Того, кто уже есть в приложении, зовут поиском: ссылка ради соседа по
+// приложению — лишний шаг. Добавленный узнаёт об этом строкой «к вам» и может
+// выйти в одно нажатие, поэтому добавление не молчаливое.
+function invitePeopleEl(circle) {
+  const box = node("div", undefined, "invite-people");
+  const field = node("input", undefined, "invite-search");
+  field.type = "search";
+  field.placeholder = "Добавить человека — имя или почта";
+  field.setAttribute("aria-label", `Найти человека для круга «${circle.name}»`);
+  const found = node("div", undefined, "invite-found");
+  let timer = 0;
+  const search = async () => {
+    const query = field.value.trim();
+    clear(found);
+    if (query.length < 2) return;
+    try {
+      const data = await request(`/api/circles/${circle.id}/candidates?q=${encodeURIComponent(query)}`);
+      if (!data.people.length) { found.append(node("span", "Никого не нашлось. Если человека ещё нет в приложении — дайте ему ссылку ниже.", "invite-hint")); return; }
+      for (const person of data.people) {
+        const button = node("button", undefined, "mini");
+        button.type = "button";
+        button.append(avatarEl(person, { size: "mini" }), node("span", person.name), node("small", person.email));
+        button.addEventListener("click", async () => {
+          button.disabled = true;
+          try {
+            await request(`/api/circles/${circle.id}/members`, { method: "POST", body: JSON.stringify({ userId: person.id }) });
+            field.value = "";
+            clear(found);
+            toast(`${person.name} в круге «${circle.name}»`);
+            await loadCircles();
+          } catch (error) { toast(error.message || "Не получилось добавить"); button.disabled = false; }
+        });
+        found.append(button);
+      }
+    } catch (error) { found.append(node("span", error.message || "Поиск не удался", "invite-hint")); }
+  };
+  field.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(search, 220); });
+  box.append(field, found);
+  return box;
 }
 function circleCardEl(circle) {
   const card = node("section", undefined, "circle-card");
@@ -4904,10 +5269,6 @@ function circleCardEl(circle) {
   head.append(name);
   const tools = node("div", undefined, "circle-tools");
   const invitePlace = node("div", undefined, "circle-invite");
-  const invite = node("button", "Позвать по ссылке", "mini primary");
-  invite.type = "button";
-  invite.addEventListener("click", () => inviteToCircle(circle, invitePlace));
-  tools.append(invite);
   if (circle.role === "owner") {
     const dissolve = node("button", "Распустить", "mini");
     dissolve.type = "button";
@@ -4929,11 +5290,23 @@ function circleCardEl(circle) {
     tools.append(leave);
   }
   head.append(tools);
-  card.append(head, invitePlace);
+  card.append(head, invitePeopleEl(circle));
+  // Ссылка — для тех, кого в приложении ещё нет. Она одна на круг, живёт неделю
+  // и работает для любого числа людей; её состояние видно, сам токен — нет.
+  const linkRow = node("div", undefined, "invite-link-row");
+  const state = circle.invite;
+  linkRow.append(node("span", state && !state.expired
+    ? `Ссылка живёт до ${reportDateLabel(state.expiresAt.slice(0, 10))} · вошли по ней: ${state.uses}`
+    : "Ссылки нет — заведите, если человека ещё нет в приложении", "invite-hint"));
+  const linkButton = node("button", state && !state.expired ? "Обновить ссылку" : "Завести ссылку", "mini");
+  linkButton.type = "button";
+  linkButton.addEventListener("click", () => inviteToCircle(circle, invitePlace, { refresh: Boolean(state && !state.expired) }));
+  linkRow.append(linkButton);
+  card.append(linkRow, invitePlace);
   const people = node("div", undefined, "circle-people");
   for (const member of circle.members) {
     const row = node("div", undefined, "people-row");
-    row.append(node("i", member.initial, "ava big"));
+    row.append(avatarEl(member, { size: "big" }));
     const who = node("div", undefined, "people-who");
     who.append(node("p", member.id === circlesState.me?.id ? `${member.name} · вы` : member.name, "people-name"));
     who.append(node("p", member.openDeeds ? `${member.openDeeds} ${pluralRu(member.openDeeds, "дело", "дела", "дел")} на нём` : "открытых дел нет", "people-sub"));
@@ -4974,12 +5347,32 @@ function circleRulesEl() {
 function renderCircles() {
   const body = $("#circles-body");
   if (!body) return;
+  const typing = document.activeElement === $("#room-input");
   clear(body);
-  const lead = node("p", "Круг — не второй журнал, а общая полка: день у вас остаётся один. Здесь только люди и граница.", "circles-lead");
+  const lead = node("p", "Круг — не второй журнал, а общая полка: день у вас остаётся один. Здесь люди, граница и разговор.", "circles-lead");
   body.append(lead);
   if (!circlesState.circles.length)
     body.append(node("p", "Кругов пока нет. Заведите первый — и позовите в него ссылкой того, с кем есть общее дело.", "empty"));
-  for (const circle of circlesState.circles) body.append(circleCardEl(circle));
+  if (circlesState.circles.length) {
+    const circle = circlesState.circles.find((item) => item.id === activeRoom()?.circleId) || circlesState.circles[0];
+    body.append(tabsEl());
+    if (circlesState.tab === "people") {
+      for (const item of circlesState.circles) body.append(circleCardEl(item));
+      body.append(circleRulesEl());
+    } else {
+      const layout = node("div", undefined, "circles-layout");
+      layout.append(circleRailEl(), roomPaneEl(circle));
+      body.append(layout);
+    }
+    const adder = node("form", undefined, "circle-add");
+    paintCircleAdder(adder);
+    body.append(adder);
+    if (typing) {
+      const field = $("#room-input");
+      if (field) { field.focus(); field.selectionStart = field.selectionEnd = field.value.length; }
+    }
+    return;
+  }
   const adder = node("form", undefined, "circle-add");
   const input = node("input");
   input.id = "circle-new-name";
@@ -4997,6 +5390,36 @@ function renderCircles() {
   });
   adder.append(input, submit);
   body.append(adder, circleRulesEl());
+}
+// Две половины одного круга: разговор и люди с границей. Больше на странице
+// круга ничего не появится — ни ленты, ни своей доски.
+function tabsEl() {
+  const tabs = node("div", undefined, "circle-tabs");
+  for (const [key, label] of [["chat", "Разговор"], ["people", "Люди и граница"]]) {
+    const button = node("button", label, `circle-tab${circlesState.tab === key ? " on" : ""}`);
+    button.type = "button";
+    button.addEventListener("click", () => { circlesState.tab = key; renderCircles(); });
+    tabs.append(button);
+  }
+  return tabs;
+}
+// Поле «+ Круг» одно и то же в обоих видах страницы.
+function paintCircleAdder(adder) {
+  const input = node("input");
+  input.id = "circle-new-name";
+  input.placeholder = "Название круга — «Хаб», «Дом»";
+  input.maxLength = 40;
+  input.setAttribute("aria-label", "Название нового круга");
+  const submit = node("button", "+ Круг", "mini primary");
+  submit.type = "submit";
+  adder.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const name = input.value.trim();
+    if (!name) return;
+    input.value = "";
+    createCircle(name);
+  });
+  adder.append(input, submit);
 }
 // Приглашение по ссылке: человек видит, кто зовёт и во что, ещё до согласия —
 // иначе он нажимает «войти» вслепую.
@@ -6072,8 +6495,9 @@ function calEventEl(item) {
   // Повтор — значком в правом верхнем углу, как в Apple.
   if (item.repeat || item.recurring) { const repeat = node("i", "⟳", "cal-ev-repeat"); repeat.title = item.repeat || "Повторяется"; element.append(repeat); }
   if (item.joinUrl && height >= 34) {
-    const join = node("a", "Войти", "cal-join");
+    const join = node("a", "К звонку", "cal-join");
     join.href = item.joinUrl; join.target = "_blank"; join.rel = "noopener";
+    join.title = `Открыть видеовстречу: ${popHost(item.joinUrl) || "ссылка"}`;
     join.addEventListener("click", (event) => event.stopPropagation());
     element.append(join);
   }
@@ -6150,7 +6574,7 @@ function calAgendaEl(date) {
     const body = node("span", undefined, "cal-row-body");
     body.append(text, meta);
     row.append(body);
-    if (item.joinUrl) { const join = node("a", "Войти", "cal-join"); join.href = item.joinUrl; join.target = "_blank"; join.rel = "noopener"; join.addEventListener("click", (event) => event.stopPropagation()); row.append(join); }
+    if (item.joinUrl) { const join = node("a", "К звонку", "cal-join"); join.href = item.joinUrl; join.target = "_blank"; join.rel = "noopener"; join.title = `Открыть видеовстречу: ${popHost(item.joinUrl) || "ссылка"}`; join.addEventListener("click", (event) => event.stopPropagation()); row.append(join); }
     row.addEventListener("click", () => openCalendarItem(item));
     aside.append(row);
     cursor = Math.max(cursor, calMinutes(calEndOf(item)));
@@ -6934,3 +7358,22 @@ async function openCaptureById(id) {
 $("#push-enable")?.addEventListener("click", () => enablePush().catch((error) => { toast(error.message || "Не удалось включить уведомления"); paintPush(); }));
 $("#push-disable")?.addEventListener("click", () => disablePush().catch((error) => toast(error.message)));
 $("#push-test")?.addEventListener("click", testPush);
+
+// Живое обновление разговора: сообщение приходит к остальным событием журнала,
+// и страница перечитывает комнаты и открытый разговор, не сбивая набранное.
+async function refreshRoomsQuietly() {
+  if ($("#circles")?.hidden) return;
+  const atBottom = (() => { const list = $("#room-thread"); return !list || list.scrollHeight - list.scrollTop - list.clientHeight < 60; })();
+  try {
+    const [data] = await Promise.all([request("/api/circles"), loadRooms()]);
+    circlesState.circles = data.circles || [];
+    if (chatState.activeRoomId) {
+      const fresh = await request(`/api/rooms/${chatState.activeRoomId}/messages`);
+      chatState.messages = fresh.messages || [];
+      const room = chatState.rooms.find((item) => item.id === chatState.activeRoomId);
+      if (room) { room.unread = 0; Object.assign(room, fresh.room); }
+    }
+  } catch { return; }
+  renderCircles();
+  if (atBottom) scrollThreadDown();
+}

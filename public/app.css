@@ -6723,3 +6723,79 @@ body {
   .inbox-row { flex-wrap: wrap; }
   .inbox-acts { width: 100%; justify-content: flex-end; }
 }
+
+/* ── разговор круга ───────────────────────────────────────────────────────
+   Слева круги и их разговоры, справа сам разговор. Счётчик непрочитанного
+   стоит только здесь: в день уходит один призыв. */
+.circle-tabs { display: flex; gap: 6px; margin: 0 0 12px; }
+.circle-tab {
+  appearance: none; border: 1px solid var(--line); background: var(--paper); color: var(--muted);
+  border-radius: 999px; padding: 5px 13px; font: inherit; font-size: 13px; cursor: pointer;
+}
+.circle-tab.on { background: var(--pink); color: var(--coral); border-color: transparent; font-weight: 600; }
+.circles-layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 16px; align-items: start; }
+.circles-rail { display: flex; flex-direction: column; gap: 2px; }
+.rail-circle { display: flex; align-items: center; gap: 7px; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--n-66); margin: 10px 0 4px; }
+.rail-circle:first-child { margin-top: 0; }
+.rail-muted { text-transform: none; letter-spacing: 0; font-size: 11.5px; }
+.rail-room {
+  display: flex; align-items: center; gap: 7px; width: 100%; text-align: left;
+  border: 0; background: none; font: inherit; font-size: 14px; color: var(--ink);
+  border-radius: 9px; padding: 6px 9px; cursor: pointer;
+}
+.rail-room:hover { background: var(--n-96); }
+.rail-room.on { background: var(--pink); color: var(--coral); font-weight: 600; }
+.rail-room-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-hash { color: var(--n-72); }
+.rail-room.on .room-hash { color: var(--coral); }
+.rail-unread { background: var(--coral); color: var(--n-100); border-radius: 999px; font-size: 11px; font-weight: 700; padding: 0 6px; line-height: 17px; }
+.rail-add { border: 0; background: none; color: var(--muted); font: inherit; font-size: 13px; text-align: left; padding: 5px 9px; cursor: pointer; border-radius: 9px; }
+.rail-add:hover { background: var(--n-96); color: var(--ink); }
+
+.room-pane { border: 1px solid var(--line); border-radius: 16px; background: var(--paper); display: flex; flex-direction: column; min-height: 420px; }
+.room-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--hairline); }
+.room-title { margin: 0; font-size: 15px; display: flex; align-items: center; gap: 6px; }
+.room-who { flex: 1; min-width: 120px; font-size: 12px; color: var(--n-66); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-tools { display: flex; gap: 6px; }
+.room-add { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--hairline); }
+.room-thread { flex: 1; overflow-y: auto; max-height: 52vh; padding: 10px 8px; display: flex; flex-direction: column; gap: 1px; }
+.room-msg { padding: 5px 8px; }
+.room-msg.dense .msg-main { margin-top: -2px; }
+.ava.spacer { background: none; }
+.room-system { text-align: center; color: var(--n-66); font-size: 12px; margin: 8px 0; }
+.room-composer { margin: 0 12px 12px; }
+.room-new { display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; max-width: 560px; }
+.room-new-hint { margin: 0; color: var(--muted); font-size: 13px; }
+.room-new input { border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; font: inherit; font-size: 14px; background: var(--paper); color: var(--ink); }
+.room-new-people { display: flex; gap: 6px; flex-wrap: wrap; }
+.room-new-people .mini[aria-pressed="true"] { background: var(--pink); color: var(--coral); border-color: transparent; font-weight: 600; }
+.room-new-acts { display: flex; gap: 8px; }
+.mini .ava.mini { margin-right: 5px; vertical-align: -4px; }
+.people-column { min-width: 0; }
+
+@media (max-width: 760px) {
+  .circles-layout { grid-template-columns: 1fr; }
+  .circles-rail { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .rail-circle { margin: 0 4px 0 0; }
+  .rail-room { width: auto; border: 1px solid var(--line); }
+  .room-thread { max-height: 60vh; }
+}
+
+/* звать людей: поиском по приложению или общей ссылкой */
+.invite-people { margin-top: 12px; }
+.invite-search { width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; font: inherit; font-size: 14px; background: var(--paper); color: var(--ink); }
+.invite-found { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.invite-found .mini small { color: var(--n-66); margin-left: 6px; font-size: 11.5px; }
+.invite-link-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; border-top: 1px solid var(--hairline); padding-top: 12px; }
+.invite-link-row .invite-hint { flex: 1; min-width: 200px; }
+
+/* быстрый срок у просроченного дела: перенести или снять, не открывая карточку */
+.quick-due { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); display: flex; gap: 4px; background: var(--paper); border-radius: 999px; padding: 2px; box-shadow: 0 2px 10px var(--n-25-a8); }
+.entry { position: relative; }
+.quick-due-button { appearance: none; border: 0; background: none; color: var(--muted); font: inherit; font-size: 11.5px; border-radius: 999px; padding: 3px 8px; cursor: pointer; white-space: nowrap; }
+.quick-due-button:hover { background: var(--pink); color: var(--coral); }
+.quick-due-button:disabled { opacity: 0.5; }
+@media (hover: hover) {
+  .quick-due { opacity: 0; transition: opacity 0.12s ease; }
+  .entry:hover .quick-due, .quick-due:focus-within { opacity: 1; }
+}

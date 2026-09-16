@@ -48,6 +48,7 @@ function rankedCatalogue(payload) {
 
 export function createOpenRouterProvider({ config, fetch: fetchImplementation = globalThis.fetch, timeoutMs, now = () => new Date() } = {}) {
   const settings = config.providers.openrouter;
+  const tuning = () => config.tuning || { temperature: 0, maxTokens: 6000, reasoning: 'low' };
   const requestTimeout = timeoutMs || config.remoteTimeoutMs || 30000;
   let catalogue = null;
 
@@ -161,13 +162,14 @@ export function createOpenRouterProvider({ config, fetch: fetchImplementation = 
       signal,
       body: {
         model: selected,
-        temperature: 0,
+        temperature: tuning().temperature,
         // «Думающие» модели (например Gemini Flash) тратят часть бюджета на
         // reasoning; при тесном лимите ответ приходит с content: null. Поэтому
-        // бюджет шире, а рассуждение просим короткое: извлечение полей по
-        // схеме — не та задача, где долгие раздумья что-то добавляют.
-        max_tokens: 6000,
-        reasoning: { effort: 'low', exclude: true },
+        // бюджет шире, а рассуждение по умолчанию короткое: извлечение полей по
+        // схеме — не та задача, где долгие раздумья что-то добавляют. Значения
+        // правятся в настройках, если модель просит другого.
+        max_tokens: tuning().maxTokens,
+        ...(tuning().reasoning === 'off' ? {} : { reasoning: { effort: tuning().reasoning, exclude: true } }),
         messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
         response_format: { type: 'json_schema', json_schema: { name: schemaName, strict: true, schema: JSON.parse(schema) } },
       },

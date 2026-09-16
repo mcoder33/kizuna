@@ -84,6 +84,12 @@ export function resolveExecutable(value, expectedBasename, env = process.env, ex
   return null;
 }
 
+// Дробное значение в границах: пустая строка и мусор значат «по умолчанию».
+function boundedNumber(value, fallback, min, max) {
+  const parsed = Number(String(value ?? '').trim());
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
 export function createCliConfig(env = process.env, { exists = fs.existsSync } = {}) {
   let provider = 'fallback';
   try { provider = validateProviderId(env.PAGENT_AI_PROVIDER, 'fallback'); } catch {}
@@ -131,6 +137,15 @@ export function createCliConfig(env = process.env, { exists = fs.existsSync } = 
     maxConcurrency: safelyBoundedInteger(env.PAGENT_CLI_MAX_CONCURRENCY, 1, 1, 2),
     maxQueue: safelyBoundedInteger(env.PAGENT_CLI_MAX_QUEUE, 3, 0, 20),
     remoteTimeoutMs: safelyBoundedInteger(env.PAGENT_OPENROUTER_TIMEOUT_MS, 30000, 5000, 120000),
+    // Ручки модели: то, что раньше стояло числами прямо в запросе. Разбор
+    // записи — извлечение полей по схеме, поэтому по умолчанию температура
+    // ноль и короткое рассуждение; но модели разные, и докручивать это должно
+    // быть можно из настроек, а не правкой кода.
+    tuning: {
+      temperature: boundedNumber(env.PAGENT_MODEL_TEMPERATURE, 0, 0, 2),
+      maxTokens: safelyBoundedInteger(env.PAGENT_MODEL_MAX_TOKENS, 6000, 256, 32000),
+      reasoning: ['off', 'low', 'medium', 'high'].includes(env.PAGENT_MODEL_REASONING) ? env.PAGENT_MODEL_REASONING : 'low',
+    },
     providers,
   };
 }

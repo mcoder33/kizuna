@@ -627,6 +627,29 @@
                 <option value="claude-cli">Claude CLI</option>
               </select></label
             >
+            <!-- Ручки модели: докрутить под другую модель, не правя код. -->
+            <label class="setting" for="setting-modelTemperature"
+              ><span class="setting-name">Температура разбора</span
+              ><input id="setting-modelTemperature" type="number" min="0" max="2" step="0.1" placeholder="0"
+            /></label>
+            <label class="setting" for="setting-modelMaxTokens"
+              ><span class="setting-name">Потолок ответа, токенов</span
+              ><input id="setting-modelMaxTokens" type="number" min="256" max="32000" step="256" placeholder="6000"
+            /></label>
+            <label class="setting" for="setting-modelReasoning"
+              ><span class="setting-name">Рассуждение модели</span
+              ><select id="setting-modelReasoning">
+                <option value="off">Без рассуждения</option>
+                <option value="low">Короткое</option>
+                <option value="medium">Среднее</option>
+                <option value="high">Длинное</option>
+              </select></label
+            >
+            <p class="setting-hint">
+              Разбор записи — извлечение полей по схеме, поэтому по умолчанию
+              температура ноль и короткое рассуждение. Модели разные: если
+              выбранная отвечает обрывками или спорит со схемой, докрутите здесь.
+            </p>
             <label class="setting" for="setting-timeZone"
               ><span class="setting-name">Часовой пояс</span
               ><input

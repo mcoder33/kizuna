@@ -483,7 +483,43 @@ function migrateCircles(db) {
     CREATE TABLE IF NOT EXISTS comment_mentions (
       comment_id TEXT NOT NULL REFERENCES comments(id), user_id TEXT NOT NULL REFERENCES users(id),
       created_at TEXT NOT NULL, seen_at TEXT, PRIMARY KEY(comment_id, user_id));
-    CREATE INDEX IF NOT EXISTS comment_mentions_user ON comment_mentions(user_id, seen_at);`);
+    CREATE INDEX IF NOT EXISTS comment_mentions_user ON comment_mentions(user_id, seen_at);
+    -- Разговор круга. «Общий» есть у каждого круга и заводится сам; в нём все,
+    -- кто в круге, поэтому своих строк участия у него нет. Комната — разговор
+    -- подмножеством: у неё участники названы поимённо, и кто не в ней, тот её
+    -- не видит вовсе. Прочитанное — отдельной таблицей: у общей комнаты состав
+    -- меняется вместе с кругом, а отметка «дочитал» у каждого своя.
+    CREATE TABLE IF NOT EXISTS chat_rooms (
+      id TEXT PRIMARY KEY, circle_id TEXT NOT NULL REFERENCES circles(id),
+      name TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('general','room')),
+      created_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL, archived_at TEXT);
+    CREATE INDEX IF NOT EXISTS chat_rooms_circle ON chat_rooms(circle_id, created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS chat_rooms_general ON chat_rooms(circle_id) WHERE kind='general';
+    CREATE TABLE IF NOT EXISTS chat_room_members (
+      room_id TEXT NOT NULL REFERENCES chat_rooms(id), user_id TEXT NOT NULL REFERENCES users(id),
+      added_by TEXT REFERENCES users(id), joined_at TEXT NOT NULL, left_at TEXT, PRIMARY KEY(room_id, user_id));
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id TEXT PRIMARY KEY, room_id TEXT NOT NULL REFERENCES chat_rooms(id), author_id TEXT REFERENCES users(id),
+      body TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'said' CHECK(kind IN ('said','joined','left','added')),
+      created_at TEXT NOT NULL, deleted_at TEXT);
+    CREATE INDEX IF NOT EXISTS chat_messages_room ON chat_messages(room_id, created_at);
+    CREATE TABLE IF NOT EXISTS chat_mentions (
+      message_id TEXT NOT NULL REFERENCES chat_messages(id), user_id TEXT NOT NULL REFERENCES users(id),
+      created_at TEXT NOT NULL, seen_at TEXT, PRIMARY KEY(message_id, user_id));
+    CREATE INDEX IF NOT EXISTS chat_mentions_user ON chat_mentions(user_id, seen_at);
+    CREATE TABLE IF NOT EXISTS chat_reads (
+      room_id TEXT NOT NULL REFERENCES chat_rooms(id), user_id TEXT NOT NULL REFERENCES users(id),
+      last_read_at TEXT NOT NULL, PRIMARY KEY(room_id, user_id));`);
+  // Ссылка-приглашение работает для многих и до срока, а не на одного
+  // человека: звать десятерых десятью ссылками неудобно, а одноразовость
+  // ничего не охраняла — круг и так виден только тем, кто в нём.
+  const inviteColumns = new Set(db.prepare('PRAGMA table_info(circle_invites)').all().map(column => column.name));
+  if (!inviteColumns.has('uses')) db.exec('ALTER TABLE circle_invites ADD COLUMN uses INTEGER NOT NULL DEFAULT 0');
+  // Человека можно добавить в круг сразу, если он уже есть в приложении. Тогда
+  // он узнаёт об этом строкой «к вам» — пока не прочитал, строка висит.
+  const memberColumns = new Set(db.prepare('PRAGMA table_info(circle_members)').all().map(column => column.name));
+  if (!memberColumns.has('added_by')) db.exec('ALTER TABLE circle_members ADD COLUMN added_by TEXT REFERENCES users(id)');
+  if (!memberColumns.has('seen_at')) db.exec('ALTER TABLE circle_members ADD COLUMN seen_at TEXT');
 }
 function migrateDailyBriefsPerUser(db) {
   db.pragma('foreign_keys = OFF');

@@ -6,6 +6,10 @@ import { E2E_EMAIL, E2E_PASSWORD } from "./fixtures/e2e-account.js";
 
 const ANYA = { email: "anya@kizuna.test", password: "anya-very-long-password" };
 
+async function dissolveCircles(request) {
+  const circles = (await (await request.get("/api/circles")).json()).circles || [];
+  for (const circle of circles) await request.delete(`/api/circles/${circle.id}`);
+}
 async function loginAs(browser, { email, password }) {
   const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
   const page = await context.newPage();
@@ -19,6 +23,7 @@ async function loginAs(browser, { email, password }) {
 
 test("круг: приглашение, просьба, «беру» и разговор с призывом", async ({ page, request, browser }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await dissolveCircles(request);
   // Второй человек заводится заявкой и одобряется администратором — обычным путём.
   const existing = (await (await request.get("/api/admin/users")).json()).users.find((user) => user.email === ANYA.email);
   if (!existing) {
@@ -34,10 +39,13 @@ test("круг: приглашение, просьба, «беру» и разг
   await page.goto("/#circles");
   await page.locator("#circle-new-name").fill("Хаб");
   await page.getByRole("button", { name: "+ Круг" }).click();
+  // Круг открывается разговором; люди и граница — вторая половина страницы.
+  await expect(page.locator(".room-pane .room-title")).toContainText("Общий");
+  await page.getByRole("button", { name: /Люди и граница/ }).click();
   const card = page.locator(".circle-card").filter({ hasText: "Хаб" });
   await expect(card).toBeVisible();
   await expect(card.locator(".people-name")).toContainText("Саша");
-  await card.getByRole("button", { name: "Позвать по ссылке" }).click();
+  await card.getByRole("button", { name: "Завести ссылку" }).click();
   const invite = await card.locator(".invite-link").inputValue();
   expect(invite).toContain("#join/");
 
@@ -47,6 +55,7 @@ test("круг: приглашение, просьба, «беру» и разг
   await anya.page.goto(`/${invite.slice(invite.indexOf("#"))}`);
   await expect(anya.page.locator(".invite-card")).toContainText("Саша зовёт вас в круг «Хаб»");
   await anya.page.getByRole("button", { name: "Войти в круг" }).click();
+  await anya.page.getByRole("button", { name: /Люди и граница/ }).click();
   await expect(anya.page.locator(".circle-card").filter({ hasText: "Хаб" }).locator(".people-name")).toHaveCount(2);
 
   // ── дело уходит фразой ──
@@ -100,6 +109,7 @@ test("круг: приглашение, просьба, «беру» и разг
 
   // ── круг выключается: дела уходят из списков, просьбы сворачиваются ──
   await anya.page.goto("/#circles");
+  await anya.page.getByRole("button", { name: /Люди и граница/ }).click();
   await anya.page.locator(".circle-card").filter({ hasText: "Хаб" }).locator(".switch-row input").check();
   await anya.page.goto("/#today");
   await expect(anya.page.locator("#todo .entry").filter({ hasText: "смету" })).toHaveCount(0);

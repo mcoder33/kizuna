@@ -43,6 +43,7 @@ export const VOICE_INSTRUCTIONS = [
   'Если человек размышляет вслух и обращается к тебе, помоги подумать: уточняющий вопрос или следующий шаг.',
   'Карта журнала уже у тебя перед глазами — проекты, типы, метки, что горит. Не спрашивай человека о том, что в ней есть. Нужны подробности — list_entries с нужным признаком, нужна свежая карта — journal_overview.',
   'Что человек однажды решил, ты помнишь. Поправил тебя или попросил учитывать всегда — вызови remember одной короткой фразой и скажи, что запомнил. Второй раз об этом не спрашивай. Вспомнить — recall, забыть по просьбе — forget.',
+  'Время в снимке — на начало разговора, и оно стареет: разговор может идти час. Когда нужно точное «сейчас» — который час, сколько осталось до встречи, какое сегодня число, — вызови current_time и считай от него, а не в уме.',
   'Календарь — тоже твоя часть: list_calendar показывает свои дела и встречи вместе с событиями внешних календарей (Яндекс, Apple, Google). Своё дело или встречу двигай update_capture, чужое событие — update_event, удаление чужого события подтверждай вслух и вызывай delete_event только после согласия. Чтобы чужое событие стало записью в памяти — take_event. На приглашение отвечай respond_event, когда человек сказал, принимает он встречу или нет. Удаляя повторяющееся событие (recurring), сначала спроси: только этот повтор или всю серию — и передай scope в delete_event.',
 ].join(' ');
 
@@ -175,11 +176,11 @@ export function buildVoiceInstructions({ provider, voice, extra, briefing, memor
 // Голосу нельзя зачитать журнал целиком, да и незачем — нужна карта: сколько
 // чего, как называются проекты и люди, что горит сегодня. Без неё разговор
 // начинается с трёх поисков подряд и вопроса «а какой проект?».
-export function voiceBriefing(overview) {
+export function voiceBriefing(overview, now = new Date()) {
   if (!overview) return '';
   const lines = [];
   const totals = overview.totals;
-  lines.push(`Сегодня ${overview.today} (${overview.timeZone}). Записей ${totals.entries}, открыто ${totals.open}, просрочено ${totals.overdue}${totals.unparsed ? `, на разборе ${totals.unparsed}` : ''}.`);
+  lines.push(`${clockLine(now, overview.timeZone)} Записей ${totals.entries}, открыто ${totals.open}, просрочено ${totals.overdue}${totals.unparsed ? `, на разборе ${totals.unparsed}` : ''}.`);
   if (overview.projects.length)
     lines.push(`Проекты: ${overview.projects.map(project => {
       const marks = [project.open ? `${project.open} открытых` : null, project.overdue ? `${project.overdue} просрочено` : null, project.stalled ? `тихо ${project.quietDays} дн.` : null].filter(Boolean);
@@ -199,8 +200,22 @@ export function voiceBriefing(overview) {
 
 /** Карта журнала и память одним вызовом — всё, что уходит в голову разговора. */
 export function voiceContext(db, { userId = null, now = new Date(), timeZone = 'Europe/Samara' } = {}) {
-  return { briefing: voiceBriefing(journalOverview(db, { userId, now, timeZone })), memory: memoryDigest(db, { userId }) };
+  return { briefing: voiceBriefing(journalOverview(db, { userId, now, timeZone }), now), memory: memoryDigest(db, { userId }) };
 }
+// Который час у человека — словами, как он сам бы сказал: день недели, дата,
+// время. Пояс приложения, а не гринвич: «к трём» — это к трём здесь.
+export function clockNow(now = new Date(), timeZone = 'Europe/Samara') {
+  const parts = new Intl.DateTimeFormat('ru-RU', { timeZone, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }).formatToParts(now);
+  const take = type => parts.find(part => part.type === type)?.value || '';
+  return {
+    date: dateInZone(now, timeZone),
+    time: `${take('hour')}:${take('minute')}`,
+    weekday: take('weekday'),
+    words: `${take('weekday')}, ${take('day')} ${take('month')} ${take('year')}, ${take('hour')}:${take('minute')}`,
+    timeZone,
+  };
+}
+const clockLine = (now, timeZone) => `Сейчас ${clockNow(now, timeZone).words} (${timeZone}).`;
 
 // Контракт инструментов. Один и тот же список уходит в Realtime-сессию и
 // используется заглушкой, поэтому режимы не расходятся.
@@ -227,6 +242,14 @@ export const VOICE_TOOLS = [
       },
       required: ['text'],
     },
+  },
+  {
+    type: 'function',
+    // Часы разговора: модель не знает, сколько сейчас времени, а снимок
+    // журнала уходит в голову один раз на весь разговор и стареет вместе с ним.
+    name: 'current_time',
+    description: 'Который сейчас час у человека: дата, время, день недели и часовой пояс приложения. Вызывай, когда время важно — «во сколько», «сколько осталось», «какое сегодня число», «через час».',
+    parameters: { type: 'object', properties: {} },
   },
   {
     type: 'function',
@@ -534,6 +557,7 @@ export function runVoiceTool(db, name, args = {}, { now = () => new Date(), time
 
   // Карта журнала: с неё начинается ориентировка. В голове разговора лежит
   // снимок на его начало, а журнал за разговор меняется — здесь он свежий.
+  if (name === 'current_time') return clockNow(now(), timeZone);
   if (name === 'journal_overview') return journalOverview(db, { userId, now: now(), timeZone });
 
   if (name === 'list_entries') {

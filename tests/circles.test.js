@@ -25,10 +25,15 @@ test('круг: заводится, зовёт по ссылке, показыв
   const hers=(await anya.get('/api/circles').expect(200)).body.circles;
   assert.equal(hers[0].id,circle.id);
   assert.equal(hers[0].role,'member');
-  // Использованное приглашение второй раз не работает.
-  const used=(await sasha.post(`/api/circles/${circle.id}/invite`).send({}).expect(201)).body;
-  await anya.post(`/api/circles/invite/${used.token}/accept`).send({}).expect(200);
-  await anya.post(`/api/circles/invite/${used.token}/accept`).send({}).expect(409);
+  // Ссылка работает для многих: звать десятерых десятью ссылками неудобно.
+  const link=(await sasha.post(`/api/circles/${circle.id}/invite`).send({}).expect(201)).body;
+  await anya.post(`/api/circles/invite/${link.token}/accept`).send({}).expect(200);
+  await anya.post(`/api/circles/invite/${link.token}/accept`).send({}).expect(200);
+  // Обновили ссылку — прежняя перестала работать, и это единственный способ
+  // её закрыть.
+  await sasha.post(`/api/circles/${circle.id}/invite`).send({}).expect(201);
+  await anya.post(`/api/circles/invite/${link.token}/accept`).send({}).expect(409);
+  assert.equal((await sasha.get(`/api/circles/${circle.id}`).expect(200)).body.circle.invite.uses,0,'у новой ссылки свой счёт');
   // Последний хозяин не может уйти: круг не должен остаться без него.
   await sasha.post(`/api/circles/${circle.id}/leave`).send({}).expect(409);
   await anya.post(`/api/circles/${circle.id}/leave`).send({}).expect(200);
@@ -178,4 +183,31 @@ test('очистка данных уносит разговор и просьб�
   assert.equal((await sasha.get('/api/inbox').expect(200)).body.waiting.length,0);
   assert.deepEqual((await sasha.get('/api/circles').expect(200)).body.circles.map(item=>item.name),['Хаб']);
   assert.equal((await anya.get('/api/day').expect(200)).body.inbox.length,0,'просьба ушла вместе с записью');
+});
+
+test('человека из приложения зовут поиском, а не ссылкой, и он узнаёт об этом строкой «к вам»',async()=>{
+  const {app,sasha,anya,circle}=await pair();
+  const katya=authed(app,{email:'katya@kizuna.test',role:'user'});
+  await katya.patch('/api/account').send({name:'Катя'}).expect(200);
+  // Ищем среди людей приложения: те, кто уже в круге, в подсказке не нужны.
+  const found=(await sasha.get(`/api/circles/${circle.id}/candidates?q=кат`).expect(200)).body.people;
+  assert.deepEqual(found.map(person=>person.name),['Катя']);
+  assert.equal((await sasha.get(`/api/circles/${circle.id}/candidates?q=ан`).expect(200)).body.people.length,0,'кто в круге, того не предлагают');
+  assert.equal((await sasha.get(`/api/circles/${circle.id}/candidates?q=к`).expect(200)).body.people.length,0,'по одной букве не ищем');
+  // Добавили — и человек в круге сразу, без ссылки и без ожидания.
+  const added=(await sasha.post(`/api/circles/${circle.id}/members`).send({userId:katya.user.id}).expect(200)).body;
+  assert.deepEqual(added.circle.members.map(member=>member.name).sort(),['Аня','Катя','Саша']);
+  await sasha.post(`/api/circles/${circle.id}/members`).send({userId:katya.user.id}).expect(409);
+  await sasha.post(`/api/circles/${circle.id}/members`).send({userId:'нет-такого'}).expect(404);
+  // Молча в чужой список круг не кладётся: пока не открыл — строка «к вам».
+  const day=(await katya.get('/api/day').expect(200)).body;
+  assert.equal(day.inbox.length,1);
+  assert.equal(day.inbox[0].kind,'circle');
+  assert.equal(day.inbox[0].from.name,'Саша');
+  assert.equal(day.inbox[0].circle.name,'Хаб');
+  await katya.post(`/api/circles/${circle.id}/seen`).send({}).expect(200);
+  assert.equal((await katya.get('/api/day').expect(200)).body.inbox.length,0);
+  // И выйти можно в одно нажатие.
+  await katya.post(`/api/circles/${circle.id}/leave`).send({}).expect(200);
+  assert.deepEqual((await katya.get('/api/circles').expect(200)).body.circles,[]);
 });

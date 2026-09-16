@@ -134,6 +134,7 @@ export function circleDetail(db, circleId, userId) {
     muted: Boolean(row.muted_at),
     members: membersOf(db, circleId).map(member => ({ ...member, openDeeds: byUser.get(member.id) || 0 })),
     captureCount: db.prepare('SELECT COUNT(*) AS n FROM capture_circles WHERE circle_id=? AND removed_at IS NULL').get(circleId).n,
+    invite: inviteState(db, circleId),
   });
 }
 
@@ -152,13 +153,26 @@ export function leaveCircle(db, circleId, userId) {
 // ── приглашения ──
 
 const hashToken = token => crypto.createHash('sha256').update(String(token)).digest('hex');
+// Ссылка у круга одна и работает для многих: звать десятерых десятью ссылками
+// неудобно, а охранять ей нечего — круг виден только тем, кто в нём, и войти по
+// ней может лишь тот, у кого уже есть учётная запись в приложении. Сам токен не
+// хранится, только его SHA-256; поэтому «показать ссылку ещё раз» невозможно —
+// её показывают один раз тому, кто её завёл, а забыли — обновите.
 export function createInvite(db, circleId, userId) {
   const member = membership(db, circleId, userId);
   if (!member) return { error: 'not_found' };
   const token = crypto.randomBytes(18).toString('base64url'), at = now();
   const expires = new Date(Date.now() + INVITE_TTL_DAYS * 86400000).toISOString();
+  db.prepare('UPDATE circle_invites SET revoked_at=? WHERE circle_id=? AND revoked_at IS NULL').run(at, circleId);
   db.prepare('INSERT INTO circle_invites(id,circle_id,token_hash,created_by,created_at,expires_at) VALUES(?,?,?,?,?,?)').run(id(), circleId, hashToken(token), userId, at, expires);
-  return { token, expiresAt: expires };
+  return { token, expiresAt: expires, uses: 0 };
+}
+// Что известно о живой ссылке круга, когда самого токена у нас нет: когда
+// заведена, до какого числа живёт и сколько людей по ней вошло.
+export function inviteState(db, circleId) {
+  const row = db.prepare('SELECT * FROM circle_invites WHERE circle_id=? AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1').get(circleId);
+  if (!row) return null;
+  return { createdAt: row.created_at, expiresAt: row.expires_at, uses: row.uses, expired: row.expires_at < now() };
 }
 // Приглашённый видит, кто зовёт и во что, ещё до согласия: иначе он нажимает
 // «войти» вслепую.
@@ -166,7 +180,7 @@ export function peekInvite(db, token) {
   const row = db.prepare(`SELECT i.*, c.name, c.color, c.deleted_at, u.email, u.display_name FROM circle_invites i
     JOIN circles c ON c.id=i.circle_id JOIN users u ON u.id=i.created_by WHERE i.token_hash=?`).get(hashToken(token));
   if (!row || row.deleted_at) return { error: 'invite_not_found' };
-  if (row.revoked_at || row.used_at) return { error: 'invite_used' };
+  if (row.revoked_at) return { error: 'invite_used' };
   if (row.expires_at < now()) return { error: 'invite_expired' };
   return { circle: { id: row.circle_id, name: row.name, color: row.color }, invitedBy: displayName(row), members: membersOf(db, row.circle_id).length };
 }
@@ -175,14 +189,69 @@ export function acceptInvite(db, token, userId) {
   if (peek.error) return peek;
   const at = now();
   const existing = db.prepare('SELECT * FROM circle_members WHERE circle_id=? AND user_id=?').get(peek.circle.id, userId);
-  // Приглашение тратится в любом случае — даже если человек уже внутри:
-  // иначе ссылка продолжала бы работать после того, как по ней прошли.
-  db.prepare('UPDATE circle_invites SET used_at=?, used_by=? WHERE token_hash=?').run(at, userId, hashToken(token));
+  // Ссылка не тратится: она заведена для многих. Считается только, сколько
+  // людей по ней вошло — это и есть весь её учёт.
+  db.prepare('UPDATE circle_invites SET uses=uses+1, used_at=?, used_by=? WHERE token_hash=? AND revoked_at IS NULL').run(at, userId, hashToken(token));
   if (existing && !existing.left_at) return { circle: circleDetail(db, peek.circle.id, userId), already: true };
   if (existing) db.prepare('UPDATE circle_members SET left_at=NULL, joined_at=?, muted_at=NULL WHERE circle_id=? AND user_id=?').run(at, peek.circle.id, userId);
   else db.prepare("INSERT INTO circle_members(circle_id,user_id,role,joined_at) VALUES(?,?,'member',?)").run(peek.circle.id, userId, at);
   db.prepare('UPDATE circle_invites SET used_at=?, used_by=? WHERE token_hash=?').run(at, userId, hashToken(token));
   return { circle: circleDetail(db, peek.circle.id, userId) };
+}
+
+// Кого можно позвать: люди приложения, которых в круге ещё нет. Ищем по имени
+// и по почте, и только среди работающих учётных записей — заявка, которую
+// администратор ещё не одобрил, в круг попасть не может.
+export function candidates(db, circleId, userId, query) {
+  if (!membership(db, circleId, userId)) return { error: 'not_found' };
+  const text = String(query || '').trim().toLocaleLowerCase('ru-RU');
+  if (text.length < 2) return { people: [] };
+  const inside = new Set(db.prepare('SELECT user_id FROM circle_members WHERE circle_id=? AND left_at IS NULL').all(circleId).map(row => row.user_id));
+  const people = db
+    .prepare("SELECT * FROM users WHERE status='active' ORDER BY COALESCE(display_name, email) LIMIT 200")
+    .all()
+    .filter(person => !inside.has(person.id))
+    .filter(person => displayName(person).toLocaleLowerCase('ru-RU').includes(text) || String(person.email).toLocaleLowerCase('ru-RU').includes(text))
+    .slice(0, 8)
+    .map(publicUser);
+  return { people };
+}
+// Добавить сразу — то, ради чего люди и заводят круг: искать ссылку ради
+// человека, который уже в приложении, незачем. Своего у него при этом никто не
+// увидит: в круге видно только то, что в него отдали, а сам он узнаёт о
+// добавлении строкой «к вам» и может выйти в одно нажатие.
+export function addMember(db, circleId, userId, personId) {
+  if (!membership(db, circleId, userId)) return { error: 'not_found' };
+  const person = db.prepare("SELECT * FROM users WHERE id=? AND status='active'").get(personId);
+  if (!person) return { error: 'person_not_found' };
+  if (membership(db, circleId, personId)) return { error: 'already_member' };
+  const at = now();
+  const existing = db.prepare('SELECT 1 FROM circle_members WHERE circle_id=? AND user_id=?').get(circleId, personId);
+  if (existing) db.prepare('UPDATE circle_members SET left_at=NULL, joined_at=?, muted_at=NULL, added_by=?, seen_at=NULL WHERE circle_id=? AND user_id=?').run(at, userId, circleId, personId);
+  else db.prepare("INSERT INTO circle_members(circle_id,user_id,role,joined_at,added_by) VALUES(?,?,'member',?,?)").run(circleId, personId, at, userId);
+  return { circle: circleDetail(db, circleId, userId), person: publicUser(person) };
+}
+// Пока человек не открыл круг, в который его добавили, об этом говорит строка
+// «к вам»: добавить молча — то же самое, что положить дело в чужой день молча.
+export function newCircles(db, userId) {
+  return db
+    .prepare(`SELECT c.id, c.name, c.color, m.joined_at, m.added_by, u.email, u.display_name FROM circle_members m
+      JOIN circles c ON c.id=m.circle_id LEFT JOIN users u ON u.id=m.added_by
+      WHERE m.user_id=? AND m.left_at IS NULL AND m.added_by IS NOT NULL AND m.seen_at IS NULL AND c.deleted_at IS NULL
+      ORDER BY m.joined_at`)
+    .all(userId)
+    .map(row => ({
+      kind: 'circle',
+      id: row.id,
+      circle: { id: row.id, name: row.name, color: row.color },
+      title: `вас добавили в круг «${row.name}»`,
+      from: row.email ? publicUser({ ...row, id: row.added_by }) : null,
+      createdAt: row.joined_at,
+    }));
+}
+export function markCircleSeen(db, circleId, userId) {
+  db.prepare('UPDATE circle_members SET seen_at=? WHERE circle_id=? AND user_id=? AND seen_at IS NULL').run(now(), circleId, userId);
+  return { seen: true };
 }
 
 // ── видимость записи ──
@@ -353,7 +422,7 @@ export function comments(db, captureId) {
     body: row.body,
     createdAt: row.created_at,
     parentId: row.parent_id,
-    author: publicUser(row),
+    author: publicUser({ ...row, id: row.author_id }),
     mentions: mentions.get(row.id) || [],
   }));
 }
@@ -397,7 +466,7 @@ export function unseenMentions(db, userId) {
       title: row.raw,
       body: row.body,
       createdAt: row.created_at,
-      author: publicUser(row),
+      author: publicUser({ ...row, id: row.author_id }),
     }));
 }
 export function markMentionsSeen(db, captureId, userId) {
@@ -417,9 +486,9 @@ export function commentCounts(db, captureIds) {
 // человека это одно и то же — кому-то от меня что-то нужно. Дела выключенных
 // кругов в неё не попадают поштучно: они собираются одной свёрнутой строкой,
 // и в этом разница между «спрятать» и «тихо потерять».
-export function inbox(db, userId) {
+export function inbox(db, userId, extraRows = []) {
   const muted = mutedCircleIds(db, userId);
-  const rows = [];
+  const rows = [...extraRows.map(row => ({ ...row, muted: row.circle ? muted.has(row.circle.id) : false }))];
   for (const assignment of assignmentsTo(db, userId, ['pending'])) {
     const capture = db.prepare('SELECT raw FROM captures WHERE id=?').get(assignment.captureId);
     rows.push({

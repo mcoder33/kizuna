@@ -18,6 +18,7 @@ import { periodReport, dayReport, shiftDate as reportShiftDate } from './reports
 import { boardView, createColumn, renameColumn, colorColumn, moveColumn, deleteColumn, moveCard } from './board.js';
 import { createCalendarService, CalendarSyncWorker } from './calendar.js';
 import * as circles from './circles.js';
+import * as chat from './chat.js';
 import { createSecretBox } from './secrets.js';
 import { createReminderService, ReminderWorker, validRemind, validRemindHour, REMIND_MAX_MINUTES } from './reminders.js';
 import { createPushService } from './push.js';
@@ -123,6 +124,13 @@ const SETTINGS = {
   // оценку разговора. Здесь — общий для всех; своё значение человеку ставит
   // администратор в разделе «Пользователи».
   monthlyLimitUsd: { admin:true, check:value => Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 1e6 },
+  // Разбор записи — извлечение полей по схеме: по умолчанию температура ноль,
+  // бюджет ответа широкий (у «думающих» моделей часть его уходит на
+  // рассуждение), рассуждение короткое. Модели разные, поэтому значения
+  // вынесены сюда.
+  modelTemperature: { env:'PAGENT_MODEL_TEMPERATURE', admin:true, check:value => Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 2 },
+  modelMaxTokens: { env:'PAGENT_MODEL_MAX_TOKENS', admin:true, check:value => /^\d+$/.test(String(value)) && Number(value) >= 256 && Number(value) <= 32000 },
+  modelReasoning: { env:'PAGENT_MODEL_REASONING', admin:true, check:value => ['off','low','medium','high'].includes(value) },
 };
 // Голоса по умолчанию те же, что и у самой службы: без них выпадающий список
 // открывался бы пустым, хотя разговор уже идёт каким-то голосом.
@@ -130,7 +138,8 @@ const SETTING_DEFAULTS = { sleepAfterSeconds:'25', remindDefault:'15', remindHou
   // Цены по умолчанию нет намеренно: выдумать её значит показать человеку
   // сумму, которой он не платил. Пока цену не задали, работает предел по
   // минутам, а деньги честно показываются как неизвестные.
-  voiceRateUsdPerMinute:'0', voiceGeminiRateUsdPerMinute:'0', voiceLimitUsd:'', voiceLimitMinutes:'', voiceLimitWindow:'day', voiceEnabled:'on', monthlyLimitUsd:'' };
+  voiceRateUsdPerMinute:'0', voiceGeminiRateUsdPerMinute:'0', voiceLimitUsd:'', voiceLimitMinutes:'', voiceLimitWindow:'day', voiceEnabled:'on', monthlyLimitUsd:'',
+  modelTemperature:'0', modelMaxTokens:'6000', modelReasoning:'low' };
 // Личная настройка лежит под своим ключом: у каждого своя строчка, общая
 // таблица одна.
 const personalKey = (userId, name) => `user:${userId}:${name}`;
@@ -256,6 +265,9 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   };
   // Новость об общем деле касается двоих: автора записи и того, кому она
   // ушла. Остальным участникам круга знать о каждом чекбоксе незачем.
+  const notifyCircleMembers = (circleId) => {
+    for (const member of circles.membersOf(db, circleId)) notifyUser(member.id, 'journal', { reason:'circle', at: now().toISOString() });
+  };
   const notifyCircle = (captureId, extra = []) => {
     const owner = captureOwner(db, captureId);
     const assignment = circles.assignmentFor(db, captureId);
@@ -433,6 +445,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     invalid_name:[400,'Имя круга — от 1 до 40 символов.'], invalid_color:[400,'Такого цвета нет.'], circles_limit:[409,'Кругов может быть не больше 12.'],
     not_found:[404,'Круг не найден.'], not_owner:[403,'Это меняет хозяин круга.'], last_owner:[409,'Круг не должен остаться без хозяина: сначала назначьте другого.'],
     invite_not_found:[404,'Приглашение не найдено.'], invite_used:[409,'Приглашение уже использовано.'], invite_expired:[410,'Приглашение просрочено — попросите новое.'],
+    person_not_found:[404,'Такого человека в приложении нет.'], already_member:[409,'Этот человек уже в круге.'],
     self_assign:[400,'Себе дело ставят обычной записью.'], not_in_circle:[409,'Этого человека нет ни в одном общем с вами круге.'],
     already_answered:[409,'На эту просьбу уже ответили.'], invalid_comment:[400,'Сообщение — от 1 до 4000 символов.'], invalid_name_value:[400,'Имя — до 60 символов.'],
   };
@@ -440,22 +453,27 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   const circleReply = (res, result, status = 200) => result.error ? circleError(res, result.error) : res.status(status).json(result);
 
   app.get('/api/circles',(req,res,next)=>{try{res.json({circles:circles.circlesOf(db,req.user.id).map(circle=>circles.circleDetail(db,circle.id,req.user.id)),me:circles.publicUser(findUserById(db,req.user.id))});}catch(error){next(error);}});
-  app.post('/api/circles',(req,res,next)=>{try{circleReply(res,circles.createCircle(db,req.user.id,req.body?.name,req.body?.color||'violet'),201);}catch(error){next(error);}});
+  app.post('/api/circles',(req,res,next)=>{try{const result=circles.createCircle(db,req.user.id,req.body?.name,req.body?.color||'violet');if(!result.error)chat.ensureGeneral(db,result.circle.id,req.user.id);circleReply(res,result,201);}catch(error){next(error);}});
   // Приглашение — раньше «:id», иначе адрес «invite» ушёл бы в идентификатор.
   app.get('/api/circles/invite/:token',(req,res,next)=>{try{circleReply(res,circles.peekInvite(db,req.params.token));}catch(error){next(error);}});
-  app.post('/api/circles/invite/:token/accept',(req,res,next)=>{try{const result=circles.acceptInvite(db,req.params.token,req.user.id);if(!result.error)notifyUser(req.user.id,'journal',{reason:'circle',at:now().toISOString()});circleReply(res,result);}catch(error){next(error);}});
+  app.post('/api/circles/invite/:token/accept',(req,res,next)=>{try{const result=circles.acceptInvite(db,req.params.token,req.user.id);if(!result.error)notifyCircleMembers(result.circle.id);circleReply(res,result);}catch(error){next(error);}});
   app.get('/api/circles/:id',(req,res,next)=>{try{const circle=circles.circleDetail(db,req.params.id,req.user.id);if(!circle)return circleError(res,'not_found');res.json({circle});}catch(error){next(error);}});
   app.patch('/api/circles/:id',(req,res,next)=>{try{circleReply(res,circles.updateCircle(db,req.params.id,req.user.id,{name:req.body?.name,color:req.body?.color}));}catch(error){next(error);}});
   // Выключить круг — личное и обратимое: дела уходят из списков, просьбы
   // продолжают приходить свёрнутой строкой.
   app.post('/api/circles/:id/mute',(req,res,next)=>{try{circleReply(res,circles.setMuted(db,req.params.id,req.user.id,req.body?.muted!==false));}catch(error){next(error);}});
   app.delete('/api/circles/:id',(req,res,next)=>{try{circleReply(res,circles.dissolveCircle(db,req.params.id,req.user.id));}catch(error){next(error);}});
-  app.post('/api/circles/:id/leave',(req,res,next)=>{try{circleReply(res,circles.leaveCircle(db,req.params.id,req.user.id));}catch(error){next(error);}});
+  // Человека, который уже есть в приложении, зовут поиском, а не ссылкой:
+  // искать ссылку ради соседа по приложению незачем.
+  app.get('/api/circles/:id/candidates',(req,res,next)=>{try{circleReply(res,circles.candidates(db,req.params.id,req.user.id,req.query?.q));}catch(error){next(error);}});
+  app.post('/api/circles/:id/members',(req,res,next)=>{try{const result=circles.addMember(db,req.params.id,req.user.id,req.body?.userId);if(result.error)return circleError(res,result.error);chat.ensureGeneral(db,req.params.id,req.user.id);notifyCircleMembers(req.params.id);chatReply(res,result);}catch(error){next(error);}});
+  app.post('/api/circles/:id/seen',(req,res,next)=>{try{if(!circles.membership(db,req.params.id,req.user.id))return circleError(res,'not_found');res.json(circles.markCircleSeen(db,req.params.id,req.user.id));}catch(error){next(error);}});
+  app.post('/api/circles/:id/leave',(req,res,next)=>{try{const result=circles.leaveCircle(db,req.params.id,req.user.id);if(!result.error)notifyCircleMembers(req.params.id);circleReply(res,result);}catch(error){next(error);}});
   app.post('/api/circles/:id/invite',(req,res,next)=>{try{const result=circles.createInvite(db,req.params.id,req.user.id);if(result.error)return circleError(res,result.error);const base=process.env.PAGENT_PUBLIC_URL||`${req.get('x-forwarded-proto')||req.protocol}://${req.get('x-forwarded-host')||req.get('host')}`;res.status(201).json({...result,url:`${base.replace(/\/+$/,'')}/#join/${result.token}`});}catch(error){next(error);}});
 
   // Полоса «к вам» и «я жду» — две стороны одного: что просят у меня и что я
   // отдал. Приложение никого не подгоняет, оно только честно считает.
-  app.get('/api/inbox',(req,res,next)=>{try{const box=circles.inbox(db,req.user.id);res.json({...box,waiting:circles.waiting(db,req.user.id)});}catch(error){next(error);}});
+  app.get('/api/inbox',(req,res,next)=>{try{const box=circles.inbox(db,req.user.id,[...chat.unseenCalls(db,req.user.id),...circles.newCircles(db,req.user.id)]);res.json({...box,waiting:circles.waiting(db,req.user.id)});}catch(error){next(error);}});
   app.post('/api/captures/:id/assign',(req,res,next)=>{try{if(!ownsCapture(req,res,req.params.id))return;const assigneeId=req.body?.assigneeId??null;const result=assigneeId?circles.assign(db,{captureId:req.params.id,assigneeId,assignerId:req.user.id,circleId:req.body?.circleId||null}):circles.unassign(db,req.params.id,req.user.id);if(result.error)return circleError(res,result.error);notifyCircle(req.params.id,[assigneeId].filter(Boolean));notifyJournal('circle');res.json({...result,...sharedEntry(req.params.id,req.user.id)});}catch(error){next(error);}});
   app.post('/api/assignments/:id/respond',(req,res,next)=>{try{const take=req.body?.take===true;const result=circles.respond(db,req.params.id,req.user.id,take,req.body?.reason);if(result.error)return circleError(res,result.error);notifyCircle(result.assignment.captureId);notifyJournal('circle');res.json(result);}catch(error){next(error);}});
 
@@ -467,6 +485,35 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   // Имя человека: до кругов его не спрашивали, потому что некому было
   // показывать. Теперь оно стоит в «просит …» и в подсказке призыва.
   app.patch('/api/account',(req,res,next)=>{try{if(req.body?.name!==undefined&&typeof req.body.name!=='string')return circleError(res,'invalid_name_value');const name=req.body?.name!==undefined?circles.setDisplayName(db,req.user.id,req.body.name):null;res.json({me:circles.publicUser(findUserById(db,req.user.id)),name});}catch(error){next(error);}});
+
+  // ── разговор круга ──
+  // Общий разговор и комнаты подмножеством. Счётчик непрочитанного живёт
+  // только здесь, на комнате: в день попадает один призыв.
+  const CHAT_ERRORS = {
+    not_found:[404,'Комната не найдена.'], invalid_room_name:[400,'Название комнаты — от 1 до 40 символов.'],
+    rooms_limit:[409,'Комнат в круге может быть не больше 20.'], room_needs_people:[400,'Комната — это разговор с кем-то: позовите хотя бы одного человека.'],
+    general_room:[409,'Общий разговор круга не переименовать и не покинуть — он и есть круг.'],
+    not_in_circle:[409,'Этого человека нет в круге.'], invalid_message:[400,'Сообщение — от 1 до 4000 символов.'],
+  };
+  const chatError = (res, error) => { const [status, message] = CHAT_ERRORS[error] || CIRCLE_ERRORS[error] || [500, 'Ошибка разговора.']; return res.status(status).json({ error:{ code:error, message } }); };
+  const chatReply = (res, result, status = 200) => result.error ? chatError(res, result.error) : res.status(status).json(result);
+  // Новость о сообщении уходит тем, кто в комнате: остальным в круге знать о
+  // чужом разговоре незачем — они его и не видят.
+  const notifyRoom = (roomId, { except = null } = {}) => {
+    const room = chat.findRoom(db, roomId);
+    if (!room) return;
+    for (const person of chat.roomMembers(db, room)) if (person.id !== except) notifyUser(person.id, 'journal', { reason:'chat', roomId, at: now().toISOString() });
+  };
+
+  app.get('/api/rooms',(req,res,next)=>{try{res.json({rooms:chat.roomsOf(db,req.user.id,typeof req.query.circle==='string'?req.query.circle:null)});}catch(error){next(error);}});
+  app.post('/api/circles/:id/rooms',(req,res,next)=>{try{const result=chat.createRoom(db,req.params.id,req.user.id,req.body?.name,Array.isArray(req.body?.members)?req.body.members:[]);if(result.error)return chatError(res,result.error);notifyRoom(result.room.id);chatReply(res,result,201);}catch(error){next(error);}});
+  app.get('/api/rooms/:id/messages',(req,res,next)=>{try{const room=chat.findRoom(db,req.params.id);if(!room||!chat.inRoom(db,room,req.user.id))return chatError(res,'not_found');chat.markRead(db,req.params.id,req.user.id);const result=chat.messages(db,req.params.id,req.user.id,{before:typeof req.query.before==='string'?req.query.before:null});if(result.error)return chatError(res,result.error);res.json(result);}catch(error){next(error);}});
+  app.post('/api/rooms/:id/messages',(req,res,next)=>{try{const result=chat.say(db,req.params.id,req.user.id,req.body?.body);if(result.error)return chatError(res,result.error);notifyRoom(req.params.id,{except:req.user.id});res.status(201).json(result);}catch(error){next(error);}});
+  app.delete('/api/rooms/:id/messages/:messageId',(req,res,next)=>{try{const result=chat.removeMessage(db,req.params.messageId,req.user.id);if(result.error)return chatError(res,result.error);notifyRoom(req.params.id,{except:req.user.id});res.json(result);}catch(error){next(error);}});
+  app.post('/api/rooms/:id/read',(req,res,next)=>{try{const room=chat.findRoom(db,req.params.id);if(!room||!chat.inRoom(db,room,req.user.id))return chatError(res,'not_found');res.json(chat.markRead(db,req.params.id,req.user.id));}catch(error){next(error);}});
+  app.patch('/api/rooms/:id',(req,res,next)=>{try{chatReply(res,chat.renameRoom(db,req.params.id,req.user.id,req.body?.name));}catch(error){next(error);}});
+  app.post('/api/rooms/:id/members',(req,res,next)=>{try{const result=chat.addToRoom(db,req.params.id,req.user.id,req.body?.userId);if(result.error)return chatError(res,result.error);notifyRoom(req.params.id);chatReply(res,result);}catch(error){next(error);}});
+  app.post('/api/rooms/:id/leave',(req,res,next)=>{try{const result=chat.leaveRoom(db,req.params.id,req.user.id);if(result.error)return chatError(res,result.error);notifyRoom(req.params.id);chatReply(res,result);}catch(error){next(error);}});
 
   // ── календарь ──
   // Ошибки календаря переводятся в статусы одним словарём: модуль отдаёт код,
@@ -512,7 +559,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   // «к вам» (просьбы и призывы одной лентой), взятые чужие дела ссылками и
   // метки кругов для строк. Переключателя пространств нет — и не будет.
   const circleDay = userId => {
-    const box = circles.inbox(db, userId);
+    const box = circles.inbox(db, userId, [...chat.unseenCalls(db, userId), ...circles.newCircles(db, userId)]);
     // Выключенный круг уходит из списков целиком: это и обещает переключатель.
     // Просьбы из него при этом продолжают приходить — свёрнутой строкой.
     const muted = circles.mutedCircleIds(db, userId);
@@ -526,7 +573,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     const waiting = circles.waiting(db, userId);
     // Отданное дело помечается прямо в своей строке: «Аня · ждёт ответа». Это
     // и есть слежение за реализацией — без доски со статусами.
-    return { inbox: box.rows, inboxFolded: box.folded, borrowed, waiting, assignments: Object.fromEntries(waiting.map(item => [item.captureId, item])), circles: circles.circlesOf(db, userId), mutedCircles: circles.mutedSummary(db, userId), circleMarks: Object.fromEntries(circles.circleMarksFor(db, userId)) };
+    return { inbox: box.rows, inboxFolded: box.folded, borrowed, waiting, unreadChat: chat.unreadByCircle(db, userId), assignments: Object.fromEntries(waiting.map(item => [item.captureId, item])), circles: circles.circlesOf(db, userId), mutedCircles: circles.mutedSummary(db, userId), circleMarks: Object.fromEntries(circles.circleMarksFor(db, userId)) };
   };
   app.get('/api/day',(req,res)=>{const date=req.query.date||dateInTimeZone(now(),configuredTimeZone);if(!validDate(date))return res.status(400).json({error:{code:'invalid_date',message:'Дата должна быть в формате YYYY-MM-DD.'}});res.json({date,...dayView(db,date,now(),req.user.id),...circleDay(req.user.id)});});
   app.get('/api/daily-brief',(req,res,next)=>{try{const date=req.query.date||dateInTimeZone(now(),'Europe/Samara'), revision=req.query.revision; if(!validDate(date)||revision!==undefined&&(!/^\d+$/.test(revision)||Number(revision)<1))return res.status(400).json({error:{code:'invalid_daily_brief_request',message:'Некорректная дата или ревизия отчёта.'}}); const brief=revision===undefined?getDailyBrief(db,{date,timeZone:'Europe/Samara',userId:req.user.id}):findDailyBrief(db,{date,timeZone:'Europe/Samara',revision:Number(revision),userId:req.user.id}); if(!brief)return res.status(404).json({error:{code:'not_found',message:'Ревизия отчёта не найдена.'}}); res.json(brief);}catch(error){next(error);}});
