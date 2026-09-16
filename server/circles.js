@@ -11,7 +11,7 @@
 // «к вам», и человек отвечает «беру» или «не я». До ответа автор видит честное
 // «ждёт ответа», а не выдуманное «в работе».
 import crypto from 'node:crypto';
-import { avatarUrl } from './avatars.js';
+import { avatarUrl, imageType, AVATAR_IMAGE_LIMIT } from './avatars.js';
 import { notify, resolveNotifications } from './notifications.js';
 
 const now = () => new Date().toISOString();
@@ -60,9 +60,11 @@ function sameName(left, right) {
 
 // ── круги ──
 
-const CIRCLE_FIELDS = 'c.id, c.name, c.color, c.created_by, c.created_at';
+const CIRCLE_FIELDS = 'c.id, c.name, c.color, c.photo, c.created_by, c.created_at';
+// Фото круга — адрес с версией: браузер держит картинку в кеше, пока её не сменили.
+const circlePhotoUrl = row => (row.photo ? `/api/circles/${encodeURIComponent(row.id)}/photo?v=${encodeURIComponent(row.photo)}` : null);
 function serializeCircle(row, extra = {}) {
-  return { id: row.id, name: row.name, color: row.color, createdBy: row.created_by, createdAt: row.created_at, ...extra };
+  return { id: row.id, name: row.name, color: row.color, photo: circlePhotoUrl(row), createdBy: row.created_by, createdAt: row.created_at, ...extra };
 }
 
 export function circlesOf(db, userId) {
@@ -110,6 +112,46 @@ export function updateCircle(db, circleId, userId, { name, color }) {
     db.prepare('UPDATE circles SET color=? WHERE id=?').run(color, circleId);
   }
   return { circle: circleDetail(db, circleId, userId) };
+}
+
+// Фото круга вместо буквы на знаке — как фото группы в Телеграме. Ставит и
+// убирает его хозяин, как имя и цвет; видят все, кто в круге. Байты лежат
+// отдельной таблицей, в строке круга — только версия: список кругов не таскает
+// за собой килобайты. Картинку ужимает браузер, сервер проверяет формат по
+// самим байтам — так же, как у лица человека (server/avatars.js).
+function ownCircle(db, circleId, userId) {
+  const member = membership(db, circleId, userId);
+  if (!member || !db.prepare('SELECT 1 FROM circles WHERE id=? AND deleted_at IS NULL').get(circleId)) return { error: 'not_found' };
+  if (member.role !== 'owner') return { error: 'not_owner' };
+  return {};
+}
+export function setCirclePhoto(db, circleId, userId, bytes, at = new Date()) {
+  const owned = ownCircle(db, circleId, userId);
+  if (owned.error) return owned;
+  if (!Buffer.isBuffer(bytes) || !bytes.length) return { error: 'empty_image' };
+  if (bytes.length > AVATAR_IMAGE_LIMIT) return { error: 'image_too_large' };
+  const mime = imageType(bytes);
+  if (!mime) return { error: 'not_an_image' };
+  db.transaction(() => {
+    db.prepare(`INSERT INTO circle_photos(circle_id, mime, bytes, updated_at) VALUES(?,?,?,?)
+      ON CONFLICT(circle_id) DO UPDATE SET mime=excluded.mime, bytes=excluded.bytes, updated_at=excluded.updated_at`).run(circleId, mime, bytes, at.toISOString());
+    db.prepare('UPDATE circles SET photo=? WHERE id=?').run(at.getTime().toString(36), circleId);
+  })();
+  return { circle: circleDetail(db, circleId, userId) };
+}
+export function removeCirclePhoto(db, circleId, userId) {
+  const owned = ownCircle(db, circleId, userId);
+  if (owned.error) return owned;
+  db.transaction(() => {
+    db.prepare('DELETE FROM circle_photos WHERE circle_id=?').run(circleId);
+    db.prepare('UPDATE circles SET photo=NULL WHERE id=?').run(circleId);
+  })();
+  return { circle: circleDetail(db, circleId, userId) };
+}
+export function circlePhoto(db, circleId, userId) {
+  if (!membership(db, circleId, userId)) return null;
+  return db.prepare(`SELECT p.mime, p.bytes FROM circles c JOIN circle_photos p ON p.circle_id=c.id
+    WHERE c.id=? AND c.deleted_at IS NULL AND c.photo IS NOT NULL`).get(circleId) || null;
 }
 
 // Выключение круга — личное и обратимое: круг вы не покидаете, дела остаются на
@@ -793,6 +835,8 @@ export function dissolveCircle(db, circleId, userId) {
   db.prepare("UPDATE assignments SET cancelled_at=? WHERE circle_id=? AND cancelled_at IS NULL AND state IN ('pending','accepted')").run(at, circleId);
   db.prepare('UPDATE capture_circles SET removed_at=? WHERE circle_id=? AND removed_at IS NULL').run(at, circleId);
   db.prepare('UPDATE circle_members SET left_at=? WHERE circle_id=? AND left_at IS NULL').run(at, circleId);
-  db.prepare('UPDATE circles SET deleted_at=? WHERE id=?').run(at, circleId);
+  db.prepare('UPDATE circles SET deleted_at=?, photo=NULL WHERE id=?').run(at, circleId);
+  // Фото распущенного круга больше некому показать — байты уходят вместе с ним.
+  db.prepare('DELETE FROM circle_photos WHERE circle_id=?').run(circleId);
   return { dissolved: true };
 }

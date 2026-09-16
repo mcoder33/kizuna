@@ -7941,6 +7941,14 @@ main:has(> #circles:not([hidden])) { max-width: 1480px; padding-top: 18px; paddi
 .kc-modal-head small { display: block; font-size: 12.5px; font-weight: 400; color: var(--muted); margin-top: 2px; }
 .kc-modal-preview { display: flex; align-items: center; gap: 14px; padding: 14px; border-radius: 16px; border: 1px solid var(--line); background: radial-gradient(260px 120px at 15% 50%, color-mix(in srgb, var(--kc-tone) var(--kc-aurora), transparent), transparent 75%), var(--wash); }
 .kc-modal-preview .kc-seal { --s: 56px; }
+/* Фото круга лежит на знаке поверх буквы и повторяет его скругление: пока фото
+   грузится или если не загрузилось, видна буква. */
+.kc-seal > .ava-picture { border-radius: inherit; }
+/* Знак, на который ставят фото: значок камеры в углу говорит, что он нажимается. */
+.kc-photo-pick { position: relative; flex: none; padding: 0; border: 0; background: none; border-radius: 50%; cursor: pointer; line-height: 0; }
+.kc-photo-pick:hover .kc-seal { filter: brightness(0.94); }
+.kc-photo-badge { position: absolute; right: -3px; bottom: -3px; width: 24px; height: 24px; border-radius: 50%; background: var(--coral); color: #fff; display: grid; place-items: center; box-shadow: 0 0 0 2.5px var(--wash); }
+.kc-photo-badge .kc-ico { width: 13px; height: 13px; }
 .kc-modal-preview b { display: block; font-size: 20px; letter-spacing: -0.02em; }
 .kc-modal-preview small { color: var(--muted); font-size: 12.5px; }
 .kc-field-label { display: flex; flex-direction: column; gap: 6px; }

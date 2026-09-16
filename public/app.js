@@ -5480,6 +5480,7 @@ const KC_ICON = {
   outcome: '<path d="M3 8.5 6.2 11.6 13 4.6"/>',
   note: '<path d="M3.5 2.5h9v11h-9Z"/><path d="M5.8 5.5h4.4M5.8 8h4.4M5.8 10.5h2.4"/>',
   idea: '<path d="M8 2.2a4 4 0 0 0-2.3 7.3c.4.3.6.7.6 1.2v.8h3.4v-.8c0-.5.2-.9.6-1.2A4 4 0 0 0 8 2.2Z"/><path d="M6.4 13.8h3.2"/>',
+  camera: '<path d="M2.2 5.8a1.5 1.5 0 0 1 1.5-1.5h1.6l1.2-1.7h3l1.2 1.7h1.6a1.5 1.5 0 0 1 1.5 1.5v5.8a1.5 1.5 0 0 1-1.5 1.5H3.7a1.5 1.5 0 0 1-1.5-1.5Z"/><circle cx="8" cy="8.6" r="2.3"/>',
 };
 function kcIcon(name, className = "kc-ico") {
   const holder = node("span", undefined, className);
@@ -5516,6 +5517,9 @@ function kcButton(className, content, onClick, attrs = {}) {
 const kcTone = (color) => `tone-${CIRCLE_TONES[color] || "violet"}`;
 const kcInitial = (name) => (String(name || "").trim()[0] || "·").toUpperCase();
 const kcSeal = (content, tone, extra = "") => kcEl("span", `kc-seal ${tone}${extra ? ` ${extra}` : ""}`, content);
+// Знак круга: фото, если хозяин его поставил, поверх первой буквы на тоне
+// круга — пока фото грузится или если не загрузилось, видна буква.
+const kcCircleSeal = (circle, extra = "round") => pictureInto(kcSeal(kcInitial(circle.name), kcTone(circle.color), extra), circle.photo);
 // Цвет имени в пузыре — у каждого свой и один и тот же во всех разговорах.
 function kcNameTone(personId) {
   let hash = 0;
@@ -5764,7 +5768,7 @@ function kcFolders() {
     return kcButton(`kc-fold${kc.folder === id ? " on" : ""}`, [kcEl("span", "kc-fold-face", face), kcEl("span", "kc-fold-label", label), count ? kcEl("span", "kc-badge", String(count)) : null], () => kcSetFolder(id), { "aria-pressed": String(kc.folder === id), title: label });
   };
   nav.append(item("all", "Все", kcIcon("chats")), item("unread", "Новые", kcIcon("unread")));
-  for (const circle of circlesState.circles) nav.append(item(circle.id, circle.name, kcSeal(kcInitial(circle.name), kcTone(circle.color), "round")));
+  for (const circle of circlesState.circles) nav.append(item(circle.id, circle.name, kcCircleSeal(circle)));
   if ((circlesState.discussions || []).length) nav.append(item("talks", "Записи", kcIcon("talk")));
   nav.append(kcEl("span", "kc-fold-space"), kcButton("kc-fold", [kcEl("span", "kc-fold-face", kcIcon("plusCircle")), kcEl("span", "kc-fold-label", "Круг")], () => kcModalOpen("circle"), { title: "Новый круг" }));
   return nav;
@@ -5788,7 +5792,7 @@ function kcAvatar(item) {
     const kind = KC_KIND[item.talk.kind] ? item.talk.kind : "note";
     return kcSeal(kcIcon(kind), `tone-${KC_KIND[kind][0]}`, "round");
   }
-  if (item.room.kind === "general") return kcSeal(kcInitial(item.circle.name), kcTone(item.circle.color), "round");
+  if (item.room.kind === "general") return kcCircleSeal(item.circle);
   return kcSeal([kcInitial(item.room.name), kcEl("i", "kc-hash", "#")], kcTone(item.circle.color), "round room");
 }
 function kcPreview(item) {
@@ -5868,12 +5872,12 @@ function kcCircleFacts(circle) {
 }
 // Кольцо: люди сидят вокруг знака, свободное место с плюсом зовёт человека.
 // Больше девяти лиц не сядет — дальше «+N».
-function kcRing(people, { tone, center, onEmpty, onPerson, onMore }) {
+function kcRing(people, { tone, center, photo = null, onEmpty, onPerson, onMore }) {
   const shown = people.length > 9 ? people.slice(0, 8) : people;
   const more = people.length - shown.length;
   const seats = [...shown.map((person) => ({ person })), ...(more ? [{ more }] : [])];
   for (let left = Math.max(1, 6 - seats.length); left > 0; left -= 1) seats.push({ empty: true });
-  const ring = kcEl("div", `kc-ring ${tone}${kc.fresh && motionAllowed() ? " fresh" : ""}`, kcEl("span", "kc-ring-halo"), kcSeal(center, tone, "kc-ring-seal"));
+  const ring = kcEl("div", `kc-ring ${tone}${kc.fresh && motionAllowed() ? " fresh" : ""}`, kcEl("span", "kc-ring-halo"), pictureInto(kcSeal(center, tone, "kc-ring-seal"), photo));
   seats.forEach((seat, index) => {
     const angle = ((-90 + (index * 360) / seats.length) * Math.PI) / 180;
     let button;
@@ -5919,7 +5923,7 @@ function kcHero(item) {
   } else if (item.room.kind === "general") {
     const circle = item.circle;
     const owner = circle.members.find((member) => member.role === "owner");
-    ring = kcRing(circle.members, { tone: kcTone(circle.color), center: kcInitial(circle.name), onEmpty: () => kcInfoOpen("invite"), onPerson: (person) => kcInfoOpen("person", person.id), onMore: () => kcInfoOpen("main") });
+    ring = kcRing(circle.members, { tone: kcTone(circle.color), center: kcInitial(circle.name), photo: circle.photo, onEmpty: () => kcInfoOpen("invite"), onPerson: (person) => kcInfoOpen("person", person.id), onMore: () => kcInfoOpen("main") });
     kicker = circle.role === "owner" ? `Ваш круг · с ${reportDateLabel(zoneDate(new Date(circle.createdAt)), { day: "numeric", month: "long" })}` : `Круг · хозяин — ${owner?.name || "—"}`;
     name = circle.name;
     facts = kcCircleFacts(circle);
@@ -6393,7 +6397,7 @@ function kcCircleInfo(item) {
   const people = circle.members.length;
   const open = circle.members.reduce((sum, member) => sum + (member.openDeeds || 0), 0);
   const profile = kcEl("div", `kc-profile ${kcTone(circle.color)}`,
-    kcRing(circle.members, { tone: kcTone(circle.color), center: kcInitial(circle.name), onEmpty: () => kcInfoOpen("invite"), onPerson: (person) => kcInfoOpen("person", person.id), onMore: () => {} }),
+    kcRing(circle.members, { tone: kcTone(circle.color), center: kcInitial(circle.name), photo: circle.photo, onEmpty: () => kcInfoOpen("invite"), onPerson: (person) => kcInfoOpen("person", person.id), onMore: () => {} }),
     kcEl("b", null, circle.name),
     kcEl("small", null, `${people} ${pluralRu(people, "участник", "участника", "участников")} · ${open ? `${open} ${pluralRu(open, "открытое дело", "открытых дела", "открытых дел")}` : "дел нет"}`));
   const fresh = circlesState.links?.get(circle.id);
@@ -6409,7 +6413,12 @@ function kcCircleInfo(item) {
   box.checked = !circle.muted;
   box.addEventListener("change", () => toggleCircleMute(circle.id, !box.checked));
   show.append(box, kcEl("span", "kc-track"));
-  const settings = kcEl("div", "kc-sect", link, show, kcRow("bound", "Граница круга", "что видят участники", () => kcInfoOpen("bound"), { side: kcIcon("chev") }));
+  // Фото ставит и убирает хозяин — как имя и цвет круга.
+  const photo = circle.role !== "owner" ? [] : [
+    kcRow("camera", circle.photo ? "Сменить фото" : "Поставить фото", "вместо буквы на знаке круга — видят все в круге", () => kcPickPhoto((image) => kcSaveCirclePhoto(circle, image))),
+    circle.photo ? kcRow("trash", "Убрать фото", "на знаке снова будет буква", () => kcRemoveCirclePhoto(circle)) : null,
+  ];
+  const settings = kcEl("div", "kc-sect", link, show, kcRow("bound", "Граница круга", "что видят участники", () => kcInfoOpen("bound"), { side: kcIcon("chev") }), photo);
   const members = kcEl("div", "kc-sect", kcEl("p", "kc-sect-cap", `${people} ${pluralRu(people, "участник", "участника", "участников")}`), kcRow("personAdd", "Позвать людей", null, () => kcInfoOpen("invite"), { accent: true }));
   for (const member of circle.members) {
     const deeds = member.openDeeds || 0;
@@ -6419,6 +6428,53 @@ function kcCircleInfo(item) {
     ? kcRow("exit", "Распустить круг", null, () => kcDissolve(circle), { danger: true })
     : kcRow("exit", "Покинуть круг", null, () => kcLeaveCircle(circle), { danger: true }));
   return [profile, settings, members, leave];
+}
+// Фото круга. Картинку ужимает браузер тем же квадратом 256 px, что и лицо
+// человека (squareAvatar). Поле выбора файла одно на страницу и живёт вне
+// перерисовок: страница кругов перестраивается целиком на каждое событие.
+function kcPickPhoto(onImage) {
+  let input = $("#kc-photo-file");
+  if (!input) {
+    input = document.createElement("input");
+    input.type = "file";
+    input.id = "kc-photo-file";
+    input.accept = "image/png,image/jpeg,image/webp,image/*";
+    input.hidden = true;
+    document.body.append(input);
+  }
+  input.onchange = async () => {
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    try { await onImage(await squareAvatar(file)); }
+    catch (error) { toast(error instanceof DOMException ? "Это не похоже на картинку" : error.message || "Фото не поставилось"); }
+  };
+  input.click();
+}
+async function kcUploadCirclePhoto(circleId, image) {
+  const response = await fetch(`/api/circles/${encodeURIComponent(circleId)}/photo`, { method: "POST", headers: { "Content-Type": image.type }, body: image });
+  if (response.status === 401) { location.replace("/login"); return null; }
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error?.message || "Фото не поставилось");
+  return result.circle;
+}
+function kcPutCircle(circle) {
+  kcEdited();
+  circlesState.circles = circlesState.circles.map((entry) => (entry.id === circle.id ? { ...entry, ...circle } : entry));
+  renderCircles();
+}
+async function kcSaveCirclePhoto(circle, image) {
+  const saved = await kcUploadCirclePhoto(circle.id, image);
+  if (!saved) return;
+  kcPutCircle(saved);
+  toast("Фото круга поставлено");
+}
+async function kcRemoveCirclePhoto(circle) {
+  try {
+    const result = await request(`/api/circles/${encodeURIComponent(circle.id)}/photo`, { method: "DELETE" });
+    kcPutCircle(result.circle);
+    toast("На знаке круга снова буква");
+  } catch (error) { toast(error.message || "Фото не убралось"); }
 }
 async function kcCopyLink(url) {
   try { await navigator.clipboard.writeText(url); toast("Ссылка скопирована — передайте её сами: писем приложение не шлёт"); }
@@ -6578,7 +6634,7 @@ function kcModalOpen(kind, extra = {}) {
 function kcModal() {
   if (!kc.modal) return null;
   const modal = kc.modal;
-  const close = () => { kc.modal = null; renderCircles(); };
+  const close = () => { if (modal.photo) URL.revokeObjectURL(modal.photo.url); kc.modal = null; renderCircles(); };
   const scrim = kcEl("div", "kc-scrim");
   scrim.addEventListener("click", close);
   const box = kcEl("form", "kc-modal");
@@ -6591,11 +6647,19 @@ function kcModal() {
   input.value = modal.name;
   input.autocomplete = "off";
   if (modal.kind === "circle") {
-    const preview = kcSeal(kcInitial(modal.name || "Круг"), kcTone(modal.color), "big");
+    const letter = document.createTextNode(kcInitial(modal.name || "Круг"));
+    // Фото можно поставить сразу, как у новой группы в Телеграме, или потом —
+    // в «Информации». Уходит на сервер, когда круг заведён.
+    const preview = kcButton("kc-photo-pick", [pictureInto(kcSeal(letter, kcTone(modal.color), "big"), modal.photo?.url), kcEl("span", "kc-photo-badge", kcIcon("camera"))], () => kcPickPhoto((image) => {
+      if (kc.modal !== modal) return;
+      if (modal.photo) URL.revokeObjectURL(modal.photo.url);
+      modal.photo = { image, url: URL.createObjectURL(image) };
+      renderCircles();
+    }), { "aria-label": "Фото круга", title: modal.photo ? "Сменить фото" : "Поставить фото" });
     const title = kcEl("b", null, modal.name.trim() || "Новый круг");
     input.placeholder = "«Дача», «Книжный клуб», «Релиз»";
     input.setAttribute("aria-label", "Название круга");
-    input.addEventListener("input", () => { modal.name = input.value; preview.textContent = kcInitial(input.value || "Круг"); title.textContent = input.value.trim() || "Новый круг"; });
+    input.addEventListener("input", () => { modal.name = input.value; letter.textContent = kcInitial(input.value || "Круг"); title.textContent = input.value.trim() || "Новый круг"; });
     const tones = kcEl("div", "kc-tones");
     for (const color of Object.keys(CIRCLE_TONES)) {
       tones.append(kcButton(`kc-tone-pick ${kcTone(color)}`, null, () => { modal.color = color; renderCircles(); }, { "aria-pressed": String(modal.color === color), "aria-label": { violet: "фиолетовый", blue: "синий", teal: "бирюзовый", orange: "янтарный", pink: "розовый", red: "коралловый" }[color] }));
@@ -6638,7 +6702,14 @@ async function kcCreateCircle() {
   if (!clean) { toast("Назовите круг — «Дача», «Книжный клуб»"); $("#kc-modal-name")?.focus(); return; }
   try {
     const result = await request("/api/circles", { method: "POST", body: JSON.stringify({ name: clean, color }) });
+    const photo = kc.modal?.photo;
     kc.modal = null;
+    // Круг уже заведён: не встало фото — круг остаётся, фото ставится в «Информации».
+    if (photo) {
+      try { await kcUploadCirclePhoto(result.circle.id, photo.image); }
+      catch (error) { toast(error.message || "Фото не поставилось — поставьте его в «Информации»"); }
+      finally { URL.revokeObjectURL(photo.url); }
+    }
     kc.folder = "all";
     await loadCircles({ then: async () => {
       const room = chatState.rooms.find((entry) => entry.circleId === result.circle.id && entry.kind === "general");

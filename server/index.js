@@ -18,6 +18,7 @@ import { periodReport, dayReport, shiftDate as reportShiftDate } from './reports
 import { boardView, createColumn, renameColumn, colorColumn, moveColumn, deleteColumn, moveCard } from './board.js';
 import { createCalendarService, CalendarSyncWorker } from './calendar.js';
 import * as circles from './circles.js';
+import { AVATAR_IMAGE_LIMIT } from './avatars.js';
 import * as chat from './chat.js';
 import { registerNotesRoutes } from './notes-tree.js';
 import { createSecretBox } from './secrets.js';
@@ -629,7 +630,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     person_not_found:[404,'Такого человека в приложении нет.'], already_member:[409,'Этот человек уже в круге.'],
     self_assign:[400,'Себе дело ставят обычной записью.'], not_in_circle:[409,'Этого человека нет ни в одном общем с вами круге.'],
     already_answered:[409,'На эту просьбу уже ответили.'], invalid_comment:[400,'Сообщение — от 1 до 4000 символов.'], invalid_name_value:[400,'Имя — до 60 символов.'],
-    invalid_reaction:[400,'Такой реакции нет.'],
+    invalid_reaction:[400,'Такой реакции нет.'], empty_image:[400,'Картинка пустая.'], not_an_image:[415,'Подходят только PNG, JPEG и WebP.'], image_too_large:[413,'Картинка слишком большая.'],
   };
   const circleError = (res, error) => { const [status, message] = CIRCLE_ERRORS[error] || [500, 'Ошибка круга.']; return res.status(status).json({ error:{ code:error, message } }); };
   const circleReply = (res, result, status = 200) => result.error ? circleError(res, result.error) : res.status(status).json(result);
@@ -641,6 +642,18 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   app.post('/api/circles/invite/:token/accept',(req,res,next)=>{try{const result=circles.acceptInvite(db,req.params.token,req.user.id);if(!result.error)notifyCircleMembers(result.circle.id);circleReply(res,result);}catch(error){next(error);}});
   app.get('/api/circles/:id',(req,res,next)=>{try{const circle=circles.circleDetail(db,req.params.id,req.user.id);if(!circle)return circleError(res,'not_found');res.json({circle});}catch(error){next(error);}});
   app.patch('/api/circles/:id',(req,res,next)=>{try{circleReply(res,circles.updateCircle(db,req.params.id,req.user.id,{name:req.body?.name,color:req.body?.color}));}catch(error){next(error);}});
+  // Фото круга: ставит и убирает хозяин, картинку ужимает браузер. Видят все в
+  // круге — им приходит событие, и знак круга у них меняется без перезагрузки.
+  const photoReply = (req, res, result) => { if (result.error) return circleError(res, result.error); notifyCircleMembers(req.params.id); res.json(result); };
+  app.post('/api/circles/:id/photo', express.raw({ type: () => true, limit: AVATAR_IMAGE_LIMIT }), (req,res,next)=>{try{photoReply(req,res,circles.setCirclePhoto(db,req.params.id,req.user.id,Buffer.isBuffer(req.body)?req.body:null,now()));}catch(error){next(error);}});
+  app.delete('/api/circles/:id/photo',(req,res,next)=>{try{photoReply(req,res,circles.removeCirclePhoto(db,req.params.id,req.user.id));}catch(error){next(error);}});
+  app.get('/api/circles/:id/photo',(req,res,next)=>{try{
+    const image=circles.circlePhoto(db,req.params.id,req.user.id);
+    if(!image)return circleError(res,'not_found');
+    // Адрес меняется вместе с фото (?v=), поэтому кешировать можно надолго.
+    res.set({ 'Content-Type': image.mime, 'Cache-Control': 'private, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'" });
+    res.send(image.bytes);
+  }catch(error){next(error);}});
   // Выключить круг — личное и обратимое: дела уходят из списков, просьбы
   // продолжают приходить свёрнутой строкой.
   app.post('/api/circles/:id/mute',(req,res,next)=>{try{circleReply(res,circles.setMuted(db,req.params.id,req.user.id,req.body?.muted!==false));}catch(error){next(error);}});

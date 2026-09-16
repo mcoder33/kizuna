@@ -163,3 +163,39 @@ test("круг: приглашение, просьба, «беру» и разг
   const anyaUser = (await (await request.get("/api/admin/users")).json()).users.find((user) => user.email === ANYA.email);
   await request.post(`/api/admin/users/${anyaUser.id}/block`, { data: { reason: "конец прогона" } });
 });
+
+// Фото круга — как фото группы в Телеграме: ставится при заведении круга или
+// потом в «Информации» и встаёт на знак везде, где круг виден буквой.
+test("фото круга встаёт на знак в папках, в списке и в кольце, а убранное возвращает букву", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await dissolveCircles(request);
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  const photos = (scope) => page.locator(`${scope} .kc-seal > .ava-picture`);
+  await page.goto("/#circles");
+  await page.locator(".kc-list-head .kc-icon, .kc-empty-card .kc-btn").first().click();
+  await page.locator("#kc-modal-name").fill("Дача");
+  let chooser = page.waitForEvent("filechooser");
+  await page.getByRole("dialog").getByRole("button", { name: "Фото круга" }).click();
+  await (await chooser).setFiles({ name: "дача.png", mimeType: "image/png", buffer: png });
+  await expect(photos(".kc-modal-preview")).toHaveCount(1);
+  const uploaded = page.waitForResponse((response) => /\/api\/circles\/[^/]+\/photo$/.test(response.url()) && response.request().method() === "POST");
+  await page.getByRole("dialog").getByRole("button", { name: "Завести круг" }).click();
+  expect((await uploaded).status()).toBe(200);
+  await expect(page.locator(".kc-hero .kc-hero-name")).toHaveText("Дача");
+  for (const scope of [".kc-fold", ".kc-chat", ".kc-hero .kc-ring"]) await expect(photos(scope)).toHaveCount(1);
+  // Картинка правда пришла, а не висит пустым тегом поверх буквы.
+  await expect.poll(() => photos(".kc-chat").evaluate((image) => image.complete && image.naturalWidth)).toBeGreaterThan(0);
+
+  // Убрал — снова буква; поставил из «Информации» — снова фото. Новый круг
+  // открывает «Информацию» сразу на «Позвать» — назад к главной.
+  await page.locator(".kc-info-head").getByRole("button", { name: "Назад" }).click();
+  await page.locator(".kc-info").getByRole("button", { name: /Убрать фото/ }).click();
+  await expect(photos(".kc-chat")).toHaveCount(0);
+  await expect(page.locator(".kc-chat .kc-seal").first()).toHaveText("Д");
+  chooser = page.waitForEvent("filechooser");
+  await page.locator(".kc-info").getByRole("button", { name: /Поставить фото/ }).click();
+  await (await chooser).setFiles({ name: "дача.png", mimeType: "image/png", buffer: png });
+  await expect(photos(".kc-chat")).toHaveCount(1);
+  await expect(photos(".kc-info .kc-ring")).toHaveCount(1);
+  await dissolveCircles(request);
+});

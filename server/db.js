@@ -456,6 +456,7 @@ function migrateUsers(db) {
   migrateCircles(db);
   migrateCaptureParticipants(db);
   migrateConversation(db);
+  migrateCirclePhotos(db);
 }
 // Участники записи: кого позвали в обсуждение одной записи без круга. Позванный
 // видит эту запись и её разговор — и больше ничего из журнала автора.
@@ -502,6 +503,15 @@ function migrateConversation(db) {
       ) seen JOIN users u ON u.id=seen.user_id`).run(at);
   }
   db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(20, now());
+}
+// Миграция 22: фото круга вместо буквы на знаке. В строке круга — только
+// версия картинки, байты — отдельной таблицей, как у лица человека: список
+// кругов не таскает за собой килобайты (server/circles.js).
+function migrateCirclePhotos(db) {
+  const columns = new Set(db.prepare('PRAGMA table_info(circles)').all().map(column => column.name));
+  if (!columns.has('photo')) db.exec('ALTER TABLE circles ADD COLUMN photo TEXT');
+  db.exec('CREATE TABLE IF NOT EXISTS circle_photos (circle_id TEXT PRIMARY KEY REFERENCES circles(id), mime TEXT NOT NULL, bytes BLOB NOT NULL, updated_at TEXT NOT NULL)');
+  db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(22, now());
 }
 // Круги: общая полка поверх личных журналов. Запись остаётся у автора, в круг
 // её кладёт отдельная строка `capture_circles` — так «убрать из круга» не

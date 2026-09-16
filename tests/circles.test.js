@@ -226,3 +226,36 @@ test('у человека в круге видно до трёх его откр
   assert.deepEqual(people.find(member=>member.name==='Саша').deeds,[]);
   assert.ok(anya);
 });
+
+// Фото круга — как фото группы в Телеграме: ставит и убирает хозяин, видят все
+// в круге, а чужому картинка не отдаётся, даже если он знает адрес.
+const PNG=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAMAASsJTYQAAAAASUVORK5CYII=','base64');
+const bytesOf=response=>new Promise(resolve=>{const chunks=[];response.on('data',chunk=>chunks.push(chunk));response.on('end',()=>resolve(Buffer.concat(chunks)));});
+test('фото круга: ставит хозяин, видят все в круге, чужому не отдаётся',async()=>{
+  const {app,sasha,anya,circle}=await pair();
+  const upload=(api,bytes,type='image/png')=>api.post(`/api/circles/${circle.id}/photo`).set('Content-Type',type).send(bytes);
+  assert.equal(circle.photo,null,'по умолчанию на знаке буква');
+  // Формат решают байты, а не подпись запроса; ставит только хозяин.
+  await upload(sasha,Buffer.from('<svg onload="alert(1)"></svg>')).expect(415);
+  await upload(sasha,Buffer.alloc(0)).expect(400);
+  await upload(anya,PNG).expect(403);
+  const photo=(await upload(sasha,PNG,'image/webp').expect(200)).body.circle.photo;
+  assert.match(photo,new RegExp(`^/api/circles/${circle.id}/photo\\?v=`));
+  // Адрес приходит всем в круге вместе с кругом, картинка кешируется по версии.
+  assert.equal((await anya.get('/api/circles').expect(200)).body.circles[0].photo,photo);
+  const served=await anya.get(photo).buffer(true).parse((response,done)=>bytesOf(response).then(body=>done(null,body))).expect(200);
+  assert.equal(served.headers['content-type'],'image/png');
+  assert.match(served.headers['cache-control'],/immutable/);
+  assert.deepEqual(served.body,PNG);
+  const stranger=authed(app,{email:'lesha@kizuna.test',role:'user'});
+  await stranger.get(photo).expect(404);
+  // Хозяин убирает фото — на знаке снова буква, байты не хранятся.
+  await anya.delete(`/api/circles/${circle.id}/photo`).expect(403);
+  assert.equal((await sasha.delete(`/api/circles/${circle.id}/photo`).expect(200)).body.circle.photo,null);
+  await anya.get(photo).expect(404);
+  assert.equal(app.database.prepare('SELECT COUNT(*) AS n FROM circle_photos').get().n,0);
+  // Распущенный круг забирает фото с собой.
+  await upload(sasha,PNG).expect(200);
+  await sasha.delete(`/api/circles/${circle.id}`).expect(200);
+  assert.equal(app.database.prepare('SELECT COUNT(*) AS n FROM circle_photos').get().n,0);
+});
