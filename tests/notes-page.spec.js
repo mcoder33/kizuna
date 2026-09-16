@@ -166,6 +166,43 @@ test("блоки страницы сворачиваются и остаются
   await expect(page.locator(".notes-props-block .notes-props")).toBeVisible();
 });
 
+// Под страницей нет пустых блоков: «Страница внутри» заводится из полосы над
+// страницей, а «Ссылаются сюда» встаёт, когда ссылка появилась, — и счётчик
+// в полосе ведёт к нему.
+test("пустых блоков под страницей нет: страница внутри — из полосы, ссылки — когда есть", async ({ page, request }) => {
+  await reset(request);
+  const home = await makePage(request, "Дача");
+  await page.goto(`/#notes?page=${home.id}`);
+  const title = page.locator(".notes-title");
+  const bar = page.locator(".notes-bar");
+  await expect(title).toHaveText("Дача");
+  await expect(page.locator(".notes-children")).toHaveCount(0);
+  await expect(page.locator(".notes-backlinks")).toHaveCount(0);
+  await expect(page.locator(".notes-after")).toBeHidden();
+  await expect(page.locator(".notes-bar-links")).toHaveCount(0);
+
+  await bar.getByRole("button", { name: "Страница внутри" }).click();
+  await expect(title).toBeFocused();
+  await page.keyboard.type("Смета на забор");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".notes-crumbs")).toContainText("Дача");
+  await expect(page.locator(".notes-side .notes-row", { hasText: "Смета на забор" })).toBeVisible();
+
+  await page.locator(".notes-crumbs a", { hasText: "Дача" }).click();
+  await expect(title).toHaveText("Дача");
+  await expect(page.locator(".notes-children .notes-page-row")).toHaveText(["Смета на забор"]);
+  await expect(page.locator(".notes-children .notes-add-row")).toHaveCount(0);
+  await expect(page.locator(".notes-backlinks")).toHaveCount(0);
+
+  await request.post("/api/captures", { data: { raw: "Позвонить про [[Дача]] в субботу" } });
+  await page.reload();
+  const links = bar.getByRole("button", { name: "1 ссылка сюда" });
+  await expect(links).toBeVisible();
+  await links.click();
+  await expect(page.locator(".notes-backlinks .notes-ref")).toContainText("Позвонить");
+  await expect(page.locator(".notes-backlinks")).toBeInViewport();
+});
+
 test("в карточке записи «[[» подсказывает страницы и заводит новую", async ({ page, request }) => {
   await reset(request);
   await makePage(request, "Релиз 1.4");

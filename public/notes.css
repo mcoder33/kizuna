@@ -270,6 +270,7 @@ a.notes-crumb:hover { background: var(--nt-hover); color: var(--nt-text); }
 .notes-bar-button:hover,
 .notes-side-toggle:hover { background: var(--nt-hover); color: var(--nt-text); }
 .notes-bar-button.is-danger:hover { color: var(--red-50); }
+.notes-bar-count { font-variant-numeric: tabular-nums; }
 .notes-bar .notes-side-toggle { display: none; }
 
 /* ── лист ── */
@@ -429,6 +430,8 @@ a.notes-crumb:hover { background: var(--nt-hover); color: var(--nt-text); }
 
 /* ── страницы внутри, базы, ссылки ── */
 .notes-after { display: grid; gap: 30px; margin-top: 34px; }
+/* Счётчик в полосе прокручивает сюда: заголовок блока не прячется под полосой. */
+.notes-backlinks { scroll-margin-top: calc(var(--notes-top, 73px) + 60px); }
 .notes-section { display: grid; gap: 2px; }
 .notes-section-head {
   display: flex;
@@ -739,6 +742,11 @@ a.notes-crumb:hover { background: var(--nt-hover); color: var(--nt-text); }
   .notes-inbox-actions { grid-column: 2; justify-content: flex-start; }
   .notes-bar { padding: 6px 12px; }
   .notes-crumb { max-width: 150px; }
+}
+/* На телефоне действия полосы — значками: иначе «Удалить» уезжает второй строкой,
+   а крошки сжимаются до обрывка. Названия остаются в подсказке и для чтения с экрана. */
+@media (max-width: 560px) {
+  .notes-bar-label { display: none; }
 }
 
 /* ── в карточке записи: переход к странице ── */

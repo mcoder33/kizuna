@@ -40,6 +40,7 @@ const ICONS = {
   search: '<circle cx="7" cy="7" r="4.3"/><path d="M10.2 10.2 13.5 13.5"/>',
   card: '<rect x="2.5" y="2.5" width="11" height="11" rx="2"/><path d="M5.5 6h5M5.5 8.5h5M5.5 11h3"/>',
   trash: '<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.6 4.5l.6 8.3a1 1 0 0 0 1 .9h3.6a1 1 0 0 0 1-.9l.6-8.3"/>',
+  link: '<path d="M6.9 9.1a2.6 2.6 0 0 0 3.7 0l2-2a2.6 2.6 0 0 0-3.7-3.7l-.8.8"/><path d="M9.1 6.9a2.6 2.6 0 0 0-3.7 0l-2 2a2.6 2.6 0 0 0 3.7 3.7l.8-.8"/>',
 };
 
 let deps = null;
@@ -618,11 +619,36 @@ function fillBar(detail, crumbs, tail) {
   const version = el("span", "notes-version");
   version.id = "notes-version";
   version.textContent = versionLabel(page);
+  tail.append(version);
+  // Кто ссылается сюда — видно сразу, даже когда блок ссылок далеко внизу
+  // длинной страницы. Нет ссылок — нет и счётчика.
+  if (detail.backlinks.length) {
+    const count = detail.backlinks.length;
+    const words = plural(count, "ссылка", "ссылки", "ссылок");
+    const links = button("", "notes-bar-button notes-bar-links", showBacklinks, { title: `${count} ${words} сюда — показать` });
+    links.append(icon("link"), el("span", "notes-bar-count", String(count)), el("span", "notes-bar-label", `${words} сюда`));
+    tail.append(links);
+  }
+  // «Страница внутри» — здесь, а не пустым блоком под текстом: под страницей
+  // остаётся только то, что в ней есть.
+  const inside = button("", "notes-bar-button", () => newPage(page.id), { title: "Новая страница внутри этой" });
+  inside.append(icon("plus"), el("span", "notes-bar-label", "Страница внутри"));
   const open = button("", "notes-bar-button", () => deps.openCard(page.id), { title: "Открыть карточку: обсуждение, вложения, источник" });
-  open.append(icon("card"), el("span", undefined, "Карточка"));
+  open.append(icon("card"), el("span", "notes-bar-label", "Карточка"));
   const remove = button("", "notes-bar-button is-danger", () => deletePage(detail), { title: "Удалить страницу — вернуть можно из уведомления" });
-  remove.append(icon("trash"), el("span", undefined, "Удалить"));
-  tail.append(version, open, remove);
+  remove.append(icon("trash"), el("span", "notes-bar-label", "Удалить"));
+  tail.append(inside, open, remove);
+}
+// Счётчик ведёт к блоку ссылок и разворачивает его, если тот свёрнут.
+function showBacklinks() {
+  const block = document.querySelector(".notes-main .notes-backlinks");
+  if (!block) return;
+  if (state.collapsed.delete("backlinks")) {
+    try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...state.collapsed])); } catch {}
+    block.classList.remove("is-collapsed");
+    block.querySelector(".notes-fold")?.setAttribute("aria-expanded", "true");
+  }
+  block.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
 }
 // Удаление — как у записи в карточке: сразу и с «Вернуть» в уведомлении, без
 // вопроса заранее. Страница — это запись журнала, поэтому и возвращается она
@@ -949,13 +975,15 @@ function pageRow(page, extra) {
 function afterBlock(detail) {
   const { page } = detail;
   const wrap = el("div", "notes-after");
-  const children = foldable(el("section", "notes-section notes-children"), "children");
-  children.append(sectionHead("Страницы внутри", detail.children.length || undefined, "children"));
-  for (const child of detail.children) children.append(pageRow(child));
-  const add = button("", "notes-add-row", () => newPage(page.id));
-  add.append(icon("plus"), el("span", undefined, "Страница внутри"));
-  children.append(add);
-  wrap.append(children);
+  // Пустых блоков под страницей нет: «Страницы внутри» и «Ссылаются сюда»
+  // встают, когда им есть что показать, а новая страница внутри заводится из
+  // полосы над страницей.
+  if (detail.children.length) {
+    const children = foldable(el("section", "notes-section notes-children"), "children");
+    children.append(sectionHead("Страницы внутри", detail.children.length, "children"));
+    for (const child of detail.children) children.append(pageRow(child));
+    wrap.append(children);
+  }
 
   // Базы встраиваются в страницу строкой ![[Название базы]], как встраивание
   // в Obsidian: сама база живёт в разделе «Базы», здесь — её вид.
@@ -971,11 +999,12 @@ function afterBlock(detail) {
     wrap.append(block);
   }
 
-  const links = foldable(el("section", "notes-section notes-backlinks"), "backlinks");
-  links.append(sectionHead("Ссылаются сюда", detail.backlinks.length, "backlinks"));
-  if (!detail.backlinks.length) links.append(el("p", "notes-empty", `Пока никто. Напишите [[${page.title}]] в другой заметке — и она появится здесь.`));
-  for (const item of detail.backlinks) links.append(referenceRow(item));
-  wrap.append(links);
+  if (detail.backlinks.length) {
+    const links = foldable(el("section", "notes-section notes-backlinks"), "backlinks");
+    links.append(sectionHead("Ссылаются сюда", detail.backlinks.length, "backlinks"));
+    for (const item of detail.backlinks) links.append(referenceRow(item));
+    wrap.append(links);
+  }
 
   if (detail.mentions.length) {
     const mentions = foldable(el("section", "notes-section notes-mentions"), "mentions");
@@ -995,6 +1024,9 @@ function afterBlock(detail) {
     }
     wrap.append(mentions);
   }
+  // Показать нечего — нет и отступа под текстом. Сам узел остаётся: фоновое
+  // обновление страницы меняет его на месте.
+  wrap.hidden = !wrap.childElementCount;
   return wrap;
 }
 // Ссылка может прийти и не со страницы — из дела или встречи: такая запись
