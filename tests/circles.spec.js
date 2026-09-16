@@ -91,23 +91,13 @@ test("круг: приглашение, просьба, «беру» и разг
   await taken.locator(".entry-title").click();
   const dialog = anya.page.locator("#review-dialog");
   await expect(dialog.locator(".card-foreign")).toContainText("Автор записи — Саша");
-  // Разговор не стоит в карточке блоком — выезжает снизу по кнопке.
-  await expect(dialog.locator(".thread-input")).toBeHidden();
-  await dialog.locator(".card-talk-open").click();
-  // Высоту листа тянут за верхнюю кромку, и она запоминается.
-  const sheet = dialog.locator(".talk-sheet");
-  // лист выезжает 0.26 с — меряем, когда встал
-  await anya.page.waitForTimeout(400);
-  const grip = await dialog.locator(".talk-grip").boundingBox();
-  const tall = (await sheet.boundingBox()).height;
-  await anya.page.mouse.move(grip.x + grip.width / 2, grip.y + 8);
-  await anya.page.mouse.down();
-  await anya.page.mouse.move(grip.x + grip.width / 2, grip.y + 160, { steps: 6 });
-  await anya.page.mouse.up();
-  expect((await sheet.boundingBox()).height).toBeLessThan(tall - 100);
-  expect(await anya.page.evaluate(() => localStorage.getItem("pagent.talk-height"))).not.toBeNull();
+  // Разговор не стоит в карточке блоком: поле лежит у нижнего края, а пока
+  // сообщений нет, панели над ним нет.
+  await expect(dialog.locator(".thread-input")).toBeVisible();
+  await expect(dialog.locator(".talk-panel")).toBeHidden();
   await dialog.locator(".thread-input").fill("Половина готова. @Саша, цены от подрядчика были?");
-  await dialog.getByRole("button", { name: "Отправить" }).click();
+  await dialog.getByRole("button", { name: "Отправить", exact: true }).click();
+  await expect(dialog.locator(".talk-panel")).toBeVisible();
   await expect(dialog.locator(".msg-text .call")).toHaveText("@Саша");
   await anya.page.locator("#review-close").click();
 
@@ -122,8 +112,10 @@ test("круг: приглашение, просьба, «беру» и разг
   // Открыли по призыву — разговор выехал сам.
   await expect(page.locator("#review-dialog .msg-text")).toBeVisible();
   await expect(page.locator("#review-dialog .msg-text")).toContainText("Половина готова");
+  // Esc сворачивает разговор в строку, а карточка остаётся.
   await page.keyboard.press("Escape");
-  await expect(page.locator("#review-dialog .talk-sheet")).toBeHidden();
+  await expect(page.locator("#review-dialog .talk-panel")).toBeHidden();
+  await expect(page.locator("#review-dialog .talk-peek")).toContainText("Половина готова");
   await expect(page.locator("#review-dialog")).toBeVisible();
   await page.locator("#review-close").click();
   await page.reload();

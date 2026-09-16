@@ -35,19 +35,21 @@ test("обсуждение без круга: позванный видит од
   await ilya.page.request.patch("/api/account", { data: { name: "Илья" } });
   const entry = (await (await request.post("/api/captures", { data: { raw: "Допинать карусель с генератором фраз" } })).json()).entry;
 
-  // ── у личной записи обсуждение есть, и видит его пока только автор ──
+  // ── у личной записи поле обсуждения лежит внизу карточки сразу, без
+  // кнопки; сообщений нет — и панели над полем нет ──
   await page.goto(`/#today?open=${entry.id}`);
   const dialog = page.locator("#review-dialog");
-  const opener = dialog.locator(".card-talk-open");
-  await expect(opener).toContainText("Обсудить");
-  await opener.click();
-  await expect(dialog.locator(".talk-who")).toContainText("видите только вы");
+  const field = dialog.locator(".thread-input");
+  await expect(field).toBeVisible();
+  await expect(dialog.locator(".talk-solo")).toContainText("Только вы");
+  await expect(dialog.locator(".talk-panel")).toBeHidden();
+  await expect(dialog.getByRole("button", { name: "Отправить", exact: true })).toBeDisabled();
 
   // ── @ подсказывает любого человека из Кизуны ──
-  const field = dialog.locator(".thread-input");
   await field.fill("Глянь сид, ");
   await field.pressSequentially("@Ил");
   const pop = dialog.locator(".mention-pop");
+  await expect(pop).toContainText("Позванный увидит эту запись");
   await expect(pop).toContainText("все в Кизуне");
   await expect(pop).toContainText("Илья");
   await field.press("Enter");
@@ -57,10 +59,12 @@ test("обсуждение без круга: позванный видит од
 
   // ── молча запись не открывается: сначала вопрос ──
   const confirm = dialog.locator(".talk-confirm");
-  await expect(confirm).toContainText("Илья получит доступ к этой записи");
+  await expect(confirm).toContainText("Илья пока не видит эту запись");
   expect((await ilya.page.request.get(`/api/captures/${entry.id}`)).status()).toBe(404);
   await confirm.getByRole("button", { name: "Позвать и отправить" }).click();
   await expect(confirm).toBeHidden();
+  // Первое сообщение — и разговор встал над полем панелью.
+  await expect(dialog.locator(".talk-panel")).toBeVisible();
   await expect(dialog.locator(".msg-text .call")).toHaveText("@Илья");
   await expect(dialog.locator(".talk-joined")).toContainText("Илья — в обсуждении");
   await expect(dialog.locator(".talk-who")).toContainText("вы и Илья");
@@ -90,9 +94,9 @@ test("обсуждение без круга: позванный видит од
   await expect(hers).toBeHidden();
   expect((await ilya.page.request.get(`/api/captures/${entry.id}`)).status()).toBe(404);
 
-  // У автора снова «видите только вы».
+  // У автора снова «видите только вы»: разговор свёрнут строкой — разворачиваем.
   await page.goto(`/#today?open=${entry.id}`);
-  await dialog.locator(".card-talk-open").click();
+  await dialog.locator(".talk-peek").click();
   await expect(dialog.locator(".talk-who")).toContainText("видите только вы");
   await page.locator("#review-close").click();
 
@@ -120,17 +124,23 @@ test("запись, открытая из списка, зовёт через @ 
   await page.goto("/");
   await page.locator("#todo .entry").filter({ hasText: raw }).locator(".entry-title").click();
   const dialog = page.locator("#review-dialog");
-  const opener = dialog.locator(".card-talk-open");
-  await expect(opener).toContainText("Обсуждение · 1");
-  await opener.click();
+  // Разговор догрузился и свёрнут строкой с последним сообщением.
+  const peek = dialog.locator(".talk-peek");
+  await expect(peek).toContainText("Сид лежит в папке фраз");
+  await peek.click();
   await expect(dialog.locator(".msg-text")).toHaveText("Сид лежит в папке фраз");
 
+  // «@» у поля открывает ту же подсказку, что и набранный руками.
   const field = dialog.locator(".thread-input");
-  await expect(field).toHaveAttribute("placeholder", "Написать… @ — позвать");
-  await field.pressSequentially("@Ил");
+  await expect(field).toHaveAttribute("placeholder", "Сообщение");
+  await dialog.getByRole("button", { name: "Позвать человека" }).click();
   const pop = dialog.locator(".mention-pop");
   await expect(pop).toContainText("все в Кизуне");
+  await expect(field).toHaveValue("@");
+  await field.pressSequentially("Ил");
   await expect(pop).toContainText("Илья");
+  await field.press("Enter");
+  await expect(field).toHaveValue("@Илья ");
   await page.locator("#review-close").click();
 
   await request.post(`/api/admin/users/${ilyaUser.id}/block`, { data: { reason: "конец прогона" } });
