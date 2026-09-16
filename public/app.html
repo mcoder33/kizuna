@@ -14,6 +14,7 @@
     <meta name="theme-color" content="#c73e3a" />
     <script src="/public/theme.js"></script>
     <link rel="stylesheet" href="/public/app.css" />
+    <link rel="stylesheet" href="/public/notes.css" />
   </head>
   <body>
     <a class="skip-link" href="#capture-input">К полю записи</a>
@@ -38,7 +39,7 @@
         <a href="#board">Доска</a>
         <a href="#circles">Круги</a>
         <a href="#calendar">Календарь</a>
-        <a href="#reports">Обзор</a>
+        <a href="#notes">Заметки</a>
       </nav>
       <div class="header-tail">
       <details class="ai-menu">
@@ -325,6 +326,14 @@
         <div id="calendar-view" class="board-calendar" aria-label="Календарь дел"></div>
       </section>
 
+      <!-- «Заметки»: дерево страниц слева, страница справа. Всё внутри рисует
+           public/notes.js; «Обзор» ушёл из шапки и открывается по #reports. -->
+      <section id="notes" class="app-page notes-page" hidden aria-label="Заметки">
+        <div class="notes-shell">
+          <aside class="notes-side" id="notes-side" aria-label="Страницы"></aside>
+          <div class="notes-main" id="notes-main"></div>
+        </div>
+      </section>
       <section id="reports" class="app-page reports-page" hidden>
         <div class="page-heading">
           <p class="eyebrow">ПАМЯТЬ · ОТЧЁТЫ</p>

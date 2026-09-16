@@ -87,7 +87,7 @@ test('inline rendering tolerates empty and non-string sources', () => {
 
 test('obsidian: highlight, wikilinks, embeds, tags, comments and anchors', () => {
   assert.equal(renderMarkdown('==важное=='), '<p><mark>важное</mark></p>');
-  assert.match(renderMarkdown('[[Заметка]]'), /<a class="md-wikilink" href="#memory\?query=%D0%97[^"]*">Заметка<\/a>/);
+  assert.match(renderMarkdown('[[Заметка]]'), /<a class="md-wikilink" href="#notes\?title=%D0%97[^"]*">Заметка<\/a>/);
   assert.match(renderMarkdown('[[Заметка|как назвали]]'), />как назвали</);
   assert.match(renderMarkdown('[[Заметка#Раздел]]'), /md-wikilink/);
   assert.match(renderMarkdown('![[Встроенное]]'), /md-embed/);

@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { makeProjections, gateClassification, shouldMaterializeProjections, actionClassification, settleCompleted, NOTE_TYPES } from './classifier.js';
 import { occursOn, nextOccurrence } from './repeat.js';
 import { migrateNotifications } from './notifications.js';
+import { migrateNotesTree } from './notes-schema.js';
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -13,6 +14,7 @@ export function openDatabase(filename) {
   db.pragma('foreign_keys = ON');
   migrate(db);
   migrateNotifications(db);
+  migrateNotesTree(db);
   settleCompletedRecords(db);
   repairMissingProjections(db);
   return db;
@@ -1291,6 +1293,11 @@ const ownedRows = {
   comment_reactions: ['comment_id IN (SELECT id FROM comments WHERE ' + MINE + ')', 1],
   comment_reads: [MINE, 1],
   capture_people: [MINE, 1],
+  // Заметки как страницы: место в дереве и связи висят на своих записях, базы —
+  // свои виды. Уходят вместе с журналом.
+  note_places: [MINE, 1],
+  note_links: ['from_id IN (SELECT id FROM captures WHERE user_id IS ?)', 1],
+  note_bases: ['user_id IS ?', 1],
 };
 const mineWhere = table => 'WHERE ' + ownedRows[table][0];
 function exportRowCount(db, userId) { return exportTables.reduce((total, table) => total + db.prepare(`SELECT COUNT(*) AS count FROM ${table} ${mineWhere(table)}`).get(userId).count, 0); }
@@ -1325,7 +1332,7 @@ export function resetLedger(db, userId = null) {
     db.exec('DROP TRIGGER IF EXISTS ledger_events_no_update; DROP TRIGGER IF EXISTS ledger_events_no_delete;');
     try {
       // Порядок важен: сначала то, что ссылается, потом то, на что ссылаются.
-      for (const table of ['agent_memories','activity_events','reminder_sends','daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','comment_mentions','comment_reactions','comment_reads','comments','capture_people','assignments','capture_circles','interpretations','capture_attachments','capture_notes','usage_events','board_placements','board_columns','calendar_links','calendar_events','calendar_accounts','captures']) db.prepare(`DELETE FROM ${table} ${mineWhere(table)}`).run(userId);
+      for (const table of ['note_links','note_places','note_bases','agent_memories','activity_events','reminder_sends','daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','comment_mentions','comment_reactions','comment_reads','comments','capture_people','assignments','capture_circles','interpretations','capture_attachments','capture_notes','usage_events','board_placements','board_columns','calendar_links','calendar_events','calendar_accounts','captures']) db.prepare(`DELETE FROM ${table} ${mineWhere(table)}`).run(userId);
     } finally { createLedgerEventGuards(db); }
   });
 }

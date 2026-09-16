@@ -3,6 +3,7 @@ import { createMarkdownField } from "./markdown-live.js";
 import { attachSlashMenu } from "./slash-menu.js";
 import { attachFormatToolbar } from "./format-toolbar.js";
 import { createVoiceDialog } from "./voice.js";
+import { openNotes, refreshNotes } from "./notes.js";
 import { phaseOf, coverFor, endedRecently, plural, hm, duration, minutesOf, longDate, shortDate, isWeekend, MEETINGS, DEALS, PHASE_NAMES } from "./today-cover.js";
 
 const $ = (selector) => document.querySelector(selector);
@@ -232,6 +233,9 @@ function updatePageFromHash() {
   // «Обзор» пересчитывается при каждом открытии: цифры меняются от каждой
   // записи, а страница может быть открыта спустя часы.
   if (activePage === "reports") loadReports();
+  // «Заметки» живут своим модулем: ему отдаётся только то, чем он ходит в
+  // приложение, — запрос, тост и карточка записи.
+  if (activePage === "notes") openNotes(params, { request, toast, openCard: openCaptureById });
   // Запрос из ссылки сразу уходит в поиск: человек щёлкнул по имени, а не по
   // пустой странице памяти.
   const query = activePage === "memory" ? params.get("query")?.trim() : "";
@@ -1513,6 +1517,7 @@ async function load() {
   if (page === "circles") await refreshRoomsQuietly();
   if (page === "calendar" && calState.data) await loadCalendar();
   if (page === "reports" && reportsState.loaded) await loadReports();
+  if (page === "notes") await refreshNotes();
 }
 // Движение в приложении одно на всё: предмет не летит через экран и не растёт
 // на глазах — он тихо проявляется там, где его посчитала раскладка. Тот же
@@ -2417,6 +2422,14 @@ function showReview(entry, review, undoGroupId, provenance) {
       });
     }
     area.append(origin);
+  }
+  // Заметка и идея — это ещё и страница в разделе «Заметки»: там у неё место
+  // в дереве, ссылки и страницы внутри.
+  if (entry.mine !== false && ["note", "idea_question"].includes(entry.interpretation.classification.primaryType)) {
+    const asPage = node("a", "Открыть как страницу", "card-page-link");
+    asPage.href = `#notes?page=${encodeURIComponent(entry.id)}`;
+    asPage.addEventListener("click", () => closeCard());
+    area.append(asPage);
   }
   // «Когда это было» — справочная мета: живёт футером внизу карточки одной
   // строкой, а не блоком в шапке. Шапка — заголовок, статус и заметки.

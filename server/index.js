@@ -19,6 +19,7 @@ import { boardView, createColumn, renameColumn, colorColumn, moveColumn, deleteC
 import { createCalendarService, CalendarSyncWorker } from './calendar.js';
 import * as circles from './circles.js';
 import * as chat from './chat.js';
+import { registerNotesRoutes } from './notes-tree.js';
 import { createSecretBox } from './secrets.js';
 import { createReminderService, ReminderWorker, validRemind, validRemindHour, REMIND_MAX_MINUTES } from './reminders.js';
 import { createPushService } from './push.js';
@@ -463,6 +464,16 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     myCircles: circles.circlesOf(db, userId),
     mine: captureOwner(db, captureId) === userId,
   });
+  // Заметки как страницы: дерево, ссылки, базы и дела из строк заметки
+  // (server/notes-tree.js). Дело из строки ставится в ту же очередь разбора,
+  // что и запись с «Сегодня», и под тем же потолком расходов.
+  registerNotesRoutes(app, { db, notifyJournal, queueCapture: async (user, raw, overrides) => {
+    const gate = await spendGate(user, undefined);
+    const selectedProvider = await snapshotProvider(ai, gate.provider);
+    const queued = enqueueCaptureJob(db, { userId: user.id, raw, selectedProvider, selectedModel: null, overrides });
+    captureJobWorker.wake();
+    return queued;
+  } });
   app.get('/api/events',(req,res)=>{
     res.set({ 'Content-Type':'text/event-stream', 'Cache-Control':'no-store', Connection:'keep-alive', 'X-Accel-Buffering':'no' });
     res.flushHeaders?.();
