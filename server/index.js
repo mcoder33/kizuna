@@ -100,7 +100,6 @@ const SETTINGS = {
   // поэтому переживают смену браузера.
   sleepAfterSeconds: { personal:true, check:value => /^\d+$/.test(String(value)) && Number(value) >= 10 && Number(value) <= 600 },
   wakeWord: { personal:true, check:value => typeof value === 'string' && value.trim().length >= 2 && value.length <= 40 },
-  previewLimit: { personal:true, check:value => /^\d+$/.test(String(value)) && Number(value) >= 1 && Number(value) <= 20 },
   // Тема оформления. Хранится у человека, а не во вкладке: со сменой браузера
   // светлая тема не должна возвращаться сама.
   theme: { personal:true, check:value => ['system','light','dark'].includes(value) },
@@ -126,7 +125,7 @@ const SETTINGS = {
 };
 // Голоса по умолчанию те же, что и у самой службы: без них выпадающий список
 // открывался бы пустым, хотя разговор уже идёт каким-то голосом.
-const SETTING_DEFAULTS = { sleepAfterSeconds:'25', remindDefault:'15', remindHour:'09:00', wakeWord:'кизуна', previewLimit:'8', voiceName:'coral', geminiVoiceName:'Leda', systemPrompt:DEFAULT_VOICE_CHARACTER, voiceModel:'gpt-realtime', geminiVoiceModel:'models/gemini-3.1-flash-live-preview', theme:'system',
+const SETTING_DEFAULTS = { sleepAfterSeconds:'25', remindDefault:'15', remindHour:'09:00', wakeWord:'кизуна', voiceName:'coral', geminiVoiceName:'Leda', systemPrompt:DEFAULT_VOICE_CHARACTER, voiceModel:'gpt-realtime', geminiVoiceModel:'models/gemini-3.1-flash-live-preview', theme:'system',
   // Цены по умолчанию нет намеренно: выдумать её значит показать человеку
   // сумму, которой он не платил. Пока цену не задали, работает предел по
   // минутам, а деньги честно показываются как неизвестные.

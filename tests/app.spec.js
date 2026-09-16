@@ -1219,13 +1219,12 @@ test("карточка говорит, просрочено дело или не
     await request.delete(`/api/captures/${(await response.json()).entry.id}`);
 });
 
-// Колонка на «Сегодня» показывает только первые записи. Раньше об этом было
-// сказано лишь заголовком-ссылкой: дело, которому передвинули срок вперёд,
-// уходило за границу превью и выглядело пропавшим — «не сохранилось».
-// Дела без срока в «Дне» не обрезаются: их видно все, а ящик прокручивается.
-// Обрезка до предела превью выглядела как потерянные дела — три «Допинываем…»
-// из двенадцати, и человек шёл искать остальные на доску.
-test("дела без срока показываются все, а ящик прокручивается", async ({
+// «День» — простой список: дела без срока показываются все, и своей полосы
+// прокрутки у ящика нет. Обрезка выглядела как потерянные дела — три
+// «Допинываем…» из двенадцати, и человек шёл искать остальные на доску; ящик с
+// собственной прокруткой оказался не лучше — окошко в три строки, за нижним
+// краем которого пряталось «по часам». Длинный день прокручивается страницей.
+test("дела без срока показываются все, а ящик не заводит свою прокрутку", async ({
   page,
   request,
 }) => {
@@ -1243,9 +1242,15 @@ test("дела без срока показываются все, а ящик п
   // Ничего не спрятано, поэтому и хвоста «Ещё N» нет: он остался только для
   // дел, назначенных на другие дни.
   await expect(todo.locator(".preview-more")).toHaveCount(0);
-  const scroll = todo.locator(".day-scroll");
-  const room = await scroll.evaluate((box) => ({ visible: box.clientHeight, all: box.scrollHeight }));
-  expect(room.all).toBeGreaterThan(room.visible + 4);
+  // Ящик показан целиком: своей полосы прокрутки у него нет.
+  const room = await todo.evaluate((box) => ({ visible: box.clientHeight, all: box.scrollHeight }));
+  expect(room.all).toBeLessThanOrEqual(room.visible + 1);
+  // Что не влезло на экран, достаётся прокруткой страницы, а не окошком внутри
+  // ящика: последняя карточка доезжает до глаз обычной прокруткой.
+  const last = todo.locator(".entry").last();
+  await expect(last).not.toBeInViewport();
+  await last.scrollIntoViewIfNeeded();
+  await expect(last).toBeInViewport();
 
   for (const response of created)
     await request.delete(`/api/captures/${(await response.json()).entry.id}`);
@@ -1290,27 +1295,23 @@ test("настройки меняются в приложении и приме�
   // Меняем поведение разговора и вид журнала.
   await page.locator("#setting-sleepAfterSeconds").fill("60");
   await page.locator("#setting-wakeWord").fill("журнал");
-  await page.locator("#setting-previewLimit").fill("5");
-  await page.locator("#setting-previewLimit").blur();
+  await page.locator("#setting-wakeWord").blur();
   await expect(page.locator("#settings-status")).toHaveText("Сохранено");
 
   // Сохранилось на сервере само, без кнопки, — и не только на экране.
   await expect
     .poll(async () => {
       const saved = (await (await request.get("/api/settings")).json()).settings;
-      return [saved.sleepAfterSeconds, saved.wakeWord, saved.previewLimit].join("|");
+      return [saved.sleepAfterSeconds, saved.wakeWord].join("|");
     })
-    .toBe("60|журнал|5");
+    .toBe("60|журнал");
 
-  // Ящик сразу становится ростом в пять дел — без перезагрузки; шестое достаётся
-  // прокруткой, а не пропадает.
+  // Шесть дел — шесть строк в ящике: ничего не обрезается и не прячется.
   const created = [];
   for (const name of ["дело 1", "дело 2", "дело 3", "дело 4", "дело 5", "дело 6"])
     created.push(await request.post("/api/captures", { data: { raw: name, primaryType: "todo" } }));
   await page.locator('nav a[href="#today"]').click();
   await expect(page.locator("#todo .entry:visible")).toHaveCount(6, { timeout: 15000 });
-  const room = await page.locator("#todo .day-scroll").evaluate((box) => ({ visible: box.clientHeight, all: box.scrollHeight }));
-  expect(room.all).toBeGreaterThan(room.visible + 4);
 
   // Новое слово пробуждения видно в подсказке разговора.
   await page.locator("#capture-voice").click();
@@ -1318,7 +1319,7 @@ test("настройки меняются в приложении и приме�
 
   // Возвращаем как было и убираем записи.
   await request.put("/api/settings", {
-    data: { sleepAfterSeconds: "", wakeWord: "", previewLimit: "" },
+    data: { sleepAfterSeconds: "", wakeWord: "" },
   });
   for (const response of created)
     await request.delete(`/api/captures/${(await response.json()).entry.id}`);

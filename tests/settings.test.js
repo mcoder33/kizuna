@@ -20,7 +20,6 @@ test('settings come back without secrets and with sensible defaults', async () =
   const body = (await api.get('/api/settings').expect(200)).body;
   assert.equal(body.settings.sleepAfterSeconds, '25');
   assert.equal(body.settings.wakeWord, 'кизуна');
-  assert.equal(body.settings.previewLimit, '8');
   // Ключ описывается признаком, а не значением.
   assert.deepEqual(Object.keys(body.settings.openaiKey).sort(), ['configured', 'fromEnvironment', 'hint']);
   assert.equal(typeof body.settings.openaiKey.configured, 'boolean');
@@ -76,7 +75,6 @@ test('nonsense settings are refused by name and by value', async () => {
     { timeZone: 'Не/Зона' },
     { sleepAfterSeconds: '5000' },
     { sleepAfterSeconds: 'скоро' },
-    { previewLimit: '0' },
     { wakeWord: 'к' },
     { voiceProvider: 'кто-нибудь' },
     { aiProvider: 'выдуманный' },
@@ -91,7 +89,7 @@ test('nonsense settings are refused by name and by value', async () => {
 
 test('settings survive a data reset and stay out of the export', async () => {
   const api = authed(app());
-  await api.put('/api/settings').send({ wakeWord: 'журнал', previewLimit: '7' }).expect(200);
+  await api.put('/api/settings').send({ wakeWord: 'журнал', sleepAfterSeconds: '60' }).expect(200);
   await api.post('/api/captures').send({ raw: 'Нужно проверить настройки' }).expect(201);
 
   const exported = (await api.get('/api/export').expect(200)).body;
@@ -102,7 +100,7 @@ test('settings survive a data reset and stay out of the export', async () => {
   await api.post('/api/reset').send({ confirmation: 'СБРОСИТЬ КИЗУНА' }).expect(200);
   const after = (await api.get('/api/settings').expect(200)).body.settings;
   assert.equal(after.wakeWord, 'журнал');
-  assert.equal(after.previewLimit, '7');
+  assert.equal(after.sleepAfterSeconds, '60');
   assert.equal((await api.get('/api/entries').expect(200)).body.entries.length, 0);
 });
 

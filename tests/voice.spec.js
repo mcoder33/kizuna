@@ -847,7 +847,7 @@ test("голос переключается прямо из шапки", async (
   });
   let saved = null;
   const base = {
-    settings: { voiceProvider: "openai", sleepAfterSeconds: "25", wakeWord: "кизуна", previewLimit: "3" },
+    settings: { voiceProvider: "openai", sleepAfterSeconds: "25", wakeWord: "кизуна" },
     voice: {
       configured: true,
       provider: "openai",
@@ -876,7 +876,7 @@ test("с одним ключом переключать голос нечем", 
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        settings: { voiceProvider: "gemini", sleepAfterSeconds: "25", wakeWord: "кизуна", previewLimit: "3" },
+        settings: { voiceProvider: "gemini", sleepAfterSeconds: "25", wakeWord: "кизуна" },
         voice: {
           configured: true,
           provider: "gemini",

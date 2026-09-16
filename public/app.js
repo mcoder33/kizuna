@@ -517,8 +517,6 @@ function appendEntries(container, entries, emptyText, options) {
   if (!container.childNodes.length)
     container.append(node("p", emptyText, "empty"));
 }
-// Сколько дел без срока показывать в «Дне» — настройка, а не константа.
-let previewLimit = 8;
 // ── «Сегодня»: обложка по часам, полоса дней, два ящика ──────────────────────
 // Страница знает, который час: дата с фазой суток, бриф из двух-трёх фраз и
 // вопрос в поле меняются утром, днём, вечером и ночью. Под полем — полоса дней
@@ -1012,14 +1010,10 @@ function appendMore(container, hidden) {
   container.append(more);
 }
 function paintDayList(date) {
-  const box = $("#todo");
-  clear(box);
-  box.append(dayNavNode(date, { view: todayState.view, onView: setView }));
-  // Полоса дней со стрелками стоит на месте, прокручивается только список:
-  // иначе стрелки уезжали бы вверх вместе с делами.
-  const container = node("div", undefined, "day-scroll");
-  box.append(container);
-  if (date === currentDayDate) { paintTodayList(container); fitDayScroll(container); return; }
+  const container = $("#todo");
+  clear(container);
+  container.append(dayNavNode(date, { view: todayState.view, onView: setView }));
+  if (date === currentDayDate) { paintTodayList(container); return; }
   const data = todayState.cache.get(date);
   if (!data) {
     container.append(node("p", "Загружаю…", "empty"));
@@ -1027,30 +1021,14 @@ function paintDayList(date) {
     return;
   }
   paintOtherDayList(container, date, data);
-  fitDayScroll(container);
-}
-// Высота ящика — столько записей, сколько человек просил показывать; остальные
-// достаются прокруткой, а не походом на доску. Меряем по настоящим строкам:
-// карточка с проектом и сроком выше карточки без них, и высота в «примерно
-// столько-то пикселей» разошлась бы со счётом.
-function fitDayScroll(container) {
-  container.style.maxHeight = "";
-  // Закрытый ящик мерить нечем: все смещения нулевые. Откроется — перерисуется
-  // и померится (переключение вкладки идёт через renderToday).
-  if (!container.offsetParent) return;
-  const rows = [...container.children].filter((row) => !row.classList.contains("day-group"));
-  if (rows.length <= previewLimit) return;
-  const edge = rows[previewLimit];
-  // Обрез по верху первой невлезающей строки плюс полоска от неё: видно, что
-  // список продолжается, даже когда полосы прокрутки не видно.
-  container.style.maxHeight = `${Math.round(edge.offsetTop - container.firstElementChild.offsetTop + 20)}px`;
 }
 // Сегодня: сверху «без времени» — просроченное, требующее уточнения, сегодняшнее
 // без часа и дела без срока, ниже «по часам» — свои дела и встречи со временем
 // вперемешку с чужими событиями, между прошедшими и будущими — строка «сейчас».
-// Ничего из этого не обрезается: ящик прокручивается, а настройка задаёт его
-// высоту. Обрезка до трёх строк выглядела как потерянные дела — человек видел
-// три «Допинываем…» из двенадцати и шёл искать остальные. Дела на другие дни
+// Это простой список: ничего не обрезается, и своей полосы прокрутки у ящика
+// нет — длинный день прокручивается страницей, как и всё остальное. Ящик с
+// собственной прокруткой оказался хуже обрезки: дела лежали в окошке высотой в
+// три строки, а «по часам» пряталось за его нижним краем. Дела на другие дни
 // живут в своих днях и в хвосте «Ещё N».
 function paintTodayList(container) {
   const today = currentDayDate, minutes = nowMinutes();
@@ -2949,7 +2927,6 @@ const SETTING_FIELDS = [
   "systemPrompt",
   "aiProvider",
   "timeZone",
-  "previewLimit",
   "remindDefault",
   "remindHour",
   "theme",
@@ -3049,12 +3026,6 @@ function paintSettings(payload) {
   }
   paintVoiceQuota(payload.quota);
   paintSpend(payload.spend);
-  // Настройки вида применяются сразу, без перезагрузки страницы.
-  const limit = Number(appSettings.previewLimit);
-  if (Number.isFinite(limit) && limit > 0 && limit !== previewLimit) {
-    previewLimit = limit;
-    load().catch(() => {});
-  }
 }
 // Расходы: сколько ушло токенов и денег. Показываем три окна — сутки, неделя,
 // всё время, — потому что «сколько я трачу» это вопрос про темп, а не про сумму.
