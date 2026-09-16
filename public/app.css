@@ -456,13 +456,19 @@ body {
     sans-serif;
   line-height: 1.45;
 }
+/* Поля верхней строки: на широком экране её содержимое — колонка в 1280px по
+   центру окна. Страница, которой нужна та же ширина (доска), берёт это же
+   поле, а не подгоняет своё числом. */
+:root {
+  --header-gutter: max(24px, calc((100vw - 1280px) / 2));
+}
 header {
   min-height: 72px;
   background: var(--n-100);
   border-bottom: 1px solid var(--n-94);
   display: flex;
   align-items: center;
-  padding: 0 max(24px, calc((100vw - 1280px) / 2));
+  padding: 0 var(--header-gutter);
   gap: 14px;
   position: sticky;
   top: 0;
@@ -2752,12 +2758,15 @@ dialog form > div {
   transform: translate(-50%, 0);
 }
 @media (max-width: 760px) {
+  :root {
+    --header-gutter: 16px;
+  }
   header {
     flex-wrap: wrap;
     align-items: center;
     gap: 8px 10px;
     min-height: 0;
-    padding: 10px 16px;
+    padding: 10px var(--header-gutter);
   }
   /* Четыре раздела в строку с брендом и хвостом не влезают: первая строка —
      знак слева и хвост справа, вторая — навигация во всю ширину. Без явного
@@ -5620,8 +5629,11 @@ dialog form > div {
   gap: 22px;
   align-items: flex-start;
   overflow-x: auto;
-  /* Правый край ленты — край окна: страница дел сама во всю ширину. */
-  padding: 6px 24px 26px 0;
+  /* Лента колонок — во всю ширину окна, а первая колонка стоит по краю шапки:
+     поле ленты равно полю страницы, и прокрученные колонки уходят под поле к
+     краю окна, а не обрезаются посреди экрана. */
+  margin: 0 calc(-1 * var(--header-gutter));
+  padding: 6px var(--header-gutter) 26px;
   /* Полосу прокрутки не показываем: колесо, трекпад и перетаскивание работают,
      а серый столбик под колонками читался как чужой элемент интерфейса. */
   scrollbar-width: none;
@@ -6044,24 +6056,19 @@ body {
   overflow: hidden;
 }
 
-/* ── страница дел во всю ширину: слева умеренное поле, не по центру ──────────
-   На широком экране центральная колонка оставляла слева пустоту; доска
-   начинается у левого края с полем, которое растёт с окном, но не впритык. */
-.board-page {
-  width: 100vw;
-  margin-left: calc(50% - 50vw);
-  padding: 0 0 0 clamp(24px, 4vw, 64px);
-}
+/* ── страница дел: края — по верхней строке ──────────────────────────────────
+   Заголовок, виды и инструменты стоят в той же колонке, что знак «Кизуна» и
+   аватар: страница во всю ширину окна, а поля у неё — поля шапки. Раньше доска
+   начиналась у левого края окна, и на широком мониторе «Дела» и «+ Дело»
+   разъезжались по углам, пока верхняя строка стояла по центру. Во всех видах
+   шапка доски на одном месте: вариант «вся страница одной узкой колонкой»
+   пробовали — шапка прыгала от вида к виду. Список — колонка чтения по центру
+   окна, лента колонок — во всю ширину (см. .board-columns). */
+main:has(> #board:not([hidden])) { max-width: none; padding-left: 0; padding-right: 0; }
+.board-page { padding: 0 var(--header-gutter); }
 .board-page .page-heading { margin-bottom: 8px; }
-/* Список — не лента вбок, а колонка чтения: заголовок и панель видов
-   остаются слева во всю ширину, как на доске и в остальных видах, а сам
-   список — с заголовком группы и делами — стоит по центру окна. Правое поле
-   страницы уравнивается с левым, чтобы центр совпал с центром окна. Вариант
-   «вся страница одной узкой колонкой» пробовали: шапка в разных видах прыгала
-   с места на место. */
-.board-page:has(#board-columns.list) { padding-right: clamp(24px, 4vw, 64px); }
-.board-page:has(#board-columns.list) .board-controls,
-.board-page:has(#board-columns.list) .board-props { margin-right: 0; }
+.board-page .board-controls,
+.board-page .board-props { margin-right: 0; }
 
 /* Панель над доской: виды слева с подчёркиванием активного, инструменты
    справа — как строка над базой в Notion. */
@@ -6232,6 +6239,7 @@ body {
   max-width: 820px;
   margin: 0 auto;
   overflow-x: visible;
+  padding-left: 0;
   padding-right: 0;
   cursor: default;
 }
@@ -6274,19 +6282,19 @@ body {
      Safari иначе расширяет окно, и всё — от карточки записи до экрана
      разговора — оказывается уже экрана. Подписи неактивных видов спрятаны,
      сам ряд при нужде едет вбок внутри себя. */
-  .board-controls { flex-wrap: wrap; margin-right: 12px; min-width: 0; }
+  .board-controls { flex-wrap: wrap; min-width: 0; }
   .board-views { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
   .board-views::-webkit-scrollbar { display: none; }
   .board-views button { padding: 5px 6px; font-size: 13px; }
   .board-views button svg + span { display: none; }
   .board-views button[aria-pressed="true"] svg + span { display: inline; }
   .board-tools { flex-wrap: wrap; max-width: 100%; }
-  .board-props { margin-right: 12px; }
   .board-segments {
     display: flex;
     gap: 6px;
     overflow-x: auto;
-    padding: 2px 12px 10px 0;
+    margin: 0 calc(-1 * var(--header-gutter));
+    padding: 2px var(--header-gutter) 10px;
     scrollbar-width: none;
   }
   .board-segments::-webkit-scrollbar { display: none; }
@@ -6305,7 +6313,8 @@ body {
   }
   .board-segment[aria-selected="true"] { opacity: 1; }
   .board-segment[aria-selected="true"] .board-pill { box-shadow: inset 0 0 0 1.5px currentColor; }
-  .board-columns:not(.list) { display: block; padding-right: 12px; cursor: default; }
+  /* Одна колонка на экран — в поле страницы, как шапка, без ленты вбок. */
+  .board-columns:not(.list) { display: block; margin: 0; padding-left: 0; padding-right: 0; cursor: default; }
   .board-columns:not(.list) .board-column { display: none; width: 100%; }
   .board-columns:not(.list) .board-column.is-active { display: block; }
   .board-columns:not(.list) .board-hidden { display: none; }
