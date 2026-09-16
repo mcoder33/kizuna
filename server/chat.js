@@ -3,7 +3,9 @@
 // У каждого круга есть «Общий» — он заводится сам вместе с кругом, и в нём все,
 // кто в круге: состав не хранится, он и есть круг. Комната — разговор
 // подмножеством: участники названы поимённо, и кто не в ней, тот её не видит
-// вовсе — ни названия, ни числа сообщений.
+// вовсе — ни названия, ни числа сообщений. Разговор можно завести и на весь круг
+// (`everyone`): это отдельная тема рядом с «Общим», и состав у неё, как у
+// «Общего», — сам круг, включая тех, кто придёт позже.
 //
 // Чат возвращает в приложение счётчик непрочитанного — то, от чего человек
 // уходит в личный журнал. Поэтому счётчик живёт только здесь, на комнате, а в
@@ -48,8 +50,9 @@ export function ensureGeneral(db, circleId, userId) {
   return db.prepare('SELECT * FROM chat_rooms WHERE id=?').get(roomId);
 }
 
+const wholeCircle = room => room.kind === 'general' || Boolean(room.everyone);
 export function roomMembers(db, room) {
-  if (room.kind === 'general') return membersOf(db, room.circle_id);
+  if (wholeCircle(room)) return membersOf(db, room.circle_id);
   return db
     .prepare(`SELECT u.*, m.joined_at FROM chat_room_members m JOIN users u ON u.id=m.user_id
       WHERE m.room_id=? AND m.left_at IS NULL ORDER BY m.joined_at`)
@@ -59,7 +62,7 @@ export function roomMembers(db, room) {
 export function inRoom(db, room, userId) {
   if (!room || room.archived_at) return false;
   if (!membership(db, room.circle_id, userId)) return false;
-  if (room.kind === 'general') return true;
+  if (wholeCircle(room)) return true;
   return Boolean(db.prepare('SELECT 1 FROM chat_room_members WHERE room_id=? AND user_id=? AND left_at IS NULL').get(room.id, userId));
 }
 export function findRoom(db, roomId) {
@@ -99,6 +102,7 @@ function serializeRoom(db, room, userId) {
     circleId: room.circle_id,
     name: room.name,
     kind: room.kind,
+    everyone: Boolean(room.everyone),
     createdBy: room.created_by,
     createdAt: room.created_at,
     members: roomMembers(db, room),
@@ -124,13 +128,24 @@ export function roomsOf(db, userId, circleId = null) {
   return rooms;
 }
 
-export function createRoom(db, circleId, userId, name, memberIds = []) {
+export function createRoom(db, circleId, userId, name, memberIds = [], { everyone = false } = {}) {
   if (!membership(db, circleId, userId)) return { error: 'not_found' };
   const clean = String(name ?? '').trim().slice(0, ROOM_NAME_LIMIT);
   if (!clean) return { error: 'invalid_room_name' };
   const count = db.prepare("SELECT COUNT(*) AS n FROM chat_rooms WHERE circle_id=? AND kind='room' AND archived_at IS NULL").get(circleId).n;
   if (count >= ROOMS_PER_CIRCLE) return { error: 'rooms_limit' };
   const circlePeople = new Set(membersOf(db, circleId).map(member => member.id));
+  if (everyone) {
+    // Разговор на весь круг: строк участия нет, позвать и выйти нельзя — в нём
+    // все, кто в круге. Круг из одного звать некуда.
+    if (circlePeople.size < 2) return { error: 'room_needs_people' };
+    const roomId = id(), at = now();
+    db.prepare("INSERT INTO chat_rooms(id,circle_id,name,kind,everyone,created_by,created_at) VALUES(?,?,?,'room',1,?,?)").run(roomId, circleId, clean, userId, at);
+    system(db, roomId, userId, 'joined', 'завёл(а) разговор для всего круга');
+    const room = findRoom(db, roomId);
+    for (const person of circlePeople) roomCall(db, room, userId, person, at, `заводит разговор «${clean}» для всего круга`);
+    return { room: serializeRoom(db, room, userId) };
+  }
   const wanted = [...new Set([userId, ...memberIds])].filter(person => circlePeople.has(person));
   if (wanted.length < 2) return { error: 'room_needs_people' };
   const roomId = id(), at = now();
@@ -143,9 +158,9 @@ export function createRoom(db, circleId, userId, name, memberIds = []) {
   for (const person of wanted) roomCall(db, findRoom(db, roomId), userId, person, at);
   return { room: serializeRoom(db, findRoom(db, roomId), userId) };
 }
-function roomCall(db, room, actorId, personId, at = now()) {
+function roomCall(db, room, actorId, personId, at = now(), text = `зовёт вас в комнату «${room.name}»`) {
   const circle = db.prepare('SELECT id, name, color FROM circles WHERE id=?').get(room.circle_id) || null;
-  notify(db, { userId: personId, kind: 'room', actorId, roomId: room.id, circleId: room.circle_id, text: `зовёт вас в комнату «${room.name}»`, data: { circle, roomName: room.name }, at });
+  notify(db, { userId: personId, kind: 'room', actorId, roomId: room.id, circleId: room.circle_id, text, data: { circle, roomName: room.name }, at });
 }
 function system(db, roomId, userId, kind, body) {
   db.prepare('INSERT INTO chat_messages(id,room_id,author_id,body,kind,created_at) VALUES(?,?,?,?,?,?)').run(id(), roomId, userId, body, kind, now());
@@ -166,6 +181,7 @@ export function addToRoom(db, roomId, userId, personId) {
   const room = findRoom(db, roomId);
   if (!room || !inRoom(db, room, userId)) return { error: 'not_found' };
   if (room.kind === 'general') return { error: 'general_room' };
+  if (room.everyone) return { error: 'everyone_room' };
   if (!membership(db, room.circle_id, personId)) return { error: 'not_in_circle' };
   const at = now();
   db.prepare(`INSERT INTO chat_room_members(room_id,user_id,added_by,joined_at) VALUES(?,?,?,?)
@@ -178,6 +194,7 @@ export function leaveRoom(db, roomId, userId) {
   const room = findRoom(db, roomId);
   if (!room || !inRoom(db, room, userId)) return { error: 'not_found' };
   if (room.kind === 'general') return { error: 'general_room' };
+  if (room.everyone) return { error: 'everyone_room' };
   db.prepare('UPDATE chat_room_members SET left_at=? WHERE room_id=? AND user_id=?').run(now(), roomId, userId);
   system(db, roomId, userId, 'left', 'вышел(ла) из комнаты');
   // Комната без людей закрывается: пустая комната в списке — мусор.

@@ -692,6 +692,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     not_found:[404,'Комната не найдена.'], invalid_room_name:[400,'Название комнаты — от 1 до 40 символов.'],
     rooms_limit:[409,'Комнат в круге может быть не больше 20.'], room_needs_people:[400,'Комната — это разговор с кем-то: позовите хотя бы одного человека.'],
     general_room:[409,'Общий разговор круга не переименовать и не покинуть — он и есть круг.'],
+    everyone_room:[409,'Разговор для всего круга не покинуть, и позвать в него отдельно нельзя: в нём все, кто в круге.'],
     not_in_circle:[409,'Этого человека нет в круге.'], invalid_message:[400,'Сообщение — от 1 до 4000 символов.'],
     invalid_reply:[400,'Ответить можно на сообщение из этого же разговора.'], invalid_reaction:[400,'Такой реакции нет.'],
   };
@@ -706,7 +707,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   };
 
   app.get('/api/rooms',(req,res,next)=>{try{res.json({rooms:chat.roomsOf(db,req.user.id,typeof req.query.circle==='string'?req.query.circle:null)});}catch(error){next(error);}});
-  app.post('/api/circles/:id/rooms',(req,res,next)=>{try{const result=chat.createRoom(db,req.params.id,req.user.id,req.body?.name,Array.isArray(req.body?.members)?req.body.members:[]);if(result.error)return chatError(res,result.error);notifyRoom(result.room.id);chatReply(res,result,201);}catch(error){next(error);}});
+  app.post('/api/circles/:id/rooms',(req,res,next)=>{try{const result=chat.createRoom(db,req.params.id,req.user.id,req.body?.name,Array.isArray(req.body?.members)?req.body.members:[],{everyone:req.body?.everyone===true});if(result.error)return chatError(res,result.error);notifyRoom(result.room.id);chatReply(res,result,201);}catch(error){next(error);}});
   app.get('/api/rooms/:id/messages',(req,res,next)=>{try{const room=chat.findRoom(db,req.params.id);if(!room||!chat.inRoom(db,room,req.user.id))return chatError(res,'not_found');chat.markRead(db,req.params.id,req.user.id);const result=chat.messages(db,req.params.id,req.user.id,{before:typeof req.query.before==='string'?req.query.before:null});if(result.error)return chatError(res,result.error);res.json(result);}catch(error){next(error);}});
   app.post('/api/rooms/:id/messages',(req,res,next)=>{try{const result=chat.say(db,req.params.id,req.user.id,req.body?.body,{replyTo:typeof req.body?.replyTo==='string'?req.body.replyTo:null});if(result.error)return chatError(res,result.error);notifyRoom(req.params.id,{except:req.user.id});res.status(201).json(result);}catch(error){next(error);}});
   app.delete('/api/rooms/:id/messages/:messageId',(req,res,next)=>{try{const result=chat.removeMessage(db,req.params.messageId,req.user.id);if(result.error)return chatError(res,result.error);notifyRoom(req.params.id,{except:req.user.id});res.json(result);}catch(error){next(error);}});

@@ -457,6 +457,7 @@ function migrateUsers(db) {
   migrateCaptureParticipants(db);
   migrateConversation(db);
   migrateCirclePhotos(db);
+  migrateEveryoneRooms(db);
 }
 // Участники записи: кого позвали в обсуждение одной записи без круга. Позванный
 // видит эту запись и её разговор — и больше ничего из журнала автора.
@@ -512,6 +513,14 @@ function migrateCirclePhotos(db) {
   if (!columns.has('photo')) db.exec('ALTER TABLE circles ADD COLUMN photo TEXT');
   db.exec('CREATE TABLE IF NOT EXISTS circle_photos (circle_id TEXT PRIMARY KEY REFERENCES circles(id), mime TEXT NOT NULL, bytes BLOB NOT NULL, updated_at TEXT NOT NULL)');
   db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(22, now());
+}
+// Миграция 23: разговор на весь круг. Помимо «Общего» круг заводит темы, которые
+// видит каждый, — под задачу, событие или тему. Состав у такой комнаты не
+// хранится: он, как у «Общего», и есть круг (server/chat.js).
+function migrateEveryoneRooms(db) {
+  const columns = new Set(db.prepare('PRAGMA table_info(chat_rooms)').all().map(column => column.name));
+  if (!columns.has('everyone')) db.exec('ALTER TABLE chat_rooms ADD COLUMN everyone INTEGER NOT NULL DEFAULT 0');
+  db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(23, now());
 }
 // Круги: общая полка поверх личных журналов. Запись остаётся у автора, в круг
 // её кладёт отдельная строка `capture_circles` — так «убрать из круга» не

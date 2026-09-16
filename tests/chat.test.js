@@ -57,6 +57,29 @@ test('комната — разговор подмножеством: кто н�
   assert.ok(!(await lesha.get('/api/rooms').expect(200)).body.rooms.some(item=>item.id===room.id));
 });
 
+test('разговор на весь круг: видят все, включая пришедших позже; позвать и выйти нельзя',async()=>{
+  const {app,sasha,anya,lesha,circle,general}=await circleOfThree();
+  const room=(await sasha.post(`/api/circles/${general.circleId}/rooms`).send({name:'Запуск',everyone:true}).expect(201)).body.room;
+  assert.equal(room.everyone,true);
+  assert.deepEqual(room.members.map(member=>member.name).sort(),['Аня','Лёша','Саша']);
+  // Тема видна каждому в круге, и призыв в ней доходит, как в «Общем».
+  for(const person of [anya,lesha]) assert.ok((await person.get('/api/rooms').expect(200)).body.rooms.some(item=>item.id===room.id&&item.everyone));
+  await sasha.post(`/api/rooms/${room.id}/messages`).send({body:'@Лёша, стенд к пятнице?'}).expect(201);
+  assert.equal((await sasha.get(`/api/rooms/${room.id}/messages`).expect(200)).body.messages.at(-1).mentions[0].name,'Лёша');
+  // Своего состава нет: позвать отдельно и выйти нельзя — в разговоре весь круг.
+  await sasha.post(`/api/rooms/${room.id}/members`).send({userId:lesha.user.id}).expect(409);
+  await anya.post(`/api/rooms/${room.id}/leave`).send({}).expect(409);
+  // Кто пришёл в круг позже, видит тему сразу — со всей историей.
+  const katya=authed(app,{email:'katya@kizuna.test',role:'user'});
+  const invite=(await sasha.post(`/api/circles/${circle.id}/invite`).send({}).expect(201)).body;
+  await katya.post(`/api/circles/invite/${invite.token}/accept`).send({}).expect(200);
+  const seen=(await katya.get(`/api/rooms/${room.id}/messages`).expect(200)).body.messages.filter(message=>message.kind==='said');
+  assert.deepEqual(seen.map(message=>message.body),['@Лёша, стенд к пятнице?']);
+  // Круг из одного разговор на всех не заводит — звать некого.
+  const alone=(await sasha.post('/api/circles').send({name:'Тест'}).expect(201)).body.circle;
+  await sasha.post(`/api/circles/${alone.id}/rooms`).send({name:'Идеи',everyone:true}).expect(400);
+});
+
 test('призыв из разговора приходит в ту же полосу «к вам», обычное сообщение — нет',async()=>{
   const {sasha,anya,general}=await circleOfThree();
   await sasha.post(`/api/rooms/${general.id}/messages`).send({body:'Просто мысль вслух'}).expect(201);
