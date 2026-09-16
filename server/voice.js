@@ -83,6 +83,58 @@ export const VOICE_CHOICES = {
     { id: 'Zephyr', label: 'Zephyr — женский, светлый', gender: 'female' },
   ],
 };
+// Модели разговора выбираются, а не вписываются от руки. Список берётся у
+// провайдера, а не зашивается сюда: имена растут числом — 3.1, 3.5, 3.8, — и
+// вписанное наугад выглядит рабочим выбором, а падает только на первой фразе.
+// Зашит здесь лишь запасной список: без него выпадающий открылся бы пустым там,
+// где каталог не дозвонился, хотя разговор всё это время шёл какой-то моделью.
+const OPENAI_MODELS_URL = 'https://api.openai.com/v1/models';
+const GEMINI_MODELS_URL = 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=200';
+// У Google имя модели идёт с приставкой models/ и с ней же уходит в запрос —
+// прячем её только в подписи, чтобы список читался.
+function modelChoice(id) { return { id, label: String(id).replace(/^models\//, '') }; }
+export const VOICE_MODEL_FALLBACK = {
+  openai: [modelChoice(VOICE_MODEL), modelChoice('gpt-realtime-mini')],
+  gemini: [modelChoice(GEMINI_VOICE_MODEL)],
+};
+// У OpenAI живой разговор держат только realtime-модели: gpt-audio-* выдают
+// эфемерный токен, но на обмене SDP отвечают «not supported in realtime mode»,
+// и человек узнаёт об этом уже с включённым микрофоном. Перевод и расшифровка
+// (translate, whisper) — не собеседники: инструментов у них нет.
+const OPENAI_LIVE = /^gpt-realtime/;
+const OPENAI_NOT_LIVE = /translate|whisper|transcribe/;
+// Порядок — это ответ на «что взять»: сначала имена без версии, они всегда
+// указывают на свежее, потом версии числом, потом снимки датой; внутри группы
+// свежее вперёд.
+function openaiRank(id) {
+  if (id === VOICE_MODEL) return 0;
+  if (id === 'gpt-realtime-mini') return 1;
+  return /\d{4}-\d{2}-\d{2}$/.test(id) ? 3 : 2;
+}
+export function openaiVoiceModels(ids) {
+  const usable = (Array.isArray(ids) ? ids : []).filter(id => typeof id === 'string' && OPENAI_LIVE.test(id) && !OPENAI_NOT_LIVE.test(id));
+  return [...new Set(usable)]
+    .sort((left, right) => openaiRank(left) - openaiRank(right) || right.localeCompare(left, 'en', { numeric: true }))
+    .map(modelChoice);
+}
+// У Google живой разговор — отдельный метод каталога: bidiGenerateContent.
+// Спрашиваем про метод, а не про слово «live» в имени: имя сменится, метод нет.
+// Имя смотрим вторым признаком — если каталог назовёт живую модель, не перечислив
+// метода, потерять её хуже, чем показать лишнюю.
+export function geminiVoiceModels(payload) {
+  const rows = Array.isArray(payload?.models) ? payload.models : [];
+  const usable = [];
+  for (const row of rows) {
+    const id = typeof row?.name === 'string' ? row.name : '';
+    if (!id) continue;
+    const methods = Array.isArray(row?.supportedGenerationMethods) ? row.supportedGenerationMethods : [];
+    if (!methods.includes('bidiGenerateContent') && !/live/i.test(id)) continue;
+    usable.push(modelChoice(id));
+  }
+  // Свежие вперёд: у Google версия растёт числом в имени, и обратный порядок
+  // ставит 3.8 раньше 3.1.
+  return usable.sort((left, right) => right.label.localeCompare(left.label, 'en', { numeric: true }));
+}
 export function voiceGender(provider, name) {
   const list = VOICE_CHOICES[provider === 'gemini' ? 'gemini' : 'openai'];
   const found = list.find(item => item.id.toLowerCase() === String(name || '').toLowerCase());
@@ -987,6 +1039,42 @@ export function createVoiceService({
     return found.expiresAt > now().getTime() ? found : null;
   }
 
+  // Каталог моделей разговора: чем можно говорить прямо сейчас. Осечку не
+  // запоминаем — один неудачный запрос не должен гасить выбор до перезапуска;
+  // удачный держим, потому что служба и так пересобирается от любой правки
+  // настроек, и каталог вместе с ней.
+  const catalogue = { openai: null, gemini: null };
+  async function askCatalogue(url, headers) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetchImplementation(url, { headers, signal: controller.signal });
+      if (!response.ok) return null;
+      return await response.json();
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  async function listModels(name) {
+    if (catalogue[name]?.length) return catalogue[name];
+    let found = [];
+    if (name === 'gemini' && geminiApiKey) found = geminiVoiceModels(await askCatalogue(GEMINI_MODELS_URL, { 'x-goog-api-key': geminiApiKey }));
+    if (name === 'openai' && apiKey) {
+      const payload = await askCatalogue(OPENAI_MODELS_URL, { Authorization: `Bearer ${apiKey}` });
+      found = openaiVoiceModels((Array.isArray(payload?.data) ? payload.data : []).map(entry => entry?.id));
+    }
+    if (found.length) catalogue[name] = found;
+    return found;
+  }
+  // Выбранное не выпадает из списка, даже когда каталог его не назвал: иначе
+  // настройка молча сменилась бы на первую строку списка.
+  function withChosen(list, name, chosen) {
+    const found = list.length ? list : VOICE_MODEL_FALLBACK[name];
+    return !chosen || found.some(entry => entry.id === chosen) ? found : [modelChoice(chosen), ...found];
+  }
+
   // Токен Gemini живёт до получаса и годен на одно подключение: браузеру
   // достаточно, а утёкший ничего не откроет.
   async function createGeminiSession(instructions, tools) {
@@ -1062,6 +1150,13 @@ export function createVoiceService({
           gemini: { configured: Boolean(geminiApiKey), model: geminiModel, voice: geminiVoice },
         },
       };
+    },
+    // Чем можно говорить: каталог провайдера, а не список в коде. Спрашивается
+    // отдельно от status() — за ним ходят в сеть, а status отвечает на каждой
+    // загрузке страницы.
+    async models() {
+      const [openai, gemini] = await Promise.all([listModels('openai'), listModels('gemini')]);
+      return { openai: withChosen(openai, 'openai', model), gemini: withChosen(gemini, 'gemini', geminiModel) };
     },
     // Короткоживущий токен для браузера: сам ключ наружу не уходит.
     // Провайдера можно выбрать на один разговор; названный без ключа не

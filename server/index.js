@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { openDatabase, createLedger, splitPartsOf, deleteCapture, restoreCapture, saveNote, NOTE_BODY_LIMIT, readSettings, writeSettings, recordUsage, usageSummary, attachmentsFor, addAttachment, findAttachment, removeAttachment, ATTACHMENT_SIZE_LIMIT, ATTACHMENTS_PER_CAPTURE, enqueueCaptureJob, cancelCaptureJob, retryCaptureJob, getCaptureJob, getAggregate, replaceInterpretation, completeProjection, undoProjectionCompletion, dayView, getDailyBrief, findDailyBrief, findDailyBriefSource, listEntries, undo, search, exportLedger, resetLedger, fullEntry } from './db.js';
 import { createAiService } from './ai.js';
 import { WebSocketServer, WebSocket as UpstreamSocket } from 'ws';
-import { createVoiceService, runVoiceTool, mockVoiceTurn, VOICE_TOOLS, VOICE_INSTRUCTIONS, VOICE_CHOICES, buildVoiceInstructions, voiceContext, DEFAULT_VOICE_CHARACTER, RELAY_PATH } from './voice.js';
+import { createVoiceService, runVoiceTool, mockVoiceTurn, VOICE_TOOLS, VOICE_INSTRUCTIONS, VOICE_CHOICES, VOICE_MODEL_FALLBACK, buildVoiceInstructions, voiceContext, DEFAULT_VOICE_CHARACTER, RELAY_PATH } from './voice.js';
 import { memoryPrompt, listFacts, rememberFact, forgetFact, learnQuietly, MEMORY_TEXT_LIMIT, MEMORY_SUBJECT_LIMIT } from './memory.js';
 import { journalOverview, listJournal } from './journal.js';
 import { CaptureJobWorker } from './capture-job-worker.js';
@@ -536,6 +536,11 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     spend_limit: SPEND_EXHAUSTED,
   };
   app.get('/api/voice/status',(req,res)=>res.json({...voice.status(),voices:VOICE_CHOICES,instructions:voiceInstructions(req.user),tools:VOICE_TOOLS,quota:voiceQuota(req.user)}));
+  // Каталог моделей разговора спрашивается у провайдера, поэтому он отдельной
+  // ручкой, а не частью настроек: настройки читаются на каждой загрузке
+  // страницы, и ходить за каталогом при каждой значило бы ждать сеть там, где
+  // ничего не менялось.
+  app.get('/api/voice/models',async(req,res,next)=>{try{res.json({models:typeof voice.models==='function'?await voice.models():VOICE_MODEL_FALLBACK});}catch(error){next(error);}});
   app.get('/api/voice/quota',(req,res,next)=>{try{res.json(voiceQuota(req.user));}catch(error){next(error);}});
   // Короткоживущий токен для браузера. Сам ключ наружу не уходит; без ключа
   // отвечаем режимом заглушки, чтобы интерфейс работал одинаково.

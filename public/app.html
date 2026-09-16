@@ -505,21 +505,32 @@
             ></label>
             <label class="setting" for="setting-voiceModel"
               ><span class="setting-name">Модель OpenAI</span
-              ><input
-                id="setting-voiceModel"
-                type="text"
-                list="known-voice-models"
-                placeholder="gpt-realtime"
-              /></label
-            >
+              ><span class="setting-model"
+                ><select id="setting-voiceModel"></select
+                ><input
+                  id="custom-voiceModel"
+                  type="text"
+                  autocomplete="off"
+                  placeholder="gpt-realtime"
+                  hidden
+              /></span
+            ></label>
             <label class="setting" for="setting-geminiVoiceModel"
               ><span class="setting-name">Модель Gemini</span
-              ><input
-                id="setting-geminiVoiceModel"
-                type="text"
-                placeholder="models/gemini-3.1-flash-live-preview"
-              /></label
-            >
+              ><span class="setting-model"
+                ><select id="setting-geminiVoiceModel"></select
+                ><input
+                  id="custom-geminiVoiceModel"
+                  type="text"
+                  autocomplete="off"
+                  placeholder="models/gemini-3.1-flash-live-preview"
+                  hidden
+              /></span
+            ></label>
+            <p class="setting-hint">
+              Список моделей приходит от провайдера: что у него есть сегодня, то
+              и в списке. Нужной в нём нет — «Другая» открывает поле для имени.
+            </p>
             <label class="setting" for="setting-voiceName"
               ><span class="setting-name">Голос OpenAI</span
               ><select id="setting-voiceName"></select
@@ -815,14 +826,6 @@
             <span id="settings-status" class="setting-state" role="status"></span>
           </div>
         </section>
-        <datalist id="known-voice-models">
-          <option value="gpt-realtime"></option>
-          <option value="gpt-realtime-mini"></option>
-          <option value="gpt-realtime-mini-2025-12-15"></option>
-          <option value="gpt-audio-mini"></option>
-          <option value="gpt-audio-mini-2025-12-15"></option>
-          <option value="gpt-audio"></option>
-        </datalist>
         <datalist id="known-timezones">
           <option value="Europe/Samara"></option>
           <option value="Europe/Moscow"></option>

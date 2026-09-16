@@ -2037,6 +2037,13 @@ body:has(#review-dialog[open]) {
 .setting-wide {
   grid-template-columns: minmax(0, 1fr);
 }
+/* Список моделей и поле для имени стоят друг под другом в одной клетке: поле
+   появляется под списком, когда выбрали «Другая», и строка не разъезжается. */
+.setting-model {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
 .setting textarea {
   font: inherit;
   font-size: 13px;

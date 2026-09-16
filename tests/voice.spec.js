@@ -729,6 +729,39 @@ test("в настройках видно, каким голосом идёт р�
   );
 });
 
+// Модель разговора выбирается списком, а не вписывается наугад: список приходит
+// от провайдера, и новая модель появляется в нём сама. Но каталог знает не всё,
+// что можно попробовать, поэтому «Другая» открывает поле для имени.
+test("модель разговора выбирается из списка, а «Другая» открывает поле для имени", async ({
+  page,
+  request,
+}) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/#settings");
+
+  const picker = page.locator("#setting-voiceModel"),
+    custom = page.locator("#custom-voiceModel");
+  await expect(picker).toHaveValue("gpt-realtime");
+  await expect(picker.locator("option")).toContainText([/gpt-realtime/]);
+  await expect(custom).toBeHidden();
+
+  // Пункт «Другая» сам по себе ничего не сохраняет: он только открывает поле.
+  await picker.selectOption("другая");
+  await expect(custom).toBeVisible();
+  expect((await (await request.get("/api/settings")).json()).settings.voiceModel).toBe("gpt-realtime");
+
+  await custom.fill("gpt-realtime-2.1");
+  await custom.blur();
+  await expect
+    .poll(async () => (await (await request.get("/api/settings")).json()).settings.voiceModel)
+    .toBe("gpt-realtime-2.1");
+  // Вписанное возвращается выбранным пунктом, а не теряется из списка.
+  await expect(picker).toHaveValue("gpt-realtime-2.1");
+  await expect(custom).toBeHidden();
+
+  await request.put("/api/settings", { data: { voiceModel: "" } });
+});
+
 // Экран разговора по макету: шапка с историей, знаком и настройками, кольцо с
 // волнами внутри, подпись состояния, мелкий эквалайзер и строка ввода.
 test("экран разговора собран по макету: шапка, кольцо, подпись, поле", async ({ page, request }) => {

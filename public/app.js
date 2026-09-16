@@ -205,6 +205,7 @@ function updatePageFromHash() {
     loadUsage();
     loadCalendarAccounts();
     loadMemory();
+    loadVoiceModels();
     // Google возвращает сюда после согласия с итогом в адресе: без слова
     // человек не понял бы, подключилось или нет.
     const calendarOutcome = params.get("calendar");
@@ -2962,6 +2963,55 @@ function paintVoiceChoices(catalogue) {
     if (chosen) picker.value = chosen;
   }
 }
+// Каким моделям можно говорить — спрашивается отдельной ручкой: за списком
+// сервер ходит к провайдеру, а настройки читаются на каждой загрузке страницы.
+// «Другая» — не модель, а просьба вписать имя: каталог может не знать той, что
+// человек хочет попробовать, и запирать его в списке нельзя.
+const VOICE_MODEL_FIELDS = [
+  ["openai", "voiceModel"],
+  ["gemini", "geminiVoiceModel"],
+];
+const CUSTOM_MODEL = "другая";
+let voiceModelCatalogue = null;
+function paintVoiceModels() {
+  for (const [provider, name] of VOICE_MODEL_FIELDS) {
+    const picker = settingInput(name);
+    if (!picker) continue;
+    const chosen = String(appSettings[name] ?? "");
+    const listed = voiceModelCatalogue?.[provider] || [];
+    // Выбранное не выпадает из списка, даже когда каталог его не назвал: иначе
+    // настройка молча сменилась бы на первую строку.
+    const options =
+      !chosen || listed.some((entry) => entry.id === chosen)
+        ? listed
+        : [{ id: chosen, label: chosen.replace(/^models\//, "") }, ...listed];
+    clear(picker);
+    for (const entry of options) {
+      const option = node("option", entry.label || entry.id);
+      option.value = entry.id;
+      picker.append(option);
+    }
+    const other = node("option", "Другая — вписать имя");
+    other.value = CUSTOM_MODEL;
+    picker.append(other);
+    picker.value = chosen;
+    const custom = document.getElementById(`custom-${name}`);
+    if (custom) {
+      custom.hidden = true;
+      custom.value = "";
+    }
+  }
+}
+async function loadVoiceModels() {
+  if (!settingInput("voiceModel")) return;
+  try {
+    voiceModelCatalogue = (await request("/api/voice/models")).models;
+    paintVoiceModels();
+  } catch {
+    // Каталог не ответил — остаётся выбранное и поле для имени: выбор модели
+    // не должен пропадать из-за осечки сети.
+  }
+}
 // Быстрое переключение голоса живёт там же, где выбор модели: и то и другое —
 // «чем сейчас работать». Показывается, только когда есть из чего выбирать.
 function paintVoiceQuickPicker(payload) {
@@ -2979,6 +3029,7 @@ function paintSettings(payload) {
   paintVoiceChoices(payload.voices);
   paintVoiceQuickPicker(payload);
   appSettings = payload.settings || {};
+  paintVoiceModels();
   for (const name of SETTING_FIELDS) {
     const input = settingInput(name);
     if (!input) continue;
@@ -3181,6 +3232,8 @@ const autosaveTimers = new Map();
 function autosaveSetting(name, input) {
   autosaveTimers.delete(name);
   const value = input.value.trim();
+  // «Другая» в списке моделей — просьба вписать имя, а не имя: сохранять нечего.
+  if (value === CUSTOM_MODEL) return;
   // Пустое поле ключа значит «не трогать»: ключ в него не возвращается.
   if (SECRET_FIELDS.includes(name)) {
     if (value) saveSettings({ [name]: value }, { announce: null });
@@ -3202,6 +3255,24 @@ for (const name of SETTING_FIELDS) {
       clearTimeout(autosaveTimers.get(name));
       autosaveTimers.set(name, setTimeout(() => autosaveSetting(name, input), AUTOSAVE_PAUSE_MS));
     });
+}
+// «Другая» открывает поле для имени и сохраняет то, что в нём, а не сам пункт
+// списка: каталог провайдера знает не всё, что можно попробовать.
+for (const [, name] of VOICE_MODEL_FIELDS) {
+  const picker = settingInput(name),
+    custom = document.getElementById(`custom-${name}`);
+  if (!picker || !custom) continue;
+  picker.addEventListener("change", () => {
+    custom.hidden = picker.value !== CUSTOM_MODEL;
+    if (!custom.hidden) {
+      custom.value = "";
+      custom.focus();
+    }
+  });
+  custom.addEventListener("change", () => {
+    const value = custom.value.trim();
+    if (value) saveSettings({ [name]: value }, { announce: null });
+  });
 }
 // Переключение из шапки — это та же настройка, только одним движением.
 $("#voice-quick-provider")?.addEventListener("change", (event) => {

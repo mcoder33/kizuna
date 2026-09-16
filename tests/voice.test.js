@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server/index.js';
 import { authed } from './helpers/auth.js';
-import { createVoiceService, runVoiceTool, mockVoiceTurn, pickVoiceProvider, geminiTools, VOICE_TOOLS, VOICE_INSTRUCTIONS, GEMINI_LIVE_URL, RELAY_PATH } from '../server/voice.js';
+import { createVoiceService, runVoiceTool, mockVoiceTurn, pickVoiceProvider, geminiTools, openaiVoiceModels, geminiVoiceModels, VOICE_TOOLS, VOICE_INSTRUCTIONS, GEMINI_LIVE_URL, RELAY_PATH } from '../server/voice.js';
 import { openDatabase, createLedger } from '../server/db.js';
 import { normalizeClassification } from '../server/classifier.js';
 import { fakeModelService } from './helpers/fake-model.js';
@@ -577,4 +577,100 @@ test('the keyless rules read a report about finished work as an outcome', () => 
     assert.equal(turn.calls[0].arguments.type, 'outcome', said);
     assert.match(turn.reply, /как результат/i, said);
   }
+});
+
+// Модель разговора выбирается из каталога провайдера, а не вписывается наугад:
+// имена растут числом, и «3.8» должна появиться в списке сама, как только она
+// есть у провайдера. В список попадает не всё подряд: gpt-audio-* выдают токен,
+// но на обмене SDP отвечают «not supported in realtime mode», а перевод и
+// расшифровка не умеют инструментов — человек узнавал бы об этом с включённым
+// микрофоном.
+test('only models that can actually hold a live conversation get into the list', () => {
+  const listed = openaiVoiceModels([
+    'gpt-audio',
+    'gpt-audio-mini',
+    'gpt-4o',
+    'gpt-realtime',
+    'gpt-realtime-2.1',
+    'gpt-realtime-2',
+    'gpt-realtime-mini',
+    'gpt-realtime-2025-08-28',
+    'gpt-realtime-translate',
+    'gpt-realtime-whisper',
+    'gpt-realtime',
+  ]).map((entry) => entry.id);
+  assert.deepEqual(listed, [
+    'gpt-realtime',
+    'gpt-realtime-mini',
+    'gpt-realtime-2.1',
+    'gpt-realtime-2',
+    'gpt-realtime-2025-08-28',
+  ]);
+
+  // У Google живой режим — отдельный метод каталога, и спрашиваем мы про него,
+  // а не про слово «live» в имени. Свежие вперёд: 3.8 раньше 3.1.
+  const google = geminiVoiceModels({
+    models: [
+      { name: 'models/gemini-3.1-flash-live-preview', supportedGenerationMethods: ['bidiGenerateContent'] },
+      { name: 'models/gemini-3.8-flash-live-preview', supportedGenerationMethods: ['bidiGenerateContent'] },
+      { name: 'models/gemini-3.8-flash', supportedGenerationMethods: ['generateContent'] },
+      { name: 'models/imagen-4', supportedGenerationMethods: ['predict'] },
+    ],
+  });
+  assert.deepEqual(google, [
+    { id: 'models/gemini-3.8-flash-live-preview', label: 'gemini-3.8-flash-live-preview' },
+    { id: 'models/gemini-3.1-flash-live-preview', label: 'gemini-3.1-flash-live-preview' },
+  ]);
+});
+
+test('the catalogue comes from the provider, and a failed request leaves the choice alive', async () => {
+  const asked = [];
+  const service = createVoiceService({
+    apiKey: 'sk-test-key',
+    geminiApiKey: 'google-key',
+    model: 'gpt-realtime',
+    geminiModel: 'models/gemini-3.8-flash-live-preview',
+    fetch: async (url, options) => {
+      asked.push({ url: String(url), headers: options?.headers || {} });
+      if (String(url).includes('generativelanguage'))
+        return { ok: true, json: async () => ({ models: [{ name: 'models/gemini-3.8-flash-live-preview', supportedGenerationMethods: ['bidiGenerateContent'] }] }) };
+      return { ok: true, json: async () => ({ data: [{ id: 'gpt-realtime-2.1' }, { id: 'gpt-realtime' }, { id: 'gpt-audio' }] }) };
+    },
+  });
+  const models = await service.models();
+  assert.deepEqual(models.openai.map((entry) => entry.id), ['gpt-realtime', 'gpt-realtime-2.1']);
+  assert.deepEqual(models.gemini.map((entry) => entry.id), ['models/gemini-3.8-flash-live-preview']);
+  // Ключ остаётся на сервере и в каталоге тоже: наружу уходят только имена.
+  assert.equal(asked.find((call) => call.url.includes('api.openai.com'))?.headers.Authorization, 'Bearer sk-test-key');
+  assert.equal(asked.find((call) => call.url.includes('generativelanguage'))?.headers['x-goog-api-key'], 'google-key');
+
+  // Второй раз в сеть не ходим: каталог держится до пересборки службы.
+  const asked_once = asked.length;
+  await service.models();
+  assert.equal(asked.length, asked_once, 'каталог спрошен один раз');
+
+  // Каталог не ответил — список не пустеет: остаётся запасной, и выбранное
+  // в нём есть, иначе настройка молча сменилась бы на первую строку.
+  const offline = createVoiceService({
+    apiKey: 'sk-test-key',
+    geminiApiKey: 'google-key',
+    geminiModel: 'models/gemini-3.8-flash-live-preview',
+    fetch: async () => ({ ok: false, status: 400 }),
+  });
+  const fallback = await offline.models();
+  assert.ok(fallback.openai.some((entry) => entry.id === 'gpt-realtime'), 'запасной список не пуст');
+  assert.equal(fallback.gemini[0].id, 'models/gemini-3.8-flash-live-preview', 'выбранное осталось в списке');
+});
+
+test('the models endpoint tells the browser what it can talk with', async () => {
+  const api = authed(app(createVoiceService({
+    apiKey: 'sk-test-key',
+    geminiApiKey: '',
+    fetch: async () => ({ ok: true, json: async () => ({ data: [{ id: 'gpt-realtime' }, { id: 'gpt-realtime-2.1' }, { id: 'gpt-audio-mini' }] }) }),
+  })));
+  const body = (await api.get('/api/voice/models').expect(200)).body;
+  assert.deepEqual(body.models.openai.map((entry) => entry.id), ['gpt-realtime', 'gpt-realtime-2.1']);
+  assert.ok(body.models.gemini.length, 'без ключа Google остаётся запасной список');
+  // Ключ наружу не уходит и здесь.
+  assert.equal(JSON.stringify(body).includes('sk-test-key'), false);
 });
