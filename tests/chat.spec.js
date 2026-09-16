@@ -148,10 +148,10 @@ test("человека из приложения зовут поиском, и �
   // Список открывается сам, как только в поле встали: людей в приложении
   // немного, и вспоминать почту соседа наизусть незачем.
   await card.locator(".invite-search").focus();
-  await expect(card.locator(".invite-found .mini").filter({ hasText: "chat-anya" })).toBeVisible();
+  await expect(card.locator(".people-row.candidate").filter({ hasText: "chat-anya" })).toBeVisible();
   // Ссылка не нужна: человек уже в приложении — его находят по имени или почте.
   await card.locator(".invite-search").fill("chat-anya");
-  const suggestion = card.locator(".invite-found .mini").first();
+  const suggestion = card.locator(".people-row.candidate").first();
   await expect(suggestion).toBeVisible();
   await suggestion.click();
   await expect(card.locator(".people-name")).toHaveCount(2);

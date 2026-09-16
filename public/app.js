@@ -5516,10 +5516,14 @@ async function inviteToCircle(circle, place, { refresh = false } = {}) {
 // выйти в одно нажатие, поэтому добавление не молчаливое.
 function invitePeopleEl(circle) {
   const box = node("div", undefined, "invite-people");
+  const searchRow = node("label", undefined, "invite-search-row");
+  const glass = node("span", undefined, "invite-glass");
+  glass.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>';
   const field = node("input", undefined, "invite-search");
   field.type = "search";
   field.placeholder = "Добавить человека — имя или почта";
   field.setAttribute("aria-label", `Найти человека для круга «${circle.name}»`);
+  searchRow.append(glass, field);
   const found = node("div", undefined, "invite-found");
   let timer = 0;
   const search = async () => {
@@ -5532,20 +5536,22 @@ function invitePeopleEl(circle) {
         return;
       }
       for (const person of data.people) {
-        const button = node("button", undefined, "mini");
-        button.type = "button";
-        button.append(avatarEl(person, { size: "mini" }), node("span", person.name), node("small", person.email));
-        button.addEventListener("click", async () => {
-          button.disabled = true;
+        const row = node("button", undefined, "people-row candidate");
+        row.type = "button";
+        const who = node("span", undefined, "people-who");
+        who.append(node("p", person.name, "people-name"), node("p", person.email, "people-sub"));
+        row.append(avatarEl(person, { size: "big" }), who, node("span", "Позвать", "candidate-add"));
+        row.addEventListener("click", async () => {
+          row.disabled = true;
           try {
             await request(`/api/circles/${circle.id}/members`, { method: "POST", body: JSON.stringify({ userId: person.id }) });
             field.value = "";
             clear(found);
             toast(`${person.name} в круге «${circle.name}»`);
             await loadCircles();
-          } catch (error) { toast(error.message || "Не получилось добавить"); button.disabled = false; }
+          } catch (error) { toast(error.message || "Не получилось добавить"); row.disabled = false; }
         });
-        found.append(button);
+        found.append(row);
       }
     } catch (error) { found.append(node("span", error.message || "Поиск не удался", "invite-hint")); }
   };
@@ -5553,7 +5559,7 @@ function invitePeopleEl(circle) {
   // Список открывается сам, как только в поле встали: людей в приложении
   // немного, и вспоминать почту соседа наизусть незачем.
   field.addEventListener("focus", () => { clearTimeout(timer); search(); });
-  box.append(field, found);
+  box.append(searchRow, found);
   return box;
 }
 function circleCardEl(circle) {

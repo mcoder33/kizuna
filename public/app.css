@@ -7065,3 +7065,23 @@ body {
 #review-dialog .dialog-close {
   z-index: 5;
 }
+
+/* Кого позвать в круг — списком, как в мессенджере: круглое лицо, имя, под ним
+   почта. Пилюли в строку читались как набор меток, а не как люди. */
+.invite-search-row { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; background: var(--paper); }
+.invite-search-row:focus-within { border-color: var(--focus); }
+.invite-glass { display: inline-flex; color: var(--n-72); flex: none; }
+.invite-glass svg { width: 15px; height: 15px; }
+.invite-search { flex: 1; border: 0; background: none; padding: 9px 0; font: inherit; font-size: 14px; color: var(--ink); }
+.invite-search:focus { outline: none; }
+.invite-found { display: flex; flex-direction: column; gap: 0; margin-top: 6px; max-height: 296px; overflow-y: auto; }
+.people-row.candidate {
+  width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--hairline);
+  font: inherit; cursor: pointer; padding: 9px 6px; border-radius: 0;
+}
+.people-row.candidate:first-child { border-top: 0; }
+.people-row.candidate:hover, .people-row.candidate:focus-visible { background: var(--n-96); }
+.people-row.candidate:disabled { opacity: 0.5; cursor: default; }
+.candidate-add { color: var(--coral); font-size: 12.5px; font-weight: 600; opacity: 0; flex: none; }
+.people-row.candidate:hover .candidate-add, .people-row.candidate:focus-visible .candidate-add { opacity: 1; }
+@media (hover: none) { .candidate-add { opacity: 1; } }
