@@ -1,6 +1,7 @@
 import { renderMarkdown, renderInlineMarkdown } from "./markdown.js";
 import { createMarkdownField } from "./markdown-live.js";
 import { attachSlashMenu } from "./slash-menu.js";
+import { attachLinkMenu } from "./link-menu.js";
 import { attachFormatToolbar } from "./format-toolbar.js";
 import { createVoiceDialog } from "./voice.js";
 import { openNotes, refreshNotes } from "./notes.js";
@@ -2260,9 +2261,11 @@ function cardBody(entry) {
   // Разметку помнить наизусть незачем: «/» показывает, что тут вообще бывает.
   closeCardSlashMenu?.();
   const slashMenu = attachSlashMenu(field);
+  // После «[[» — страницы из «Заметок» на выбор: название помнить не нужно.
+  const linkMenu = attachLinkMenu(field, { exclude: () => entry.id });
   // Панель оформления живёт столько же, сколько поле: убирается вместе с меню.
   const formatBar = attachFormatToolbar(field, { prefs: window.pagentText });
-  closeCardSlashMenu = () => { slashMenu.destroy(); formatBar.destroy(); closeCardSlashMenu = null; };
+  closeCardSlashMenu = () => { slashMenu.destroy(); formatBar.destroy(); linkMenu.destroy(); closeCardSlashMenu = null; };
   field.setValue(body);
   hint.hidden = true;
 
@@ -3092,6 +3095,7 @@ const captureField = createMarkdownField({
 });
 $("#capture-form").prepend(captureField.element);
 attachSlashMenu(captureField);
+attachLinkMenu(captureField);
 attachFormatToolbar(captureField, { prefs: window.pagentText });
 // Одна кнопка на два дела: пока писать нечего — это разговор, как только
 // появился текст — отправка. Две кнопки рядом заставляли бы выбирать там, где

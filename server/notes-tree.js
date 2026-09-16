@@ -101,6 +101,11 @@ export function loadPages(db, userId) {
   const pages = pageRows(db, userId).map(toPage);
   const byId = new Map(pages.map(page => [page.id, page]));
   for (const page of pages) page.parentKey = parentKeyOf(page, byId);
+  // Порядок рядом — по месту, где страница лежит сейчас; без порядка страница
+  // идёт после упорядоченных, по времени записи.
+  const order = new Map(db.prepare('SELECT parent_key, capture_id, position FROM note_order WHERE user_id IS ?').all(userId)
+    .map(row => [`${row.parent_key}\u0000${row.capture_id}`, row.position]));
+  for (const page of pages) page.position = order.get(`${page.parentKey ?? 'root'}\u0000${page.id}`) ?? null;
   for (const page of pages) {
     const seen = new Set([page.id]);
     let key = page.parentKey;
@@ -112,6 +117,11 @@ export function loadPages(db, userId) {
   }
   return { pages, byId };
 }
+
+export const bySiblingOrder = (left, right) =>
+  (left.position === null) - (right.position === null)
+  || (left.position ?? 0) - (right.position ?? 0)
+  || left.createdAt.localeCompare(right.createdAt);
 
 function trailOf(page, byId) {
   const trail = [];
@@ -285,7 +295,7 @@ export function linkMention(db, { userId, pageId, fromId }) {
   const page = byId.get(pageId);
   const found = bodyOf(db, fromId);
   if (!page || !found || found.capture.user_id !== userId || fromId === pageId) return { error: 'not_found' };
-  const masked = found.body.replace(/!?\[\[[^\]\n]+\]\]/g, match => ' '.repeat(match.length));
+  const masked = found.body.replace(/!?\[\[[^\]\n]+\]\]/g, match => '\u0000'.repeat(match.length));
   const at = masked.toLocaleLowerCase('ru-RU').indexOf(lower(page.title));
   if (at < 0) return { error: 'mention_gone' };
   const original = found.body.slice(at, at + page.title.trim().length);
@@ -336,10 +346,27 @@ export function afterCapture(db, { captureId, userId }) {
 
 // parent: 'root' — корень, 'auto' — место по правилу (проект или «Входящие»),
 // иначе id страницы. Внутрь самой себя и своих потомков страницу не положить.
-export function placePage(db, { userId, pageId, parent }) {
+// order — как страницы должны стоять рядом на новом месте (перетаскивание):
+// берутся только те, кто там правда лежит.
+export function placePage(db, { userId, pageId, parent, order = null }) {
   const { byId } = loadPages(db, userId);
   const page = byId.get(pageId);
   if (!page) return { error: 'not_found' };
+  if (order !== null && (!Array.isArray(order) || order.length > 500 || order.some(id => typeof id !== 'string' || id.length > 64))) return { error: 'invalid_order' };
+  const result = movePage(db, { byId, pageId, parent });
+  if (result.error || order === null) return result;
+  const moved = loadPages(db, userId).byId;
+  const key = moved.get(pageId).parentKey ?? 'root';
+  const siblings = [...new Set(order)].filter(id => moved.has(id) && (moved.get(id).parentKey ?? 'root') === key);
+  if (!siblings.includes(pageId)) siblings.push(pageId);
+  db.transaction(() => {
+    db.prepare('DELETE FROM note_order WHERE user_id=? AND parent_key=?').run(userId, key);
+    const insert = db.prepare('INSERT INTO note_order(user_id,parent_key,capture_id,position) VALUES(?,?,?,?)');
+    siblings.forEach((id, index) => insert.run(userId, key, id, index));
+  })();
+  return result;
+}
+function movePage(db, { byId, pageId, parent }) {
   if (parent === 'auto') {
     db.prepare('DELETE FROM note_places WHERE capture_id=?').run(pageId);
     return { ok: true };
@@ -400,7 +427,7 @@ function linkCounts(db, userId, pages) {
 }
 const listed = (page, counts) => ({
   id: page.id, title: page.title, type: page.type, project: page.project, tags: page.tags,
-  createdAt: page.createdAt, updatedAt: page.updatedAt, parentKey: page.parentKey,
+  createdAt: page.createdAt, updatedAt: page.updatedAt, parentKey: page.parentKey, position: page.position,
   placed: page.placed, excerpt: plain(page.body).slice(0, 220), links: counts.get(page.id) || 0,
 });
 
@@ -436,7 +463,7 @@ export function pageDetail(db, userId, pageId) {
     page: { ...listed(page, counts), body: page.body, noteVersion: page.noteVersion, placeSource: page.placeSource },
     trail: trailOf(page, byId),
     children: pages.filter(child => child.parentKey === page.id)
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .sort(bySiblingOrder)
       .map(child => listed(child, counts)),
     backlinks,
     mentions: mentionsOf(db, userId, page, linked),
@@ -587,6 +614,7 @@ const ERRORS = {
   cycle: [409, 'Страницу нельзя положить внутрь неё самой.'],
   invalid_title: [400, `Название страницы — от 1 до ${PAGE_TITLE_LIMIT} символов.`],
   invalid_parent: [400, 'Некорректное место.'],
+  invalid_order: [400, 'Некорректный порядок страниц.'],
   mention_gone: [409, 'Упоминания уже нет в тексте.'],
   line_changed: [409, 'Строка изменилась — сохраните заметку и попробуйте ещё раз.'],
   not_task_line: [400, 'Делом становится строка вида «- [ ] что сделать».'],
@@ -655,7 +683,7 @@ export function registerNotesRoutes(app, { db, notifyJournal = () => {}, queueCa
   app.put('/api/pages/:id/place', guard((req, res) => {
     const parent = req.body?.parent;
     if (typeof parent !== 'string') return reply(res, { error: 'invalid_parent' });
-    const result = placePage(db, { userId: req.user.id, pageId: req.params.id, parent });
+    const result = placePage(db, { userId: req.user.id, pageId: req.params.id, parent, order: req.body?.order ?? null });
     if (result.error) return reply(res, result);
     notifyJournal('page');
     res.json(pageDetail(db, req.user.id, req.params.id));

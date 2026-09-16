@@ -182,6 +182,17 @@ main:has(> #notes:not([hidden])) {
   padding: 0 4px;
 }
 .notes-count.is-hot { color: var(--coral); font-weight: 600; }
+/* Перетаскивание: строка, которую тащат, бледнеет; место, куда она ляжет, —
+   синяя черта перед или после строки или подсветка всей строки «внутрь». */
+.notes-row[draggable="true"] { cursor: grab; }
+.notes-row.is-dragging,
+.notes-inbox-row.is-dragging { opacity: 0.45; }
+.notes-row.drop-inside,
+.notes-side-head.drop-inside { background: var(--nt-blue-bg); box-shadow: inset 0 0 0 1px var(--nt-blue); color: var(--nt-text); }
+.notes-side-head.drop-inside { border-radius: 6px; }
+.notes-row.drop-before { box-shadow: inset 0 2px 0 var(--nt-blue); }
+.notes-row.drop-after { box-shadow: inset 0 -2px 0 var(--nt-blue); }
+.notes-inbox-row[draggable="true"] { cursor: grab; }
 .notes-row-add { opacity: 0; }
 .notes-row:hover .notes-row-add,
 .notes-row-add:focus-visible { opacity: 1; }
@@ -595,7 +606,68 @@ a.notes-crumb:hover { background: var(--nt-hover); color: var(--nt-text); }
 .notes-list-excerpt { font-size: 13.5px; color: var(--nt-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .notes-list-when { font-size: 12.5px; color: var(--nt-tertiary); white-space: nowrap; }
 .notes-embed .notes-section-head { padding-bottom: 2px; }
-.notes-embed .notes-section-head .notes-crumb { max-width: none; padding-left: 0; color: var(--nt-text); font-weight: 600; }
+.notes-embed .notes-section-head .notes-crumb { margin-left: auto; font-weight: 400; font-size: 13px; color: var(--nt-tertiary); }
+
+/* ── сворачиваемые блоки: свойства, страницы внутри, ссылки ── */
+.notes-fold {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-left: -4px;
+  padding: 2px 8px 2px 2px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.notes-fold:hover { background: var(--nt-hover); color: var(--nt-text); }
+.notes-fold-caret { width: 16px; height: 16px; color: var(--nt-tertiary); transition: transform 0.12s ease; }
+.notes-fold-caret svg { width: 12px; height: 12px; stroke-width: 1.8; }
+.notes-fold[aria-expanded="true"] .notes-fold-caret { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .notes-fold-caret { transition: none; } }
+.notes-section.is-collapsed > :not(.notes-section-head) { display: none; }
+.notes-section.is-collapsed > .notes-section-head { border-bottom-color: transparent; margin-bottom: 0; }
+.notes-props-block { margin: 0 0 16px; }
+.notes-props-block > .notes-fold { font-size: 13px; color: var(--nt-tertiary); margin-bottom: 2px; }
+.notes-props-block .notes-props { margin-bottom: 0; }
+.notes-props-summary { display: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--nt-secondary); }
+.notes-props-block.is-collapsed .notes-props { display: none; }
+.notes-props-block.is-collapsed .notes-props-summary { display: inline; }
+.notes-props-block.is-collapsed .notes-fold-text::after { content: " ·"; }
+
+/* ── подсказка страниц после «[[» — в мерке меню по «/» ── */
+.link-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 260px;
+  max-width: 360px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--n-100);
+  border: 1px solid var(--n-93);
+  border-radius: 14px;
+  box-shadow: 0 16px 44px var(--orange-21-a10);
+}
+.link-option {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1.3;
+}
+.link-option.is-active { background: var(--n-96); }
+.link-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--n-25); }
+.link-hint { flex: none; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--n-66); }
+.link-create .link-title { color: var(--n-52); }
 
 /* ── выбор места ── */
 .notes-picker {

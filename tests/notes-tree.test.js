@@ -215,3 +215,31 @@ test('someone else’s page is not found and reset clears places, links and base
   for (const table of ['note_places', 'note_links', 'note_bases']) assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n, 0, table);
   assert.equal(db.prepare('PRAGMA foreign_key_check').all().length, 0);
 });
+
+test('dragging sets the order next to each other and moves a page into a new place', async () => {
+  const api = authed(app());
+  const first = await page(api, 'Первая');
+  const second = await page(api, 'Вторая');
+  const third = await page(api, 'Третья');
+  const roots = data => data.pages.filter(item => item.parentKey === null)
+    .sort((left, right) => (left.position === null) - (right.position === null) || (left.position ?? 0) - (right.position ?? 0) || left.createdAt.localeCompare(right.createdAt))
+    .map(item => item.title);
+  assert.deepEqual(roots(await overview(api)), ['Первая', 'Вторая', 'Третья'], 'без порядка — по времени записи');
+
+  await api.put(`/api/pages/${third.id}/place`).send({ parent: 'root', order: [third.id, first.id, second.id] }).expect(200);
+  assert.deepEqual(roots(await overview(api)), ['Третья', 'Первая', 'Вторая']);
+
+  // Внутрь страницы — рядом с тем, что уже там лежит, и в заданном месте.
+  const inner = await page(api, 'Внутри', first.id);
+  const moved = (await api.put(`/api/pages/${second.id}/place`).send({ parent: first.id, order: [second.id, inner.id] }).expect(200)).body;
+  assert.equal(moved.page.parentKey, first.id);
+  const detail = (await api.get(`/api/pages/${first.id}`).expect(200)).body;
+  assert.deepEqual(detail.children.map(item => item.title), ['Вторая', 'Внутри']);
+  assert.deepEqual(roots(await overview(api)), ['Третья', 'Первая']);
+
+  // Чужие и лежащие в другом месте id в порядке не участвуют.
+  await api.put(`/api/pages/${inner.id}/place`).send({ parent: first.id, order: ['нет-такой', third.id, inner.id, second.id] }).expect(200);
+  assert.deepEqual((await api.get(`/api/pages/${first.id}`).expect(200)).body.children.map(item => item.title), ['Внутри', 'Вторая']);
+  await api.put(`/api/pages/${inner.id}/place`).send({ parent: first.id, order: 'не список' }).expect(400);
+  await api.put(`/api/pages/${first.id}/place`).send({ parent: second.id, order: [first.id] }).expect(409);
+});

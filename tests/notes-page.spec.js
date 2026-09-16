@@ -25,7 +25,13 @@ test("новая страница: название, текст со ссылк�
   await page.keyboard.type("Планы на осень");
   await page.keyboard.press("Enter");
   await expect(page.locator(".notes-markdown")).toBeFocused();
-  await page.keyboard.type("Смотри [[Кизуна]]");
+  // После «[[» — страницы на выбор: название набирать целиком не нужно.
+  await page.keyboard.type("Смотри [[Кизу");
+  const suggest = page.locator(".link-menu:not([hidden])");
+  await expect(suggest.locator(".link-option").first()).toContainText("Кизуна");
+  await page.keyboard.press("Enter");
+  await expect(suggest).toHaveCount(0);
+  await expect(page.locator(".notes-markdown")).toHaveText("Смотри [[Кизуна]]");
   // Текст сохраняется сам — версия появляется в полосе над страницей.
   await expect(page.locator("#notes-version")).toContainText("версия 2", { timeout: 5000 });
   await expect(page.locator(".notes-side .notes-row", { hasText: "Планы на осень" })).toBeVisible();
@@ -125,4 +131,93 @@ test("«Все заметки»: галерея и сохранение вида
   // Узел проекта в дереве собирает его заметки.
   await page.locator(".notes-row", { hasText: "Книги" }).locator(".notes-link").click();
   await expect(page.locator(".notes-children")).toContainText("Shape Up");
+});
+
+test("блоки страницы сворачиваются и остаются свёрнутыми", async ({ page, request }) => {
+  await reset(request);
+  const parent = await makePage(request, "Доступы Андрея");
+  await makePage(request, "Доступы Андрея с ГитЛабом", parent.id);
+  await request.post("/api/captures", { data: { raw: "Проверить [[Доступы Андрея]] до пятницы" } });
+  await page.goto(`/#notes?page=${parent.id}`);
+  const props = page.locator(".notes-props-block");
+  const children = page.locator(".notes-children");
+  const backlinks = page.locator(".notes-backlinks");
+  await expect(props.locator(".notes-props")).toBeVisible();
+  await expect(children.locator(".notes-page-row")).toBeVisible();
+
+  await props.locator(".notes-fold").click();
+  await expect(props.locator(".notes-props")).toBeHidden();
+  // Свёрнутые свойства оставляют строку с главным: место и тип.
+  await expect(props.locator(".notes-props-summary")).toHaveText("Корень · Заметка");
+  await children.locator(".notes-fold").click();
+  await backlinks.locator(".notes-fold").click();
+  await expect(children.locator(".notes-page-row")).toBeHidden();
+  await expect(backlinks.locator(".notes-ref")).toBeHidden();
+  await expect(backlinks.locator(".notes-fold")).toHaveAttribute("aria-expanded", "false");
+
+  await page.reload();
+  await expect(page.locator(".notes-props-block .notes-props")).toBeHidden();
+  await expect(page.locator(".notes-children .notes-page-row")).toBeHidden();
+  await expect(page.locator(".notes-backlinks .notes-ref")).toBeHidden();
+  await page.locator(".notes-backlinks .notes-fold").click();
+  await expect(page.locator(".notes-backlinks .notes-ref")).toContainText("Проверить");
+  await page.locator(".notes-props-block .notes-fold").click();
+  await page.locator(".notes-children .notes-fold").click();
+  await expect(page.locator(".notes-props-block .notes-props")).toBeVisible();
+});
+
+test("в карточке записи «[[» подсказывает страницы и заводит новую", async ({ page, request }) => {
+  await reset(request);
+  await makePage(request, "Релиз 1.4");
+  const { entry } = await (await request.post("/api/captures", { data: { raw: "Мысль про интерфейс" } })).json();
+  await page.goto(`/#today?open=${entry.id}`);
+  const field = page.locator("#card-body-editor");
+  await field.click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" [[рел");
+  const suggest = page.locator(".link-menu:not([hidden])");
+  await expect(suggest.locator(".link-option").first()).toContainText("Релиз 1.4");
+  await page.keyboard.press("Enter");
+  await expect(field).toContainText("Мысль про интерфейс [[Релиз 1.4]]");
+
+  // Нужной страницы нет — последний пункт заводит её и ставит ссылку.
+  await page.keyboard.type(" и [[Планы на осень");
+  await expect(suggest.locator(".link-option").last()).toContainText("Новая страница «Планы на осень»");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowDown");
+  await suggest.locator(".link-option").last().click();
+  await expect(field).toContainText("и [[Планы на осень]]");
+  await expect.poll(async () => (await (await request.get("/api/pages")).json()).pages.some((item) => item.title === "Планы на осень")).toBe(true);
+});
+
+test("страницы в дереве перетаскиваются: внутрь, рядом, в корень и в проект", async ({ page, request }) => {
+  await reset(request);
+  const home = await makePage(request, "Кизуна");
+  const release = await makePage(request, "Релиз 1.4");
+  const voice = await makePage(request, "Голос");
+  await makePage(request, "Shape Up", "project:Книги");
+  const pages = async () => (await (await request.get("/api/pages")).json()).pages;
+  const find = async (id) => (await pages()).find((item) => item.id === id);
+  const row = (id) => page.locator(`.notes-side .notes-row[data-key="${id}"]`);
+  await page.goto("/#notes?view=all");
+  await expect(row(voice.id)).toBeVisible();
+
+  // На середину строки — внутрь страницы.
+  await row(voice.id).dragTo(row(home.id), { targetPosition: { x: 60, y: 15 } });
+  await expect.poll(async () => (await find(voice.id)).parentKey).toBe(home.id);
+  await expect(page.locator(".notes-side .notes-group").locator(`.notes-row[data-key="${voice.id}"]`)).toBeVisible();
+
+  // К верхнему краю — рядом, перед страницей.
+  const rootTitles = page.locator(".notes-side .notes-tree[aria-label='Страницы'] > .notes-row .notes-link-title");
+  await expect(rootTitles).toHaveText(["Книги", "Кизуна", "Релиз 1.4"]);
+  await row(release.id).dragTo(row(home.id), { targetPosition: { x: 60, y: 2 } });
+  await expect(rootTitles).toHaveText(["Книги", "Релиз 1.4", "Кизуна"]);
+  await page.reload();
+  await expect(rootTitles).toHaveText(["Книги", "Релиз 1.4", "Кизуна"]);
+
+  // На заголовок «Страницы» — в корень; на проект — в проект.
+  await row(voice.id).dragTo(page.locator(".notes-side-head", { hasText: "Страницы" }));
+  await expect.poll(async () => (await find(voice.id)).parentKey).toBe(null);
+  await row(voice.id).dragTo(page.locator('.notes-side .notes-row[data-key="project:Книги"]'), { targetPosition: { x: 60, y: 15 } });
+  await expect.poll(async () => { const item = await find(voice.id); return `${item.parentKey} ${item.project}`; }).toBe("project:Книги Книги");
 });

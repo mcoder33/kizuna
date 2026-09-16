@@ -12,6 +12,10 @@
 //   в момент сохранения: переименованная страница не теряет ссылок на себя.
 //   to_id NULL — страницы с таким именем пока нет.
 // - note_bases — сохранённые виды: фильтр, сортировка и раскладка.
+// - note_order — порядок страниц рядом друг с другом, заданный перетаскиванием.
+//   parent_key — где этот порядок: 'root', 'project:<имя>', 'inbox' или id
+//   страницы. Переложили страницу — старая строка просто перестаёт
+//   участвовать: порядок читается по нынешнему месту.
 //
 // Модуль без зависимостей: его зовёт openDatabase, а логика страниц
 // (server/notes-tree.js) сама пользуется db.js — так не возникает цикла.
@@ -39,6 +43,13 @@ export function migrateNotesTree(db) {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS note_bases_user ON note_bases(user_id, created_at);`);
+    CREATE INDEX IF NOT EXISTS note_bases_user ON note_bases(user_id, created_at);
+    CREATE TABLE IF NOT EXISTS note_order (
+      user_id TEXT NOT NULL REFERENCES users(id),
+      parent_key TEXT NOT NULL,
+      capture_id TEXT NOT NULL REFERENCES captures(id),
+      position INTEGER NOT NULL,
+      PRIMARY KEY(user_id, parent_key, capture_id)
+    );`);
   db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(21, new Date().toISOString());
 }

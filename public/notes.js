@@ -12,6 +12,7 @@
 import { createMarkdownField } from "./markdown-live.js";
 import { attachSlashMenu } from "./slash-menu.js";
 import { attachFormatToolbar } from "./format-toolbar.js";
+import { attachLinkMenu, forgetLinkPages } from "./link-menu.js";
 
 const ZONE = "Europe/Samara";
 const TYPE_NAMES = { note: "Заметка", idea_question: "Идея" };
@@ -19,6 +20,9 @@ const LAYOUTS = [["table", "Таблица"], ["gallery", "Галерея"], ["l
 const SORTS = [["created", "Сначала новые"], ["updated", "Недавно изменённые"], ["title", "По названию"]];
 const DEFAULT_VIEW = { layout: "table", sort: "created", filter: { type: "all", project: null, tag: null, parent: null } };
 const EXPANDED_KEY = "kizuna-notes-expanded";
+// Свёрнутые блоки страницы — свойства, страницы внутри, ссылки — помнятся в
+// браузере для всех страниц сразу: кому ссылки мешают, тому мешают везде.
+const COLLAPSED_KEY = "kizuna-notes-collapsed";
 const DEED_LINE = /^\s*[-*+]\s+\[ \]\s+\S/;
 const DEED_ANCHOR = /(?:^|\s)\^(task-[0-9a-f]{8})\s*$/;
 
@@ -47,7 +51,8 @@ const state = {
   sideOpen: false,
   draft: null,
   focusTitle: false,
-  expanded: readExpanded(),
+  expanded: readSet(EXPANDED_KEY),
+  collapsed: readSet(COLLAPSED_KEY),
 };
 let editor = null;
 let picker = null;
@@ -71,11 +76,32 @@ function button(text, className, onClick, { title } = {}) {
   if (onClick) node.addEventListener("click", onClick);
   return node;
 }
-function readExpanded() {
-  try { return new Set(JSON.parse(localStorage.getItem(EXPANDED_KEY) || "[]")); } catch { return new Set(); }
+function readSet(key) {
+  try { return new Set(JSON.parse(localStorage.getItem(key) || "[]")); } catch { return new Set(); }
 }
 function saveExpanded() {
   try { localStorage.setItem(EXPANDED_KEY, JSON.stringify([...state.expanded].slice(-200))); } catch {}
+}
+// Сворачиваемый блок: заголовок — кнопка со стрелкой, содержимое прячет CSS
+// по классу is-collapsed. Перерисовка блоку не нужна.
+function foldToggle(key, text, count) {
+  const toggle = button("", "notes-fold", (event) => {
+    const block = event.currentTarget.closest("[data-fold]");
+    if (state.collapsed.has(key)) state.collapsed.delete(key); else state.collapsed.add(key);
+    try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...state.collapsed])); } catch {}
+    const collapsed = state.collapsed.has(key);
+    block?.classList.toggle("is-collapsed", collapsed);
+    event.currentTarget.setAttribute("aria-expanded", String(!collapsed));
+  });
+  toggle.setAttribute("aria-expanded", String(!state.collapsed.has(key)));
+  toggle.append(icon("caret", "notes-fold-caret"), el("span", "notes-fold-text", text));
+  if (count !== undefined) toggle.append(el("span", "notes-section-count", String(count)));
+  return toggle;
+}
+function foldable(block, key) {
+  block.dataset.fold = key;
+  block.classList.toggle("is-collapsed", state.collapsed.has(key));
+  return block;
 }
 const zoneDay = (date) => new Intl.DateTimeFormat("en-CA", { timeZone: ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
 function when(iso, { time = true } = {}) {
@@ -216,10 +242,14 @@ async function loadDetail(id) {
 }
 
 // ── дерево ─────────────────────────────────────────────────────────────────
+// Порядок рядом — как его поставили перетаскиванием; остальные страницы идут
+// следом по времени записи (так же сортирует сервер).
+const bySiblingOrder = (left, right) =>
+  (left.position == null) - (right.position == null)
+  || (left.position ?? 0) - (right.position ?? 0)
+  || left.createdAt.localeCompare(right.createdAt);
 function childrenOf(key) {
-  return state.overview.pages
-    .filter((page) => page.parentKey === key)
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  return state.overview.pages.filter((page) => page.parentKey === key).sort(bySiblingOrder);
 }
 function activeKey() {
   const route = state.route;
@@ -229,8 +259,9 @@ function activeKey() {
   if (route.kind === "base") return `base:${route.id}`;
   return route.kind;
 }
-function treeRow({ key, title, iconName, href, depth, count = 0, hasChildren = false, addParent = null }) {
+function treeRow({ key, title, iconName, href, depth, count = 0, hasChildren = false, addParent = null, kind = null }) {
   const row = el("div", "notes-row");
+  row.dataset.key = key;
   row.setAttribute("role", "treeitem");
   row.style.setProperty("--depth", depth);
   if (activeKey() === key) row.classList.add("is-active");
@@ -248,6 +279,8 @@ function treeRow({ key, title, iconName, href, depth, count = 0, hasChildren = f
   link.href = href;
   link.append(icon(iconName), el("span", "notes-link-title", title));
   row.append(caret, link);
+  if (kind === "page") { link.draggable = false; draggablePage(row, key); }
+  if (kind === "page" || kind === "project") dropTarget(row, kind, key);
   if (count) row.append(el("span", "notes-count", String(count)));
   if (addParent !== null) {
     const add = button("", "notes-row-add", (event) => { event.preventDefault(); newPage(addParent); }, { title: "Страница внутри" });
@@ -262,12 +295,15 @@ function treeNode(item, depth, parentList) {
   if (!kids.length || !state.expanded.has(item.key)) return;
   const group = el("div", "notes-group");
   group.setAttribute("role", "group");
-  for (const page of kids) treeNode({ key: page.id, title: page.title, iconName: typeIcon(page), href: hashFor({ kind: "page", id: page.id }), addParent: page.id }, depth + 1, group);
+  for (const page of kids) treeNode({ key: page.id, title: page.title, iconName: typeIcon(page), href: hashFor({ kind: "page", id: page.id }), addParent: page.id, kind: "page" }, depth + 1, group);
   parentList.append(group);
 }
 function renderSide() {
   const side = document.getElementById("notes-side");
   if (!side || !state.overview) return;
+  // Пока страницу тащат, дерево не перерисовывается: вместе со строкой пропал
+  // бы и сам перенос. Фоновое обновление догонит после отпускания.
+  if (drag) { drag.stale = true; return; }
   const searchHadFocus = document.activeElement?.id === "notes-search";
   side.replaceChildren();
   const search = el("label", "notes-search");
@@ -308,15 +344,17 @@ function renderSide() {
     const addRoot = button("", "notes-side-add", () => newPage("root"), { title: "Новая страница" });
     addRoot.append(icon("plus"));
     pagesHead.append(addRoot);
+    // Заголовок «Страницы» — корень: брошенная на него страница встаёт наверх.
+    dropTarget(pagesHead, "root", null);
     side.append(pagesHead);
     const tree = el("div", "notes-tree");
     tree.setAttribute("role", "tree");
     tree.setAttribute("aria-label", "Страницы");
     // Узлы проектов — первыми: это полки, на которых лежат заметки по делу.
     for (const project of state.overview.projects)
-      treeNode({ key: `project:${project.name}`, title: project.name, iconName: "project", href: hashFor({ kind: "project", name: project.name }), addParent: `project:${project.name}` }, 0, tree);
+      treeNode({ key: `project:${project.name}`, title: project.name, iconName: "project", href: hashFor({ kind: "project", name: project.name }), addParent: `project:${project.name}`, kind: "project" }, 0, tree);
     for (const page of childrenOf(null))
-      treeNode({ key: page.id, title: page.title, iconName: typeIcon(page), href: hashFor({ kind: "page", id: page.id }), addParent: page.id }, 0, tree);
+      treeNode({ key: page.id, title: page.title, iconName: typeIcon(page), href: hashFor({ kind: "page", id: page.id }), addParent: page.id, kind: "page" }, 0, tree);
     if (!state.overview.projects.length && !childrenOf(null).length)
       tree.append(el("p", "notes-empty", "Страниц пока нет. «+» заводит новую, а заметки с «Сегодня» появятся сами."));
     side.append(tree);
@@ -340,11 +378,114 @@ function renderSide() {
   }
 }
 
+// ── перетаскивание в дереве ────────────────────────────────────────────────
+// Как в Notion: на середину строки — внутрь страницы или проекта, к верхнему
+// или нижнему краю — рядом, перед или после. На заголовок «Страницы» — в
+// корень. Внутрь самой себя и своих потомков страницу не бросить: такие места
+// просто не подсвечиваются.
+const DRAG_TYPE = "application/x-kizuna-page";
+let drag = null;
+function draggablePage(node, pageId) {
+  node.draggable = true;
+  node.addEventListener("dragstart", (event) => {
+    if (event.target.closest?.("button, input, select")) return;
+    drag = { id: pageId, stale: false };
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(DRAG_TYPE, pageId);
+    event.dataTransfer.setData("text/plain", pageById(pageId)?.title || "");
+    node.classList.add("is-dragging");
+  });
+  node.addEventListener("dragend", () => {
+    node.classList.remove("is-dragging");
+    finishDrag();
+  });
+}
+function finishDrag() {
+  const stale = drag?.stale;
+  drag = null;
+  markDrop(null);
+  if (stale) renderSide();
+}
+function markDrop(target, zone = null) {
+  for (const node of document.querySelectorAll(".drop-before, .drop-after, .drop-inside"))
+    if (node !== target || !node.classList.contains(`drop-${zone}`)) node.classList.remove("drop-before", "drop-after", "drop-inside");
+  if (target && zone) target.classList.add(`drop-${zone}`);
+}
+function dropZone(target, event, kind) {
+  if (kind !== "page") return "inside";
+  const rect = target.getBoundingClientRect();
+  const share = (event.clientY - rect.top) / rect.height;
+  return share < 0.3 ? "before" : share > 0.7 ? "after" : "inside";
+}
+function dropAllowed(pageId, kind, key, zone) {
+  if (kind !== "page") return true;
+  if (key === pageId) return false;
+  const blocked = descendantsOf(pageId);
+  if (zone === "inside") return !blocked.has(key);
+  const parent = pageById(key)?.parentKey;
+  return !(parent && blocked.has(parent));
+}
+function dropTarget(target, kind, key) {
+  target.addEventListener("dragover", (event) => {
+    if (!drag) return;
+    const zone = dropZone(target, event, kind);
+    if (!dropAllowed(drag.id, kind, key, zone)) { markDrop(null); return; }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    markDrop(target, zone);
+  });
+  target.addEventListener("dragleave", (event) => {
+    if (!target.contains(event.relatedTarget)) target.classList.remove("drop-before", "drop-after", "drop-inside");
+  });
+  target.addEventListener("drop", (event) => {
+    if (!drag) return;
+    const zone = dropZone(target, event, kind);
+    if (!dropAllowed(drag.id, kind, key, zone)) return;
+    event.preventDefault();
+    const pageId = drag.id;
+    finishDrag();
+    dropPage(pageId, kind, key, zone);
+  });
+}
+async function dropPage(pageId, kind, key, zone) {
+  const page = pageById(pageId);
+  if (!page) return;
+  // Куда: ключ места в дереве (null — корень) и страница, рядом с которой встать.
+  let parentKey = null, beside = null;
+  if (kind === "page" && zone !== "inside") { parentKey = pageById(key)?.parentKey ?? null; beside = key; }
+  else if (kind === "page" || kind === "project") parentKey = key;
+  const order = childrenOf(parentKey).map((item) => item.id).filter((id) => id !== pageId);
+  let index = order.length;
+  if (beside) index = order.indexOf(beside) + (zone === "after" ? 1 : 0);
+  order.splice(Math.max(0, index), 0, pageId);
+  if (parentKey === page.parentKey && order.join() === childrenOf(parentKey).map((item) => item.id).join()) return;
+  try {
+    await saveEditor();
+    if (parentKey?.startsWith("project:")) {
+      const name = parentKey.slice(8);
+      if (page.project !== name) await call(`/api/captures/${page.id}/corrections`, "POST", { project: name });
+      await call(`/api/pages/${page.id}/place`, "PUT", { parent: "auto", order });
+    } else {
+      await call(`/api/pages/${page.id}/place`, "PUT", { parent: parentKey ?? "root", order });
+    }
+    forgetLinkPages();
+    if (parentKey) { state.expanded.add(parentKey); saveExpanded(); }
+    await loadOverview();
+    if (state.route.kind === "page") await loadDetail(state.route.id);
+    renderSide();
+    renderMain({ quiet: true });
+    if (parentKey !== page.parentKey) deps.toast(`«${page.title}» — ${parentKey ? `в «${placeLabel(parentKey)}»` : "в корне"}`);
+  } catch (error) {
+    deps.toast(error.message);
+  }
+}
+
 // ── создание ───────────────────────────────────────────────────────────────
 async function newPage(parent, title = "Без названия") {
   try {
     await saveEditor();
     const detail = await call("/api/pages", "POST", { title, parent });
+    forgetLinkPages();
     if (parent && parent !== "root") { state.expanded.add(parent); saveExpanded(); }
     state.focusTitle = title === "Без названия";
     go({ kind: "page", id: detail.page.id });
@@ -422,7 +563,7 @@ function renderPage({ quiet }) {
     main.querySelector(".notes-bar")?.replaceWith(bar);
     const title = current.querySelector(".notes-title");
     if (title && document.activeElement !== title) title.textContent = page.title;
-    current.querySelector(".notes-props")?.replaceWith(propsBlock(detail));
+    current.querySelector(".notes-props-block")?.replaceWith(propsBlock(detail));
     current.querySelector('[data-part="suggest"]')?.replaceWith(suggestBlock(detail));
     current.querySelector(".notes-after")?.replaceWith(afterBlock(detail));
     fillBar(detail, crumbs, tail);
@@ -489,6 +630,7 @@ async function renamePage(page, title) {
   if (next === page.title) return;
   try {
     await call(`/api/captures/${page.id}/corrections`, "POST", { summary: next });
+    forgetLinkPages();
     page.title = next;
     await loadOverview();
     renderSide();
@@ -508,12 +650,19 @@ function propRow(list, label, value) {
 }
 function propsBlock(detail) {
   const { page } = detail;
+  const block = foldable(el("div", "notes-props-block"), "props");
   const list = el("dl", "notes-props");
+  const where = detail.trail.map((step) => step.title).join(" / ") || "Корень";
+  // Свёрнутые свойства не пропадают совсем: строка кнопки говорит главное —
+  // где лежит, проект и тип.
+  const toggle = foldToggle("props", "Свойства");
+  toggle.append(el("span", "notes-props-summary", [...new Set([where, page.project, TYPE_NAMES[page.type]].filter(Boolean))].join(" · ")));
+  block.append(toggle, list);
   const place = button("", "notes-prop-button", (event) => openPicker(event.currentTarget, page));
-  place.append(el("span", undefined, detail.trail.map((step) => step.title).join(" / ") || "Корень"));
-  const where = propRow(list, "Место", place);
+  place.append(el("span", undefined, where));
+  const placeRow = propRow(list, "Место", place);
   const origin = page.parentKey === "inbox" ? "не разложено" : page.placed ? (detail.page.placeSource === "text" ? "из текста" : "указано") : page.parentKey?.startsWith("project:") ? "по проекту" : "";
-  if (origin) where.append(el("span", `notes-prov${page.parentKey === "inbox" ? " is-loose" : ""}`, origin));
+  if (origin) placeRow.append(el("span", `notes-prov${page.parentKey === "inbox" ? " is-loose" : ""}`, origin));
   if (page.project) {
     const link = el("a", "notes-prop-link", page.project);
     link.href = hashFor({ kind: "project", name: page.project });
@@ -543,7 +692,7 @@ function propsBlock(detail) {
     propRow(list, "Теги", tags);
   }
   propRow(list, "Записано", when(page.createdAt));
-  return list;
+  return block;
 }
 function suggestBlock(detail) {
   const { page } = detail;
@@ -592,11 +741,14 @@ function editorFor(page) {
   field.element.classList.add("notes-markdown");
   const slash = attachSlashMenu(field);
   const format = attachFormatToolbar(field, { prefs: window.pagentText });
+  // После «[[» — страницы на выбор; новая страница из подсказки встаёт внутрь
+  // этой, как подстраница в Notion.
+  const links = attachLinkMenu(field, { exclude: () => page.id, parentFor: () => page.id });
   const deedButton = button("На доску →", "notes-deed-button", () => makeDeed(Number(deedButton.dataset.line)), { title: "Завести дело из этой строки" });
   deedButton.hidden = true;
   deedButton.addEventListener("mousedown", (event) => event.preventDefault());
   wrap.append(field.element, deedButton);
-  editor = { pageId: page.id, field, wrap, slash, format, deedButton, saved: page.body, timer: 0, saving: null, again: false };
+  editor = { pageId: page.id, field, wrap, slash, format, links, deedButton, saved: page.body, timer: 0, saving: null, again: false };
   field.setValue(page.body);
   editor.saved = page.body;
 
@@ -657,6 +809,7 @@ function destroyEditor() {
   clearTimeout(editor.timer);
   editor.slash.destroy();
   editor.format.destroy();
+  editor.links.destroy();
   document.removeEventListener("selectionchange", onSelection);
   editor = null;
 }
@@ -750,10 +903,13 @@ async function toggleDeed(deed) {
 }
 
 // ── под телом: страницы внутри, базы, ссылки ───────────────────────────────
-function sectionHead(text, count) {
+function sectionHead(text, count, key) {
   const head = el("h2", "notes-section-head");
-  head.append(el("span", undefined, text));
-  if (count !== undefined) head.append(el("span", "notes-section-count", String(count)));
+  if (key) head.append(foldToggle(key, text, count));
+  else {
+    head.append(el("span", undefined, text));
+    if (count !== undefined) head.append(el("span", "notes-section-count", String(count)));
+  }
   return head;
 }
 function pageRow(page, extra) {
@@ -766,8 +922,8 @@ function pageRow(page, extra) {
 function afterBlock(detail) {
   const { page } = detail;
   const wrap = el("div", "notes-after");
-  const children = el("section", "notes-section notes-children");
-  children.append(sectionHead("Страницы внутри", detail.children.length || undefined));
+  const children = foldable(el("section", "notes-section notes-children"), "children");
+  children.append(sectionHead("Страницы внутри", detail.children.length || undefined, "children"));
   for (const child of detail.children) children.append(pageRow(child));
   const add = button("", "notes-add-row", () => newPage(page.id));
   add.append(icon("plus"), el("span", undefined, "Страница внутри"));
@@ -781,22 +937,22 @@ function afterBlock(detail) {
     .map((match) => bases.find((base) => base.name.toLocaleLowerCase("ru-RU") === match[1].trim().toLocaleLowerCase("ru-RU")))
     .filter((base, index, list) => base && list.indexOf(base) === index);
   for (const base of embedded) {
-    const block = el("section", "notes-section notes-embed");
-    const head = sectionHead("");
-    head.replaceChildren(crumbLink(base.name, { kind: "base", id: base.id }, "base"));
+    const block = foldable(el("section", "notes-section notes-embed"), `base:${base.id}`);
+    const head = sectionHead(base.name, undefined, `base:${base.id}`);
+    head.append(crumbLink("открыть", { kind: "base", id: base.id }));
     block.append(head, baseContent(base.view, rowsFor(base.view)));
     wrap.append(block);
   }
 
-  const links = el("section", "notes-section");
-  links.append(sectionHead("Ссылаются сюда", detail.backlinks.length));
+  const links = foldable(el("section", "notes-section notes-backlinks"), "backlinks");
+  links.append(sectionHead("Ссылаются сюда", detail.backlinks.length, "backlinks"));
   if (!detail.backlinks.length) links.append(el("p", "notes-empty", `Пока никто. Напишите [[${page.title}]] в другой заметке — и она появится здесь.`));
   for (const item of detail.backlinks) links.append(referenceRow(item));
   wrap.append(links);
 
   if (detail.mentions.length) {
-    const mentions = el("section", "notes-section");
-    mentions.append(sectionHead("Упоминания без ссылки", detail.mentions.length));
+    const mentions = foldable(el("section", "notes-section notes-mentions"), "mentions");
+    mentions.append(sectionHead("Упоминания без ссылки", detail.mentions.length, "mentions"));
     for (const item of detail.mentions) {
       const row = referenceRow(item);
       row.append(button("Связать", "notes-act", async (event) => {
@@ -838,15 +994,15 @@ function renderProject() {
   const all = state.overview.pages.filter((page) => page.project === name);
   const inside = childrenOf(`project:${name}`);
   sheet.append(head, el("p", "notes-lead", all.length ? `Проект · ${all.length} ${plural(all.length, "заметка", "заметки", "заметок")}. Заметка с этим проектом без своего места ложится сюда сама.` : "В проекте пока нет заметок."));
-  const children = el("section", "notes-section notes-children");
-  children.append(sectionHead("Страницы", inside.length || undefined));
+  const children = foldable(el("section", "notes-section notes-children"), "project-children");
+  children.append(sectionHead("Страницы", inside.length || undefined, "project-children"));
   for (const page of inside) children.append(pageRow(page));
   const add = button("", "notes-add-row", () => newPage(`project:${name}`));
   add.append(icon("plus"), el("span", undefined, "Страница в проекте"));
   children.append(add);
   const view = { ...DEFAULT_VIEW, filter: { ...DEFAULT_VIEW.filter, project: name } };
-  const everything = el("section", "notes-section notes-embed");
-  everything.append(sectionHead("Все заметки проекта", all.length), baseContent(view, rowsFor(view)));
+  const everything = foldable(el("section", "notes-section notes-embed"), "project-all");
+  everything.append(sectionHead("Все заметки проекта", all.length, "project-all"), baseContent(view, rowsFor(view)));
   sheet.append(children, everything);
   main.replaceChildren(bar, sheet);
 }
@@ -864,6 +1020,9 @@ function renderInbox() {
   if (!rows.length) list.append(el("p", "notes-empty", "Пусто — всё разложено."));
   for (const page of rows) {
     const row = el("div", "notes-inbox-row");
+    // Входящие раскладываются и мышью: строку можно бросить на страницу или
+    // проект в дереве.
+    draggablePage(row, page.id);
     const text = el("a", "notes-inbox-main");
     text.href = hashFor({ kind: "page", id: page.id });
     text.append(el("b", undefined, page.title));
