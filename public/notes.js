@@ -39,6 +39,7 @@ const ICONS = {
   menu: '<path d="M2.5 4h11M2.5 8h11M2.5 12h11"/>',
   search: '<circle cx="7" cy="7" r="4.3"/><path d="M10.2 10.2 13.5 13.5"/>',
   card: '<rect x="2.5" y="2.5" width="11" height="11" rx="2"/><path d="M5.5 6h5M5.5 8.5h5M5.5 11h3"/>',
+  trash: '<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.6 4.5l.6 8.3a1 1 0 0 0 1 .9h3.6a1 1 0 0 0 1-.9l.6-8.3"/>',
 };
 
 let deps = null;
@@ -619,7 +620,33 @@ function fillBar(detail, crumbs, tail) {
   version.textContent = versionLabel(page);
   const open = button("", "notes-bar-button", () => deps.openCard(page.id), { title: "Открыть карточку: обсуждение, вложения, источник" });
   open.append(icon("card"), el("span", undefined, "Карточка"));
-  tail.append(version, open);
+  const remove = button("", "notes-bar-button is-danger", () => deletePage(detail), { title: "Удалить страницу — вернуть можно из уведомления" });
+  remove.append(icon("trash"), el("span", undefined, "Удалить"));
+  tail.append(version, open, remove);
+}
+// Удаление — как у записи в карточке: сразу и с «Вернуть» в уведомлении, без
+// вопроса заранее. Страница — это запись журнала, поэтому и возвращается она
+// целиком: с текстом, местом в дереве и ссылками. Страницы внутри не пропадают —
+// сервер ставит их туда, куда их положило бы правило: в проект или во «Входящие».
+async function deletePage(detail) {
+  const { page } = detail;
+  // Набранное перед удалением сохраняется: вернуть — значит вернуть и его.
+  await saveEditor();
+  try {
+    await call(`/api/captures/${encodeURIComponent(page.id)}`, "DELETE");
+  } catch (error) {
+    deps.toast(error.message);
+    return;
+  }
+  const up = detail.trail.at(-1);
+  go(!up ? { kind: "all" } : up.key === "inbox" ? { kind: "inbox" } : up.key.startsWith("project:") ? { kind: "project", name: up.title } : { kind: "page", id: up.key });
+  deps.toast(`Страница «${page.title}» удалена`, { label: "Вернуть", run: async () => {
+    try {
+      await call(`/api/captures/${encodeURIComponent(page.id)}/restore`, "POST");
+      go({ kind: "page", id: page.id });
+      deps.toast("Страница возвращена");
+    } catch (error) { deps.toast(error.message); }
+  } });
 }
 function versionLabel(page) {
   return `изменено ${when(page.updatedAt)}${page.noteVersion ? ` · версия ${page.noteVersion}` : ""}`;

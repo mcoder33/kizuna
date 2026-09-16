@@ -269,6 +269,7 @@ a.notes-crumb:hover { background: var(--nt-hover); color: var(--nt-text); }
 }
 .notes-bar-button:hover,
 .notes-side-toggle:hover { background: var(--nt-hover); color: var(--nt-text); }
+.notes-bar-button.is-danger:hover { color: var(--red-50); }
 .notes-bar .notes-side-toggle { display: none; }
 
 /* ── лист ── */

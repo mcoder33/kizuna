@@ -221,3 +221,27 @@ test("страницы в дереве перетаскиваются: внут�
   await row(voice.id).dragTo(page.locator('.notes-side .notes-row[data-key="project:Книги"]'), { targetPosition: { x: 60, y: 15 } });
   await expect.poll(async () => { const item = await find(voice.id); return `${item.parentKey} ${item.project}`; }).toBe("project:Книги Книги");
 });
+
+// Удаление — из полосы над страницей, как у записи в карточке: сразу и с
+// «Вернуть» в уведомлении. Страница внутри удалённой не пропадает.
+test("страница удаляется из полосы над ней и возвращается из уведомления", async ({ page, request }) => {
+  await reset(request);
+  const home = await makePage(request, "Дача");
+  const inner = await makePage(request, "Смета на забор", home.id);
+  await page.goto(`/#notes?page=${home.id}`);
+  await expect(page.locator(".notes-title")).toHaveText("Дача");
+  await page.locator(".notes-bar").getByRole("button", { name: "Удалить" }).click();
+  const toast = page.locator("#toast");
+  await expect(toast).toContainText("Страница «Дача» удалена");
+  await expect(page.locator(".notes-side .notes-row", { hasText: "Дача" })).toHaveCount(0);
+  await expect(page).not.toHaveURL(new RegExp(home.id));
+  const pages = (await (await request.get("/api/pages")).json()).pages;
+  expect(pages.map((item) => item.title)).not.toContain("Дача");
+  expect(pages.find((item) => item.id === inner.id).parentKey).toBe("inbox");
+
+  await toast.getByRole("button", { name: "Вернуть" }).click();
+  await expect(page.locator(".notes-title")).toHaveText("Дача");
+  await expect(page.locator(".notes-side .notes-row", { hasText: "Дача" })).toBeVisible();
+  const back = (await (await request.get("/api/pages")).json()).pages;
+  expect(back.find((item) => item.id === inner.id).parentKey).toBe(home.id);
+});
