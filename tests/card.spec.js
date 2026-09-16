@@ -671,7 +671,8 @@ test("the expand button lifts the card into a sheet fitted to the window", async
   await page.keyboard.press("Escape");
   await expect(form).not.toHaveClass(/capture-large/);
   await expect(page.locator("body")).not.toHaveClass(/capture-large-open/);
-  await expect(form).toHaveCSS("position", "static");
+  // На месте карточка снова в потоке — relative держит ручки размера.
+  await expect(form).toHaveCSS("position", "relative");
   await expect(field.locator(".md-heading")).toHaveText("Заметка на листе");
 
   // Отправка с листа возвращает карточку к обычному виду.

@@ -6924,7 +6924,9 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 /* Ширина карточки ввода — своя у каждого: тянется за боковые края, выбор
    хранится в браузере и приходит сюда переменной. */
 .today-page .hero { max-width: var(--capture-width, 800px); margin: 0 auto 8px; }
-.today-page .capture { position: relative; }
+/* Ручкам нужна опора, но только у карточки на месте: у листа своё
+   `position: fixed` выше в файле, и правило для всех карточек перебило бы его. */
+.today-page .capture:not(.capture-large) { position: relative; }
 .today-page .capture.resizing { user-select: none; }
 /* Ручки: невидимые полосы вдоль краёв и квадраты в нижних углах; о том, что
    край тянется, говорит только курсор. */

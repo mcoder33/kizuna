@@ -193,9 +193,6 @@ export function attachSlashMenu(field, { document: doc = document } = {}) {
         event.preventDefault();
         choose(index);
       });
-      option.addEventListener("mouseenter", () => {
-        if (index !== active) setActive(index);
-      });
       menu.append(option);
     });
     menu.hidden = false;
@@ -259,6 +256,21 @@ export function attachSlashMenu(field, { document: doc = document } = {}) {
   };
   doc.addEventListener("keydown", onKeyDown, true);
 
+  // Подсветку ведёт мышь, только когда она правда сдвинулась. Меню встаёт под
+  // кареткой — часто прямо под курсором, оставшимся после щелчка в поле, — и
+  // браузер сразу сообщает о наведении. Поверь меню этому, Enter вставил бы не
+  // первое совпадение, а пункт под неподвижной стрелкой: «созвон /цитат»
+  // становился выноской вместо цитаты.
+  let pointer = null;
+  const onMouseMove = (event) => {
+    const moved = pointer && (pointer.x !== event.clientX || pointer.y !== event.clientY);
+    pointer = { x: event.clientX, y: event.clientY };
+    if (!moved || !open()) return;
+    const index = [...menu.children].indexOf(event.target.closest?.(".slash-option"));
+    if (index >= 0 && index !== active) setActive(index);
+  };
+  doc.addEventListener("mousemove", onMouseMove, true);
+
   // Курсор мог уехать мышью или стрелками — тогда подсказка уже не о том месте.
   const onKeyUp = (event) => { if (!["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(event.key)) refresh(); };
   root.addEventListener("input", refresh);
@@ -273,6 +285,7 @@ export function attachSlashMenu(field, { document: doc = document } = {}) {
     isOpen: open,
     destroy: () => {
       doc.removeEventListener("keydown", onKeyDown, true);
+      doc.removeEventListener("mousemove", onMouseMove, true);
       root.removeEventListener("input", refresh);
       root.removeEventListener("keyup", onKeyUp);
       root.removeEventListener("blur", close);
