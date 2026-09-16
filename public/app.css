@@ -7215,19 +7215,13 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 .wait-state.done { color: var(--green); }
 .wait-state.declined { color: var(--n-66); }
 
-/* страница круга: люди и граница */
-
-
+/* карточка приглашения в круг по ссылке: «зовёт вас в круг» и «Войти в круг» */
 .circle-card { border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; background: var(--paper); }
-
 .circle-name { margin: 0; font-size: 16px; display: flex; align-items: center; gap: 8px; flex: 1; }
 .circle-tools { display: flex; gap: 6px; flex-wrap: wrap; }
-
-.invite-hint { font-size: 11.5px; color: var(--n-66); }
-
 .invite-card { border-color: var(--type-todo); }
 .invite-lead { font-size: 15px; margin: 10px 0 6px; }
-.invite-hint { color: var(--n-66); }
+.invite-hint { font-size: 11.5px; color: var(--n-66); }
 
 @media (max-width: 640px) {
   .wait-row { grid-template-columns: 1fr; gap: 4px; }
@@ -7235,29 +7229,6 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
   .inbox-row { flex-wrap: wrap; }
   .inbox-acts { width: 100%; justify-content: flex-end; }
 }
-
-/* ── разговор круга ───────────────────────────────────────────────────────
-   Слева круги и их разговоры, справа сам разговор. Счётчик непрочитанного
-   стоит только здесь: в день уходит один призыв. */
-
-.circle-tab.on { background: var(--pink); color: var(--coral); border-color: transparent; font-weight: 600; }
-
-.rail-room.on { background: var(--pink); color: var(--coral); font-weight: 600; }
-
-.rail-room.on .room-hash { color: var(--coral); }
-
-.room-msg.dense .msg-main { margin-top: -2px; }
-.ava.spacer { background: none; }
-
-.room-new-people .mini[aria-pressed="true"] { background: var(--pink); color: var(--coral); border-color: transparent; font-weight: 600; }
-
-.mini .ava.mini { margin-right: 5px; vertical-align: -4px; }
-
-/* звать людей: поиском по приложению или общей ссылкой */
-
-.invite-found .mini small { color: var(--n-66); margin-left: 6px; font-size: 11.5px; }
-
-.invite-link-row .invite-hint { flex: 1; min-width: 200px; }
 
 /* быстрый срок у просроченного дела: перенести или снять, не открывая карточку */
 .quick-due { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); display: flex; gap: 4px; background: var(--paper); border-radius: 999px; padding: 2px; box-shadow: 0 2px 10px var(--n-25-a8); }
@@ -7459,10 +7430,7 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
   z-index: 5;
 }
 
-/* Кого позвать в круг — списком, как в мессенджере: круглое лицо, имя, под ним
-   почта. Пилюли в строку читались как набор меток, а не как люди. */
-
-/* ── участники записи: кто видит, подтверждение призыва, «Обсуждения» ──────── */
+/* ── участники записи: кто видит, подтверждение призыва ──────────────────── */
 .talk-faces { display: inline-flex; align-items: center; }
 .talk-faces .ava.mini { margin-left: -5px; box-shadow: 0 0 0 2px var(--paper); }
 .talk-faces .ava.mini:first-child { margin-left: 0; }
@@ -7524,10 +7492,6 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 #review-dialog .talk-confirm p { margin: 0 0 8px; }
 #review-dialog .talk-confirm-acts { display: flex; flex-wrap: wrap; gap: 6px; }
 .mention-note { margin-left: auto; font-size: 11px; color: var(--n-66); }
-
-.talk-row.unread .talk-dot { background: var(--coral); }
-
-.talk-row.unread .talk-title { font-weight: 600; }
 
 /* ── разговоры кругов: как в Телеграме, а над разговором — кольцо лиц ─────────
    Раскладка Telegram Desktop в цветах Кизуны: папки, список, разговор и
@@ -7627,6 +7591,9 @@ main:has(> #circles:not([hidden])) { max-width: 1480px; padding-top: 18px; paddi
 /* :where — без веса: цвет кнопки задаёт её собственный класс. */
 .kc :where(button) { font: inherit; color: inherit; }
 .kc :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* Поле ввода показывает фокус своей скруглённой рамкой: общий контур ложился
+   прямоугольником поверх пилюли — текстовое поле внутри неё без скругления. */
+.kc :is(input:not([type="checkbox"]), textarea):focus-visible { outline: none; }
 .kc-ico { display: inline-grid; place-items: center; width: 16px; height: 16px; flex: none; }
 .kc-ico svg { width: 100%; height: 100%; display: block; }
 .kc-hint { margin: 0; font-size: 12.5px; color: var(--muted); }
@@ -7694,6 +7661,7 @@ main:has(> #circles:not([hidden])) { max-width: 1480px; padding-top: 18px; paddi
 .kc-list-head h3 { margin: 0; font-size: 16px; font-weight: 700; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kc-search { margin: 0 10px 8px; height: 34px; border-radius: 10px; background: var(--kc-plate); display: flex; align-items: center; gap: 8px; padding: 0 10px; color: var(--n-66); }
 .kc-search input { flex: 1; min-width: 0; border: 0; background: none; font: inherit; font-size: 13.5px; color: var(--ink); outline: none; }
+.kc-search:focus-within { box-shadow: 0 0 0 1px color-mix(in srgb, var(--coral) 50%, transparent), 0 0 0 4px color-mix(in srgb, var(--coral) 12%, transparent); }
 .kc-ftabs { display: none; gap: 4px; padding: 0 10px 8px; overflow-x: auto; scrollbar-width: none; flex: none; }
 .kc-ftab {
   flex: none; height: 30px; padding: 0 11px; border-radius: 999px; border: 0; background: var(--kc-plate); color: var(--muted);
@@ -7876,7 +7844,7 @@ main:has(> #circles:not([hidden])) { max-width: 1480px; padding-top: 18px; paddi
 .kc-round { width: 40px; height: 40px; border-radius: 50%; border: 0; background: none; color: var(--muted); display: grid; place-items: center; cursor: pointer; flex: none; font-weight: 700; font-size: 18px; }
 .kc-round:hover { color: var(--ink); background: var(--kc-hover); }
 .kc-field { flex: 1; min-width: 0; display: flex; align-items: flex-end; background: var(--kc-plate); border-radius: 20px; padding: 0 14px; }
-.kc-field:focus-within { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--coral) 45%, transparent); }
+.kc-field:focus-within { box-shadow: 0 0 0 1px color-mix(in srgb, var(--coral) 50%, transparent), 0 0 0 4px color-mix(in srgb, var(--coral) 12%, transparent); }
 .kc-field textarea { flex: 1; border: 0; background: none; resize: none; font: inherit; font-size: 14.5px; line-height: 1.45; color: var(--ink); padding: 10px 0; min-height: 40px; max-height: 160px; outline: none; }
 .kc-send { width: 40px; height: 40px; border-radius: 50%; border: 0; background: var(--coral); color: #fff; display: grid; place-items: center; cursor: pointer; flex: none; }
 .kc-send:disabled { background: var(--kc-plate); color: var(--n-66); cursor: default; }
@@ -7978,7 +7946,7 @@ main:has(> #circles:not([hidden])) { max-width: 1480px; padding-top: 18px; paddi
 .kc-field-label { display: flex; flex-direction: column; gap: 6px; }
 .kc-field-label > span { font-size: 12.5px; color: var(--muted); }
 .kc-field-label input { height: 42px; border: 1px solid var(--line); border-radius: 12px; background: var(--wash); padding: 0 12px; font: inherit; font-size: 15px; color: var(--ink); outline: none; }
-.kc-field-label input:focus { border-color: var(--coral); }
+.kc-field-label input:focus { border-color: color-mix(in srgb, var(--coral) 70%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--coral) 12%, transparent); }
 .kc-tones { display: flex; gap: 10px; flex-wrap: wrap; }
 .kc-tone-pick { width: 30px; height: 30px; border-radius: 50%; border: 0; background: var(--kc-tone); cursor: pointer; box-shadow: 0 0 0 3px var(--paper); }
 .kc-tone-pick[aria-pressed="true"] { box-shadow: 0 0 0 3px var(--paper), 0 0 0 5px var(--kc-tone); }
