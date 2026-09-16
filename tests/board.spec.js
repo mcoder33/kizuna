@@ -65,22 +65,25 @@ test("доска: колонка, быстрое дело, статус, кар�
   const listed = todayGroup.locator(".board-card").filter({ hasText: "Дело на сегодня из списка" });
   await expect(listed).toBeVisible();
   await expect(listed.locator(".btag.due")).toContainText("сегодня");
-  // Список стоит по центру окна вместе с заголовком группы, а заголовок
-  // страницы и панель видов — по краям верхней строки: слева по знаку
-  // «Кизуна», справа по аватару, как в остальных видах.
+  // Список стоит по центру окна вместе с заголовком группы, и шапка доски
+  // ужимается до него: заголовок страницы и панель видов — по краям списка.
   const listBox = await page.locator("#board-columns").boundingBox();
   const viewport = page.viewportSize();
   expect(Math.abs(listBox.x + listBox.width / 2 - viewport.width / 2)).toBeLessThan(24);
   const groupBox = await page.locator("#board-columns .board-column").first().boundingBox();
   expect(Math.abs(groupBox.x + groupBox.width / 2 - viewport.width / 2)).toBeLessThan(24);
   const headBox = await page.locator(".board-page .page-heading").boundingBox();
-  expect(headBox.x).toBeLessThan(listBox.x - 100);
-  const brandBox = await page.locator("header .brand").boundingBox();
-  const tailBox = await page.locator("header .header-tail").boundingBox();
   const controlsBox = await page.locator(".board-page .board-controls").boundingBox();
-  expect(Math.abs(headBox.x - brandBox.x)).toBeLessThan(2);
-  expect(Math.abs(controlsBox.x - brandBox.x)).toBeLessThan(2);
-  expect(Math.abs(controlsBox.x + controlsBox.width - (tailBox.x + tailBox.width))).toBeLessThan(2);
+  expect(Math.abs(headBox.x - listBox.x)).toBeLessThan(2);
+  expect(Math.abs(controlsBox.x - listBox.x)).toBeLessThan(2);
+  expect(Math.abs(controlsBox.x + controlsBox.width - (listBox.x + listBox.width))).toBeLessThan(2);
+  // Ряд умещается в колонку одной строкой: у невыбранных видов — значки, подпись
+  // остаётся у выбранного и в подсказке.
+  expect(controlsBox.height).toBeLessThan(48);
+  await expect(page.locator('[data-board-view="dates"] span')).toBeHidden();
+  await expect(page.locator('[data-board-view="dates"]')).toHaveAttribute("title", "По датам");
+  await expect(page.locator('[data-board-view="list"] span')).toBeVisible();
+  const brandBox = await page.locator("header .brand").boundingBox();
   // Вид запоминается: после перезагрузки доска снова списком.
   await page.reload();
   await expect(page.locator("#board-columns")).toHaveClass(/list/);
