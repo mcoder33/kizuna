@@ -106,3 +106,17 @@ test('обсуждение как разговор: ответ цитатой, �
   assert.ok((await anya.get('/api/notifications').expect(200)).body.notifications.some(item=>item.kind==='reaction'));
   await sasha.post(`/api/captures/${entry.id}/comments/${answer.id}/reactions`).send({emoji:'🦄'}).expect(400);
 });
+
+test('карточка узнаёт, сколько сообщений новые, хотя открытие отмечает их прочитанными',async()=>{
+  const {sasha,anya,entry}=await trio();
+  await say(sasha,entry,'@Аня глянь второй лист','yes').expect(201);
+  await say(sasha,entry,'и третий заодно').expect(201);
+  // Число считается до отметки: карточка успевает показать «2 новых».
+  assert.equal((await anya.get(`/api/captures/${entry.id}`).expect(200)).body.entry.unreadComments,2);
+  assert.equal((await anya.get(`/api/captures/${entry.id}/comments`).expect(200)).body.unread,0);
+  // Своё сообщение новым не бывает, чужое после него — новое.
+  await say(anya,entry,'Глянула').expect(201);
+  await say(sasha,entry,'Спасибо').expect(201);
+  assert.equal((await anya.get(`/api/captures/${entry.id}/comments`).expect(200)).body.unread,1);
+  assert.equal((await sasha.get(`/api/captures/${entry.id}`).expect(200)).body.entry.unreadComments,0);
+});

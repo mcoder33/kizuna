@@ -7352,9 +7352,10 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 
 /* ── обсуждение у нижнего края карточки ─────────────────────────────────────
    Поле лежит внизу всегда, как в мессенджере; сообщения встают над ним
-   панелью по своей высоте, а свёрнутый разговор — строкой. Поле чуть шире
-   колонки карточки (708px) — на свои скругления. Пузыри — как в разговорах
-   кругов; своя палитра живёт в переменных --talk-*, три состояния темы. */
+   панелью по своей высоте, а свёрнутый разговор — его последним пузырём.
+   Поле ровно по колонке карточки (708px): края совпадают с линиями и подвалом.
+   Пузыри — как в разговорах кругов; своя палитра живёт в переменных --talk-*,
+   три состояния темы. */
 #review-dialog {
   --talk-field: #ffffff;
   --talk-field-edge: rgba(55, 53, 47, 0.16);
@@ -7368,8 +7369,9 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
   --talk-meta: rgba(0, 0, 0, 0.42);
   --talk-out-meta: rgba(150, 40, 70, 0.62);
   --talk-link: #e0294d;
-  --talk-pill: rgba(74, 58, 48, 0.46);
-  --talk-pill-ink: #ffffff;
+  --talk-field-edge-on: rgba(55, 53, 47, 0.34);
+  --talk-in-hover: #e9e6e2;
+  --talk-out-hover: #ffd6df;
   --talk-accent-text: #d9254a;
   --talk-shadow: 0 -10px 30px rgba(34, 34, 34, 0.12);
   --talk-pop-shadow: 0 16px 40px rgba(34, 34, 34, 0.18);
@@ -7387,8 +7389,9 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
   --talk-meta: rgba(255, 255, 255, 0.45);
   --talk-out-meta: rgba(255, 205, 216, 0.62);
   --talk-link: #ff8098;
-  --talk-pill: rgba(0, 0, 0, 0.4);
-  --talk-pill-ink: rgba(255, 255, 255, 0.85);
+  --talk-field-edge-on: rgba(255, 255, 255, 0.22);
+  --talk-in-hover: #3c3b3a;
+  --talk-out-hover: #562837;
   --talk-accent-text: #ff8098;
   --talk-shadow: 0 -16px 44px rgba(0, 0, 0, 0.45);
   --talk-pop-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
@@ -7407,8 +7410,9 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
     --talk-meta: rgba(255, 255, 255, 0.45);
     --talk-out-meta: rgba(255, 205, 216, 0.62);
     --talk-link: #ff8098;
-    --talk-pill: rgba(0, 0, 0, 0.4);
-    --talk-pill-ink: rgba(255, 255, 255, 0.85);
+    --talk-field-edge-on: rgba(255, 255, 255, 0.22);
+    --talk-in-hover: #3c3b3a;
+    --talk-out-hover: #562837;
     --talk-accent-text: #ff8098;
     --talk-shadow: 0 -16px 44px rgba(0, 0, 0, 0.45);
     --talk-pop-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
@@ -7416,7 +7420,7 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 }
 /* Колонка оставляет под полем место: конец заметки и подвал не прячутся. */
 #review-dialog.has-talk .review {
-  padding-bottom: calc(28px + var(--talk-base, 60px));
+  padding-bottom: calc(40px + var(--talk-base, 60px));
 }
 /* Слой на всю карточку, чтобы высота панели считалась от карточки; клики
    проходят насквозь везде, кроме самой панели и поля. */
@@ -7427,8 +7431,8 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  gap: 8px;
-  padding: 54px max(14px, calc((100% - 708px) / 2 - 14px)) calc(14px + env(safe-area-inset-bottom, 0px));
+  gap: 10px;
+  padding: 54px max(12px, calc((100% - 708px) / 2)) calc(16px + env(safe-area-inset-bottom, 0px));
   pointer-events: none;
 }
 /* Текст заметки, уходящий под поле, растворяется, а не режется краем. */
@@ -7438,7 +7442,7 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
   left: 0;
   right: 0;
   bottom: 0;
-  height: calc(var(--talk-base, 60px) + 50px);
+  height: calc(var(--talk-base, 60px) + 52px);
   background: linear-gradient(to top, var(--nt-bg) calc(100% - 36px), transparent);
   pointer-events: none;
 }
@@ -7450,7 +7454,7 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 #review-dialog .talk-base {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 #review-dialog .talk-icon {
   display: inline-flex;
@@ -7465,8 +7469,8 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
   display: flex;
   flex-direction: column;
   min-height: 0;
-  max-height: min(560px, 62%);
-  border-radius: 16px;
+  max-height: min(560px, 64%);
+  border-radius: 18px;
   background: var(--talk-panel);
   box-shadow: 0 0 0 1px var(--talk-panel-edge), var(--talk-shadow);
   overflow: hidden;
@@ -7484,8 +7488,8 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 44px;
-  padding: 6px 6px 6px 14px;
+  min-height: 46px;
+  padding: 6px 8px 6px 16px;
   border-bottom: 1px solid var(--nt-divider);
 }
 #review-dialog .talk-title {
@@ -7497,8 +7501,10 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
   white-space: nowrap;
 }
 #review-dialog .talk-count {
+  margin-left: 6px;
   font-weight: 500;
   color: var(--nt-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 #review-dialog .talk-close {
   flex: none;
@@ -7524,24 +7530,34 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
   display: flex;
   flex-direction: column;
   margin: 0;
-  padding: 6px 12px 10px;
+  padding: 6px 14px 12px;
   overflow-y: auto;
   scrollbar-width: thin;
 }
 
-/* пузыри: свои справа приглушённым кораллом, чужие слева с именем */
+/* пузыри: свои справа приглушённым кораллом, чужие слева с именем; день и
+   «в обсуждении» — тихим текстом, чтобы не спорить с пузырями */
 #review-dialog .talk-day,
 #review-dialog .talk-joined {
   align-self: center;
   max-width: 90%;
-  margin: 8px 0 4px;
-  padding: 3px 11px;
-  border-radius: 999px;
-  background: var(--talk-pill);
-  color: var(--talk-pill-ink);
+  margin: 8px 0 6px;
+  color: var(--nt-tertiary);
   font-size: 12px;
-  font-weight: 550;
   text-align: center;
+}
+#review-dialog .talk-day {
+  font-weight: 600;
+}
+#review-dialog .talk-joined {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+#review-dialog .talk-joined .ava.mini {
+  width: 16px;
+  height: 16px;
+  font-size: 8.5px;
 }
 #review-dialog .talk-grp {
   display: grid;
@@ -7710,61 +7726,119 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
   color: var(--nt-text);
 }
 
-/* свёрнутый разговор: строка над полем */
+/* свёрнутый разговор: последний пузырь над полем, рядом «ещё N» или «N новых» */
 #review-dialog .talk-peek {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 8px;
   width: 100%;
-  min-height: 40px;
-  padding: 6px 10px 6px 12px;
+  margin: 0;
+  padding: 0;
   border: 0;
-  border-radius: 14px;
-  background: var(--talk-panel);
-  box-shadow: 0 0 0 1px var(--talk-panel-edge);
-  color: var(--nt-secondary);
+  background: none;
+  color: var(--nt-text);
   font: inherit;
-  font-size: 13.5px;
   text-align: left;
   cursor: pointer;
-}
-#review-dialog .talk-peek:hover {
-  color: var(--nt-text);
 }
 #review-dialog.talk-open .talk-peek {
   display: none;
 }
-#review-dialog .talk-peek-count {
-  font-weight: 650;
-  color: var(--nt-text);
-  font-variant-numeric: tabular-nums;
+#review-dialog .talk-peek > .ava {
+  width: 26px;
+  height: 26px;
+  font-size: 11px;
 }
+#review-dialog .talk-peek-bubble {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  max-width: min(540px, calc(100% - 150px));
+  padding: 6px 10px 6px 12px;
+  border-radius: 16px 16px 16px 5px;
+  background: var(--talk-in);
+  font-size: 14.5px;
+  line-height: 20px;
+  transition: background-color 0.15s ease;
+}
+#review-dialog .talk-peek.out .talk-peek-bubble {
+  margin-left: auto;
+  border-radius: 16px 16px 5px 16px;
+  background: var(--talk-out);
+}
+#review-dialog .talk-peek:hover .talk-peek-bubble { background: var(--talk-in-hover); }
+#review-dialog .talk-peek.out:hover .talk-peek-bubble { background: var(--talk-out-hover); }
 #review-dialog .talk-peek-text {
-  flex: 1;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-#review-dialog .talk-peek-text b {
-  font-weight: 600;
+#review-dialog .talk-peek-name {
+  margin-right: 5px;
+  font-weight: 650;
+}
+#review-dialog .talk-peek-time {
+  flex: none;
+  position: relative;
+  top: 1px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--talk-meta);
+  font-variant-numeric: tabular-nums;
+}
+#review-dialog .talk-peek.out .talk-peek-time { color: var(--talk-out-meta); }
+#review-dialog .talk-peek-more {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 8px 0 11px;
+  border-radius: 15px;
+  color: var(--nt-tertiary);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+#review-dialog .talk-peek-more.bare {
+  justify-content: center;
+  width: 30px;
+  padding: 0;
+}
+#review-dialog .talk-peek:not(.out) .talk-peek-more { margin-left: auto; }
+#review-dialog .talk-peek:hover .talk-peek-more {
+  background: var(--talk-plate-2);
   color: var(--nt-text);
 }
+#review-dialog .talk-peek-more.new,
+#review-dialog .talk-peek:hover .talk-peek-more.new {
+  background: color-mix(in srgb, var(--coral) 16%, transparent);
+  color: var(--talk-accent-text);
+  font-weight: 650;
+}
 
-/* поле: пилюля с «@» и круглой стрелкой отправки */
+/* поле: тихая пилюля — «@» значком, стрелка отправки появляется с текстом;
+   в фокусе светлеет рамка, кораллового ореола нет */
 #review-dialog .thread-composer {
   position: relative;
   display: flex;
   align-items: flex-end;
-  gap: 4px;
-  padding: 5px;
+  gap: 2px;
+  min-height: 44px;
+  padding: 4px;
   border: 0;
   border-radius: 22px;
   background: var(--talk-field);
-  box-shadow: 0 0 0 1px var(--talk-field-edge), 0 6px 18px rgba(0, 0, 0, 0.1);
+  box-shadow: inset 0 0 0 1px var(--talk-field-edge);
+  cursor: text;
 }
 #review-dialog .thread-composer:focus-within {
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--coral) 60%, transparent), 0 0 0 4px color-mix(in srgb, var(--coral) 14%, transparent);
+  box-shadow: inset 0 0 0 1px var(--talk-field-edge-on);
 }
 #review-dialog .thread-input {
   flex: 1;
@@ -7772,29 +7846,19 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
   min-height: 36px;
   max-height: 200px;
   margin: 0;
-  padding: 7px 6px 7px 12px;
+  padding: 8px 8px 8px 12px;
   border: 0;
   background: none;
   color: var(--nt-text);
   font: inherit;
   font-size: 15px;
-  line-height: 1.45;
+  line-height: 20px;
   resize: none;
   outline: none;
   box-shadow: none;
 }
 #review-dialog .thread-input::placeholder {
   color: var(--nt-tertiary);
-}
-#review-dialog .talk-solo {
-  align-self: center;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0 8px;
-  font-size: 12.5px;
-  color: var(--nt-tertiary);
-  white-space: nowrap;
 }
 #review-dialog .talk-at,
 #review-dialog .talk-send {
@@ -7812,9 +7876,7 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 }
 #review-dialog .talk-at {
   background: transparent;
-  color: var(--nt-secondary);
-  font-size: 17px;
-  font-weight: 650;
+  color: var(--nt-tertiary);
 }
 #review-dialog .talk-at:hover {
   background: var(--nt-hover);
@@ -7825,10 +7887,8 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
   color: #fff;
 }
 #review-dialog .talk-send:disabled {
-  background: var(--talk-plate);
-  color: var(--nt-tertiary);
   cursor: default;
-  opacity: 1;
+  opacity: 0.6;
 }
 
 /* подсказка «@» в карточке */
@@ -7894,10 +7954,10 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
     padding: 44px 10px calc(10px + env(safe-area-inset-bottom, 0px));
   }
   #review-dialog .talk-panel {
-    max-height: 64%;
+    max-height: 68%;
   }
-  #review-dialog .talk-solo {
-    display: none;
+  #review-dialog .talk-peek-bubble {
+    max-width: calc(100% - 96px);
   }
 }
 @media (prefers-reduced-motion: reduce) {

@@ -1952,8 +1952,8 @@ function commentText(body, mentions) {
 // «Обсудить» нет, позвать человека можно сразу. Пока сообщений нет, над полем
 // ничего не выезжает — пустому листу неоткуда взяться. Сообщения встают над
 // полем панелью по своей высоте, заметки сверху остаются на виду, а свёрнутый
-// разговор — строка с последним сообщением. Пузыри — как в разговорах кругов:
-// это тот же разговор, что в «Кругах → Записи».
+// разговор — его последний пузырь. Пузыри — как в разговорах кругов: это тот
+// же разговор, что в «Кругах → Записи».
 // Открыли карточку по призыву — разговор сразу развернулся: звали ради него.
 let cardTalkOnOpen = false;
 // Поле и строка над ним занимают низ карточки: колонка оставляет под ними
@@ -1974,6 +1974,7 @@ const TALK_ICONS = {
   up: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.8 8 5.8l4 4"/></svg>',
   eye: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1.8 8s2.3-4.3 6.2-4.3S14.2 8 14.2 8s-2.3 4.3-6.2 4.3S1.8 8 1.8 8z"/><circle cx="8" cy="8" r="1.9"/></svg>',
   bubble: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg>',
+  at: '<svg viewBox="0 0 16 16" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.4"/><path d="M10.4 5.8v2.9c0 1 .6 1.6 1.4 1.6.9 0 1.7-.8 1.7-2.3A5.5 5.5 0 1 0 11.3 12.4"/></svg>',
 };
 function talkIcon(name, className = "talk-icon") {
   const holder = node("span", undefined, className);
@@ -1986,11 +1987,16 @@ const talkNames = (names) => (names.length > 1 ? `${names.slice(0, -1).join(", "
 function cardDiscussion(entry) {
   let comments = entry.comments || [];
   let participants = entry.participants || [];
+  // Сколько чужих сообщений новые: сервер считает до того, как открытие
+  // отметит разговор прочитанным. Развернули — увидели, число гаснет.
+  let unread = entry.unreadComments || 0;
   const callable = entry.callable || [];
   const openNow = cardTalkOnOpen;
   cardTalkOnOpen = false;
   const dialog = $("#review-dialog");
-  const myId = currentUser?.id;
+  // Карточка по ссылке может открыться раньше, чем приложение узнало, кто
+  // вошёл: тогда свои реплики до ответа рисуются чужими и перерисовываются.
+  let myId = currentUser?.id;
   const mine = entry.mine !== false;
   const author = mine ? null : entry.author;
   const dock = node("section", undefined, "talk-dock");
@@ -2018,7 +2024,7 @@ function cardDiscussion(entry) {
   const list = node("div", undefined, "thread-list");
   panel.append(top, whoMenu, list);
 
-  // Под панелью: свёрнутый разговор строкой, вопрос о доступе и само поле.
+  // Под панелью: свёрнутый разговор пузырём, вопрос о доступе и само поле.
   const base = node("div", undefined, "talk-base");
   const peek = node("button", undefined, "talk-peek");
   peek.type = "button";
@@ -2030,10 +2036,9 @@ function cardDiscussion(entry) {
   const field = node("textarea", undefined, "thread-input");
   field.rows = 1;
   field.setAttribute("aria-label", "Сообщение в обсуждение");
-  const solo = node("span", undefined, "talk-solo");
-  solo.append(talkIcon("lock"), document.createTextNode("Только вы"));
-  const at = node("button", "@", "talk-at");
+  const at = node("button", undefined, "talk-at");
   at.type = "button";
+  at.append(talkIcon("at"));
   at.title = "Позвать человека";
   at.setAttribute("aria-label", "Позвать человека");
   const send = node("button", undefined, "talk-send");
@@ -2115,6 +2120,7 @@ function cardDiscussion(entry) {
     dialog.classList.toggle("talk-open", next);
     peek.setAttribute("aria-expanded", String(next));
     if (next) {
+      if (unread) { unread = 0; entry.unreadComments = 0; paintPeek(); }
       // Выезжает только то, что было свёрнуто: перерисовка развёрнутого
       // разговора не дёргает панель.
       if (!was) panel.classList.add("rise");
@@ -2126,20 +2132,32 @@ function cardDiscussion(entry) {
     if (was && dock.contains(document.activeElement) && document.activeElement !== field) peek.focus({ preventScroll: true });
   };
 
-  // Свёрнутый разговор: сколько сообщений, кто сказал последним и что.
+  // Свёрнутый разговор — его последний пузырь, тот же, что внутри: своё
+  // справа, чужое слева с лицом и именем. Рядом — сколько нового или сколько
+  // ещё выше, а у единственной реплики только стрелка.
   const paintPeek = () => {
     clear(peek);
     const last = comments[comments.length - 1];
     if (!last) return;
+    const out = last.author?.id === myId;
+    peek.classList.toggle("out", out);
     const text = node("span", undefined, "talk-peek-text");
-    text.append(node("b", `${last.author?.id === myId ? "Вы" : last.author?.name || "Кто-то"}: `), document.createTextNode(String(last.body).replace(/\s+/g, " ")));
-    const others = seers();
-    let side = talkIcon("lock");
-    if (others.length) {
-      side = node("span", undefined, "talk-faces");
-      for (const person of others.slice(0, 3)) side.append(avatarEl(person, { size: "mini" }));
+    if (!out) {
+      const name = node("b", last.author?.name || "Кто-то", "talk-peek-name");
+      name.style.color = `var(--circle-${kcNameTone(last.author?.id)})`;
+      text.append(name);
     }
-    peek.append(talkIcon("bubble"), node("span", String(comments.length), "talk-peek-count"), text, side, talkIcon("up"));
+    text.append(document.createTextNode(String(last.body).replace(/\s+/g, " ")));
+    const time = node("span", kcClock(last.createdAt), "talk-peek-time");
+    if (out && typeof last.read === "boolean") time.append(readMark(last.read));
+    const bubble = node("span", undefined, "talk-peek-bubble");
+    bubble.append(text, time);
+    const label = unread ? `${unread} ${pluralRu(unread, "новое", "новых", "новых")}` : comments.length > 1 ? `ещё ${comments.length - 1}` : "";
+    const more = node("span", undefined, `talk-peek-more${unread ? " new" : ""}${label ? "" : " bare"}`);
+    if (label) more.append(node("span", label));
+    more.append(talkIcon("up"));
+    if (!out) peek.append(avatarEl(last.author));
+    peek.append(bubble, more);
   };
 
   // Время и цвет имени — те же, что в разговорах кругов.
@@ -2218,7 +2236,13 @@ function cardDiscussion(entry) {
     for (const item of timeline) {
       const itemDay = zoneDate(new Date(item.at));
       if (itemDay !== day) { day = itemDay; group = null; list.append(node("p", kcDayLabel(day), "talk-day")); }
-      if (item.person) { group = null; list.append(node("p", `${item.person.id === myId ? "Вы" : item.person.name} — в обсуждении`, "talk-joined")); continue; }
+      if (item.person) {
+        group = null;
+        const joined = node("p", undefined, "talk-joined");
+        joined.append(avatarEl(item.person, { size: "mini" }), node("span", `${item.person.id === myId ? "Вы" : item.person.name} — в обсуждении`));
+        list.append(joined);
+        continue;
+      }
       const by = item.comment.author?.id;
       if (!group || group.by !== by) {
         const out = by === myId;
@@ -2234,21 +2258,27 @@ function cardDiscussion(entry) {
     }
     list.scrollTop = scrolled;
   };
+  // «Отправить» появляется с первой буквой: пока писать нечего, самым заметным
+  // внизу карточки был серый круг.
+  let sending = false;
   const paintField = () => {
-    send.disabled = !field.value.trim();
-    solo.hidden = comments.length > 0 || seers().length > 0 || field.value.length > 0;
+    send.hidden = !field.value.trim();
+    send.disabled = sending;
   };
   const paint = () => {
     const count = comments.length;
     clear(head);
-    head.append(document.createTextNode("Обсуждение"), node("span", ` · ${count}`, "talk-count"));
+    head.append(document.createTextNode("Обсуждение"), node("span", String(count), "talk-count"));
     paintWho();
     paintPeek();
     paintList();
     panel.hidden = !count;
     peek.hidden = !count;
     at.hidden = !callable.length;
-    field.placeholder = count ? "Сообщение" : callable.length ? "Написать или позвать через @" : "Написать…";
+    // Пока запись видите только вы, реплика — себе: об этом говорит поле, а не
+    // отдельная метка с замком.
+    const alone = !seers().length;
+    field.placeholder = count ? "Сообщение" : callable.length ? `Написать${alone ? " себе" : ""} или позвать через @` : alone ? "Написать себе…" : "Написать…";
     paintField();
     if (!count) dialog.classList.remove("talk-open");
   };
@@ -2281,7 +2311,8 @@ function cardDiscussion(entry) {
   };
   const submit = async (share = null, sameBody = null) => {
     const body = sameBody ?? field.value.trim();
-    if (!body) return;
+    if (!body || sending) return;
+    sending = true;
     send.disabled = true;
     try {
       const response = await fetch(`/api/captures/${entry.id}/comments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(share ? { body, share } : { body }) });
@@ -2300,7 +2331,7 @@ function cardDiscussion(entry) {
       setOpen(true, { focus: false });
       if (data.comment.mentions.length) toast(`Позвали: ${talkNames(data.comment.mentions.map((person) => person.name))}`);
     } catch (error) { toast(error.message || "Сообщение не ушло"); }
-    finally { paintField(); if (confirm.hidden) field.focus({ preventScroll: true }); }
+    finally { sending = false; paintField(); if (confirm.hidden) field.focus({ preventScroll: true }); }
   };
   send.addEventListener("click", () => submit());
   field.addEventListener("keydown", (event) => {
@@ -2330,7 +2361,7 @@ function cardDiscussion(entry) {
     field.dispatchEvent(new Event("input"));
   });
   const pop = mentionPopup(field, callable, paintField, { lead: "Позванный увидит эту запись и разговор", keys: true });
-  composer.append(field, solo, at, send, pop);
+  composer.append(field, at, send, pop);
 
   // Карточка перерисовывается после правки свойств — развёрнутый разговор
   // остаётся на месте, если это та же запись.
@@ -2342,6 +2373,7 @@ function cardDiscussion(entry) {
   cardTalkBaseObserver = new ResizeObserver(() => dialog.style.setProperty("--talk-base", `${Math.ceil(base.offsetHeight)}px`));
   cardTalkBaseObserver.observe(base);
   paint();
+  if (!myId) accountKnown.then((user) => { if (!dock.isConnected || !user) return; myId = user.id; paint(); });
   // Та же запись после перерисовки — разговор уже на месте, без выезда и без
   // кражи фокуса у того, кто правил свойства.
   if (keep && comments.length) { dialog.classList.add("talk-open"); peek.setAttribute("aria-expanded", "true"); requestAnimationFrame(toBottom); }
@@ -2355,6 +2387,8 @@ function cardDiscussion(entry) {
       const stayOpen = isOpen();
       comments = data.comments || [];
       participants = data.participants || [];
+      unread = stayOpen ? 0 : data.unread || 0;
+      entry.unreadComments = unread;
       callable.splice(0, callable.length, ...(data.callable || []));
       entry.comments = comments;
       entry.participants = participants;
@@ -4529,6 +4563,10 @@ listenToJournal();
 // Кто мы, что нам можно и как отсюда выйти. Всё остальное приложение об этом не
 // спрашивает: маршруты закрыты на сервере, а здесь только видимость разделов.
 let currentUser = null;
+// «Кто мы» грузится параллельно со страницей: карточка, открытая по ссылке,
+// ждёт этого, чтобы отличить свои реплики от чужих.
+let resolveAccountKnown = () => {};
+const accountKnown = new Promise((resolve) => { resolveAccountKnown = resolve; });
 
 const roleNames = { admin: "администратор", user: "пользователь" };
 
@@ -4536,6 +4574,7 @@ async function loadAccount() {
   try {
     const state = await request("/api/auth/me");
     currentUser = state.user;
+    resolveAccountKnown(currentUser);
   } catch {
     return;
   }

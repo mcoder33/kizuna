@@ -36,14 +36,15 @@ test("обсуждение без круга: позванный видит од
   const entry = (await (await request.post("/api/captures", { data: { raw: "Допинать карусель с генератором фраз" } })).json()).entry;
 
   // ── у личной записи поле обсуждения лежит внизу карточки сразу, без
-  // кнопки; сообщений нет — и панели над полем нет ──
+  // кнопки; сообщений нет — и панели над полем нет. Что реплика пока себе,
+  // говорит само поле, а «Отправить» появляется только с текстом ──
   await page.goto(`/#today?open=${entry.id}`);
   const dialog = page.locator("#review-dialog");
   const field = dialog.locator(".thread-input");
   await expect(field).toBeVisible();
-  await expect(dialog.locator(".talk-solo")).toContainText("Только вы");
+  await expect(field).toHaveAttribute("placeholder", "Написать себе или позвать через @");
   await expect(dialog.locator(".talk-panel")).toBeHidden();
-  await expect(dialog.getByRole("button", { name: "Отправить", exact: true })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Отправить", exact: true })).toBeHidden();
 
   // ── @ подсказывает любого человека из Кизуны ──
   await field.fill("Глянь сид, ");
@@ -89,16 +90,28 @@ test("обсуждение без круга: позванный видит од
   // Своего журнала у автора Илья не видит: чужая запись не падает в его день.
   expect((await (await ilya.page.request.get("/api/entries?limit=100")).json()).entries.length).toBe(0);
 
+  // Илья отвечает прямо в карточке — у Саши это будет новое сообщение.
+  await hers.locator(".thread-input").fill("Смотрю, сид на месте");
+  await hers.getByRole("button", { name: "Отправить", exact: true }).click();
+  await expect(hers.locator(".msg-text").filter({ hasText: "Смотрю, сид на месте" })).toBeVisible();
+
   // ── «Не следить»: запись пропадает у Ильи ──
   await hers.locator(".talk-who").click();
   await hers.getByRole("button", { name: /Не следить/ }).click();
   await expect(hers).toBeHidden();
   expect((await ilya.page.request.get(`/api/captures/${entry.id}`)).status()).toBe(404);
 
-  // У автора снова «видите только вы»: разговор свёрнут строкой — разворачиваем.
+  // У автора разговор свёрнут последним пузырём — ответом Ильи с «1 новое».
   await page.goto(`/#today?open=${entry.id}`);
-  await dialog.locator(".talk-peek").click();
+  const peek = dialog.locator(".talk-peek");
+  await expect(peek).toContainText("Илья");
+  await expect(peek).toContainText("Смотрю, сид на месте");
+  await expect(peek.locator(".talk-peek-more")).toHaveText("1 новое");
+  // Развернули — прочитали; снова «видите только вы», а свёрнутый пишет «ещё 1».
+  await peek.click();
   await expect(dialog.locator(".talk-who")).toContainText("видите только вы");
+  await page.keyboard.press("Escape");
+  await expect(peek.locator(".talk-peek-more")).toHaveText("ещё 1");
   await page.locator("#review-close").click();
 
   await ilya.context.close();
@@ -125,9 +138,10 @@ test("запись, открытая из списка, зовёт через @ 
   await page.goto("/");
   await page.locator("#todo .entry").filter({ hasText: raw }).locator(".entry-title").click();
   const dialog = page.locator("#review-dialog");
-  // Разговор догрузился и свёрнут строкой с последним сообщением.
+  // Разговор догрузился и свёрнут последним пузырём: своя реплика — справа.
   const peek = dialog.locator(".talk-peek");
   await expect(peek).toContainText("Сид лежит в папке фраз");
+  await expect(peek).toHaveClass(/\bout\b/);
   await peek.click();
   await expect(dialog.locator(".msg-text")).toHaveText("Сид лежит в папке фраз");
 

@@ -538,6 +538,13 @@ export function markCommentsRead(db, captureId, userId, at = now()) {
   db.prepare(`INSERT INTO comment_reads(capture_id,user_id,last_read_at) VALUES(?,?,?)
     ON CONFLICT(capture_id,user_id) DO UPDATE SET last_read_at=excluded.last_read_at`).run(captureId, userId, at);
 }
+// Сколько чужих сообщений человек ещё не видел. Открытая карточка сразу
+// отмечает разговор прочитанным, поэтому число спрашивают до отметки: по нему
+// свёрнутый разговор пишет «1 новое».
+export function unreadComments(db, captureId, userId) {
+  const at = db.prepare('SELECT last_read_at FROM comment_reads WHERE capture_id=? AND user_id=?').get(captureId, userId)?.last_read_at || '';
+  return db.prepare('SELECT COUNT(*) AS n FROM comments WHERE capture_id=? AND deleted_at IS NULL AND author_id!=? AND created_at>?').get(captureId, userId, at).n;
+}
 // Кого можно призвать — тремя группами, в этом порядке: те, кто запись уже
 // видит (автор, позванные, круг записи), люди из моих кругов и все остальные
 // в Кизуне. Круг для разговора не нужен: позванный получает доступ к одной
