@@ -193,7 +193,10 @@ test('человека из приложения зовут поиском, а �
   const found=(await sasha.get(`/api/circles/${circle.id}/candidates?q=кат`).expect(200)).body.people;
   assert.deepEqual(found.map(person=>person.name),['Катя']);
   assert.equal((await sasha.get(`/api/circles/${circle.id}/candidates?q=ан`).expect(200)).body.people.length,0,'кто в круге, того не предлагают');
-  assert.equal((await sasha.get(`/api/circles/${circle.id}/candidates?q=к`).expect(200)).body.people.length,0,'по одной букве не ищем');
+  // Пустое поле показывает всех, кого можно позвать: вспоминать почту соседа
+  // наизусть незачем. Текст только сужает список.
+  assert.deepEqual((await sasha.get(`/api/circles/${circle.id}/candidates`).expect(200)).body.people.map(person=>person.name),['Катя']);
+  assert.deepEqual((await sasha.get(`/api/circles/${circle.id}/candidates?q=к`).expect(200)).body.people.map(person=>person.name),['Катя']);
   // Добавили — и человек в круге сразу, без ссылки и без ожидания.
   const added=(await sasha.post(`/api/circles/${circle.id}/members`).send({userId:katya.user.id}).expect(200)).body;
   assert.deepEqual(added.circle.members.map(member=>member.name).sort(),['Аня','Катя','Саша']);

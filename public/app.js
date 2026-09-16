@@ -5396,10 +5396,12 @@ function invitePeopleEl(circle) {
   const search = async () => {
     const query = field.value.trim();
     clear(found);
-    if (query.length < 2) return;
     try {
       const data = await request(`/api/circles/${circle.id}/candidates?q=${encodeURIComponent(query)}`);
-      if (!data.people.length) { found.append(node("span", "Никого не нашлось. Если человека ещё нет в приложении — дайте ему ссылку ниже.", "invite-hint")); return; }
+      if (!data.people.length) {
+        found.append(node("span", data.all ? "Никого не нашлось. Если человека ещё нет в приложении — дайте ему ссылку ниже." : "В круге уже все, кто есть в приложении. Нового человека зовите ссылкой ниже.", "invite-hint"));
+        return;
+      }
       for (const person of data.people) {
         const button = node("button", undefined, "mini");
         button.type = "button";
@@ -5419,6 +5421,9 @@ function invitePeopleEl(circle) {
     } catch (error) { found.append(node("span", error.message || "Поиск не удался", "invite-hint")); }
   };
   field.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(search, 220); });
+  // Список открывается сам, как только в поле встали: людей в приложении
+  // немного, и вспоминать почту соседа наизусть незачем.
+  field.addEventListener("focus", () => { clearTimeout(timer); search(); });
   box.append(field, found);
   return box;
 }

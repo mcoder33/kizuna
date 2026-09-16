@@ -203,19 +203,17 @@ export function acceptInvite(db, token, userId) {
 // Кого можно позвать: люди приложения, которых в круге ещё нет. Ищем по имени
 // и по почте, и только среди работающих учётных записей — заявка, которую
 // администратор ещё не одобрил, в круг попасть не может.
+export const CANDIDATES_LIMIT = 20;
 export function candidates(db, circleId, userId, query) {
   if (!membership(db, circleId, userId)) return { error: 'not_found' };
   const text = String(query || '').trim().toLocaleLowerCase('ru-RU');
-  if (text.length < 2) return { people: [] };
   const inside = new Set(db.prepare('SELECT user_id FROM circle_members WHERE circle_id=? AND left_at IS NULL').all(circleId).map(row => row.user_id));
-  const people = db
+  const matches = person => !text || displayName(person).toLocaleLowerCase('ru-RU').includes(text) || String(person.email).toLocaleLowerCase('ru-RU').includes(text);
+  const rest = db
     .prepare("SELECT * FROM users WHERE status='active' ORDER BY COALESCE(display_name, email) LIMIT 200")
     .all()
-    .filter(person => !inside.has(person.id))
-    .filter(person => displayName(person).toLocaleLowerCase('ru-RU').includes(text) || String(person.email).toLocaleLowerCase('ru-RU').includes(text))
-    .slice(0, 8)
-    .map(publicUser);
-  return { people };
+    .filter(person => !inside.has(person.id));
+  return { people: rest.filter(matches).slice(0, CANDIDATES_LIMIT).map(publicUser), all: rest.length };
 }
 // Добавить сразу — то, ради чего люди и заводят круг: искать ссылку ради
 // человека, который уже в приложении, незачем. Своего у него при этом никто не

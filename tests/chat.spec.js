@@ -145,6 +145,10 @@ test("человека из приложения зовут поиском, и �
   await page.getByRole("button", { name: "+ Круг" }).click();
   await page.getByRole("button", { name: /Люди и граница/ }).click();
   const card = page.locator(".circle-card").filter({ hasText: "Дом" });
+  // Список открывается сам, как только в поле встали: людей в приложении
+  // немного, и вспоминать почту соседа наизусть незачем.
+  await card.locator(".invite-search").focus();
+  await expect(card.locator(".invite-found .mini").filter({ hasText: "chat-anya" })).toBeVisible();
   // Ссылка не нужна: человек уже в приложении — его находят по имени или почте.
   await card.locator(".invite-search").fill("chat-anya");
   const suggestion = card.locator(".invite-found .mini").first();
