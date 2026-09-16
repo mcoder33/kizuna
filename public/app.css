@@ -1074,10 +1074,17 @@ body.voice-live-open {
 }
 .voice-panel.voice-live {
   position: fixed;
-  inset: 0;
+  /* Не inset: 0, а высота по живому вьюпорту: в мобильном браузере нижний край
+     «fixed» уходит под панель адреса, и подсказка с полем ввода прятались за
+     ней. dvh следит за тем, что видно прямо сейчас; vh остаётся для браузеров,
+     которые dvh не знают. Отступы снизу и сверху учитывают вырез и полосу
+     жеста, иначе текст ложится под них. */
+  inset: 0 0 auto;
+  height: 100vh;
+  height: 100dvh;
   z-index: 20;
   margin: 0;
-  padding: 22px 24px 26px;
+  padding: calc(22px + env(safe-area-inset-top, 0px)) 24px calc(26px + env(safe-area-inset-bottom, 0px));
   border: 0;
   border-radius: 0;
   box-shadow: none;
@@ -1104,6 +1111,12 @@ body.voice-live-open {
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 12px;
+}
+/* minmax-порог колонок снимается явно: иначе «Обзор» и «Настройки» держат
+   ширину по своему тексту, шапка перестаёт влезать в узкий экран и утаскивает
+   вправо весь экран разговора. */
+.voice-panel.voice-live .voice-head > * {
+  min-width: 0;
 }
 .voice-head-tail {
   display: flex;
@@ -1318,6 +1331,48 @@ body.voice-live-open {
   text-align: center;
   color: var(--violet-64);
   font-size: 13px;
+}
+
+/* На телефоне шапка разговора остаётся значками: подпись рядом с круглой
+   кнопкой — первое, что перестаёт влезать, а часы и шестерёнка понятны и без
+   слова. Ужимается заодно всё, что меряется пикселями: сами кнопки, знак и
+   поля экрана. */
+@media (max-width: 560px) {
+  .voice-panel.voice-live {
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 14px calc(18px + env(safe-area-inset-bottom, 0px));
+  }
+  .voice-panel.voice-live .voice-head {
+    gap: 8px;
+  }
+  .voice-panel.voice-live .voice-round-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+  .voice-panel.voice-live .voice-round,
+  .voice-panel.voice-live .voice-close {
+    width: 38px;
+    height: 38px;
+    border-radius: 12px;
+  }
+  .voice-panel.voice-live .voice-head-tail {
+    gap: 8px;
+  }
+  .voice-panel.voice-live .voice-brand {
+    font-size: 18px;
+    gap: 8px;
+  }
+  .voice-panel.voice-live .voice-brand-mark {
+    width: 22px;
+    height: 22px;
+    border-width: 2.5px;
+  }
+  .voice-panel.voice-live .voice-hint {
+    font-size: 12px;
+    margin-top: 10px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

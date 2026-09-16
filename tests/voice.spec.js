@@ -927,6 +927,43 @@ test("с одним ключом переключать голос нечем", 
   await expect(page.locator(".voice-quick-picker")).toBeHidden();
 });
 
+// На телефоне экран разговора уезжал вправо: «Обзор» и «Настройки» держали
+// ширину по своему тексту, шапка переставала влезать и утаскивала за собой весь
+// экран. А нижний край «fixed» уходил под панель адреса мобильного браузера, и
+// подсказка пряталась за ней.
+test("экран разговора влезает в телефон: шапка значками, ничего не уезжает вправо", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 780 });
+  await installFakeRealtime(page);
+  await page.goto("/");
+  await page.locator("#capture-voice").click();
+  const panel = page.locator("#voice-panel");
+  await expect(panel).toHaveClass(/voice-live/, { timeout: 15000 });
+
+  const fits = await page.evaluate(() => {
+    const box = document.querySelector("#voice-panel"),
+      hint = document.querySelector("#voice-hint"),
+      right = (node) => Math.round(node.getBoundingClientRect().right);
+    return {
+      страница: document.documentElement.scrollWidth <= window.innerWidth,
+      панель: box.scrollWidth <= window.innerWidth,
+      шапка: right(box.querySelector(".voice-head")) <= window.innerWidth,
+      подсказка: right(hint) <= window.innerWidth,
+      подсказкаВидна: Math.round(hint.getBoundingClientRect().bottom) <= window.innerHeight,
+    };
+  });
+  expect(fits).toEqual({ страница: true, панель: true, шапка: true, подсказка: true, подсказкаВидна: true });
+
+  // Кнопки остались, подписи рядом с ними — нет: значок понятен и без слова.
+  await expect(panel.locator(".voice-round").first()).toBeVisible();
+  const label = await panel
+    .locator(".voice-round-label")
+    .first()
+    .evaluate((node) => node.getBoundingClientRect().width);
+  expect(label).toBeLessThan(4);
+});
+
 // На низком окне экран разговора обрезал последнюю строку подсказки, а поле
 // ввода уезжало за край: средняя строка раскладки не умела сжиматься.
 test("экран разговора влезает в низкое окно: ужимается круг, а не текст", async ({ page }) => {
