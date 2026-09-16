@@ -6368,26 +6368,129 @@ main:has(> #board:not([hidden])) { max-width: none; padding-left: 0; padding-rig
 #review-dialog .card-files-head .secondary {
   margin-left: auto;
 }
+/* Служебный подвал — одной ровной строкой: у всех пунктов один шрифт и одна
+   высота, нажимаемое подсвечивается подложкой, значки — как у свойств. Строка
+   выступает на поле подложки влево и вправо, чтобы текст первого пункта стоял
+   по краю карточки, а черта над ней — по тем же краям. Источник раскрывается
+   листом над строкой, а не распирает её. */
 #review-dialog .card-footer-row {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px 22px;
+  gap: 6px 10px;
   flex-wrap: wrap;
-  margin-top: 12px;
-  padding-top: 12px;
+  margin: 18px -10px 0;
+  padding-top: 14px;
+  font-size: 13px;
+  line-height: 20px;
+}
+#review-dialog .card-footer-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 10px;
+  right: 10px;
   border-top: 1px solid var(--nt-divider);
 }
-#review-dialog .card-footer-row .card-written.card-footer-line {
+#review-dialog .card-footer-row > * {
   margin: 0;
 }
-#review-dialog .card-footer-row > details {
-  margin: 0;
-  /* своя верхняя черта details не нужна: разделитель уже у всей строки футера */
+#review-dialog .card-footer-row :is(.card-calendar-menu > summary, .card-source > summary, .card-delete, .card-written.card-footer-line, .card-calendar-link) {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  margin-block: 0;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+#review-dialog .card-footer-row :is(.card-calendar-menu > summary, .card-source > summary) {
+  list-style: none;
+  cursor: pointer;
+  color: var(--nt-secondary);
+}
+#review-dialog .card-footer-row :is(.card-calendar-menu > summary, .card-source > summary)::-webkit-details-marker {
+  display: none;
+}
+#review-dialog .card-footer-row :is(.card-calendar-menu > summary, .card-source > summary):hover,
+#review-dialog .card-footer-row .card-source[open] > summary {
+  background: var(--nt-hover);
+  color: var(--nt-text);
+}
+#review-dialog .card-footer-row .card-calendar-menu > summary {
+  color: var(--fmt-blue);
+}
+#review-dialog .card-footer-row .card-calendar-menu > summary .prop-icon {
+  color: inherit;
+}
+#review-dialog .card-footer-row .card-written.card-footer-line {
+  color: var(--nt-tertiary);
+}
+#review-dialog .card-footer-row .card-calendar {
+  gap: 0;
+  font-size: 13px;
+}
+#review-dialog .card-footer-row .card-calendar-link {
+  color: var(--nt-tertiary);
+}
+#review-dialog .card-footer-row .card-source .prop-icon:last-child {
+  transition: transform 0.15s ease;
+}
+#review-dialog .card-footer-row .card-source[open] .prop-icon:last-child {
+  transform: rotate(180deg);
+}
+#review-dialog .card-footer-row .card-source {
+  position: relative;
   border-top: 0;
   padding-top: 0;
 }
-#review-dialog .card-footer-row .card-delete {
+#review-dialog .card-source-body {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(460px, 78vw);
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--nt-divider);
+  border-radius: 12px;
+  background: var(--nt-bg, var(--paper));
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: normal;
+}
+#review-dialog .card-source-body .review-raw {
+  margin: 0;
+}
+#review-dialog .card-source-body .entry-meta {
+  margin: 0;
+}
+#review-dialog .card-footer-row > .card-delete {
   margin-left: auto;
+  color: var(--nt-red);
+  cursor: pointer;
+}
+#review-dialog .card-footer-row .card-delete .prop-icon {
+  color: inherit;
+}
+#review-dialog .card-footer-row .card-delete:hover {
+  background: rgba(235, 87, 87, 0.1);
+  color: var(--nt-red);
+}
+#review-dialog .card-footer-row .card-delete-ask {
+  margin: 0 0 0 auto;
+  padding: 0 10px;
 }
 
 /* ── панель оформления выделенного текста ──────────────────────────────────
