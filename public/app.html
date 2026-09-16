@@ -437,6 +437,51 @@
             </p>
           </div>
 
+          <!-- Учётная запись — первой: лицо, имя и тему ищут в настройках чаще
+               всего, а ключи и календари настраивают один раз. -->
+          <fieldset class="settings-group">
+            <legend>Учётная запись</legend>
+            <p class="setting-hint" id="account-summary-line"></p>
+            <!-- Лицо в кругу и в разговоре: персонаж из набора или своя
+                 картинка. Без выбора — буква имени, как раньше. -->
+            <div class="setting avatar-setting">
+              <span class="setting-name">Аватар</span>
+              <div class="avatar-picker">
+                <div class="avatar-current" id="avatar-current"></div>
+                <div class="avatar-side">
+                  <div class="avatar-grid" id="avatar-presets" role="radiogroup" aria-label="Аватар"></div>
+                  <div class="avatar-actions">
+                    <button id="avatar-upload" class="secondary" type="button">Загрузить свою картинку</button>
+                    <input id="avatar-file" type="file" accept="image/png,image/jpeg,image/webp,image/*" hidden />
+                  </div>
+                </div>
+              </div>
+            </div>
+            <!-- Имя понадобилось кругам: «просит Аня» читается, «просит
+                 anna@example.com» — нет. Без круга оно никому не видно. -->
+            <label class="setting" for="setting-name"
+              ><span class="setting-name">Как вас зовут</span
+              ><input id="setting-name" type="text" maxlength="60" placeholder="Имя, которое видят в круге" autocomplete="nickname"
+            /></label>
+            <label class="setting" for="setting-theme"
+              ><span class="setting-name">Тема оформления</span
+              ><select id="setting-theme">
+                <option value="system">Как в системе</option>
+                <option value="light">Светлая</option>
+                <option value="dark">Тёмная</option>
+              </select></label
+            >
+            <div class="setting-actions">
+              <button id="password-change" class="secondary" type="button">
+                Сменить пароль
+              </button>
+              <button id="logout-everywhere" class="secondary" type="button">
+                Выйти на всех устройствах
+              </button>
+              <button id="account-logout-2" class="secondary" type="button">Выйти</button>
+            </div>
+          </fieldset>
+
           <fieldset class="settings-group">
             <legend>Ключи</legend>
             <label class="setting" for="setting-openaiKey"
@@ -746,49 +791,6 @@
               <button id="push-test" class="secondary" type="button" hidden>Проверить</button>
             </div>
             <p class="setting-hint">На iPhone push приходит, только если Кизуна добавлена на экран «Домой».</p>
-          </fieldset>
-
-          <fieldset class="settings-group">
-            <legend>Учётная запись</legend>
-            <p class="setting-hint" id="account-summary-line"></p>
-            <!-- Лицо в кругу и в разговоре: персонаж из набора или своя
-                 картинка. Без выбора — буква имени, как раньше. -->
-            <div class="setting avatar-setting">
-              <span class="setting-name">Аватар</span>
-              <div class="avatar-picker">
-                <div class="avatar-current" id="avatar-current"></div>
-                <div class="avatar-side">
-                  <div class="avatar-grid" id="avatar-presets" role="radiogroup" aria-label="Аватар"></div>
-                  <div class="avatar-actions">
-                    <button id="avatar-upload" class="secondary" type="button">Загрузить свою картинку</button>
-                    <input id="avatar-file" type="file" accept="image/png,image/jpeg,image/webp,image/*" hidden />
-                  </div>
-                </div>
-              </div>
-            </div>
-            <!-- Имя понадобилось кругам: «просит Аня» читается, «просит
-                 anna@example.com» — нет. Без круга оно никому не видно. -->
-            <label class="setting" for="setting-name"
-              ><span class="setting-name">Как вас зовут</span
-              ><input id="setting-name" type="text" maxlength="60" placeholder="Имя, которое видят в круге" autocomplete="nickname"
-            /></label>
-            <label class="setting" for="setting-theme"
-              ><span class="setting-name">Тема оформления</span
-              ><select id="setting-theme">
-                <option value="system">Как в системе</option>
-                <option value="light">Светлая</option>
-                <option value="dark">Тёмная</option>
-              </select></label
-            >
-            <div class="setting-actions">
-              <button id="password-change" class="secondary" type="button">
-                Сменить пароль
-              </button>
-              <button id="logout-everywhere" class="secondary" type="button">
-                Выйти на всех устройствах
-              </button>
-              <button id="account-logout-2" class="secondary" type="button">Выйти</button>
-            </div>
           </fieldset>
 
           <fieldset class="settings-group">
