@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { unclassifiedCapture, normalizeClassification, gateClassification, scheduleFromModel, shouldMaterializeProjections, validateCitations } from '../server/classifier.js';
+import { unclassifiedCapture, normalizeClassification, gateClassification, scheduleFromModel, shouldMaterializeProjections, validateCitations, settleCompleted, makeProjections } from '../server/classifier.js';
 
 const now = new Date('2026-08-21T10:00:00Z');
 const zone = 'Europe/Samara';
@@ -48,6 +48,26 @@ test('a schedule is ignored for types that cannot be scheduled and for finished 
   assert.equal(note.entities.schedule, null);
   const done = normalize('созвон прошёл', { primaryType: 'meeting_event', completed: true, entities: { projects: [], people: [], when: { date: '2026-08-21', time: '11:00' }, followUp: null } });
   assert.equal(done.entities.schedule, null);
+});
+
+// «Обсудили орг вопросы с Даниилом» модель отметила состоявшимся, но назвала
+// встречей — и в «Что делал» у записи висел кружок «Готово» с «без срока».
+test('finished work is an outcome, never an open meeting or task', () => {
+  for (const primaryType of ['meeting_event', 'task']) {
+    const result = normalize('Обсудили орг вопросы с Даниилом', {
+      primaryType, completed: true, entities: { projects: [], people: ['Даниил'], when: null, followUp: null },
+    });
+    assert.equal(result.primaryType, 'outcome_decision', primaryType);
+    assert.equal(result.claims.find(item => item.field === 'type').value, 'outcome_decision');
+    assert.deepEqual(makeProjections('capture', result, 'undo').map(item => item.projectionType), ['outcome_decision']);
+  }
+  const upcoming = normalize('Обсудить орг вопросы с Даниилом', { primaryType: 'meeting_event' });
+  assert.equal(upcoming.primaryType, 'meeting_event', 'предстоящая встреча остаётся встречей');
+  assert.equal(settleCompleted(upcoming), upcoming, 'незавершённое не трогается');
+  // Уточнение и голос приходят с готовой классификацией — правило то же.
+  const corrected = settleCompleted({ ...upcoming, completed: true, additionalTypes: ['task', 'note'] });
+  assert.equal(corrected.primaryType, 'outcome_decision');
+  assert.deepEqual(corrected.additionalTypes, ['note']);
 });
 
 test('ungrounded people and projects are rejected, grounded ones pass', () => {

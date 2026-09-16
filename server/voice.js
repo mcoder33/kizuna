@@ -12,7 +12,7 @@
 // через них, поэтому поведение совпадает, а контракт памяти не обходится.
 import { randomUUID } from 'node:crypto';
 import { enqueueCaptureJob, getAggregate, fullEntry, activeNote, saveNote, search, day, replaceInterpretation, deleteCapture, restoreCapture, captureOwner } from './db.js';
-import { parseCaptureOverrides, applyUserOverrides, gateClassification, shouldMaterializeProjections } from './classifier.js';
+import { parseCaptureOverrides, applyUserOverrides, gateClassification, shouldMaterializeProjections, settleCompleted } from './classifier.js';
 import { journalOverview, listJournal } from './journal.js';
 import { rememberFact, forgetFact, recallFacts, memoryDigest, learnQuietly } from './memory.js';
 import { dateInZone, shiftDate } from './reports.js';
@@ -699,7 +699,8 @@ export function runVoiceTool(db, name, args = {}, { now = () => new Date(), time
       classification = { ...classification, entities: { ...classification.entities, schedule: { ...schedule, ...kept, ...(endValid ? { end: endValid } : {}), display: scheduleDisplay({ date: schedule.date, time: schedule.time, end: endValid || schedule.end || null, repeat: kept.repeat || schedule.repeat || null }) } } };
     if (typeof args.project === 'string' && args.project.trim())
       classification = { ...classification, entities: { ...classification.entities, projects: [args.project.trim().slice(0, 120)] } };
-    if (typeof args.done === 'boolean') classification = { ...classification, completed: args.done };
+    // Отмеченное голосом сделанным — результат, а не дело с кружком в «Что делал».
+    if (typeof args.done === 'boolean') classification = settleCompleted({ ...classification, completed: args.done });
     replaceInterpretation(db, args.captureId, classification, 'manual', null, shouldMaterializeProjections(classification));
     // Поправка голосом учит помощника так же, как поправка в карточке: в
     // следующий раз такую же запись он разберёт уже правильно.

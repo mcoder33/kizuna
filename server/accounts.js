@@ -13,7 +13,9 @@ import {
   normalizeEmail, validEmail, MAX_FAILED_ATTEMPTS, LOCKOUT_MS,
 } from './auth.js';
 import QRCode from 'qrcode';
+import express from 'express';
 import { monthlySpend } from './db.js';
+import { avatarUrl, avatarPresets, choosePreset, saveAvatarImage, avatarImage, forgetAvatar, AVATAR_IMAGE_LIMIT } from './avatars.js';
 import {
   createUser, findUserByEmail, findUserById, countUsers, listUsers, updateUser, adoptOrphanRecords,
   createSession, findSessionUser, touchSession, deleteSession, deleteUserSessions, purgeExpiredSessions, countUserSessions,
@@ -28,6 +30,7 @@ export function publicUser(row) {
     id: row.id, email: row.email, role: row.role, status: row.status,
     // Имя видят люди в круге; без имени человека зовут по началу адреса.
     name: (row.display_name || '').trim() || String(row.email || '').split('@')[0],
+    avatar: avatarUrl(row),
     twoFactorEnabled: Boolean(row.totp_enabled),
     createdAt: row.created_at, approvedAt: row.approved_at, lastLoginAt: row.last_login_at,
     blockedAt: row.blocked_at, blockedReason: row.blocked_reason,
@@ -217,6 +220,41 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
       recoveryCodesLeft: (() => { try { return JSON.parse(req.user.recovery_codes_json || '[]').length; } catch { return 0; } })(),
     }));
 
+    // ── аватар ──
+    // Персонаж выбирается из набора, своя картинка приходит уже ужатой
+    // браузером. Смотреть чужое лицо может любой вошедший: оно видно в круге и
+    // в разговоре, а адрес картинки знает только тот, кому показали человека.
+    const AVATAR_ERRORS = {
+      unknown_preset: [400, 'Такого персонажа нет в наборе.'],
+      empty_image: [400, 'Картинка пустая.'],
+      not_an_image: [415, 'Подходят только PNG, JPEG и WebP.'],
+      image_too_large: [413, 'Картинка слишком большая.'],
+    };
+    const avatarReply = (req, res, result) => {
+      if (result.error) { const [status, message] = AVATAR_ERRORS[result.error]; return fail(res, status, result.error, message); }
+      res.json({ me: publicUser(findUserById(db, req.user.id)) });
+    };
+    app.get('/api/account/avatars', requireAuth, (req, res) => res.json({ presets: avatarPresets() }));
+    app.put('/api/account/avatar', requireAuth, (req, res, next) => {
+      try {
+        const preset = req.body?.preset ?? null;
+        if (preset !== null && typeof preset !== 'string') return fail(res, 400, 'unknown_preset', AVATAR_ERRORS.unknown_preset[1]);
+        avatarReply(req, res, choosePreset(db, req.user.id, preset));
+      } catch (error) { next(error); }
+    });
+    app.post('/api/account/avatar/image', requireAuth, express.raw({ type: () => true, limit: AVATAR_IMAGE_LIMIT }), (req, res, next) => {
+      try { avatarReply(req, res, saveAvatarImage(db, req.user.id, Buffer.isBuffer(req.body) ? req.body : null, now())); }
+      catch (error) { next(error); }
+    });
+    app.get('/api/avatars/:userId', requireAuth, (req, res) => {
+      const image = avatarImage(db, req.params.userId);
+      if (!image) return fail(res, 404, 'not_found', 'Картинки нет.');
+      // Адрес меняется вместе с картинкой (?v=), поэтому кешировать можно
+      // надолго; sniff и CSP — чтобы байты не стали ничем, кроме картинки.
+      res.set({ 'Content-Type': image.mime, 'Cache-Control': 'private, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'" });
+      res.send(image.bytes);
+    });
+
     app.post('/api/auth/logout-everywhere', requireAuth, (req, res) => {
       deleteUserSessions(db, req.user.id);
       logAuthEvent(db, { userId: req.user.id, email: req.user.email, event: 'logout_all', result: 'succeeded' });
@@ -384,6 +422,7 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
         // Память помощника про этого человека уходит вместе с ним: без хозяина
         // она никому не видна и ничего не уточняет.
         db.prepare('DELETE FROM agent_memories WHERE user_id=?').run(target.id);
+        forgetAvatar(db, target.id);
         db.prepare('DELETE FROM users WHERE id=?').run(target.id);
         logAuthEvent(db, { email: target.email, event: 'admin_delete', result: 'succeeded', detail: `от ${req.user.email}` });
         res.json({ ok: true });

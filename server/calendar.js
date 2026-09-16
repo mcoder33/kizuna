@@ -495,6 +495,9 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
       if (!budget()) break;
       const capture = db.prepare(captureQuery).get(link.capture_id);
       const c = capture && !capture.deleted_at && capture.classification_json ? JSON.parse(capture.classification_json) : null;
+      // Сделанное — результат, а не встреча (settleCompleted): событие о нём
+      // уже было и из календаря не пропадает, но и переписывать его незачем.
+      if (c?.completed) continue;
       let event = c && ['task', 'meeting_event'].includes(c.primaryType) && hasActiveProjection(capture.id) ? eventFromCapture(capture, tz) : null;
       // Выключенная автоотправка не забирает уже отправленное: события живут
       // дальше как ручные. А суженный режим («только встречи») дела убирает.

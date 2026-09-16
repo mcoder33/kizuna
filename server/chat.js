@@ -156,14 +156,14 @@ export function messages(db, roomId, userId, { before = null, limit = PAGE_SIZE 
   const room = findRoom(db, roomId);
   if (!room || !inRoom(db, room, userId)) return { error: 'not_found' };
   const rows = db
-    .prepare(`SELECT m.*, u.email, u.display_name FROM chat_messages m LEFT JOIN users u ON u.id=m.author_id
+    .prepare(`SELECT m.*, u.email, u.display_name, u.avatar FROM chat_messages m LEFT JOIN users u ON u.id=m.author_id
       WHERE m.room_id=? AND m.deleted_at IS NULL ${before ? 'AND m.created_at < ?' : ''} ORDER BY m.created_at DESC LIMIT ?`)
     .all(...(before ? [roomId, before, limit] : [roomId, limit]));
   const ids = rows.map(row => row.id);
   const mentions = new Map();
   if (ids.length)
     for (const row of db
-      .prepare(`SELECT cm.message_id, u.id, u.email, u.display_name FROM chat_mentions cm JOIN users u ON u.id=cm.user_id
+      .prepare(`SELECT cm.message_id, u.id, u.email, u.display_name, u.avatar FROM chat_mentions cm JOIN users u ON u.id=cm.user_id
         WHERE cm.message_id IN (${ids.map(() => '?').join(',')})`)
       .iterate(...ids)) {
       if (!mentions.has(row.message_id)) mentions.set(row.message_id, []);
@@ -222,7 +222,7 @@ export function markRead(db, roomId, userId, at = now()) {
 export function unseenCalls(db, userId) {
   return db
     .prepare(`SELECT cm.message_id, m.body, m.created_at, m.room_id, r.name AS room_name, r.circle_id, c.name AS circle_name, c.color,
-        u.email, u.display_name, m.author_id FROM chat_mentions cm
+        u.email, u.display_name, u.avatar, m.author_id FROM chat_mentions cm
       JOIN chat_messages m ON m.id=cm.message_id JOIN chat_rooms r ON r.id=m.room_id JOIN circles c ON c.id=r.circle_id
       JOIN users u ON u.id=m.author_id
       WHERE cm.user_id=? AND cm.seen_at IS NULL AND m.deleted_at IS NULL AND r.archived_at IS NULL AND c.deleted_at IS NULL

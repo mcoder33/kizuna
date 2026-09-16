@@ -2221,7 +2221,19 @@ function showReview(entry, review, undoGroupId, provenance) {
     doneToggle.setAttribute("aria-label", doneToggle.title);
     doneToggle.classList.toggle("is-done", done);
   };
-  doneToggle.addEventListener("click", () => { done = !done; paintDone(); });
+  // Сделанное — результат: у встречи или дела с отметкой «сделано» в «Что
+  // делал» остался бы кружок, который нечего отмечать. Сервер держит то же
+  // правило, а карточка показывает его сразу — и в обратную сторону: запись,
+  // названная встречей или делом, снова предстоит.
+  const openType = () => ["task", "meeting_event"].includes(type.value);
+  doneToggle.addEventListener("click", () => {
+    done = !done;
+    if (done && openType()) {
+      type.value = "outcome_decision";
+      type.dispatchEvent(new Event("change"));
+    }
+    paintDone();
+  });
   paintDone();
 
   const scheduleRow = node("div", undefined, "review-schedule");
@@ -2297,7 +2309,10 @@ function showReview(entry, review, undoGroupId, provenance) {
     }
     propsSummary.classList.toggle("is-label", propsOpen);
   };
-  type.addEventListener("change", () => { updateVisibility(); });
+  type.addEventListener("change", () => {
+    if (done && openType()) { done = false; paintDone(); }
+    updateVisibility();
+  });
   updateVisibility();
   propsBar.addEventListener("click", () => { propsOpen = !propsOpen; paintProps(); });
   paintProps();
@@ -3452,18 +3467,21 @@ const VOICE_MODEL_FIELDS = [
 ];
 const CUSTOM_MODEL = "другая";
 let voiceModelCatalogue = null;
+function voiceModelOptions(provider, chosen) {
+  const listed = voiceModelCatalogue?.[provider] || [];
+  // Выбранное не выпадает из списка, даже когда каталог его не назвал: иначе
+  // настройка молча сменилась бы на первую строку.
+  return !chosen || listed.some((entry) => entry.id === chosen)
+    ? listed
+    : [{ id: chosen, label: chosen.replace(/^models\//, "") }, ...listed];
+}
 function paintVoiceModels() {
+  paintVoiceQuickModel();
   for (const [provider, name] of VOICE_MODEL_FIELDS) {
     const picker = settingInput(name);
     if (!picker) continue;
     const chosen = String(appSettings[name] ?? "");
-    const listed = voiceModelCatalogue?.[provider] || [];
-    // Выбранное не выпадает из списка, даже когда каталог его не назвал: иначе
-    // настройка молча сменилась бы на первую строку.
-    const options =
-      !chosen || listed.some((entry) => entry.id === chosen)
-        ? listed
-        : [{ id: chosen, label: chosen.replace(/^models\//, "") }, ...listed];
+    const options = voiceModelOptions(provider, chosen);
     clear(picker);
     for (const entry of options) {
       const option = node("option", entry.label || entry.id);
@@ -3481,18 +3499,23 @@ function paintVoiceModels() {
     }
   }
 }
+let voiceModelsInFlight = false;
 async function loadVoiceModels() {
-  if (!settingInput("voiceModel")) return;
+  if (!settingInput("voiceModel") || voiceModelsInFlight) return;
+  voiceModelsInFlight = true;
   try {
     voiceModelCatalogue = (await request("/api/voice/models")).models;
     paintVoiceModels();
   } catch {
     // Каталог не ответил — остаётся выбранное и поле для имени: выбор модели
     // не должен пропадать из-за осечки сети.
+  } finally {
+    voiceModelsInFlight = false;
   }
 }
 // Быстрое переключение голоса живёт там же, где выбор модели: и то и другое —
 // «чем сейчас работать». Показывается, только когда есть из чего выбирать.
+let quickVoice = { provider: null, field: "voiceModel", editable: false };
 function paintVoiceQuickPicker(payload) {
   const label = document.querySelector(".voice-quick-picker"),
     picker = $("#voice-quick-provider");
@@ -3503,6 +3526,33 @@ function paintVoiceQuickPicker(payload) {
   for (const option of picker.options) option.hidden = !configured.includes(option.value);
   label.hidden = configured.length < 2;
   picker.value = payload.settings?.voiceProvider || payload.voice?.provider || configured[0] || "openai";
+  const field = picker.value === "gemini" ? "geminiVoiceModel" : "voiceModel";
+  quickVoice = {
+    provider: configured.includes(picker.value) ? picker.value : null,
+    field,
+    editable: (payload.editable || SETTING_FIELDS).includes(field),
+  };
+}
+// Модель голоса — под провайдером: тоже «чем сейчас говорить». Выбирать её
+// есть смысл, только когда у провайдера есть ключ и настройки правит этот
+// человек. Список — тот же каталог провайдера, что и в настройках; пока он
+// не пришёл, в списке хотя бы выбранная модель.
+function paintVoiceQuickModel() {
+  const label = document.querySelector(".voice-model-quick-picker"),
+    picker = $("#voice-quick-model");
+  if (!label || !picker) return;
+  label.hidden = !quickVoice.provider || !quickVoice.editable;
+  if (label.hidden) return;
+  const chosen = String(appSettings[quickVoice.field] ?? "");
+  clear(picker);
+  for (const entry of voiceModelOptions(quickVoice.provider, chosen)) {
+    const option = node("option", entry.label || entry.id);
+    option.value = entry.id;
+    picker.append(option);
+  }
+  picker.value = chosen;
+  // Меню открыли раньше, чем пришли настройки, — каталог спрашивается сейчас.
+  if (!voiceModelCatalogue && document.querySelector("details.ai-menu")?.open) loadVoiceModels();
 }
 function paintSettings(payload) {
   paintVoiceChoices(payload.voices);
@@ -3761,6 +3811,18 @@ $("#voice-quick-provider")?.addEventListener("change", (event) => {
     { announce: `Голос: ${voiceProviderNames[chosen] || chosen}` },
   );
 });
+$("#voice-quick-model")?.addEventListener("change", (event) => {
+  const picker = event.target;
+  saveSettings(
+    { [quickVoice.field]: picker.value },
+    { announce: `Модель голоса: ${picker.selectedOptions[0]?.textContent || picker.value}` },
+  );
+});
+// За каталогом моделей сервер ходит к провайдеру, поэтому меню спрашивает его,
+// когда его открыли, а не на каждой загрузке страницы.
+document.querySelector("details.ai-menu")?.addEventListener("toggle", (event) => {
+  if (event.target.open && !voiceModelCatalogue && quickVoice.provider && quickVoice.editable) loadVoiceModels();
+});
 $("#settings-forget")?.addEventListener("click", () => {
   saveSettings(Object.fromEntries(SECRET_FIELDS.map((name) => [name, ""])));
 });
@@ -3988,9 +4050,7 @@ async function loadAccount() {
   } catch {
     return;
   }
-  const short = currentUser.email.split("@")[0];
-  $("#account-summary").textContent = short.slice(0, 2).toUpperCase();
-  $("#account-summary").title = currentUser.email;
+  paintAccountChip();
   $("#account-email").textContent = currentUser.email;
   $("#account-role").textContent = roleNames[currentUser.role] || currentUser.role;
   $("#account-admin-link").hidden = currentUser.role !== "admin";
@@ -3999,8 +4059,109 @@ async function loadAccount() {
     line.textContent = `${currentUser.email} · ${roleNames[currentUser.role]} · вход защищён ${currentUser.twoFactorEnabled ? "паролем и вторым фактором" : "только паролем"}`;
   const nameInput = $("#setting-name");
   if (nameInput && document.activeElement !== nameInput) nameInput.value = currentUser.name || "";
+  paintAvatarPicker();
   paintTotp();
 }
+// Значок в шапке — то же лицо, что видят люди в круге: картинка, если она
+// выбрана, иначе две буквы адреса.
+function paintAccountChip() {
+  const chip = $("#account-summary");
+  if (!chip || !currentUser) return;
+  chip.textContent = currentUser.email.split("@")[0].slice(0, 2).toUpperCase();
+  chip.title = currentUser.email;
+  pictureInto(chip, currentUser.avatar);
+}
+// ── аватар ──
+// Персонаж из набора или своя картинка; «Буква» возвращает кружок с началом
+// имени. Картинку ужимает браузер — на сервер уходит квадрат 256 px, а не
+// двенадцать мегапикселей с телефона.
+const AVATAR_SIDE = 256;
+let avatarPresets = null;
+async function paintAvatarPicker() {
+  const grid = $("#avatar-presets");
+  if (!grid || !currentUser) return;
+  if (!avatarPresets) {
+    try { avatarPresets = (await request("/api/account/avatars")).presets; }
+    catch { return; }
+  }
+  const current = $("#avatar-current");
+  clear(current);
+  current.append(avatarEl(currentUser, { size: "huge" }));
+  clear(grid);
+  const choice = (label, content, chosen, onPick) => {
+    const button = node("button", undefined, "avatar-choice");
+    button.type = "button";
+    button.title = label;
+    button.setAttribute("role", "radio");
+    button.setAttribute("aria-label", label);
+    button.setAttribute("aria-checked", String(chosen));
+    button.append(content);
+    button.addEventListener("click", onPick);
+    grid.append(button);
+  };
+  choice("Буква имени", avatarEl({ ...currentUser, avatar: null }), !currentUser.avatar, () => chooseAvatar(null));
+  for (const preset of avatarPresets)
+    choice(preset.label, avatarEl({ name: preset.label, avatar: preset.url }), currentUser.avatar === preset.url, () => chooseAvatar(preset.id));
+}
+async function avatarSaved(result, message) {
+  currentUser = { ...currentUser, ...result.me };
+  paintAccountChip();
+  paintAvatarPicker();
+  toast(message);
+  // Лицо видно в кругах, в обсуждении и в полосе «к вам» — они перечитываются.
+  await load();
+}
+async function chooseAvatar(presetId) {
+  try {
+    const result = await request("/api/account/avatar", { method: "PUT", body: JSON.stringify({ preset: presetId }) });
+    await avatarSaved(result, presetId ? "Аватар выбран" : "Снова буква имени");
+  } catch (error) { toast(error.message || "Аватар не сохранился"); }
+}
+// Квадрат по центру картинки: лицо на фото обычно в середине, а кружок всё
+// равно срежет углы. Картинка читается обычным <img>: createImageBitmap
+// строже и отказывается от файлов, которые браузер спокойно показывает.
+async function squareAvatar(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    const side = Math.min(image.naturalWidth, image.naturalHeight);
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = AVATAR_SIDE;
+    const draw = (background) => {
+      const context = canvas.getContext("2d");
+      context.clearRect(0, 0, AVATAR_SIDE, AVATAR_SIDE);
+      if (background) { context.fillStyle = background; context.fillRect(0, 0, AVATAR_SIDE, AVATAR_SIDE); }
+      context.drawImage(image, (image.naturalWidth - side) / 2, (image.naturalHeight - side) / 2, side, side, 0, 0, AVATAR_SIDE, AVATAR_SIDE);
+    };
+    const encode = (type) => new Promise((resolve) => canvas.toBlob(resolve, type, 0.9));
+    draw(null);
+    const webp = await encode("image/webp");
+    if (webp?.type === "image/webp") return webp;
+    // Safari не умеет сохранять WebP и молча отдаёт PNG на сотни килобайт —
+    // тогда JPEG, а прозрачное становится белым.
+    draw("#ffffff");
+    return await encode("image/jpeg");
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+$("#avatar-upload")?.addEventListener("click", () => $("#avatar-file").click());
+$("#avatar-file")?.addEventListener("change", async (event) => {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  try {
+    const image = await squareAvatar(file);
+    const response = await fetch("/api/account/avatar/image", { method: "POST", headers: { "Content-Type": image.type }, body: image });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error?.message || "Картинка не загрузилась");
+    await avatarSaved(result, "Картинка поставлена");
+  } catch (error) {
+    toast(error instanceof DOMException ? "Это не похоже на картинку" : error.message || "Картинка не загрузилась");
+  }
+});
 // Имя сохраняется само, когда поле отпустили: отдельной кнопки «Сохранить» в
 // настройках нет ни у чего.
 $("#setting-name")?.addEventListener("change", async (event) => {

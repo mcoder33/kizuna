@@ -239,9 +239,25 @@ test("the done toggle overrides the model and moves the entry into reported work
   if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
   await page.locator("#review-completed").click();
   await expect(page.locator("#review-completed")).toHaveAttribute("aria-pressed", "true");
+  // Сделанное — результат: отмечать в нём больше нечего.
+  await expect(page.locator("#review-primary-type")).toHaveValue("outcome_decision");
   await page.locator("#review-close").click();
   await expect(page.locator("#journal")).toContainText(raw);
   await expect(page.locator("#todo")).not.toContainText(raw);
+  const row = page.locator("#journal .entry").filter({ hasText: raw });
+  await expect(row).toContainText("результат");
+  await expect(row).not.toContainText("без срока");
+  await expect(row.locator(".completion-button")).toHaveCount(0);
+
+  // Назвать запись снова делом — значит вернуть её в работу.
+  await showTab(page, /Что делал/);
+  await openCard(page, "#journal", raw);
+  if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
+  await page.locator("#review-primary-type").selectOption("task");
+  await expect(page.locator("#review-completed")).toHaveAttribute("aria-pressed", "false");
+  await page.locator("#review-close").click();
+  await expect(page.locator("#todo")).toContainText(raw);
+  await expect(page.locator("#journal")).not.toContainText(raw);
 });
 
 test("properties changed in the card are saved when Escape closes it", async ({ page }) => {

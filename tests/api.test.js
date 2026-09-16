@@ -1,4 +1,4 @@
-import test from 'node:test';import assert from 'node:assert/strict';import http from 'node:http';import request from 'supertest';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import { createApp } from '../server/index.js';import { fakeModelService, fakeModelClassification } from './helpers/fake-model.js';import { authed } from './helpers/auth.js';
+import test from 'node:test';import assert from 'node:assert/strict';import http from 'node:http';import request from 'supertest';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import { createApp } from '../server/index.js';import { openDatabase, createLedger } from '../server/db.js';import { fakeModelService, fakeModelClassification } from './helpers/fake-model.js';import { authed } from './helpers/auth.js';
 function app(){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pagent-'));return createApp({aiService:fakeModelService(),databasePath:path.join(dir,'test.sqlite')})}
 // Журнал у каждого свой, поэтому запрос без учётной записи получает 401:
 // тесты ходят от лица заведённого администратора.
@@ -131,4 +131,41 @@ test('a manually chosen «результат» counts as reported work, other ma
   assert.equal(asOutcome.interpretation.classification.completed,true);
   const explicit=(await api.post(`/api/captures/${created.id}/corrections`).send({patch:{primaryType:'outcome_decision',completed:false}}).expect(200)).body.entry;
   assert.equal(explicit.interpretation.classification.completed,false);
+});
+
+// Сделанное — результат: отметка «сделано» у дела не оставляет в «Что делал»
+// кружка, который нечего отмечать, а названная делом запись снова предстоит.
+test('a task marked done becomes an outcome, and naming it a task again reopens it',async()=>{const api=signedIn();
+  const created=(await api.post('/api/captures').send({raw:'Нужно проверить отметку сделанного'}).expect(201)).body.entry;
+  assert.deepEqual(created.projections.map(projection=>projection.type),['task']);
+  const done=(await api.post(`/api/captures/${created.id}/corrections`).send({patch:{completed:true}}).expect(200)).body.entry;
+  assert.equal(done.interpretation.classification.primaryType,'outcome_decision');
+  assert.equal(done.interpretation.classification.completed,true);
+  assert.deepEqual(done.projections.map(projection=>projection.type),['outcome_decision']);
+  const reopened=(await api.post(`/api/captures/${created.id}/corrections`).send({patch:{primaryType:'task',completed:false}}).expect(200)).body.entry;
+  assert.equal(reopened.interpretation.classification.primaryType,'task');
+  assert.deepEqual(reopened.projections.map(projection=>projection.type),['task']);
+});
+
+// Записи, разобранные до правила, чинятся при старте новой версией разбора:
+// прежняя остаётся в истории, провайдер и модель — те же.
+test('a stored finished meeting is settled into an outcome when the journal opens',()=>{const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pagent-settle-')),databasePath=path.join(dir,'test.sqlite');
+  const classification={primaryType:'meeting_event',summary:'Обсудили орг вопросы с Даниилом',entities:{projects:[],people:['Даниил'],schedule:null,followUp:null},additionalTypes:[],proposedActions:[],completed:true,ambiguity:null,claims:[{field:'type',value:'meeting_event',kind:'inference',confidence:0.9,provenance:{source:'model'},essential:true}],confidence:{type:0.9},conflicts:{projects:false,schedule:false}};
+  let db=openDatabase(databasePath);
+  const {captureId}=createLedger(db,{raw:'Обсудили орг вопросы с Даниилом',classification,provider:'openrouter',model:'google/gemini-3.5-flash-lite'});
+  assert.deepEqual(db.prepare("SELECT projection_type FROM projections WHERE capture_id=? AND status='active'").all(captureId).map(row=>row.projection_type),['meeting_event']);
+  db.close();
+  for(let pass=0;pass<2;pass+=1){
+    db=openDatabase(databasePath);
+    const active=db.prepare("SELECT version,provider,model,classification_json FROM interpretations WHERE capture_id=? AND status='active'").get(captureId);
+    assert.equal(active.version,2,'второе открытие ничего не переписывает');
+    assert.equal(active.provider,'openrouter');
+    assert.equal(active.model,'google/gemini-3.5-flash-lite');
+    const settled=JSON.parse(active.classification_json);
+    assert.equal(settled.primaryType,'outcome_decision');
+    assert.equal(settled.completed,true);
+    assert.deepEqual(db.prepare("SELECT projection_type FROM projections WHERE capture_id=? AND status='active'").all(captureId).map(row=>row.projection_type),['outcome_decision']);
+    assert.equal(db.prepare("SELECT COUNT(*) count FROM interpretations WHERE capture_id=? AND status='superseded'").get(captureId).count,1);
+    db.close();
+  }
 });

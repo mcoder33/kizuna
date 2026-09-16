@@ -902,6 +902,69 @@ test("голос переключается прямо из шапки", async (
   await expect(page.locator("#toast")).toContainText("Голос: Google Gemini");
 });
 
+// Модель голоса — там же, под голосом: сменить её можно, не уходя в настройки.
+// Список — каталог того провайдера, что выбран сейчас.
+test("модель голоса выбирается прямо из шапки", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  let saved = null;
+  const settings = {
+    voiceProvider: "gemini",
+    voiceModel: "gpt-realtime",
+    geminiVoiceModel: "models/gemini-3.1-flash-live-preview",
+    sleepAfterSeconds: "25",
+    wakeWord: "кизуна",
+  };
+  const payload = () => ({
+    settings,
+    voice: {
+      configured: true,
+      provider: settings.voiceProvider,
+      mode: "live",
+      providers: { openai: { configured: true }, gemini: { configured: true } },
+    },
+    voices: { openai: [], gemini: [] },
+    timeZone: "Europe/Samara",
+  });
+  await page.route("**/api/settings", async (route) => {
+    if (route.request().method() === "PUT") {
+      saved = JSON.parse(route.request().postData() || "{}");
+      Object.assign(settings, saved);
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(payload()) });
+  });
+  await page.route("**/api/voice/models", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        models: {
+          openai: [{ id: "gpt-realtime", label: "gpt-realtime" }, { id: "gpt-realtime-mini", label: "gpt-realtime-mini" }],
+          gemini: [
+            { id: "models/gemini-3.1-flash-live-preview", label: "Gemini 3.1 Flash Live" },
+            { id: "models/gemini-2.5-flash-native-audio", label: "Gemini 2.5 Flash Native Audio" },
+          ],
+        },
+      }),
+    }),
+  );
+  await page.goto("/");
+
+  await page.locator(".ai-menu summary").click();
+  const model = page.locator("#voice-quick-model");
+  await expect(model).toBeVisible();
+  await expect(model.locator("option")).toHaveText(["Gemini 3.1 Flash Live", "Gemini 2.5 Flash Native Audio"]);
+  await expect(model).toHaveValue("models/gemini-3.1-flash-live-preview");
+
+  await model.selectOption("models/gemini-2.5-flash-native-audio");
+  await expect.poll(() => saved?.geminiVoiceModel).toBe("models/gemini-2.5-flash-native-audio");
+  await expect(page.locator("#toast")).toContainText("Модель голоса: Gemini 2.5 Flash Native Audio");
+
+  // Сменили голос — и модели в списке уже его.
+  await page.locator("#voice-quick-provider").selectOption("openai");
+  await expect(model.locator("option")).toHaveText(["gpt-realtime", "gpt-realtime-mini"]);
+  await expect(model).toHaveValue("gpt-realtime");
+});
+
 test("с одним ключом переключать голос нечем", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   await page.route("**/api/settings", (route) =>
@@ -925,6 +988,8 @@ test("с одним ключом переключать голос нечем", 
   await page.locator(".ai-menu summary").click();
   // Выбора нет — и строки нет: пустой список только мешал бы.
   await expect(page.locator(".voice-quick-picker")).toBeHidden();
+  // А модель у единственного голоса выбрать можно.
+  await expect(page.locator("#voice-quick-model")).toBeVisible();
 });
 
 // На телефоне экран разговора уезжал вправо: «Обзор» и «Настройки» держали

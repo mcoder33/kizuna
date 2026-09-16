@@ -241,6 +241,13 @@ test('автосинк с Яндексом: дела и встречи уход�
   calls.length = 0;
   await app.calendar.autoExport();
   assert.equal(calls.filter(call => call.method === 'DELETE').length, 0);
+  // «Сделано» в карточке делает запись результатом — а состоявшееся из
+  // календаря от этого не пропадает и больше не переписывается.
+  const settled = (await api.post(`/api/captures/${todo.id}/corrections`).send({ patch: { completed: true } }).expect(200)).body.entry;
+  assert.equal(settled.interpretation.classification.primaryType, 'outcome_decision');
+  calls.length = 0;
+  await app.calendar.autoExport();
+  assert.deepEqual(calls.filter(call => ['PUT', 'DELETE'].includes(call.method)), []);
   await api.delete(`/api/captures/${todo.id}`).expect(200);
   calls.length = 0;
   const removed = await app.calendar.autoExport();

@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { makeProjections, gateClassification, shouldMaterializeProjections, actionClassification } from './classifier.js';
+import { makeProjections, gateClassification, shouldMaterializeProjections, actionClassification, settleCompleted } from './classifier.js';
 import { occursOn, nextOccurrence } from './repeat.js';
 
 export function openDatabase(filename) {
@@ -11,6 +11,7 @@ export function openDatabase(filename) {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   migrate(db);
+  settleCompletedRecords(db);
   repairMissingProjections(db);
   return db;
 }
@@ -433,6 +434,10 @@ function migrateUsers(db) {
   // Имя человека понадобилось кругам: «просит Аня» читается, «просит
   // anna@example.com» — нет. Пустое имя значит «зовите по началу адреса».
   if (!userColumns.has('display_name')) db.exec('ALTER TABLE users ADD COLUMN display_name TEXT');
+  // Аватар: «preset:fox» — персонаж из набора, «photo:<версия>» — своя картинка,
+  // пусто — буква имени. Байты картинки лежат отдельно (server/avatars.js).
+  if (!userColumns.has('avatar')) db.exec('ALTER TABLE users ADD COLUMN avatar TEXT');
+  db.exec('CREATE TABLE IF NOT EXISTS user_avatars (user_id TEXT PRIMARY KEY REFERENCES users(id), mime TEXT NOT NULL, bytes BLOB NOT NULL, updated_at TEXT NOT NULL)');
   const captureColumns = new Set(db.prepare('PRAGMA table_info(captures)').all().map(column => column.name));
   if (!captureColumns.has('user_id')) db.exec('ALTER TABLE captures ADD COLUMN user_id TEXT REFERENCES users(id)');
   db.exec('CREATE INDEX IF NOT EXISTS captures_user ON captures(user_id, created_at)');
@@ -995,6 +1000,25 @@ function repairMissingProjections(db) {
       if (missing.length) insertProjections(db, interpretation.id, missing, now());
     }
   });
+}
+// Сделанное — результат (settleCompleted в classifier.js). Записи, разобранные
+// раньше этого правила, остались «встречей» или «делом» с отметкой «сделано» и
+// лежат в «Что делал» с кружком, который нечего отмечать. Они получают новую
+// версию разбора от того же провайдера — прежняя остаётся в истории, как при
+// любой замене. Выборка пустеет после первого прохода.
+function settleCompletedRecords(db) {
+  const rows = db.prepare(`SELECT i.capture_id,i.provider,i.model,i.classification_json
+    FROM interpretations i JOIN captures c ON c.id=i.capture_id
+    WHERE i.status='active' AND c.deleted_at IS NULL AND json_extract(i.classification_json,'$.completed')=1
+      AND (json_extract(i.classification_json,'$.primaryType') IN ('task','meeting_event')
+        OR EXISTS (SELECT 1 FROM json_each(i.classification_json,'$.additionalTypes') WHERE value IN ('task','meeting_event')))`).all();
+  for (const row of rows) {
+    let classification;
+    try { classification = JSON.parse(row.classification_json); }
+    catch { continue; }
+    const settled = settleCompleted(classification);
+    if (settled !== classification) replaceInterpretation(db, row.capture_id, settled, row.provider, null, shouldMaterializeProjections(settled), row.model);
+  }
 }
 export function replaceInterpretation(db, captureId, classification, provider, correction = null, createProjections = true, model = null) {
   return withImmediateTransaction(db,()=>{

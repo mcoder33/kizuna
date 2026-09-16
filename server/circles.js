@@ -11,6 +11,7 @@
 // «к вам», и человек отвечает «беру» или «не я». До ответа автор видит честное
 // «ждёт ответа», а не выдуманное «в работе».
 import crypto from 'node:crypto';
+import { avatarUrl } from './avatars.js';
 
 const now = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
@@ -34,7 +35,7 @@ export function displayName(user) {
   return name || String(user.email || '').split('@')[0] || 'кто-то';
 }
 export function publicUser(user) {
-  return { id: user.id, name: displayName(user), email: user.email, initial: displayName(user).slice(0, 1).toUpperCase() };
+  return { id: user.id, name: displayName(user), email: user.email, initial: displayName(user).slice(0, 1).toUpperCase(), avatar: avatarUrl(user) };
 }
 export function setDisplayName(db, userId, value) {
   const name = String(value ?? '').trim().slice(0, NAME_LIMIT);
@@ -235,7 +236,7 @@ export function addMember(db, circleId, userId, personId) {
 // «к вам»: добавить молча — то же самое, что положить дело в чужой день молча.
 export function newCircles(db, userId) {
   return db
-    .prepare(`SELECT c.id, c.name, c.color, m.joined_at, m.added_by, u.email, u.display_name FROM circle_members m
+    .prepare(`SELECT c.id, c.name, c.color, m.joined_at, m.added_by, u.email, u.display_name, u.avatar FROM circle_members m
       JOIN circles c ON c.id=m.circle_id LEFT JOIN users u ON u.id=m.added_by
       WHERE m.user_id=? AND m.left_at IS NULL AND m.added_by IS NOT NULL AND m.seen_at IS NULL AND c.deleted_at IS NULL
       ORDER BY m.joined_at`)
@@ -406,12 +407,12 @@ export function assignmentsTo(db, userId, states = ['pending', 'accepted']) {
 
 export function comments(db, captureId) {
   const rows = db
-    .prepare(`SELECT m.*, u.email, u.display_name FROM comments m JOIN users u ON u.id=m.author_id
+    .prepare(`SELECT m.*, u.email, u.display_name, u.avatar FROM comments m JOIN users u ON u.id=m.author_id
       WHERE m.capture_id=? AND m.deleted_at IS NULL ORDER BY m.created_at`)
     .all(captureId);
   const mentions = new Map();
   for (const row of db
-    .prepare(`SELECT cm.comment_id, u.id, u.email, u.display_name FROM comment_mentions cm JOIN users u ON u.id=cm.user_id
+    .prepare(`SELECT cm.comment_id, u.id, u.email, u.display_name, u.avatar FROM comment_mentions cm JOIN users u ON u.id=cm.user_id
       JOIN comments c ON c.id=cm.comment_id WHERE c.capture_id=?`)
     .iterate(captureId)) {
     if (!mentions.has(row.comment_id)) mentions.set(row.comment_id, []);
@@ -456,7 +457,7 @@ function ownerAsCallable(db, captureId, authorId) {
 }
 export function unseenMentions(db, userId) {
   return db
-    .prepare(`SELECT cm.comment_id, c.id AS capture_id, c.raw, m.body, m.created_at, u.email, u.display_name, m.author_id
+    .prepare(`SELECT cm.comment_id, c.id AS capture_id, c.raw, m.body, m.created_at, u.email, u.display_name, u.avatar, m.author_id
       FROM comment_mentions cm JOIN comments m ON m.id=cm.comment_id JOIN captures c ON c.id=m.capture_id JOIN users u ON u.id=m.author_id
       WHERE cm.user_id=? AND cm.seen_at IS NULL AND m.deleted_at IS NULL AND c.deleted_at IS NULL ORDER BY m.created_at`)
     .all(userId)

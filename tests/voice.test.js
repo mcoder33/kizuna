@@ -317,6 +317,9 @@ test('update_capture changes the parse and refuses what is still being parsed', 
   assert.equal(done.captureId, created.captureId);
   const stored = JSON.parse(db.prepare("SELECT classification_json FROM interpretations WHERE capture_id=? AND status='active'").get(created.captureId).classification_json);
   assert.equal(stored.completed, true);
+  // Сделанное — результат: дело с кружком в «Что делал» не остаётся.
+  assert.equal(stored.primaryType, 'outcome_decision');
+  assert.deepEqual(db.prepare("SELECT projection_type FROM projections WHERE capture_id=? AND status='active'").all(created.captureId).map(row => row.projection_type), ['outcome_decision']);
   // Исходный текст записи правки не трогают.
   assert.equal(db.prepare('SELECT raw FROM captures WHERE id=?').get(created.captureId).raw, 'подготовить отчёт');
 });

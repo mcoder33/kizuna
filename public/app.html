@@ -57,6 +57,9 @@
               <option value="openai">OpenAI</option>
               <option value="gemini">Google Gemini</option>
             </select></label
+          ><label class="provider-picker voice-model-quick-picker" for="voice-quick-model" hidden
+            ><span>Модель голоса</span
+            ><select id="voice-quick-model" aria-label="Модель голоса"></select></label
           >
           <a class="ai-menu-more" href="#settings">Все настройки →</a>
         </div>
@@ -706,6 +709,21 @@
           <fieldset class="settings-group">
             <legend>Учётная запись</legend>
             <p class="setting-hint" id="account-summary-line"></p>
+            <!-- Лицо в кругу и в разговоре: персонаж из набора или своя
+                 картинка. Без выбора — буква имени, как раньше. -->
+            <div class="setting avatar-setting">
+              <span class="setting-name">Аватар</span>
+              <div class="avatar-picker">
+                <div class="avatar-current" id="avatar-current"></div>
+                <div class="avatar-side">
+                  <div class="avatar-grid" id="avatar-presets" role="radiogroup" aria-label="Аватар"></div>
+                  <div class="avatar-actions">
+                    <button id="avatar-upload" class="secondary" type="button">Загрузить свою картинку</button>
+                    <input id="avatar-file" type="file" accept="image/png,image/jpeg,image/webp,image/*" hidden />
+                  </div>
+                </div>
+              </div>
+            </div>
             <!-- Имя понадобилось кругам: «просит Аня» читается, «просит
                  anna@example.com» — нет. Без круга оно никому не видно. -->
             <label class="setting" for="setting-name"

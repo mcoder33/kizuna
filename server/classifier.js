@@ -117,10 +117,25 @@ export function unclassifiedCapture(raw=''){
 }
 export const classifyFallback=(raw='')=>unclassifiedCapture(raw);
 
+// Сделанное — это результат. Модель честно отмечала «Обсудили орг вопросы с
+// Даниилом» как состоявшееся, но оставляла тип «встреча», и запись лежала в
+// «Что делал» с кружком «Готово» и пометкой «без срока», хотя отмечать в ней
+// нечего: она уже завершилась. Правило одно на все входы — разбор моделью,
+// уточнение в карточке, поправка голосом: у сделанного нет ни встречи, ни дела.
+const OPEN_TYPES=['task','meeting_event'];
+export function settleCompleted(classification){
+  if(classification?.completed!==true)return classification;
+  const additional=classification.additionalTypes||[];
+  if(!OPEN_TYPES.includes(classification.primaryType)&&!additional.some(type=>OPEN_TYPES.includes(type)))return classification;
+  const primaryType=OPEN_TYPES.includes(classification.primaryType)?'outcome_decision':classification.primaryType;
+  const claims=(classification.claims||[]).map(item=>item.field==='type'?{...item,value:primaryType}:item);
+  return {...classification,primaryType,additionalTypes:additional.filter(type=>type!==primaryType&&!OPEN_TYPES.includes(type)),claims,confidence:Object.fromEntries(claims.map(item=>[item.field,item.confidence]))};
+}
+
 export function normalizeClassification(candidate,raw='',now=new Date(),source='model',timeZone='Europe/Samara'){
   const parsed=classificationSchema.parse(candidate);
-  const primaryType=parsed.primaryType;
   const completed=parsed.completed===true;
+  const primaryType=completed&&OPEN_TYPES.includes(parsed.primaryType)?'outcome_decision':parsed.primaryType;
   const scheduleRelevant=['meeting_event','task'].includes(primaryType)&&!completed;
   const schedule=scheduleRelevant?scheduleFromModel(parsed.entities.when,now,timeZone):null;
   const people=groundedValues(parsed.entities.people,raw,8);
