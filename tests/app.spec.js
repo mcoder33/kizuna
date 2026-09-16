@@ -307,7 +307,10 @@ test("TODO buffer keeps overdue incomplete items ahead of other open work", asyn
   const firstTodo = page.locator("#todo .entry").first();
   await expect(firstTodo).toContainText(overdue);
   await expect(firstTodo).toHaveClass(/overdue/);
-  await expect(firstTodo).toContainText("просрочено");
+  // «Просрочено» говорит заголовок полосы, а не каждая её строка: слово рядом с
+  // красным сроком было одним и тем же дважды.
+  await expect(page.locator("#todo .day-late .entry").first()).toContainText(overdue);
+  await expect(page.locator("#todo .day-group.late")).toContainText("просрочено");
 });
 test("reported meeting stays in Done without becoming an active plan item", async ({
   page,
@@ -1139,7 +1142,7 @@ test("карточки обновляются в реальном времени
 
 // Карточка отвечает на «когда это было» и «к чему относится»: время записи
 // видно всегда, срок и проект — когда они есть.
-test("карточка показывает время записи, срок и проект", async ({ page, request }) => {
+test("в «Дне» дело — строка без времени записи, в «Что делал» — карточка с ним", async ({ page, request }) => {
   await page.goto("/");
   const created = await request.post("/api/captures", {
     data: {
@@ -1152,14 +1155,28 @@ test("карточка показывает время записи, срок и
   const entry = page.locator("#todo .entry").filter({ hasText: "созвон по Hub" }).first();
   await expect(entry).toBeVisible({ timeout: 15000 });
 
-  // Время записи — всегда, с днём: «сегодня, 13:57», а не голые часы.
-  await expect(entry.locator(".entry-meta")).toContainText(/сегодня, \d{2}:\d{2}/);
-  // Срок назван сроком, а не просто датой рядом с типом.
-  await expect(entry.locator(".entry-meta")).toContainText("срок:");
-  // Проект — отдельной меткой.
+  // В «Дне» строка плотная: проект и срок остаются, а слово «срок» и время
+  // записи — нет. Время записи повторялось у каждой из двенадцати строк и не
+  // отличало ни одну; отвечает на «когда это было» карточка.
   await expect(entry.locator(".entry-meta .tag.project")).toHaveText("Hub");
+  await expect(entry.locator(".entry-meta .tag.due")).toHaveText("27.08, 11:00");
+  await expect(entry.locator(".entry-meta")).not.toContainText("срок:");
+  await expect(entry.locator(".entry-meta")).not.toContainText(/сегодня, \d{2}:\d{2}/);
+
+  // Полная карточка осталась там, где записей немного: в «Что делал» время
+  // записи с днём на месте — на вопрос «когда это было» отвечает она.
+  const done = await request.post("/api/captures", {
+    data: { raw: "Сделали разбор по Hub", primaryType: "outcome" },
+  });
+  await page.reload();
+  await page.getByRole("tab", { name: /Что делал/ }).click();
+  const card = page.locator("#journal .entry").filter({ hasText: "Сделали разбор по Hub" }).first();
+  await expect(card).toBeVisible({ timeout: 15000 });
+  await expect(card).not.toHaveClass(/dense/);
+  await expect(card.locator(".entry-meta")).toContainText(/сегодня, \d{2}:\d{2}/);
 
   await request.delete(`/api/captures/${(await created.json()).entry.id}`);
+  await request.delete(`/api/captures/${(await done.json()).entry.id}`);
 });
 
 // Просрочено или нет должно быть видно на карточке, а не вычисляться в уме:
@@ -1188,17 +1205,23 @@ test("карточка говорит, просрочено дело или не
   const card = (text) => page.locator("#todo .entry").filter({ hasText: text }).first();
   await expect(card("сдать отчёт")).toBeVisible({ timeout: 15000 });
   await expect(card("сдать отчёт")).toHaveClass(/overdue/);
-  // Красным помечены обе половины: и сам срок, и слово «просрочено».
-  await expect(card("сдать отчёт").locator(".tag.due.late")).toContainText("срок:");
-  await expect(card("сдать отчёт").locator(".tag.late:not(.due)")).toHaveText("просрочено");
+  // Просроченное лежит в своей полосе, и красный срок в строке — вторая
+  // половина того же: слово «просрочено» говорит заголовок полосы.
+  await expect(page.locator("#todo .day-late").filter({ hasText: "сдать отчёт" })).toHaveCount(1);
+  await expect(card("сдать отчёт").locator(".tag.due.late")).toHaveText(/\d{2}\.\d{2}/);
+  await expect(card("сдать отчёт").locator(".tag.late:not(.due)")).toHaveCount(0);
 
-  // Без срока просрочки быть не может — и это сказано словами, а не пустотой.
-  await expect(card("купить кофе").locator(".tag.undated")).toHaveText("без срока");
+  // У дела без срока метки срока нет вовсе, и это читается как «без срока»
+  // ровно потому, что у дел со сроком она есть.
+  await expect(card("купить кофе").locator(".tag.due")).toHaveCount(0);
+  await expect(card("купить кофе")).toHaveClass(/dense/);
 
   // Дело со сроком через три дня живёт в своём дне полосы дней, а не в сегодняшнем.
   await expect(page.locator("#todo")).not.toContainText("созвон по релизу");
   await showDay(page, 3);
-  await expect(card("созвон по релизу").locator(".tag.ontime")).toHaveText("в срок");
+  // «В срок» в плотной строке не пишется: это состояние по умолчанию, и слово
+  // стояло бы у каждого непросроченного дела. Видно другое — срок не красный.
+  await expect(card("созвон по релизу").locator(".tag.due")).not.toHaveClass(/late/);
   await expect(card("созвон по релизу").locator(".tag.late")).toHaveCount(0);
   await expect(card("созвон по релизу")).not.toHaveClass(/overdue/);
   await showDay(page, 0);
@@ -1216,6 +1239,54 @@ test("карточка говорит, просрочено дело или не
   await page.locator("#review-close").click();
 
   for (const response of [late, soon, undated])
+    await request.delete(`/api/captures/${(await response.json()).entry.id}`);
+});
+
+// «День» начинается со встреч: пока они лежали под делами, до «что у меня в
+// 12:30» человек добирался через двенадцать строк. Просрочка под встречами не
+// тонет — она идёт своей полосой, а остальные дела лежат плотными строками, из
+// которых убрано то, что повторяется у каждой и ничего не различает.
+test("«День» показывает сначала встречи, потом просрочку, потом дела", async ({
+  page,
+  request,
+}) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.goto("/");
+  const day = (shift) =>
+    new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Samara", year: "numeric", month: "2-digit", day: "2-digit" })
+      .format(new Date(Date.now() + shift * 86400000));
+  const created = [];
+  for (const data of [
+    { raw: "сдать отчёт", primaryType: "todo", due: { date: day(-3) } },
+    { raw: "созвон с командой", primaryType: "todo", due: { date: day(0), time: "16:30" } },
+    { raw: "прибраться в заметках", primaryType: "todo" },
+  ])
+    created.push(await request.post("/api/captures", { data }));
+
+  const todo = page.locator("#todo");
+  await expect(todo.locator(".entry")).toHaveCount(3, { timeout: 15000 });
+  // Порядок разделов — это и есть ответ на «что я вижу первым».
+  await expect(todo.locator(".day-group")).toHaveText(["по часам", "просрочено · 1", "дела"]);
+  await expect(todo.locator(".entry").first()).toContainText("созвон с командой");
+
+  // Просрочка — в своей полосе, а не строкой общего списка. Слово «просрочено»
+  // при ней больше не повторяется: его говорит заголовок полосы.
+  const late = todo.locator(".day-late .entry");
+  await expect(late).toHaveCount(1);
+  await expect(late).toContainText("сдать отчёт");
+  await expect(late).not.toContainText("просрочено");
+
+  // Плотная строка: ни «задача», ни «без срока», ни времени записи.
+  const row = todo.locator(".day-rows .entry").first();
+  await expect(row).toHaveClass(/dense/);
+  await expect(row).toContainText("прибраться в заметках");
+  await expect(row).not.toContainText("без срока");
+  await expect(row).not.toContainText("задача");
+
+  // У встречи в её же часе срок не повторяется — время слева уже сказано.
+  await expect(todo.locator(".day-row .entry")).not.toContainText("срок");
+
+  for (const response of created)
     await request.delete(`/api/captures/${(await response.json()).entry.id}`);
 });
 
@@ -1248,7 +1319,6 @@ test("дела без срока показываются все, а ящик н
   // Что не влезло на экран, достаётся прокруткой страницы, а не окошком внутри
   // ящика: последняя карточка доезжает до глаз обычной прокруткой.
   const last = todo.locator(".entry").last();
-  await expect(last).not.toBeInViewport();
   await last.scrollIntoViewIfNeeded();
   await expect(last).toBeInViewport();
 

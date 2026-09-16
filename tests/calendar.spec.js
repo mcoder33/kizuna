@@ -347,8 +347,11 @@ test("«День»: повторяющееся дело видно сегодн�
   const todo = page.locator("#todo");
   const card = todo.locator(".entry", { hasText: "Проверить почту" });
   await expect(card).toBeVisible();
-  await expect(card.locator(".tag.due")).toHaveText("срок: сегодня, 09:00, каждый день");
+  // Дело стоит в своём часе, и час назван колонкой времени слева — в строке
+  // остаётся то, чего колонка не говорит: что дело повторяется.
+  await expect(card.locator(".tag.due")).toHaveText("каждый день");
+  await expect(todo.locator(".day-row", { hasText: "Проверить почту" }).locator(".day-time")).toHaveText("09:00");
   await expect(card.locator(".tag.late")).toHaveCount(0);
   await todo.locator('.daynav [data-step="1"]').click();
-  await expect(todo.locator(".entry", { hasText: "Проверить почту" }).locator(".tag.due")).toHaveText("срок: завтра, 09:00, каждый день");
+  await expect(todo.locator(".entry", { hasText: "Проверить почту" }).locator(".tag.due")).toHaveText("каждый день");
 });

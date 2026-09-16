@@ -409,7 +409,12 @@ async function updateCompletion(projections, complete, button) {
     button.disabled = false;
   }
 }
-function entryCard(entry, { overdue = false, compact = false, on = null } = {}) {
+// dense — вид для ящика «День»: дело в одну строку. Из четырёх пилюль остаются
+// только те, что что-то говорят: «задача» повторяется у всего списка подряд,
+// «без срока» — у большинства, а время записи в списке дня не нужно вовсе, оно
+// есть в карточке. Двенадцать дел двухэтажными плашками читались как стена, и
+// встречи из-за них уезжали за нижний край экрана.
+function entryCard(entry, { overdue = false, compact = false, dense = false, atTime = false, on = null } = {}) {
   const c = entry.interpretation.classification,
     projections = completableProjections(entry),
     completed = isClosed(entry),
@@ -417,7 +422,7 @@ function entryCard(entry, { overdue = false, compact = false, on = null } = {}) 
     card = node(
       "div",
       undefined,
-      `entry${projections.length ? " completable" : ""}${completed ? " completed" : ""}${overdue ? " overdue" : ""}${waiting ? " waiting" : ""}`,
+      `entry${dense ? " dense" : ""}${projections.length ? " completable" : ""}${completed ? " completed" : ""}${overdue ? " overdue" : ""}${waiting ? " waiting" : ""}`,
     ),
     meta = node("div", undefined, "entry-meta");
   card.dataset.captureId = entry.id;
@@ -448,13 +453,14 @@ function entryCard(entry, { overdue = false, compact = false, on = null } = {}) 
     showCorrection(entry, review.level === "high" ? undefined : review);
   });
   card.append(title);
-  meta.append(
-    node(
-      "span",
-      typeNames[c.primaryType] || c.primaryType,
-      `tag ${c.primaryType === "task" ? "task" : ""}`,
-    ),
-  );
+  if (!dense || c.primaryType !== "task")
+    meta.append(
+      node(
+        "span",
+        typeNames[c.primaryType] || c.primaryType,
+        `tag ${c.primaryType === "task" ? "task" : ""}`,
+      ),
+    );
   // Проект — отдельной меткой рядом с типом: это то, к чему запись относится,
   // а не подробность в общей строке.
   for (const project of c.entities.projects)
@@ -462,34 +468,42 @@ function entryCard(entry, { overdue = false, compact = false, on = null } = {}) 
   const due = scheduleLabel(c.entities.schedule, on);
   // Время записи видно всегда: без него карточка не отвечает на вопрос
   // «когда это было».
-  const metaParts = [
-    entryClock(entry),
-    ...(Array.isArray(c.tags) ? c.tags.map((tag) => `#${tag}`) : []),
-  ].filter(Boolean);
+  const metaParts = dense
+    ? []
+    : [
+        entryClock(entry),
+        ...(Array.isArray(c.tags) ? c.tags.map((tag) => `#${tag}`) : []),
+      ].filter(Boolean);
   if (metaParts.length)
     meta.append(document.createTextNode(metaParts.join(" · ")));
   // Состояния — цветными метками, а не словами в общей строке: просрочено и
   // готово должны читаться взглядом, не чтением.
   const dueToday = c.entities.schedule?.repeat ? scheduledOn(entry, currentDayDate) : Boolean(c.entities.schedule?.date) && c.entities.schedule.date === currentDayDate;
-  if (due)
+  // Строка стоит в своём часе — срок рядом с ней повторяет время из колонки
+  // слева. Признак повтора остаётся: он про серию, а не про час, и без него
+  // ежедневное дело не отличить от разового.
+  const repeats = c.entities.schedule?.repeat ? repeatLabel(c.entities.schedule.repeat, { until: false }) : null;
+  if (due && (!atTime || repeats))
     meta.append(
       node(
         "span",
-        `срок: ${due}`,
+        // В плотной строке слово «срок» лишнее: сама дата и её цвет говорят всё,
+        // а место в строке из двенадцати таких дорого.
+        atTime ? repeats : dense ? due : `срок: ${due}`,
         `tag due${overdue ? " late" : dueToday ? " soon" : ""}`,
       ),
     );
   // У дела без срока просрочки быть не может — и это тоже должно быть видно,
   // иначе пустое место читается как «неизвестно».
-  if (!due && !completed && ["task", "meeting_event"].includes(c.primaryType))
+  if (!dense && !due && !completed && ["task", "meeting_event"].includes(c.primaryType))
     meta.append(node("span", "без срока", "tag undated"));
-  if (overdue) meta.append(node("span", "просрочено", "tag late"));
-  if (!overdue && !completed && due && ["task", "meeting_event"].includes(c.primaryType))
+  if (overdue && !dense) meta.append(node("span", "просрочено", "tag late"));
+  if (!dense && !overdue && !completed && due && ["task", "meeting_event"].includes(c.primaryType))
     meta.append(node("span", "в срок", "tag ontime"));
   if (completed) meta.append(node("span", "готово", "tag done"));
   if (c.primaryType === "task" && c.priority === "high")
     meta.append(node("span", "важно", "tag urgent"));
-  if (c.primaryType === "task" && c.priority === "low")
+  if (!dense && c.primaryType === "task" && c.priority === "low")
     meta.append(node("span", "не срочно", "tag calm"));
   // Скрепка с числом: по списку видно, что к записи что-то приложено.
   if (entry.attachments?.length)
@@ -1036,6 +1050,8 @@ function paintTodayList(container) {
   const timed = (entry) => scheduledOn(entry, today) && Boolean(scheduleOf(entry)?.time);
   const order = (entry) => todoOrder(entry, today);
   const band = todayState.todo.filter((entry) => order(entry) <= 3 && !timed(entry));
+  const late = band.filter((entry) => isOverdue(entry, today));
+  const rest = band.filter((entry) => !isOverdue(entry, today));
   const later = todayState.todo.filter((entry) => order(entry) === 4);
   const hidden = later.length;
   const external = (todayState.calendar?.external || []).filter((item) => item.date === today);
@@ -1051,47 +1067,67 @@ function paintTodayList(container) {
     appendMore(container, hidden);
     return;
   }
-  if (band.length || allDay.length) {
-    container.append(node("div", "без времени", "day-group"));
-    for (const entry of band) container.append(entryCard(entry, { overdue: isOverdue(entry, today), compact: true, on: today }));
-    for (const item of allDay) container.append(eventRow(item, { minutes, today: true }));
-  }
-  if (hours.length) {
+  // Часы идут первыми: день — это прежде всего встречи, к которым надо успеть.
+  // Пока они лежали под списком дел, до «что у меня в 12:30» человек добирался
+  // через двенадцать строк. Событие на весь день стоит над часами: оно про весь
+  // день, а не про какой-то из них.
+  if (hours.length || allDay.length) {
     container.append(node("div", "по часам", "day-group"));
+    for (const item of allDay) container.append(eventRow(item, { minutes, today: true }));
     const meetings = todayMeetings();
     const running = meetings.some((meeting) => minutes >= meeting.start && minutes < meeting.end);
     let nowPlaced = running;
     for (const slot of hours) {
       if (!nowPlaced && slot.start > minutes) { container.append(nowRow(minutes, meetings)); nowPlaced = true; }
       container.append(slot.entry
-        ? rowWithTime(scheduleOf(slot.entry).time, entryCard(slot.entry, { overdue: false, compact: true, on: today }))
+        ? rowWithTime(scheduleOf(slot.entry).time, entryCard(slot.entry, { overdue: false, compact: true, dense: true, atTime: true, on: today }))
         : eventRow(slot.item, { minutes, today: true }));
     }
-    if (!nowPlaced) container.append(nowRow(minutes, meetings));
+    if (!nowPlaced && hours.length) container.append(nowRow(minutes, meetings));
+  }
+  // Просроченное — своей полосой сразу под часами, а не строкой в общем списке:
+  // под встречами оно иначе теряется, а это единственное, что горит.
+  if (late.length) {
+    container.append(node("div", `просрочено · ${late.length}`, "day-group late"));
+    const strip = node("div", undefined, "day-late");
+    for (const entry of late) strip.append(entryCard(entry, { overdue: true, compact: true, dense: true, on: today }));
+    container.append(strip);
+  }
+  if (rest.length) {
+    container.append(node("div", "дела", "day-group"));
+    const rows = node("div", undefined, "day-rows");
+    for (const entry of rest) rows.append(entryCard(entry, { compact: true, dense: true, on: today }));
+    container.append(rows);
   }
   appendMore(container, hidden);
 }
+// Соседний день собран так же, как сегодняшний: сначала часы, потом дела. День
+// не должен менять устройство от того, каким его открыли.
 function paintOtherDayList(container, date, data) {
   const pastDay = date < currentDayDate;
   const own = ownEntriesFor(date);
   const external = (data.calendar?.external || []).filter((item) => item.date === date);
-  const card = (entry) => entryCard(entry, { overdue: pastDay && !isClosed(entry) && !scheduleOf(entry)?.repeat, compact: true, on: date });
-  const band = [...own.filter((entry) => !scheduleOf(entry)?.time).map((entry) => ({ entry })), ...external.filter((item) => item.allDay).map((item) => ({ item }))];
+  const card = (entry, atTime = false) => entryCard(entry, { overdue: pastDay && !isClosed(entry) && !scheduleOf(entry)?.repeat, compact: true, dense: true, atTime, on: date });
+  const band = own.filter((entry) => !scheduleOf(entry)?.time);
+  const allDay = external.filter((item) => item.allDay);
   const hours = [
     ...own.filter((entry) => scheduleOf(entry)?.time).map((entry) => ({ start: minutesOf(scheduleOf(entry).time), entry })),
     ...external.filter((item) => !item.allDay && item.time).map((item) => ({ start: minutesOf(item.time), item })),
   ].filter((slot) => slot.start != null).sort((a, b) => a.start - b.start);
-  if (!band.length && !hours.length) {
+  if (!band.length && !allDay.length && !hours.length) {
     container.append(node("p", pastDay ? "Встреч и дел со сроком не было." : "Встреч и дел со сроком пока нет.", "empty"));
     return;
   }
-  if (band.length) {
-    container.append(node("div", "без времени", "day-group"));
-    for (const slot of band) container.append(slot.entry ? card(slot.entry) : eventRow(slot.item, { pastDay }));
-  }
-  if (hours.length) {
+  if (hours.length || allDay.length) {
     container.append(node("div", "по часам", "day-group"));
-    for (const slot of hours) container.append(slot.entry ? rowWithTime(scheduleOf(slot.entry).time, card(slot.entry)) : eventRow(slot.item, { pastDay }));
+    for (const item of allDay) container.append(eventRow(item, { pastDay }));
+    for (const slot of hours) container.append(slot.entry ? rowWithTime(scheduleOf(slot.entry).time, card(slot.entry, true)) : eventRow(slot.item, { pastDay }));
+  }
+  if (band.length) {
+    container.append(node("div", "дела", "day-group"));
+    const rows = node("div", undefined, "day-rows");
+    for (const entry of band) rows.append(card(entry));
+    container.append(rows);
   }
 }
 function paintJournal(date) {

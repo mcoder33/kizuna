@@ -6450,6 +6450,62 @@ body {
 .drawer .entry-meta { font-size: 10px; }
 .drawer .entry-actions { gap: 7px; margin-top: 7px; }
 .day-group { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--n-66); padding: 8px 4px 0; }
+/* Просрочка — своей полосой под часами, и заголовок у неё того же цвета, что
+   строки внутри: полоса читается целиком, а не по одной строке. */
+.day-group.late { color: var(--red-66); }
+/* Дело в «Дне» — одна строка: кружок, название, справа то, что что-то говорит.
+   Фона состояния у строки нет: просроченное лежит в своей полосе, а тратить на
+   подсветку остальных двенадцать плашек не за что. Селектор с #todo — не
+   прихоть: фоны состояний заданы через #todo, и без него плашка осталась бы. */
+#todo .entry.dense,
+.drawer .entry.dense {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 9px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: none;
+  font-size: 12.5px;
+}
+/* Раскладка «завершаемой» записи сводит всех детей в одну колонку — в плотной
+   строке колонок три, и каждый встаёт в свою. */
+.drawer .entry.dense.completable > * { grid-column: auto; grid-row: auto; }
+.drawer .entry.dense .completion-button { grid-column: 1; grid-row: 1; margin: 0; }
+.drawer .entry.dense .entry-title {
+  grid-column: 2;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#todo .entry.dense:hover,
+.drawer .entry.dense:hover { background: var(--n-96); }
+.drawer .entry.dense.overdue .entry-title { color: var(--red-66); font-weight: 650; }
+.drawer .entry.dense .entry-meta {
+  grid-column: 3;
+  margin: 0;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  font-size: 10.5px;
+}
+/* Строки идут встык и разделяются волосяной линией: у списка из двенадцати дел
+   зазоры между плашками съедали столько же места, сколько сами дела. */
+.day-rows > .entry.dense + .entry.dense,
+.day-late > .entry.dense + .entry.dense { border-top: 1px solid var(--n-94); }
+.day-late {
+  border: 1px solid var(--red-83);
+  background: var(--red-97);
+  border-radius: 12px;
+  padding: 2px 4px;
+  margin-top: 6px;
+}
+.day-late > .entry.dense + .entry.dense { border-top-color: var(--red-83); }
+#todo .day-late > .entry.dense:hover { background: var(--red-90); }
+/* Строка со временем несёт ту же плотную строку — часы не должны быть выше
+   собственного содержимого. */
+.day-row .entry.dense { padding-left: 0; }
+.day-row:has(.entry.dense) .day-time { padding-top: 6px; }
 .day-group:first-child { padding-top: 0; }
 .day-row { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; align-items: start; }
 .day-time { font-size: 12px; font-weight: 600; color: var(--n-52); padding-top: 12px; text-align: right; }
