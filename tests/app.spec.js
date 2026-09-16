@@ -305,6 +305,32 @@ test("заметки дня лежат в своём ящике со стрел�
   await drawer.locator(".entry-title").first().click();
   await expect(page.locator("#review-dialog")).toBeVisible();
 });
+// Сделанной заметка не бывает: отметка «Сделано» в карточке делает её итогом,
+// и запись переезжает из «Заметок» в «Что делал».
+test("заметка, отмеченная «Сделано», становится итогом и переезжает в «Что делал»", async ({ page }) => {
+  const note = "Доступы к стенду лежат в хранилище";
+  await page.goto("/");
+  await capture(page, note);
+  await page.getByRole("tab", { name: /^Заметки/ }).click();
+  await page.locator("#today-notes .entry-title").first().click();
+  await expect(page.locator("#review-dialog")).toBeVisible();
+  const propsBar = page.locator(".props-bar");
+  if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
+  const type = page.locator("#review-primary-type");
+  const done = page.locator("#review-completed");
+  await expect(type).toHaveValue("note");
+  await done.click();
+  await expect(done).toHaveAttribute("aria-pressed", "true");
+  await expect(type).toHaveValue("outcome_decision");
+  // Назвали обратно заметкой — отметка снялась.
+  await type.selectOption("note");
+  await expect(done).toHaveAttribute("aria-pressed", "false");
+  await done.click();
+  await page.locator("#review-close").click();
+  await expect(page.locator("#today-notes")).not.toContainText(note);
+  await page.getByRole("tab", { name: /Что делал/ }).click();
+  await expect(page.locator("#journal .entry").filter({ hasText: note })).toContainText("результат");
+});
 test("TODO buffer keeps overdue incomplete items ahead of other open work", async ({
   page,
 }) => {

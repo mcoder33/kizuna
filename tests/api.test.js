@@ -169,3 +169,26 @@ test('a stored finished meeting is settled into an outcome when the journal open
     db.close();
   }
 });
+// Заметка, которую модель отметила сделанной, при старте теряет отметку и
+// уходит из «Что делал»; заметка, отмеченная сделанной рукой, становится итогом.
+test('a stored done note loses the flag when the model set it and becomes an outcome when a person did',()=>{const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pagent-settle-note-')),databasePath=path.join(dir,'test.sqlite');
+  const note=(summary)=>({primaryType:'note',summary,entities:{projects:[],people:[],schedule:null,followUp:null},additionalTypes:[],proposedActions:[],completed:true,ambiguity:null,claims:[{field:'type',value:'note',kind:'inference',confidence:0.9,provenance:{source:'model'},essential:true}],confidence:{type:0.9},conflicts:{projects:false,schedule:false}});
+  let db=openDatabase(databasePath);
+  const byModel=createLedger(db,{raw:'Доступы к стенду',classification:note('Доступы к стенду'),provider:'gemini',model:'gemini-flash'}).captureId;
+  const byPerson=createLedger(db,{raw:'Разобрал почту',classification:note('Разобрал почту'),provider:'manual'}).captureId;
+  db.close();
+  for(let pass=0;pass<2;pass+=1){
+    db=openDatabase(databasePath);
+    const active=(captureId)=>db.prepare("SELECT version,provider,model,classification_json FROM interpretations WHERE capture_id=? AND status='active'").get(captureId);
+    const model=active(byModel),manual=active(byPerson);
+    assert.equal(model.version,2,'второе открытие ничего не переписывает');
+    assert.equal(model.provider,'gemini');
+    assert.equal(model.model,'gemini-flash');
+    assert.equal(JSON.parse(model.classification_json).primaryType,'note');
+    assert.equal(JSON.parse(model.classification_json).completed,false);
+    assert.equal(manual.version,2);
+    assert.equal(JSON.parse(manual.classification_json).primaryType,'outcome_decision');
+    assert.equal(JSON.parse(manual.classification_json).completed,true);
+    db.close();
+  }
+});

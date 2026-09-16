@@ -122,19 +122,27 @@ export const classifyFallback=(raw='')=>unclassifiedCapture(raw);
 // «Что делал» с кружком «Готово» и пометкой «без срока», хотя отмечать в ней
 // нечего: она уже завершилась. Правило одно на все входы — разбор моделью,
 // уточнение в карточке, поправка голосом: у сделанного нет ни встречи, ни дела.
+// Ни заметки с идеей: человек, отметивший заметку сделанной, назвал её итогом.
 const OPEN_TYPES=['task','meeting_event'];
+export const NOTE_TYPES=['note','idea_question'];
 export function settleCompleted(classification){
   if(classification?.completed!==true)return classification;
   const additional=classification.additionalTypes||[];
-  if(!OPEN_TYPES.includes(classification.primaryType)&&!additional.some(type=>OPEN_TYPES.includes(type)))return classification;
-  const primaryType=OPEN_TYPES.includes(classification.primaryType)?'outcome_decision':classification.primaryType;
+  const settles=OPEN_TYPES.includes(classification.primaryType)||NOTE_TYPES.includes(classification.primaryType);
+  if(!settles&&!additional.some(type=>OPEN_TYPES.includes(type)))return classification;
+  const primaryType=settles?'outcome_decision':classification.primaryType;
   const claims=(classification.claims||[]).map(item=>item.field==='type'?{...item,value:primaryType}:item);
   return {...classification,primaryType,additionalTypes:additional.filter(type=>type!==primaryType&&!OPEN_TYPES.includes(type)),claims,confidence:Object.fromEntries(claims.map(item=>[item.field,item.confidence]))};
 }
+// У модели заметка и идея сделанными не бывают. Она путала справку с отчётом:
+// «Доступы Андрея с ГитЛабом» со ссылками легли в «Что делал» с галочкой
+// «Сделано». Назвала запись заметкой или идеей — верим типу и признак снимаем:
+// о сделанном модель говорит типом outcome_decision.
+export const modelCompleted=(primaryType,completed)=>completed===true&&!NOTE_TYPES.includes(primaryType);
 
 export function normalizeClassification(candidate,raw='',now=new Date(),source='model',timeZone='Europe/Samara'){
   const parsed=classificationSchema.parse(candidate);
-  const completed=parsed.completed===true;
+  const completed=modelCompleted(parsed.primaryType,parsed.completed);
   const primaryType=completed&&OPEN_TYPES.includes(parsed.primaryType)?'outcome_decision':parsed.primaryType;
   const scheduleRelevant=['meeting_event','task'].includes(primaryType)&&!completed;
   const schedule=scheduleRelevant?scheduleFromModel(parsed.entities.when,now,timeZone):null;

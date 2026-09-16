@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { makeProjections, gateClassification, shouldMaterializeProjections, actionClassification, settleCompleted } from './classifier.js';
+import { makeProjections, gateClassification, shouldMaterializeProjections, actionClassification, settleCompleted, NOTE_TYPES } from './classifier.js';
 import { occursOn, nextOccurrence } from './repeat.js';
 import { migrateNotifications } from './notifications.js';
 
@@ -1053,20 +1053,25 @@ function repairMissingProjections(db) {
 }
 // Сделанное — результат (settleCompleted в classifier.js). Записи, разобранные
 // раньше этого правила, остались «встречей» или «делом» с отметкой «сделано» и
-// лежат в «Что делал» с кружком, который нечего отмечать. Они получают новую
+// лежат в «Что делал» с кружком, который нечего отмечать. Заметки и идеи с
+// отметкой «сделано» туда же попали по ошибке модели. Они получают новую
 // версию разбора от того же провайдера — прежняя остаётся в истории, как при
 // любой замене. Выборка пустеет после первого прохода.
 function settleCompletedRecords(db) {
   const rows = db.prepare(`SELECT i.capture_id,i.provider,i.model,i.classification_json
     FROM interpretations i JOIN captures c ON c.id=i.capture_id
     WHERE i.status='active' AND c.deleted_at IS NULL AND json_extract(i.classification_json,'$.completed')=1
-      AND (json_extract(i.classification_json,'$.primaryType') IN ('task','meeting_event')
+      AND (json_extract(i.classification_json,'$.primaryType') IN ('task','meeting_event','note','idea_question')
         OR EXISTS (SELECT 1 FROM json_each(i.classification_json,'$.additionalTypes') WHERE value IN ('task','meeting_event')))`).all();
   for (const row of rows) {
     let classification;
     try { classification = JSON.parse(row.classification_json); }
     catch { continue; }
-    const settled = settleCompleted(classification);
+    // Сделанной заметку называла модель — верим типу и снимаем признак, как в
+    // modelCompleted. Отмеченное рукой — итог, как у дела и встречи.
+    const settled = row.provider !== 'manual' && NOTE_TYPES.includes(classification.primaryType)
+      ? { ...classification, completed: false }
+      : settleCompleted(classification);
     if (settled !== classification) replaceInterpretation(db, row.capture_id, settled, row.provider, null, shouldMaterializeProjections(settled), row.model);
   }
 }

@@ -1423,8 +1423,8 @@ function reportRecordNode(record) {
 // «Заметки» устроены как «Что делал»: свои стрелки по дням, сегодняшние — из
 // загруженных записей, другой день — из ленты отчёта «Обзора». Заметка здесь —
 // всё, что записано не делом, не встречей и не итогом: наблюдение, идея, вопрос.
-// Отметка «сделано» заметку отсюда не уводит: тип в карточке — «заметка», и
-// искать её будут здесь. null — день ещё не загружен.
+// Сделанной заметка не бывает: отмеченная «Сделано», она становится итогом и
+// уходит в «Что делал». null — день ещё не загружен.
 const NOTE_TYPES = ["note", "idea_question"];
 function notesFor(date) {
   if (date === currentDayDate)
@@ -2519,13 +2519,14 @@ function showReview(entry, review, undoGroupId, provenance) {
     doneToggle.classList.toggle("is-done", done);
   };
   // Сделанное — результат: у встречи или дела с отметкой «сделано» в «Что
-  // делал» остался бы кружок, который нечего отмечать. Сервер держит то же
-  // правило, а карточка показывает его сразу — и в обратную сторону: запись,
-  // названная встречей или делом, снова предстоит.
-  const openType = () => ["task", "meeting_event"].includes(type.value);
+  // делал» остался бы кружок, который нечего отмечать, а заметка или идея
+  // «сделанными» не бывают. Сервер держит то же правило, а карточка показывает
+  // его сразу — и в обратную сторону: запись, названная не результатом, снова
+  // не сделана.
+  const notResult = () => type.value !== "outcome_decision";
   doneToggle.addEventListener("click", () => {
     done = !done;
-    if (done && openType()) {
+    if (done && notResult()) {
       type.value = "outcome_decision";
       type.dispatchEvent(new Event("change"));
     }
@@ -2607,7 +2608,7 @@ function showReview(entry, review, undoGroupId, provenance) {
     propsSummary.classList.toggle("is-label", propsOpen);
   };
   type.addEventListener("change", () => {
-    if (done && openType()) { done = false; paintDone(); }
+    if (done && notResult()) { done = false; paintDone(); }
     updateVisibility();
   });
   updateVisibility();

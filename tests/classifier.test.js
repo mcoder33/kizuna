@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { unclassifiedCapture, normalizeClassification, gateClassification, scheduleFromModel, shouldMaterializeProjections, validateCitations, settleCompleted, makeProjections } from '../server/classifier.js';
+import { unclassifiedCapture, normalizeClassification, gateClassification, scheduleFromModel, shouldMaterializeProjections, validateCitations, settleCompleted, makeProjections, modelCompleted } from '../server/classifier.js';
 
 const now = new Date('2026-08-21T10:00:00Z');
 const zone = 'Europe/Samara';
@@ -15,9 +15,9 @@ const normalize = (raw, overrides) => normalizeClassification(candidate(override
 
 test('type, summary and completion come from the model without text rules', () => {
   const result = normalize('дорабатывал работу context mcp - прогонял луп', {
-    primaryType: 'note', summary: 'Доработка context mcp', completed: true, additionalTypes: ['task'],
+    primaryType: 'outcome_decision', summary: 'Доработка context mcp', completed: true, additionalTypes: ['task'],
   });
-  assert.equal(result.primaryType, 'note');
+  assert.equal(result.primaryType, 'outcome_decision');
   assert.equal(result.completed, true);
   assert.equal(result.summary, 'Доработка context mcp');
   assert.deepEqual(result.additionalTypes, [], 'отчёт о сделанном не открывает задачу');
@@ -68,6 +68,23 @@ test('finished work is an outcome, never an open meeting or task', () => {
   const corrected = settleCompleted({ ...upcoming, completed: true, additionalTypes: ['task', 'note'] });
   assert.equal(corrected.primaryType, 'outcome_decision');
   assert.deepEqual(corrected.additionalTypes, ['note']);
+});
+
+// «Доступы Андрея с ГитЛабом» со ссылками модель назвала заметкой и отметила
+// сделанной — справка легла в «Что делал» с галочкой «Сделано».
+test('a note or an idea is never done: the model loses the flag, a person makes it an outcome', () => {
+  for (const primaryType of ['note', 'idea_question']) {
+    const parsed = normalize('Доступы Андрея с ГитЛабом', { primaryType, completed: true });
+    assert.equal(parsed.primaryType, primaryType, 'тип от модели остаётся');
+    assert.equal(parsed.completed, false, `${primaryType}: признак «сделано» снимается`);
+    assert.equal(modelCompleted(primaryType, true), false);
+    // Отмеченное сделанным в карточке или голосом — это итог, а не заметка.
+    const marked = settleCompleted({ ...parsed, completed: true });
+    assert.equal(marked.primaryType, 'outcome_decision', primaryType);
+    assert.equal(marked.claims.find(item => item.field === 'type').value, 'outcome_decision');
+    assert.deepEqual(makeProjections('capture', marked, 'undo').map(item => item.projectionType), ['outcome_decision']);
+  }
+  assert.equal(modelCompleted('outcome_decision', true), true, 'отчёт о сделанном остаётся сделанным');
 });
 
 test('ungrounded people and projects are rejected, grounded ones pass', () => {
