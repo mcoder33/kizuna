@@ -817,6 +817,11 @@ function render(data) {
 }
 function renderToday() {
   if (!currentDayDate) return;
+  // Перерисовка не сбивает фокус с записи: открыли её из брифа или дошли до неё
+  // клавиатурой — после живого обновления фокус на той же записи в том же ящике,
+  // а не на странице целиком.
+  const active = document.activeElement;
+  const keep = active?.dataset?.captureId && active.closest(".drawers") ? { id: active.dataset.captureId, drawer: active.closest(".drawer")?.id } : null;
   if (todayState.calendarStale && !$("#today")?.hidden) refreshTodayCalendar();
   const minutes = nowMinutes();
   const phase = phaseOf({ minutes, weekend: isWeekend(currentDayDate) });
@@ -849,6 +854,13 @@ function renderToday() {
   paintJournal(journalDate);
   paintDayList(viewDate);
   paintNotes(notesDate);
+  if (keep && !active.isConnected) {
+    const again = keep.drawer && document.querySelector(`#${keep.drawer} [data-capture-id="${CSS.escape(keep.id)}"]`);
+    if (again) {
+      if (!again.hasAttribute("tabindex")) again.tabIndex = -1;
+      again.focus({ preventScroll: true });
+    }
+  }
 }
 // Первый шаг. Пустой журнал ничего о себе не рассказывает: поле есть, а что в
 // него писать — человек не знает, и уходит, ничего не записав. Три примера
