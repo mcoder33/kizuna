@@ -99,3 +99,39 @@ test("обсуждение без круга: позванный видит од
   await ilya.context.close();
   await request.post(`/api/admin/users/${ilyaUser.id}/block`, { data: { reason: "конец прогона" } });
 });
+
+// Карточку чаще открывают кликом по строке в «Дне», чем по ссылке. Строка
+// журнала приходит без обсуждения: «@» молчал, а прошлые реплики не
+// показывались, хотя по ссылке та же запись открывалась целиком.
+test("запись, открытая из списка, зовёт через @ и показывает прошлые реплики", async ({ page, request, browser }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  const ilyaUser = await ensureUser(request, ILYA);
+  const ilya = await loginAs(browser, ILYA);
+  await ilya.page.request.patch("/api/account", { data: { name: "Илья" } });
+  await ilya.context.close();
+  const raw = "Нужно проверить сид карусели";
+  const entry = (await (await request.post("/api/captures", { data: { raw } })).json()).entry;
+  expect((await request.post(`/api/captures/${entry.id}/comments`, { data: { body: "Сид лежит в папке фраз" } })).status()).toBe(201);
+
+  // Ящик «День» открыт днём: страница видит 13:00.
+  const noon = new Date();
+  noon.setHours(13, 0, 0, 0);
+  await page.clock.install({ time: noon });
+  await page.goto("/");
+  await page.locator("#todo .entry").filter({ hasText: raw }).locator(".entry-title").click();
+  const dialog = page.locator("#review-dialog");
+  const opener = dialog.locator(".card-talk-open");
+  await expect(opener).toContainText("Обсуждение · 1");
+  await opener.click();
+  await expect(dialog.locator(".msg-text")).toHaveText("Сид лежит в папке фраз");
+
+  const field = dialog.locator(".thread-input");
+  await expect(field).toHaveAttribute("placeholder", "Написать… @ — позвать");
+  await field.pressSequentially("@Ил");
+  const pop = dialog.locator(".mention-pop");
+  await expect(pop).toContainText("все в Кизуне");
+  await expect(pop).toContainText("Илья");
+  await page.locator("#review-close").click();
+
+  await request.post(`/api/admin/users/${ilyaUser.id}/block`, { data: { reason: "конец прогона" } });
+});

@@ -2230,6 +2230,22 @@ function cardDiscussion(entry) {
   // без кражи фокуса у того, кто правил свойства.
   if (keep) dialog.classList.add("talk-open");
   else if (openNow) requestAnimationFrame(() => setOpen(true));
+  // Строка из списка приходит без обсуждения: ни реплик, ни тех, кого можно
+  // позвать, — «@» молчал, а разговор казался пустым. Такая карточка догружает
+  // его сама; список людей меняется на месте — его держит подсказка «@».
+  if (!entry.callable) {
+    request(`/api/captures/${entry.id}/comments`).then((data) => {
+      if (!wrap.isConnected) return;
+      comments = data.comments || [];
+      participants = data.participants || [];
+      callable.splice(0, callable.length, ...(data.callable || []));
+      entry.comments = comments;
+      entry.participants = participants;
+      field.placeholder = callable.length ? "Написать… @ — позвать" : "Написать…";
+      paint();
+      if (dialog.classList.contains("talk-open")) toBottom();
+    }).catch(() => {});
+  }
   return opener;
 }
 const entryClockLabel = (iso) => {
