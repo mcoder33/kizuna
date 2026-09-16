@@ -577,17 +577,18 @@ function appendEntries(container, entries, emptyText, options) {
   if (!container.childNodes.length)
     container.append(node("p", emptyText, "empty"));
 }
-// ── «Сегодня»: обложка по часам, полоса дней, два ящика ──────────────────────
+// ── «Сегодня»: обложка по часам, полоса дней, три ящика ──────────────────────
 // Страница знает, который час: дата с фазой суток, бриф из двух-трёх фраз и
 // вопрос в поле меняются утром, днём, вечером и ночью. Под полем — полоса дней
-// и два ящика: «Что делал» и «День», где дела лежат вместе с календарём.
-// Заметок на главной нет: они живут в «Обзоре», поиске и карточке записи.
+// и три ящика: «Что делал», «День», где дела лежат вместе с календарём, и
+// «Заметки» — записанное за день, что не дело, не встреча и не итог.
 const TODAY_ZONE = "Europe/Samara";
 const circlesState = { circles: [], me: null, loading: false, tab: "chat", discussions: [] };
 const todayState = {
   view: 0,            // смещение дня, показанного в «Дне», от сегодняшнего
   journalView: 0,     // то же для «Что делал»: у ящиков свои дни
-  tab: null,          // открытый ящик: "journal" | "day" | null
+  notesView: 0,       // и для «Заметок»
+  tab: null,          // открытый ящик: "journal" | "day" | "notes" | null
   manual: false,      // ящик выбран рукой — фаза его не трогает
   phase: null,
   cover: null,
@@ -770,7 +771,7 @@ function rememberTab() {
 function recallTab(phase) {
   try {
     const saved = JSON.parse(localStorage.getItem("kizuna-today-tab") || "null");
-    if (saved && saved.date === currentDayDate && saved.phase === phase && ["journal", "day", null].includes(saved.tab)) {
+    if (saved && saved.date === currentDayDate && saved.phase === phase && ["journal", "day", "notes", null].includes(saved.tab)) {
       todayState.tab = saved.tab;
       todayState.manual = true;
       return true;
@@ -832,9 +833,11 @@ function renderToday() {
   paintCover(cover, currentDayDate);
   const viewDate = shiftDate(currentDayDate, todayState.view);
   const journalDate = shiftDate(currentDayDate, todayState.journalView);
-  paintTabs(viewDate, journalDate);
+  const notesDate = shiftDate(currentDayDate, todayState.notesView);
+  paintTabs(viewDate, journalDate, notesDate);
   paintJournal(journalDate);
   paintDayList(viewDate);
+  paintNotes(notesDate);
 }
 // Первый шаг. Пустой журнал ничего о себе не рассказывает: поле есть, а что в
 // него писать — человек не знает, и уходит, ничего не записав. Три примера
@@ -903,8 +906,8 @@ function paintCover(cover, date) {
   }
 }
 // Стрелки по дням живут внутри каждого ящика: слева предыдущий день, справа
-// следующий, по центру показанный. У «Дня» и «Что делал» свои дни; обложка
-// всегда про сегодня. Ящик, открытый или закрытый рукой, сбрасывает оба дня
+// следующий, по центру показанный. У каждого ящика свой день; обложка
+// всегда про сегодня. Ящик, открытый или закрытый рукой, сбрасывает все дни
 // на сегодняшний.
 function ownEntriesFor(date) {
   return todayState.entries.filter((entry) =>
@@ -924,6 +927,11 @@ function setView(offset) {
 function setJournalView(offset) {
   todayState.journalView = offset;
   todayState.tab = "journal";
+  renderToday();
+}
+function setNotesView(offset) {
+  todayState.notesView = offset;
+  todayState.tab = "notes";
   renderToday();
 }
 function dayNavNode(date, { view, onView }) {
@@ -977,15 +985,18 @@ function dayCountNode(date) {
   wrap.append(document.createTextNode(parts.join(" · ")));
   return wrap;
 }
-function paintTabs(date, journalDate) {
+const DRAWER_PANELS = { journal: "journal", day: "todo", notes: "today-notes" };
+function paintTabs(date, journalDate, notesDate) {
   const host = $("#today-tabs");
   clear(host);
-  const today = date === currentDayDate, journalToday = journalDate === currentDayDate;
+  const today = date === currentDayDate, journalToday = journalDate === currentDayDate, notesToday = notesDate === currentDayDate;
   const report = todayState.cache.get(journalDate)?.report;
   const doneCount = journalToday ? String(todayState.done.length) : report ? String((report.done || []).length) : "…";
+  const notes = notesFor(notesDate);
   const tabs = [
     ["journal", journalToday ? "Что делал" : `Что делал ${shortDate(journalDate)}`, node("b", doneCount)],
     ["day", today ? "День" : `День ${shortDate(date)}`, dayCountNode(date)],
+    ["notes", notesToday ? "Заметки" : `Заметки ${shortDate(notesDate)}`, node("b", notes ? String(notes.length) : "…")],
   ];
   for (const [key, label, count] of tabs) {
     const button = node("button", undefined, "drawer-tab");
@@ -993,23 +1004,23 @@ function paintTabs(date, journalDate) {
     button.id = `tab-${key}`;
     button.setAttribute("role", "tab");
     button.setAttribute("aria-selected", String(todayState.tab === key));
-    button.setAttribute("aria-controls", key === "journal" ? "journal" : "todo");
+    button.setAttribute("aria-controls", DRAWER_PANELS[key]);
     button.append(node("span", label, "drawer-tab-label"), count);
     button.addEventListener("click", () => {
       todayState.tab = todayState.tab === key ? null : key;
       todayState.manual = true;
-      // Любое переключение ящика возвращает оба дня на сегодня: день, куда
+      // Любое переключение ящика возвращает все дни на сегодня: день, куда
       // человек ушёл стрелками, не тянется за ним в соседний ящик и не ждёт
       // его в закрытом. Открывается всегда то, что сейчас.
       todayState.view = 0;
       todayState.journalView = 0;
+      todayState.notesView = 0;
       rememberTab();
       renderToday();
     });
     host.append(button);
   }
-  $("#journal").hidden = todayState.tab !== "journal";
-  $("#todo").hidden = todayState.tab !== "day";
+  for (const [key, panel] of Object.entries(DRAWER_PANELS)) $(`#${panel}`).hidden = todayState.tab !== key;
 }
 // Строка с временем слева: карточка записи или чужое событие.
 function rowWithTime(time, child, className = "") {
@@ -1392,21 +1403,47 @@ function paintJournal(date) {
   container.append(nav());
   const data = todayState.cache.get(date);
   if (!data) { container.append(node("p", "Загружаю…", "empty")); ensureDayData(date); return; }
-  // Сделанное другого дня — из отчёта «Обзора»; карточка записи, если она
-  // ещё среди загруженных, иначе строка с названием и временем.
+  // Сделанное другого дня — из отчёта «Обзора».
   const done = data.report?.done || [];
   if (!done.length) { container.append(node("p", date < currentDayDate ? "В этот день ничего не записано." : "День ещё не наступил.", "empty")); return; }
-  const entriesById = new Map(todayState.entries.map((entry) => [entry.id, entry]));
-  for (const record of done) {
-    const entry = entriesById.get(record.captureId);
-    if (entry) { container.append(entryCard(entry, { compact: true })); continue; }
-    const box = node("div", undefined, "day-own");
-    box.append(node("span", record.title, "day-own-title"));
-    const meta = node("span", undefined, "day-event-meta");
-    meta.append(node("span", typeNames[record.type] || record.type, "tag"), node("span", hm(zoneMinutes(new Date(record.at))), "tag"));
-    box.append(meta);
-    container.append(box);
+  for (const record of done) container.append(reportRecordNode(record));
+}
+// Запись другого дня из отчёта «Обзора»: карточка, если запись ещё среди
+// загруженных, иначе строка с названием и временем.
+function reportRecordNode(record) {
+  const entry = todayState.entries.find((candidate) => candidate.id === record.captureId);
+  if (entry) return entryCard(entry, { compact: true });
+  const box = node("div", undefined, "day-own");
+  box.append(node("span", record.title, "day-own-title"));
+  const meta = node("span", undefined, "day-event-meta");
+  meta.append(node("span", typeNames[record.type] || record.type, "tag"), node("span", hm(zoneMinutes(new Date(record.at))), "tag"));
+  box.append(meta);
+  return box;
+}
+// «Заметки» устроены как «Что делал»: свои стрелки по дням, сегодняшние — из
+// загруженных записей, другой день — из ленты отчёта «Обзора». Заметка здесь —
+// всё, что записано не делом, не встречей и не итогом: наблюдение, идея, вопрос.
+// Отметка «сделано» заметку отсюда не уводит: тип в карточке — «заметка», и
+// искать её будут здесь. null — день ещё не загружен.
+const NOTE_TYPES = ["note", "idea_question"];
+function notesFor(date) {
+  if (date === currentDayDate)
+    return todayState.entries.filter((entry) => NOTE_TYPES.includes(entry.interpretation.classification.primaryType) && entryDate(entry) === date);
+  const feed = todayState.cache.get(date)?.report?.feed;
+  if (!feed) return null;
+  return feed.filter((record) => NOTE_TYPES.includes(record.type)).sort((left, right) => String(right.at).localeCompare(String(left.at)));
+}
+function paintNotes(date) {
+  const container = $("#today-notes");
+  clear(container);
+  container.append(dayNavNode(date, { view: todayState.notesView, onView: setNotesView }));
+  const notes = notesFor(date);
+  if (!notes) { container.append(node("p", "Загружаю…", "empty")); ensureDayData(date); return; }
+  if (!notes.length) {
+    container.append(node("p", date === currentDayDate ? "Сегодня заметок нет." : date < currentDayDate ? "В этот день заметок не было." : "День ещё не наступил.", "empty"));
+    return;
   }
+  for (const note of notes) container.append(date === currentDayDate ? entryCard(note, { compact: true }) : reportRecordNode(note));
 }
 // Другой день грузится, когда его открыли, и помнится до следующего изменения
 // журнала: чужие события — из календаря, сделанное — из отчёта «Обзора»;
@@ -1424,7 +1461,7 @@ async function ensureDayData(date) {
     todayState.loading.delete(date);
   }
   if (!currentDayDate) return;
-  if ([todayState.view, todayState.journalView].some((offset) => shiftDate(currentDayDate, offset) === date)) renderToday();
+  if ([todayState.view, todayState.journalView, todayState.notesView].some((offset) => shiftDate(currentDayDate, offset) === date)) renderToday();
 }
 // Раз в минуту обложка и строка «сейчас» пересчитываются — но не под руками:
 // с текстом в поле страница ждёт.
@@ -7041,6 +7078,78 @@ function calEventEl(item) {
   element.addEventListener("click", () => openCalendarItem(item));
   return element;
 }
+// Высота сетки. По умолчанию сетка дотягивается до низа окна: подсказка под
+// ней остаётся на экране, а часов видно столько, сколько помещается. Нижний
+// край сетки тянется рукой, как край карточки ввода: высота запоминается в
+// браузере, двойной клик по краю возвращает подгонку под окно.
+const CAL_HEIGHT = { min: 240, key: "kizuna-calendar-height" };
+function storedCalendarHeight() {
+  try {
+    const value = Number(localStorage.getItem(CAL_HEIGHT.key));
+    return Number.isFinite(value) && value >= CAL_HEIGHT.min ? value : null;
+  } catch {
+    return null;
+  }
+}
+function fitCalendarHeight() {
+  const wrap = $("#calendar-view");
+  const scroll = wrap?.querySelector(".cal-scroll");
+  // Пока край тянут рукой, высоту задаёт рука, а не окно.
+  if (!scroll?.getClientRects().length || wrap.classList.contains("resizing")) return;
+  const stored = storedCalendarHeight();
+  if (stored) { wrap.style.setProperty("--cal-height", `${stored}px`); return; }
+  const apply = (height) => wrap.style.setProperty("--cal-height", `${Math.round(Math.max(CAL_HEIGHT.min, height))}px`);
+  // На телефоне сетка во весь экран забирала бы прокрутку страницы себе.
+  if (window.matchMedia("(max-width: 760px)").matches) { apply(window.innerHeight * 0.6); return; }
+  // Сетке достаётся окно за вычетом того, что над ней, и того, что под ней до
+  // конца страницы: подсказки и нижних полей. Считается за один раз — сетка,
+  // промежуточно выросшая на поля, сбила бы свою прокрутку и закрыла плашку.
+  const grid = scroll.getBoundingClientRect();
+  const below = document.body.getBoundingClientRect().bottom - grid.bottom;
+  apply(window.innerHeight - (grid.top + window.scrollY) - below);
+}
+window.addEventListener("resize", () => { if (!$("#calendar")?.hidden) fitCalendarHeight(); });
+function calResizeEl() {
+  const grip = node("div", undefined, "cal-resize");
+  grip.title = "Потяните, чтобы изменить высоту. Двойной клик — по высоте окна";
+  grip.setAttribute("aria-hidden", "true");
+  grip.addEventListener("dblclick", () => {
+    try { localStorage.removeItem(CAL_HEIGHT.key); } catch {}
+    fitCalendarHeight();
+  });
+  grip.addEventListener("pointerdown", (event) => {
+    const scroll = grip.parentElement?.querySelector(".cal-scroll");
+    if (event.button !== 0 || !scroll) return;
+    const wrap = $("#calendar-view");
+    const startY = event.clientY, startHeight = Math.round(scroll.getBoundingClientRect().height);
+    // Выше самих часов тянуть незачем: под сеткой осталась бы пустота.
+    const tallest = scroll.scrollHeight;
+    let height = startHeight;
+    grip.setPointerCapture(event.pointerId);
+    wrap.classList.add("resizing");
+    event.preventDefault();
+    const move = (e) => {
+      height = Math.round(Math.min(tallest, Math.max(CAL_HEIGHT.min, startHeight + e.clientY - startY)));
+      wrap.style.setProperty("--cal-height", `${height}px`);
+    };
+    // Сетку могут перерисовать посреди движения — пришло обновление журнала, —
+    // и ручка уйдёт со страницы вместе со своими слушателями. Поэтому движение
+    // слушает окно: до него события доходят и от новой ручки, и без неё.
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      wrap.classList.remove("resizing");
+      if (height !== startHeight) {
+        try { localStorage.setItem(CAL_HEIGHT.key, String(height)); } catch {}
+      }
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  });
+  return grip;
+}
 function calGridEl(dates) {
   const today = calToday();
   const now = new Date();
@@ -7082,7 +7191,7 @@ function calGridEl(dates) {
   }
   scroll.append(grid);
   const wrap = node("div", undefined, "cal-week");
-  wrap.append(head, lane, scroll);
+  wrap.append(head, lane, scroll, calResizeEl());
   // Первый показ — с восьми утра; при перерисовке прокрутка остаётся прежней.
   requestAnimationFrame(() => { if (calState.scrollTop === null) { scroll.scrollTop = (Math.max(CAL_H0, 8) - CAL_H0) * CAL_HOUR_PX - 10; calState.gridScroll = scroll.scrollTop; } });
   return wrap;
@@ -7171,6 +7280,7 @@ function renderCalendar() {
   const hint = node("p", undefined, "cal-hint");
   hint.append(node("kbd", "D"), node("kbd", "W"), node("kbd", "M"), document.createTextNode(" виды · "), node("kbd", "T"), document.createTextNode(" сегодня · "), node("kbd", "←"), node("kbd", "→"), document.createTextNode(" листать · "), node("kbd", "1"), document.createTextNode("–"), node("kbd", "7"), document.createTextNode(" дней · тяните дела, встречи и чужие события, клик по пустому месту — новая запись"));
   wrap.append(hint);
+  fitCalendarHeight();
 }
 // Клик по своему делу — карточка записи; по чужому событию — плашка с тем,
 // что известно, и «Взять в память».

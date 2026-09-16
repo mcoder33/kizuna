@@ -79,8 +79,8 @@ test("success notification disappears without shifting the drawers under the fie
   await expect(page.locator("#capture-notifications .capture-notification")).toHaveCount(0, {
     timeout: 5000,
   });
-  // Под полем два ящика: «Что делал» и «День». Колонок и заметок больше нет.
-  await expect(page.locator(".drawer-tab")).toHaveCount(2);
+  // Под полем три ящика: «Что делал», «День» и «Заметки». Колонок больше нет.
+  await expect(page.locator(".drawer-tab")).toHaveCount(3);
 });
 test("notification stack is pinned to the viewport right edge on desktop", async ({
   page,
@@ -97,7 +97,7 @@ test("notification stack is pinned to the viewport right edge on desktop", async
     });
   expect(geometry.rightGap).toBeLessThanOrEqual(24);
 });
-test("today separates reported work and the day's plan; notes stay off the main page", async ({
+test("today separates reported work, the day's plan and the day's notes", async ({
   page,
 }) => {
   await page.goto("/");
@@ -111,7 +111,7 @@ test("today separates reported work and the day's plan; notes stay off the main 
   await showDay(page, 1);
   await expect(page.locator("#todo")).toContainText("созвон по Hub");
   await showDay(page, 0);
-  // Заметка сохраняется, но на главную не выносится: главная — про день.
+  // Заметка не попадает ни в сделанное, ни в дела: у неё свой ящик.
   await capture(page, "Сегодня посмотрел работу с голосовым ИИ");
   await expect(page.locator("#journal")).not.toContainText("голосовым ИИ");
   await expect(page.locator("#todo")).not.toContainText("голосовым ИИ");
@@ -119,7 +119,9 @@ test("today separates reported work and the day's plan; notes stay off the main 
   expect(entries.entries.some((entry) => entry.raw.includes("голосовым ИИ"))).toBe(true);
   await expect(page.getByRole("tab", { name: /Что делал/ })).toBeVisible();
   await expect(page.getByRole("tab", { name: /День/ })).toBeVisible();
-  expect(await page.locator("#notes").count()).toBe(0);
+  await page.getByRole("tab", { name: /^Заметки/ }).click();
+  await expect(page.locator("#today-notes")).toContainText("голосовым ИИ");
+  await expect(page.locator("#today-notes")).not.toContainText("доработал обновление контекста");
   expect(await page.locator("#attention").count()).toBe(0);
   await page.evaluate(() => { location.hash = "#memory"; });
   await expect(page.locator("#memory")).toBeVisible();
@@ -273,8 +275,35 @@ test("the day keeps tasks and meetings together; notes never land among them", a
   await showDay(page, 1);
   await expect(page.locator("#todo")).toContainText(meeting);
   await expect(page.locator("#todo")).not.toContainText("голосовым ИИ");
-  expect(await page.locator("#notes").count()).toBe(0);
   expect(await page.locator(".calendar-block").count()).toBe(0);
+  // Заметка лежит в своём ящике — рядом с «Днём», а не среди дел.
+  await page.getByRole("tab", { name: /^Заметки/ }).click();
+  await expect(page.locator("#today-notes")).toContainText(note);
+  await expect(page.locator("#today-notes")).not.toContainText(task);
+  await expect(page.locator("#todo")).toBeHidden();
+});
+// «Заметки» устроены как «День»: число на вкладке, свои стрелки по дням, и из
+// строки открывается карточка записи.
+test("заметки дня лежат в своём ящике со стрелками по дням", async ({ page }) => {
+  const note = "Доступы к стенду лежат в хранилище";
+  await page.goto("/");
+  const notesTab = page.getByRole("tab", { name: /^Заметки/ });
+  const drawer = page.locator("#today-notes");
+  await expect(notesTab.locator("b")).toHaveText("0");
+  await capture(page, note);
+  await expect(notesTab.locator("b")).toHaveText("1");
+  await notesTab.click();
+  await expect(drawer.locator(".daynav .daynav-mark")).toBeVisible();
+  await expect(drawer.locator(".entry")).toHaveCount(1);
+  await expect(drawer).toContainText(note);
+  // Вчера заметок не было: ящик так и говорит, а вкладка называет день.
+  await drawer.locator('.daynav [data-step="-1"]').click();
+  await expect(drawer).toContainText("В этот день заметок не было.");
+  await expect(page.locator("#tab-notes .drawer-tab-label")).not.toHaveText("Заметки");
+  await drawer.locator(".daynav-today").click();
+  await expect(page.locator("#tab-notes .drawer-tab-label")).toHaveText("Заметки");
+  await drawer.locator(".entry-title").first().click();
+  await expect(page.locator("#review-dialog")).toBeVisible();
 });
 test("TODO buffer keeps overdue incomplete items ahead of other open work", async ({
   page,

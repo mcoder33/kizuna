@@ -355,3 +355,45 @@ test("«День»: повторяющееся дело видно сегодн�
   await todo.locator('.daynav [data-step="1"]').click();
   await expect(todo.locator(".entry", { hasText: "Проверить почту" }).locator(".tag.due")).toHaveText("каждый день");
 });
+// Сетка по умолчанию дотягивается до низа окна, а её нижний край тянется
+// рукой: высота переживает перезагрузку, двойной клик возвращает подгонку.
+test("сетка календаря встаёт по высоте окна и тянется за нижний край", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/#calendar");
+  await page.evaluate(() => { localStorage.setItem("kizuna-calendar-mode", "week"); });
+  await page.reload();
+  const scroll = page.locator("#calendar-view .cal-scroll");
+  await expect(scroll).toBeVisible();
+  const height = () => scroll.evaluate((element) => Math.round(element.getBoundingClientRect().height));
+  // Высота в пикселях округляется по-разному в сетке и в окне — допуск в пиксель.
+  const off = (target) => async () => Math.abs((await height()) - target);
+  const pageOverflow = () => page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
+  // Страница встаёт в окно целиком: сетка забрала всё место, но окно не
+  // прокручивается и пустоты под календарём нет.
+  await expect.poll(pageOverflow).toBeLessThanOrEqual(1);
+  const fitted = await height();
+  expect(fitted).toBeGreaterThan(240);
+  await page.setViewportSize({ width: 1440, height: 860 });
+  await expect.poll(off(fitted - 40)).toBeLessThanOrEqual(1);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect.poll(off(fitted)).toBeLessThanOrEqual(1);
+
+  // Край тянут вверх на 50px — сетка ниже и такой остаётся после перезагрузки.
+  const box = await scroll.boundingBox();
+  const x = box.x + box.width / 2, edge = box.y + box.height - 1;
+  await page.mouse.move(x, edge);
+  await page.mouse.down();
+  await page.mouse.move(x, edge - 50, { steps: 5 });
+  await page.mouse.up();
+  await expect.poll(off(fitted - 50)).toBeLessThanOrEqual(1);
+  await page.reload();
+  await expect(scroll).toBeVisible();
+  await expect.poll(off(fitted - 50)).toBeLessThanOrEqual(1);
+
+  // Двойной клик по краю — снова по окну.
+  const again = await scroll.boundingBox();
+  await page.mouse.dblclick(again.x + again.width / 2, again.y + again.height - 1);
+  await expect.poll(off(fitted)).toBeLessThanOrEqual(1);
+  expect(await page.evaluate(() => localStorage.getItem("kizuna-calendar-height"))).toBeNull();
+});

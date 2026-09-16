@@ -218,9 +218,8 @@
             <div class="capture-resize" data-dir="sw" aria-hidden="true"></div>
           </form>
         </section>
-        <!-- Под полем — два ящика: «Что делал» и «День», где дела лежат вместе
-             с календарём, а внутри «Дня» — стрелки по дням. Заметок на главной
-             нет: они живут в «Обзоре», поиске и карточке записи. -->
+        <!-- Под полем — три ящика: «Что делал», «День», где дела лежат вместе
+             с календарём, и «Заметки» дня. В каждом свои стрелки по дням. -->
         <section class="drawers" aria-label="Дневная сводка">
           <div class="drawer-tabs" id="today-tabs" role="tablist"></div>
           <div id="journal" class="stack drawer" role="tabpanel" aria-labelledby="tab-journal" hidden>
@@ -228,6 +227,9 @@
           </div>
           <div id="todo" class="stack drawer day-list" role="tabpanel" aria-labelledby="tab-day" hidden>
             <p class="empty">Открытых дел нет.</p>
+          </div>
+          <div id="today-notes" class="stack drawer" role="tabpanel" aria-labelledby="tab-notes" hidden>
+            <p class="empty">Сегодня заметок нет.</p>
           </div>
         </section>
       </section>

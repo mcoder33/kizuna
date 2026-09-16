@@ -699,9 +699,11 @@ main {
 .md-field .md-heading {
   font-weight: 750;
 }
-.md-field .md-h1 { font-size: 1.32em; }
-.md-field .md-h2 { font-size: 1.2em; }
-.md-field .md-h3 { font-size: 1.09em; }
+/* Заголовки в поле ввода — той же лестницей, что в карточке записи: набранный
+   «### » должен читаться заголовком, а не жирной строкой рядом с текстом. */
+.md-field .md-h1 { font-size: 1.875em; }
+.md-field .md-h2 { font-size: 1.5em; }
+.md-field .md-h3 { font-size: 1.25em; }
 .md-field .md-h4 { font-size: 1em; }
 .md-field .md-quote,
 .md-field .md-callout-line {
@@ -6536,6 +6538,8 @@ body {
   padding: 0 clamp(24px, 4vw, 64px);
 }
 .calendar-page .page-heading { margin-bottom: 8px; }
+/* Сетка встаёт по высоте окна — нижнее поле страницы отдаётся ей. */
+main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 .calendar-controls { margin-right: 0; }
 .calendar-controls .cal-sources { padding: 0; border: 0; }
 /* Ссылка в настройки календарей — тихая, как «Свойства» на доске: это не
@@ -6632,7 +6636,18 @@ body {
 }
 .cal-nt.today, .cal-col.today, .cal-mc.today { background-color: rgba(255, 56, 92, 0.05); }
 .cal-nt.over, .cal-mc.over { box-shadow: inset 0 0 0 2px var(--focus); }
-.cal-scroll { max-height: 560px; overflow: auto; overscroll-behavior: contain; }
+/* Высоту сетки считает fitCalendarHeight — до низа окна или как вытянули рукой. */
+.cal-scroll { max-height: var(--cal-height, 560px); overflow: auto; overscroll-behavior: contain; }
+/* Ручка высоты — полоса по нижнему краю сетки. Сама полоса невидима, о ней
+   говорят курсор и язычок, который проявляется под мышью. */
+.cal-resize { position: relative; z-index: 4; height: 0; touch-action: none; }
+.cal-resize::before { content: ""; position: absolute; left: 0; right: 0; top: -5px; height: 10px; cursor: ns-resize; }
+.cal-resize::after {
+  content: ""; position: absolute; left: 50%; top: -2px; width: 36px; height: 4px; margin-left: -18px;
+  border-radius: 2px; background: var(--n-72); opacity: 0; transition: opacity 0.15s; pointer-events: none;
+}
+.cal-resize:hover::after, .board-calendar.resizing .cal-resize::after { opacity: 1; }
+.board-calendar.resizing { cursor: ns-resize; }
 .cal-grid { display: grid; grid-template-columns: 52px repeat(var(--days, 7), minmax(0, 1fr)); position: relative; }
 .cal-hours { position: relative; border-right: 1px solid var(--line); }
 .cal-hours div { height: var(--h); font-size: 10.5px; color: var(--n-72); text-align: right; padding-right: 6px; transform: translateY(-7px); }
@@ -6828,7 +6843,7 @@ body {
   .cal-seg kbd, .cal-hint { display: none; }
   .cal-day { grid-template-columns: 1fr; }
   .cal-agenda { border-left: 0; border-top: 1px solid var(--line); }
-  .cal-scroll { max-height: 60vh; }
+  .cal-scroll { max-height: var(--cal-height, 60vh); }
   .cal-mc { min-height: 64px; padding: 2px; }
   .cal-mc .cal-chip-title { display: none; }
   .cal-mc .cal-chip { padding: 2px 3px; }
@@ -6902,10 +6917,10 @@ body {
 .card-delete-ask button.danger { color: var(--red-50); }
 .card-delete-ask button:disabled { opacity: 0.5; cursor: default; }
 
-/* ── «Сегодня»: обложка по часам, полоса дней, два ящика ─────────────────────
+/* ── «Сегодня»: обложка по часам, полоса дней, три ящика ─────────────────────
    Дата с фазой суток, бриф и вопрос в поле меняются утром, днём, вечером и
-   ночью. Под полем — полоса дней и два ящика: «Что делал» и «День», где дела
-   лежат вместе с календарём. Колонок и заметок на главной больше нет. */
+   ночью. Под полем — полоса дней и три ящика: «Что делал», «День», где дела
+   лежат вместе с календарём, и «Заметки» дня. Колонок на главной больше нет. */
 /* Ширина карточки ввода — своя у каждого: тянется за боковые края, выбор
    хранится в браузере и приходит сюда переменной. */
 .today-page .hero { max-width: var(--capture-width, 800px); margin: 0 auto 8px; }
