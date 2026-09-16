@@ -1158,7 +1158,7 @@ function inboxRow(row) {
   const label = row.kind === "request" ? row.title
     : row.kind === "circle" ? `${row.from?.name || "Вас"} добавил${row.from ? "" : "и"} в круг «${row.circle.name}»`
     : `${row.from.name} зовёт: «${row.kind === "chat" ? row.title : row.body}»`;
-  const open = () => (row.kind === "chat" ? openRoomFromInbox(row.roomId) : row.kind === "circle" ? openCircleFromInbox(row.circle.id) : openSharedCard(row.captureId));
+  const open = () => (row.kind === "chat" ? openRoomFromInbox(row.roomId) : row.kind === "circle" ? openCircleFromInbox(row.circle.id) : openSharedCard(row.captureId, { talk: row.kind === "call" }));
   const title = node("button", label, "inbox-title");
   title.type = "button";
   title.addEventListener("click", open);
@@ -1251,9 +1251,10 @@ async function toggleCircleMute(circleId, muted) {
 }
 // Чужая карточка открывается тем же окном, что и своя: запись живёт у автора,
 // а мы читаем её и пишем в обсуждение.
-async function openSharedCard(captureId) {
+async function openSharedCard(captureId, { talk = false } = {}) {
   try {
     const { entry } = await request(`/api/captures/${captureId}`);
+    cardTalkOnOpen = talk;
     showCorrection(entry, reviewFromEntry(entry).level === "high" ? undefined : reviewFromEntry(entry));
   } catch (error) { toast(error.message || "Запись не открылась"); }
 }
@@ -1513,11 +1514,13 @@ function closeCard() {
   flushCard();
   closeCardSlashMenu?.();
   if (!dialog.open) {
+    dropCardTalk();
     clear($("#review"));
     return;
   }
   const finish = () => {
     if (dialog.open) dialog.close();
+    dropCardTalk();
     clear($("#review"));
     // Анимация закрытия держит карточку прозрачной (fill: forwards): не снять
     // её — и при следующем открытии карточка окажется невидимой.
@@ -1846,16 +1849,65 @@ function commentText(body, mentions) {
   }
   return wrap;
 }
+// Обсуждение не стоит блоком под заметкой, а выезжает снизу карточки по
+// кнопке: заметки и разговор больше не сваливаются в одну колонку. Личной
+// записи без сообщений обсуждать не с кем — у неё нет ни кнопки, ни поля.
+// Открыли карточку по призыву — разговор сразу выехал: звали ради него.
+let cardTalkOnOpen = false;
+// Высоту листа тянут за верхнюю кромку: доля карточки в процентах. Запоминается,
+// как размер самой карточки; дотянули почти до низа — лист свернулся.
+const talkHeightStorageKey = "pagent.talk-height";
+const TALK_MIN = 30, TALK_MAX = 94, TALK_SHUT = 18;
+function storedTalkHeight() {
+  try {
+    const value = Number(localStorage.getItem(talkHeightStorageKey));
+    return value >= TALK_MIN && value <= TALK_MAX ? value : null;
+  } catch { return null; }
+}
+function rememberTalkHeight(value) {
+  try {
+    if (value == null) localStorage.removeItem(talkHeightStorageKey);
+    else localStorage.setItem(talkHeightStorageKey, String(Math.round(value)));
+  } catch {}
+}
+function dropCardTalk() {
+  const dialog = $("#review-dialog");
+  dialog.classList.remove("talk-open");
+  dialog.querySelectorAll(".talk-sheet, .talk-scrim").forEach((element) => element.remove());
+}
 function cardDiscussion(entry) {
-  const wrap = node("section", undefined, "card-thread");
-  const head = node("p", undefined, "prop-section");
-  const list = node("div", undefined, "thread-list");
   let comments = entry.comments || [];
   const callable = entry.callable || [];
+  const openNow = cardTalkOnOpen;
+  cardTalkOnOpen = false;
+  if (!comments.length && !callable.length) return null;
+  const dialog = $("#review-dialog");
+  const opener = node("button", undefined, "card-talk-open");
+  opener.type = "button";
+  opener.setAttribute("aria-controls", "card-talk");
+  const wrap = node("section", undefined, "card-thread talk-sheet");
+  wrap.id = "card-talk";
+  wrap.setAttribute("aria-label", "Обсуждение");
+  const scrim = node("div", undefined, "talk-scrim");
+  const top = node("div", undefined, "talk-head");
+  const head = node("p", undefined, "prop-section");
+  const shut = node("button", undefined, "talk-close");
+  shut.type = "button";
+  shut.setAttribute("aria-label", "Свернуть обсуждение");
+  top.append(head, shut);
+  const grip = node("div", undefined, "talk-grip");
+  grip.tabIndex = 0;
+  grip.setAttribute("role", "separator");
+  grip.setAttribute("aria-orientation", "horizontal");
+  grip.setAttribute("aria-label", "Высота обсуждения");
+  grip.title = "Потяните, чтобы изменить высоту · двойной клик — как было";
+  const sizeTip = node("span", undefined, "talk-size");
+  const list = node("div", undefined, "thread-list");
   const paint = () => {
     head.textContent = comments.length ? `Обсуждение · ${comments.length}` : "Обсуждение";
+    opener.textContent = comments.length ? `Обсуждение · ${comments.length}` : "Обсудить";
     clear(list);
-    if (!comments.length) list.append(node("p", callable.length ? "Пока тихо. Напишите — и позовите, кто нужен, через @имя." : "Обсуждение появится, когда запись окажется в круге: сейчас её видите только вы.", "empty"));
+    if (!comments.length) list.append(node("p", "Пока тихо. Напишите — и позовите, кто нужен, через @имя.", "empty"));
     for (const comment of comments) {
       const row = node("div", undefined, `msg${comment.parentId ? " reply" : ""}`);
       row.append(avatarEl(comment.author));
@@ -1881,6 +1933,7 @@ function cardDiscussion(entry) {
     }
   };
   paint();
+  const toBottom = () => { list.scrollTop = list.scrollHeight; };
   const composer = node("div", undefined, "thread-composer");
   const field = node("textarea", undefined, "thread-input");
   field.rows = 1;
@@ -1897,7 +1950,9 @@ function cardDiscussion(entry) {
       comments = [...comments, result.comment];
       entry.comments = comments;
       field.value = "";
+      field.style.height = "auto";
       paint();
+      toBottom();
       if (result.comment.mentions.length) toast(`Призвали: ${result.comment.mentions.map((person) => person.name).join(", ")}`);
     } catch (error) { toast(error.message || "Сообщение не ушло"); }
     finally { send.disabled = false; field.focus(); }
@@ -1908,8 +1963,73 @@ function cardDiscussion(entry) {
   });
   field.addEventListener("input", () => { field.style.height = "auto"; field.style.height = `${Math.min(field.scrollHeight, 200)}px`; });
   composer.append(field, mentionPopup(field, callable, () => {}), send);
-  wrap.append(head, list, composer);
-  return wrap;
+  wrap.append(grip, sizeTip, top, list);
+  const applyHeight = (value) => {
+    if (value == null) wrap.style.removeProperty("height");
+    else wrap.style.height = `${value}%`;
+    grip.setAttribute("aria-valuenow", String(Math.round(value ?? 0)));
+  };
+  applyHeight(storedTalkHeight());
+  // Из круга ушли — прочитать разговор можно, написать в него уже некому.
+  if (callable.length) wrap.append(composer);
+  const setOpen = (open) => {
+    dialog.classList.toggle("talk-open", open);
+    opener.setAttribute("aria-expanded", String(open));
+    if (open) { toBottom(); if (callable.length) field.focus({ preventScroll: true }); }
+    else opener.focus({ preventScroll: true });
+  };
+  opener.addEventListener("click", () => setOpen(true));
+  shut.addEventListener("click", () => setOpen(false));
+  grip.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const box = dialog.getBoundingClientRect();
+    let height = wrap.getBoundingClientRect().height / box.height * 100;
+    grip.setPointerCapture(event.pointerId);
+    dialog.classList.add("talk-dragging");
+    const move = (moveEvent) => {
+      height = Math.min(TALK_MAX, (box.bottom - moveEvent.clientY) / box.height * 100);
+      wrap.style.height = `${Math.max(height, 8)}%`;
+      sizeTip.textContent = height < TALK_SHUT ? "отпустите — свернуть" : `${Math.round(height)}%`;
+    };
+    const up = () => {
+      grip.removeEventListener("pointermove", move);
+      dialog.classList.remove("talk-dragging");
+      if (height < TALK_SHUT) {
+        applyHeight(storedTalkHeight());
+        setOpen(false);
+        return;
+      }
+      const value = Math.max(TALK_MIN, height);
+      applyHeight(value);
+      rememberTalkHeight(value);
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up, { once: true });
+    grip.addEventListener("pointercancel", up, { once: true });
+  });
+  grip.addEventListener("dblclick", () => { applyHeight(null); rememberTalkHeight(null); });
+  grip.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault();
+    const now = wrap.getBoundingClientRect().height / dialog.getBoundingClientRect().height * 100;
+    const value = Math.min(TALK_MAX, Math.max(TALK_MIN, now + (event.key === "ArrowUp" ? 6 : -6)));
+    applyHeight(value);
+    rememberTalkHeight(value);
+  });
+  scrim.addEventListener("click", () => setOpen(false));
+  // Карточка перерисовывается после правки свойств — выехавший разговор
+  // остаётся на месте, если это та же запись.
+  const keep = dialog.classList.contains("talk-open") && dialog.dataset.talkFor === entry.id;
+  dropCardTalk();
+  dialog.dataset.talkFor = entry.id;
+  dialog.append(scrim, wrap);
+  opener.setAttribute("aria-expanded", String(openNow || keep));
+  // Та же запись после перерисовки — разговор уже на месте, без выезда и
+  // без кражи фокуса у того, кто правил свойства.
+  if (keep) dialog.classList.add("talk-open");
+  else if (openNow) requestAnimationFrame(() => setOpen(true));
+  return opener;
 }
 const entryClockLabel = (iso) => {
   try {
@@ -2365,7 +2485,9 @@ function showReview(entry, review, undoGroupId, provenance) {
   flushCardProps = saveProps;
   // Enter в поле свойства раньше отправлял форму; отправлять больше нечего.
   form.addEventListener("submit", (event) => event.preventDefault());
-  area.append(form, cardBody(entry), cardDiscussion(entry));
+  const talk = cardDiscussion(entry);
+  if (!talk) dropCardTalk();
+  area.append(form, ...(talk ? [talk] : []), cardBody(entry));
   // Футер прижат к низу листа и собран в строку: вложения, «когда записано»,
   // источник и удаление — служебный подвал, а не столбик в теле карточки.
   const footer = node("div", undefined, "card-footer");
@@ -3874,8 +3996,15 @@ $("#review-dialog").addEventListener("close", () => {
   // документе вместе со своим слушателем клавиш, а правки пропали бы.
   flushCard();
   closeCardSlashMenu?.();
+  dropCardTalk();
   clear($("#review"));
   syncCardViewport();
+});
+// Esc при выехавшем разговоре сворачивает разговор, а не закрывает карточку.
+$("#review-dialog").addEventListener("cancel", (event) => {
+  if (!$("#review-dialog").classList.contains("talk-open")) return;
+  event.preventDefault();
+  $("#review-dialog .talk-close")?.click();
 });
 // На телефоне клавиатура сжимает видимую область, а не окно: Safari тогда
 // прокручивает документ, чтобы показать каретку, и уводит карточку за экран,
