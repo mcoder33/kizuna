@@ -608,19 +608,28 @@ test('only models that can actually hold a live conversation get into the list',
   ]);
 
   // У Google живой режим — отдельный метод каталога, и спрашиваем мы про него,
-  // а не про слово «live» в имени. Свежие вперёд: 3.8 раньше 3.1.
+  // а не про слово «live» в имени. Но тем же сокетом ходят расшифровка, перевод
+  // и поток робототехники: наших инструментов они не умеют, и разговор с ними
+  // оборвался бы на первой записи. Порядок — по версии: 3.8 выше 3.1, а внутри
+  // версии первым идёт имя без добавки.
   const google = geminiVoiceModels({
     models: [
       { name: 'models/gemini-3.1-flash-live-preview', supportedGenerationMethods: ['bidiGenerateContent'] },
-      { name: 'models/gemini-3.8-flash-live-preview', supportedGenerationMethods: ['bidiGenerateContent'] },
+      { name: 'models/gemini-3.8-live-extended-thinking', supportedGenerationMethods: ['bidiGenerateContent'] },
+      { name: 'models/gemini-3.8-live', supportedGenerationMethods: ['bidiGenerateContent'] },
+      { name: 'models/gemini-3.5-transcribe-live', supportedGenerationMethods: ['bidiGenerateContent'] },
+      { name: 'models/gemini-3.5-live-translate-preview', supportedGenerationMethods: ['bidiGenerateContent'] },
+      { name: 'models/gemini-robotics-er-2-streaming-preview', supportedGenerationMethods: ['bidiGenerateContent'] },
       { name: 'models/gemini-3.8-flash', supportedGenerationMethods: ['generateContent'] },
       { name: 'models/imagen-4', supportedGenerationMethods: ['predict'] },
     ],
   });
-  assert.deepEqual(google, [
-    { id: 'models/gemini-3.8-flash-live-preview', label: 'gemini-3.8-flash-live-preview' },
-    { id: 'models/gemini-3.1-flash-live-preview', label: 'gemini-3.1-flash-live-preview' },
+  assert.deepEqual(google.map((entry) => entry.id), [
+    'models/gemini-3.8-live',
+    'models/gemini-3.8-live-extended-thinking',
+    'models/gemini-3.1-flash-live-preview',
   ]);
+  assert.deepEqual(google[0], { id: 'models/gemini-3.8-live', label: 'gemini-3.8-live' });
 });
 
 test('the catalogue comes from the provider, and a failed request leaves the choice alive', async () => {

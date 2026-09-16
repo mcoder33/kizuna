@@ -121,19 +121,30 @@ export function openaiVoiceModels(ids) {
 // Спрашиваем про метод, а не про слово «live» в имени: имя сменится, метод нет.
 // Имя смотрим вторым признаком — если каталог назовёт живую модель, не перечислив
 // метода, потерять её хуже, чем показать лишнюю.
+// Но метод сам по себе не значит «собеседник»: тем же сокетом ходят расшифровка
+// (transcribe), синхронный перевод (translate) и поток для робототехники. Они
+// не умеют наших инструментов, и разговор с ними обрывался бы на первой записи.
+const GEMINI_NOT_LIVE = /transcribe|translate|robotics/i;
+// Версия — то, по чему список читают: 3.8 выше 3.1. Внутри одной версии первым
+// идёт имя без добавки: «extended-thinking» — особый случай, а не свежесть.
+function geminiVersion(label) {
+  const found = /(\d+(?:\.\d+)*)/.exec(label);
+  return found ? found[1] : '0';
+}
 export function geminiVoiceModels(payload) {
   const rows = Array.isArray(payload?.models) ? payload.models : [];
   const usable = [];
   for (const row of rows) {
     const id = typeof row?.name === 'string' ? row.name : '';
-    if (!id) continue;
+    if (!id || GEMINI_NOT_LIVE.test(id)) continue;
     const methods = Array.isArray(row?.supportedGenerationMethods) ? row.supportedGenerationMethods : [];
     if (!methods.includes('bidiGenerateContent') && !/live/i.test(id)) continue;
     usable.push(modelChoice(id));
   }
-  // Свежие вперёд: у Google версия растёт числом в имени, и обратный порядок
-  // ставит 3.8 раньше 3.1.
-  return usable.sort((left, right) => right.label.localeCompare(left.label, 'en', { numeric: true }));
+  return usable.sort((left, right) =>
+    geminiVersion(right.label).localeCompare(geminiVersion(left.label), 'en', { numeric: true })
+    || left.label.length - right.label.length
+    || right.label.localeCompare(left.label, 'en', { numeric: true }));
 }
 export function voiceGender(provider, name) {
   const list = VOICE_CHOICES[provider === 'gemini' ? 'gemini' : 'openai'];
