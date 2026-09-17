@@ -9,6 +9,7 @@ import { authed } from './helpers/auth.js';
 import { createVoiceService, runVoiceTool, mockVoiceTurn, pickVoiceProvider, geminiTools, openaiVoiceModels, geminiVoiceModels, voiceContext, VOICE_TOOLS, VOICE_INSTRUCTIONS, GEMINI_LIVE_URL, RELAY_PATH } from '../server/voice.js';
 import { openDatabase, createLedger } from '../server/db.js';
 import { normalizeClassification } from '../server/classifier.js';
+import { nextVoiceLevel, VOICE_INTERRUPT_LEVELS, VOICE_INTERRUPT_STEPS, VOICE_PAUSE_LEVELS, VOICE_PAUSE_STEPS } from '../server/voice-turn.js';
 import { fakeModelService } from './helpers/fake-model.js';
 
 function app(voiceService) {
@@ -255,6 +256,74 @@ test('with a key the service asks OpenAI for an ephemeral secret and never leaks
   assert.equal(body.session.tool_choice, 'auto');
   assert.deepEqual(body.session.tools.map((tool) => tool.name), VOICE_TOOLS.map((tool) => tool.name));
   assert.ok(body.expires_after.seconds <= 600, 'токен должен быть коротким');
+  // Без выбора человека очерёдность — умолчания OpenAI, но названные явно:
+  // правка на ходу должна уметь вернуть их обратно.
+  assert.deepEqual(body.session.audio.input, {
+    transcription: { model: 'whisper-1' },
+    turn_detection: { type: 'server_vad', threshold: 0.5, silence_duration_ms: 500 },
+  });
+});
+
+// Очерёдность разговора — шкала словами, а у провайдеров свои ручки: у OpenAI
+// порог и миллисекунды, у Gemini ступени чуткости. «Обычно» Gemini не
+// получает вовсе — его умолчаний мы не знаем.
+test('turn levels become OpenAI thresholds and Gemini sensitivities', async () => {
+  const bodies = [];
+  const fetch = async (url, options) => {
+    bodies.push(JSON.parse(options.body));
+    return { ok: true, json: async () => ({ value: 'ek_short_lived', name: 'auth_tokens/short-lived' }) };
+  };
+  const both = createVoiceService({ apiKey: 'sk-test', geminiApiKey: 'g', fetch });
+  await both.createSession({ provider: 'openai', turn: { interrupt: 'loud', pause: 'think' } });
+  assert.deepEqual(bodies.at(-1).session.audio.input.turn_detection, { type: 'server_vad', threshold: 0.75, silence_duration_ms: 2000 });
+  await both.createSession({ provider: 'openai', turn: { interrupt: 'easy', pause: 'quick' } });
+  assert.deepEqual(bodies.at(-1).session.audio.input.turn_detection, { type: 'server_vad', threshold: 0.3, silence_duration_ms: 300 });
+
+  await both.createSession({ provider: 'gemini' });
+  assert.equal(bodies.at(-1).bidiGenerateContentSetup.realtimeInputConfig, undefined, 'обычное — без ручек Gemini');
+  await both.createSession({ provider: 'gemini', turn: { interrupt: 'loud', pause: 'wait' } });
+  assert.deepEqual(bodies.at(-1).bidiGenerateContentSetup.realtimeInputConfig, {
+    automaticActivityDetection: { startOfSpeechSensitivity: 'START_SENSITIVITY_LOW', endOfSpeechSensitivity: 'END_SENSITIVITY_LOW', silenceDurationMs: 1000 },
+  });
+  // Меняют только названное: пауза обычная — о конце речи Gemini молчим.
+  await both.createSession({ provider: 'gemini', turn: { interrupt: 'easy', pause: 'normal' } });
+  assert.deepEqual(bodies.at(-1).bidiGenerateContentSetup.realtimeInputConfig, {
+    automaticActivityDetection: { startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH' },
+  });
+});
+
+test('a spoken step moves along the scale and holds at its ends', () => {
+  assert.equal(nextVoiceLevel(VOICE_PAUSE_LEVELS, VOICE_PAUSE_STEPS, 'normal', 'longer'), 'wait');
+  assert.equal(nextVoiceLevel(VOICE_PAUSE_LEVELS, VOICE_PAUSE_STEPS, 'think', 'longer'), 'think');
+  assert.equal(nextVoiceLevel(VOICE_PAUSE_LEVELS, VOICE_PAUSE_STEPS, 'quick', 'shorter'), 'quick');
+  assert.equal(nextVoiceLevel(VOICE_INTERRUPT_LEVELS, VOICE_INTERRUPT_STEPS, 'normal', 'easier'), 'easy');
+  assert.equal(nextVoiceLevel(VOICE_INTERRUPT_LEVELS, VOICE_INTERRUPT_STEPS, 'loud', 'harder'), 'loud');
+  // Названный уровень ставится как есть; чужое слово — отказ, а не догадка.
+  assert.equal(nextVoiceLevel(VOICE_PAUSE_LEVELS, VOICE_PAUSE_STEPS, 'quick', 'think'), 'think');
+  assert.equal(nextVoiceLevel(VOICE_PAUSE_LEVELS, VOICE_PAUSE_STEPS, 'normal', 'harder'), null);
+  assert.equal(nextVoiceLevel(VOICE_INTERRUPT_LEVELS, VOICE_INTERRUPT_STEPS, undefined, 'harder'), 'loud', 'пустое значит «обычно»');
+});
+
+// Разговор открывается с очерёдностью того, кто говорит: у соседа по серверу
+// может быть своя.
+test('the session endpoint opens the conversation with the speaker’s own turn settings', async () => {
+  const bodies = [];
+  const instance = app(createVoiceService({
+    apiKey: 'sk-test',
+    geminiApiKey: '',
+    fetch: async (url, options) => {
+      bodies.push(JSON.parse(options.body));
+      return { ok: true, json: async () => ({ value: 'ek_short_lived' }) };
+    },
+  }));
+  const me = authed(instance, { email: 'me@kizuna.test', role: 'user' });
+  const neighbour = authed(instance, { email: 'neighbour@kizuna.test', role: 'user' });
+  await me.put('/api/settings').send({ voiceInterrupt: 'loud', voicePause: 'wait' }).expect(200);
+
+  await me.post('/api/voice/session').expect(200);
+  assert.deepEqual(bodies.at(-1).session.audio.input.turn_detection, { type: 'server_vad', threshold: 0.75, silence_duration_ms: 1000 });
+  await neighbour.post('/api/voice/session').expect(200);
+  assert.deepEqual(bodies.at(-1).session.audio.input.turn_detection, { type: 'server_vad', threshold: 0.5, silence_duration_ms: 500 });
 });
 
 test('a failing or slow realtime API degrades with a safe reason', async () => {

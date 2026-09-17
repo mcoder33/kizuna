@@ -24,6 +24,7 @@ import { registerNotesRoutes } from './notes-tree.js';
 import { createSecretBox } from './secrets.js';
 import { createReminderService, ReminderWorker, validRemindHour, REMIND_MAX_MINUTES } from './reminders.js';
 import { createPushService } from './push.js';
+import { validVoiceInterrupt, validVoicePause } from './voice-turn.js';
 import { NOTIFICATION_KINDS, DEFAULT_QUIET_HOURS, validNotifyPrefs, validQuietHours, notify, setNotificationSink, notificationPrefs, quietHoursOf, isQuiet, serializeNotification, listNotifications, notificationCounts, readNotifications, resolveNotifications, findNotification, snoozeNotification, wakeSnoozed, purgeNotifications, dismissNotifications, restoreNotifications, validMutedCalendars } from './notifications.js';
 import { zonedToUtc } from './ics.js';
 import { correctCapture } from './corrections.js';
@@ -89,6 +90,11 @@ const SETTINGS = {
   // поэтому переживают смену браузера.
   sleepAfterSeconds: { personal:true, check:value => /^\d+$/.test(String(value)) && Number(value) >= 10 && Number(value) <= 600 },
   wakeWord: { personal:true, check:value => typeof value === 'string' && value.trim().length >= 2 && value.length <= 40 },
+  // Очерёдность разговора: насколько легко перебить Кизуну и сколько ждать
+  // тишины, прежде чем ответить. Шкала словами, а не миллисекундами — так её
+  // можно назвать и голосом; перевод на язык провайдеров — в voice-turn.js.
+  voiceInterrupt: { personal:true, check:value => validVoiceInterrupt(value) },
+  voicePause: { personal:true, check:value => validVoicePause(value) },
   // Тема оформления. Хранится у человека, а не во вкладке: со сменой браузера
   // светлая тема не должна возвращаться сама.
   theme: { personal:true, check:value => ['system','light','dark'].includes(value) },
@@ -126,7 +132,7 @@ const SETTINGS = {
 };
 // Голоса по умолчанию те же, что и у самой службы: без них выпадающий список
 // открывался бы пустым, хотя разговор уже идёт каким-то голосом.
-const SETTING_DEFAULTS = { notifyPrefs:'{}', notifyMutedCalendars:'[]', quietHours:DEFAULT_QUIET_HOURS, sleepAfterSeconds:'25', remindDefault:'15', remindHour:'09:00', wakeWord:'кизуна', voiceName:'coral', geminiVoiceName:'Leda', systemPrompt:DEFAULT_VOICE_CHARACTER, voiceModel:'gpt-realtime', geminiVoiceModel:'models/gemini-3.1-flash-live-preview', theme:'system',
+const SETTING_DEFAULTS = { notifyPrefs:'{}', notifyMutedCalendars:'[]', quietHours:DEFAULT_QUIET_HOURS, sleepAfterSeconds:'25', remindDefault:'15', remindHour:'09:00', wakeWord:'кизуна', voiceInterrupt:'normal', voicePause:'normal', voiceName:'coral', geminiVoiceName:'Leda', systemPrompt:DEFAULT_VOICE_CHARACTER, voiceModel:'gpt-realtime', geminiVoiceModel:'models/gemini-3.1-flash-live-preview', theme:'system',
   // Цены по умолчанию нет намеренно: выдумать её значит показать человеку
   // сумму, которой он не платил. Пока цену не задали, работает предел по
   // минутам, а деньги честно показываются как неизвестные.
@@ -880,7 +886,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     // и остановить его будет уже нечем.
     const quota=voiceQuota(req.user);
     if(!quota.allowed)return res.status(429).json({error:{code:quota.reason,message:quotaMessages[quota.reason]||'Разговор недоступен.'},quota});
-    const session=await voice.createSession({instructions:voiceInstructions(req.user),tools:VOICE_TOOLS,provider:chosen??null});
+    const session=await voice.createSession({instructions:voiceInstructions(req.user),tools:VOICE_TOOLS,provider:chosen??null,turn:{interrupt:settingValue(stored,process.env,'voiceInterrupt',req.user.id),pause:settingValue(stored,process.env,'voicePause',req.user.id)}});
     // Выбранный провайдер без ключа — это не «сервер сломался», а «так не
     // получится»: причину видно, и интерфейс может предложить другой.
     if(session.error==='not_configured')return res.status(409).json({error:{code:'voice_provider_not_configured',message:'У выбранного провайдера нет ключа.'}});
@@ -912,6 +918,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     notifyJournal, notifyCircle, notifyCircleMembers, notifyRoom, countsChanged, stillWaits, reminders, dismissReminders,
     reclassify: captureId => reclassifyForVoice(user, captureId),
     saveSettings: changes => savePersonalSettings(user, changes),
+    settingOf: name => settingValue(stored, process.env, name, user.id),
   });
   async function reclassifyForVoice(user, captureId) {
     const budget = spendState(user);

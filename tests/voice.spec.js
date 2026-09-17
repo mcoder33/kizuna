@@ -196,6 +196,49 @@ test("with a key the live path connects, runs the tool and returns the result to
   expect(JSON.parse(output.item.output).saved).toBe(true);
 });
 
+// «Дай подумать» — настройка, сказанная вслух. OpenAI получает новые паузы
+// прямо в идущем разговоре, модель — только слово, когда это заработает, а
+// страница настроек показывает то же, что сказано.
+test("очерёдность голосом доходит до идущего разговора OpenAI и до настроек", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await request.put("/api/settings", { data: { voiceInterrupt: "", voicePause: "" } });
+  await installFakeRealtime(page);
+  await page.goto("/");
+  await page.locator("#capture-voice").click();
+  await expect(page.locator("#voice-hint")).toContainText("Говорите вслух");
+
+  await page.evaluate(() => {
+    window.__voiceChannel.emit("message", {
+      data: JSON.stringify({
+        type: "response.done",
+        response: {
+          output: [{ type: "function_call", name: "update_settings", call_id: "call_pause", arguments: JSON.stringify({ voicePause: "longer" }) }],
+        },
+      }),
+    });
+  });
+
+  await expect
+    .poll(async () => (await page.evaluate(() => window.__voiceProbe.sent)).at(-1)?.type, { timeout: 15000 })
+    .toBe("response.create");
+  const sent = await page.evaluate(() => window.__voiceProbe.sent);
+  const retuned = sent.filter((event) => event.type === "session.update").at(-1);
+  expect(retuned.session.type).toBe("realtime");
+  expect(retuned.session.audio.input).toEqual({
+    transcription: { model: "whisper-1" },
+    turn_detection: { type: "server_vad", threshold: 0.5, silence_duration_ms: 1000 },
+  });
+  const output = JSON.parse(sent.find((event) => event.item?.call_id === "call_pause").item.output);
+  expect(output.applies).toBe("уже действует");
+  expect(output.turn).toBeUndefined();
+  await expect(page.locator(".voice-line.voice-done").last()).toHaveText("Отвечать после паузы: подождать — уже действует");
+
+  expect((await (await request.get("/api/settings")).json()).settings.voicePause).toBe("wait");
+  await expect(page.locator("#setting-voicePause")).toHaveValue("wait");
+
+  await request.put("/api/settings", { data: { voiceInterrupt: "", voicePause: "" } });
+});
+
 test("live transcripts appear in the log and errors are shown honestly", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   await installFakeRealtime(page);
@@ -410,7 +453,8 @@ const installFakeGemini = async (page) => {
         return { duration: length / 24000, getChannelData: () => new Float32Array(length) };
       }
       createBufferSource() {
-        return { buffer: null, connect() {}, start() {} };
+        // Остановленные куски считаются: так видно, что перебитый ответ замолк.
+        return { buffer: null, connect() {}, start() {}, stop() { window.__stoppedSources = (window.__stoppedSources || 0) + 1; } };
       }
       close() {
         window.__audioClosed = true;
@@ -855,6 +899,46 @@ test("разговор показывает, что записал и в как�
     });
   }, captureId);
   await expect(page.locator(".voice-line.voice-done").last()).toContainText("Вернул запись");
+});
+
+// Сокет Gemini настраивается при соединении, поэтому сказанное «не сбивайся от
+// шума» заработает со следующего разговора — так модели и отвечается. А
+// перебитый ответ замолкает сразу: звук, пришедший наперёд, снимается с очереди.
+test("у Gemini очерёдность — со следующего разговора, а перебитый ответ замолкает сразу", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await installFakeGemini(page);
+  await page.goto("/");
+  await page.locator("#capture-voice").click();
+  await expect(page.locator("#voice-hint")).toContainText("Говорите вслух");
+
+  await page.evaluate(() => {
+    window.__geminiSocket.emit("message", {
+      data: JSON.stringify({
+        toolCall: { functionCalls: [{ name: "update_settings", id: "call-turn", args: { voiceInterrupt: "harder" } }] },
+      }),
+    });
+  });
+  await expect
+    .poll(async () => (await page.evaluate(() => window.__geminiProbe.sent)).some((event) => event.toolResponse), { timeout: 15000 })
+    .toBe(true);
+  const sent = await page.evaluate(() => window.__geminiProbe.sent);
+  const result = sent.find((event) => event.toolResponse).toolResponse.functionResponses[0].response.result;
+  expect(result.applies).toBe("со следующего разговора");
+  expect(result.turn).toBeUndefined();
+  await expect(page.locator(".voice-line.voice-done").last()).toHaveText("Перебить: только громко — со следующего разговора");
+  await request.put("/api/settings", { data: { voiceInterrupt: "", voicePause: "" } });
+
+  // Ответ пришёл наперёд двумя кусками, и человек заговорил поверх.
+  await page.evaluate(() => {
+    const chunk = { serverContent: { modelTurn: { parts: [{ inlineData: { mimeType: "audio/pcm;rate=24000", data: "AAAAAA==" } }] } } };
+    window.__geminiSocket.emit("message", { data: JSON.stringify(chunk) });
+    window.__geminiSocket.emit("message", { data: JSON.stringify(chunk) });
+  });
+  expect(await page.evaluate(() => window.__stoppedSources || 0)).toBe(0);
+  await page.evaluate(() => {
+    window.__geminiSocket.emit("message", { data: JSON.stringify({ serverContent: { interrupted: true } }) });
+  });
+  await expect.poll(() => page.evaluate(() => window.__stoppedSources || 0)).toBe(2);
 });
 
 // Переключение голоса из шапки: «чем сейчас говорить» — такое же быстрое

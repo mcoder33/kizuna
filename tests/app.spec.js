@@ -1452,6 +1452,34 @@ test("настройки меняются в приложении и приме�
     await request.delete(`/api/captures/${(await response.json()).entry.id}`);
 });
 
+// Очерёдность разговора выбирается словами, а не миллисекундами, и хранится у
+// человека: выбранное остаётся и после перезагрузки.
+test("чуткость перебивания и паузу перед ответом выбирают в настройках разговора", async ({ page, request }) => {
+  await request.put("/api/settings", { data: { voiceInterrupt: "", voicePause: "" } });
+  await page.goto("/#settings");
+  const interrupt = page.locator("#setting-voiceInterrupt");
+  const pause = page.locator("#setting-voicePause");
+  await expect(interrupt).toBeVisible();
+  await expect(interrupt).toHaveValue("normal");
+  await expect(pause).toHaveValue("normal");
+  await expect(interrupt.locator("option")).toHaveText(["с полуслова", "обычно", "только громко"]);
+  await expect(pause.locator("option")).toHaveText(["сразу — 0,3 с", "обычно — 0,5 с", "подождать — 1 с", "дать подумать — 2 с"]);
+
+  await interrupt.selectOption("loud");
+  await pause.selectOption("think");
+  await expect
+    .poll(async () => {
+      const saved = (await (await request.get("/api/settings")).json()).settings;
+      return `${saved.voiceInterrupt}|${saved.voicePause}`;
+    })
+    .toBe("loud|think");
+  await page.reload();
+  await expect(page.locator("#setting-voiceInterrupt")).toHaveValue("loud");
+  await expect(page.locator("#setting-voicePause")).toHaveValue("think");
+
+  await request.put("/api/settings", { data: { voiceInterrupt: "", voicePause: "" } });
+});
+
 test("некорректная настройка не сохраняется и объясняет причину", async ({ page, request }) => {
   await page.goto("/#settings");
   await page.locator("#setting-timeZone").fill("Не/Зона");

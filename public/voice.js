@@ -18,7 +18,7 @@ const element = (tag, className, text) => {
   return node;
 };
 
-export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () => {}, voiceProvider = () => null, captureProvider = () => null, sleepAfterMs = () => 25000, wakeWord = () => "кизуна", fetchImplementation = fetch } = {}) {
+export function createVoiceDialog({ onJournalChanged = () => {}, onSettingsChanged = () => {}, onClosed = () => {}, voiceProvider = () => null, captureProvider = () => null, sleepAfterMs = () => 25000, wakeWord = () => "кизуна", fetchImplementation = fetch } = {}) {
   const panel = element("section", "voice-panel");
   panel.id = "voice-panel";
   panel.hidden = true;
@@ -473,9 +473,30 @@ export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () =
     if (name === "append_note") say("done", "Дописал к записи");
     if (name === "update_capture" && payload.result?.summary)
       say("done", `Поправил · ${columnFor(payload.result)}: ${payload.result.summary}`);
+    if (name === "update_settings") {
+      // Чуткость и паузы разговор меняет на ходу: OpenAI принимает новые
+      // правила прямо в идущей сессии, а Gemini получает их только при
+      // соединении — ему они достанутся со следующего разговора. Модели
+      // говорится, когда поправка заработает; параметры провайдера ей ни к чему.
+      if (payload.result.turn) {
+        const { turn, ...rest } = payload.result;
+        payload.result = { ...rest, applies: retune(turn) ? "уже действует" : "со следующего разговора" };
+      }
+      onSettingsChanged();
+    }
     const note = doneNote(name, payload.result);
     if (note) say("done", note);
     return payload.result;
+  }
+
+  // Новые правила очерёдности — в идущий разговор. Так умеет только OpenAI:
+  // его сессия правится на ходу. Сокет Gemini настраивается при соединении, и
+  // канала событий у него нет.
+  function retune(turn) {
+    const channel = state.live?.channel;
+    if (!channel || channel.readyState !== "open" || !turn?.openaiInput) return false;
+    channel.send(JSON.stringify({ type: "session.update", session: { type: "realtime", audio: { input: turn.openaiInput } } }));
+    return true;
   }
 
   // Что изменилось от действий, которых нет в журнале словами: закрытое дело,
@@ -492,7 +513,13 @@ export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () =
     if (name === "manage_circle") return result.roomId ? `Завёл разговор «${result.name}»` : `Круг «${result.name}»: готово`;
     if (name === "notification_action") return result.snoozedUntil ? "Отложил уведомление" : result.responded ? "Ответил на приглашение" : "Отметил прочитанным";
     if (name === "export_to_calendar") return result.exportedTo ? `Отправил в «${result.exportedTo}»` : `Убрал из «${result.removedFrom}»`;
-    if (name === "update_settings") return "Настройки сохранены";
+    if (name === "update_settings") {
+      const turn = [
+        result.saved?.includes("voiceInterrupt") ? `Перебить: ${result.voice?.interrupt}` : null,
+        result.saved?.includes("voicePause") ? `Отвечать после паузы: ${result.voice?.pause}` : null,
+      ].filter(Boolean);
+      return turn.length ? `${turn.join(" · ")} — ${result.applies || "сохранено"}` : "Настройки сохранены";
+    }
     if (name === "reclassify_capture") return `Переразобрал: ${result.summary || ""}`.trim();
     return null;
   }
@@ -643,7 +670,8 @@ export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () =
     const context = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: GEMINI_INPUT_RATE });
     const outputMix = context.createGain();
     outputMix.connect(context.destination);
-    const playback = { time: 0 };
+    // Куски звука, поставленные в очередь: перебитый ответ глушится целиком.
+    const playback = { time: 0, nodes: new Set() };
     // Разговор идёт через свой же сервер: он держит сокет к Google, поэтому
     // страна браузера больше ничего не решает. Старый путь — прямой адрес
     // Google — остаётся рабочим, если сервер отдаст его.
@@ -727,6 +755,19 @@ export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () =
     }
     const content = payload.serverContent;
     if (!content) return;
+    // Человек заговорил поверх ответа: Gemini уже бросил фразу, но звук приходит
+    // быстрее, чем звучит, и остаток ответа ещё стоит в очереди. Без этого
+    // перебить Кизуну было нельзя — она договаривала до конца.
+    if (content.interrupted) {
+      for (const node of playback.nodes) {
+        try {
+          node.stop();
+        } catch {}
+      }
+      playback.nodes.clear();
+      playback.time = context.currentTime;
+      if (state.awake) setPhase("listening");
+    }
     if (content.inputTranscription?.text) {
       const said = content.inputTranscription.text.trim();
       say("me", said);
@@ -750,6 +791,8 @@ export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () =
       node.connect(state.live?.outputMix || context.destination);
       playback.time = Math.max(playback.time, context.currentTime);
       node.start(playback.time);
+      playback.nodes.add(node);
+      node.onended = () => playback.nodes.delete(node);
       playback.time += buffer.duration;
       setPhase("speaking");
     }

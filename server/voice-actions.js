@@ -18,6 +18,7 @@ import { boardView, moveCard, createColumn, renameColumn, deleteColumn } from '.
 import { periodReport, dayReport, dateInZone, dayStartInZone, shiftDate, loadEntries } from './reports.js';
 import { correctCapture } from './corrections.js';
 import { normalizeSkip, occursOn, nextOccurrence, describeRepeat, dayDiff } from './repeat.js';
+import { VOICE_INTERRUPT_LEVELS, VOICE_PAUSE_LEVELS, VOICE_INTERRUPT_WORDS, VOICE_PAUSE_WORDS, VOICE_INTERRUPT_STEPS, VOICE_PAUSE_STEPS, nextVoiceLevel, openaiAudioInput } from './voice-turn.js';
 
 const TYPE_WORDS = { task: 'задача', meeting_event: 'встреча', outcome_decision: 'результат', note: 'заметка', idea_question: 'идея' };
 const ASSIGNMENT_WORDS = { pending: 'ждёт ответа', accepted: 'взято', done: 'сделано', declined: 'вернули' };
@@ -43,7 +44,7 @@ const cut = (value, limit = 160) => { const clean = String(value ?? '').replace(
 const lower = value => String(value ?? '').toLocaleLowerCase('ru-RU').replace(/ё/g, 'е').replace(/\s+/g, ' ').trim();
 const nameOf = person => person?.name || null;
 const dueWords = due => (due?.date ? `${due.date}${due.time ? ` ${due.time}` : ''}` : null);
-const NO_HOOKS = { notifyJournal() {}, notifyCircle() {}, notifyCircleMembers() {}, notifyRoom() {}, countsChanged() {}, stillWaits: null, reminders: null, reclassify: null, saveSettings: null, dismissReminders: null };
+const NO_HOOKS = { notifyJournal() {}, notifyCircle() {}, notifyCircleMembers() {}, notifyRoom() {}, countsChanged() {}, stillWaits: null, reminders: null, reclassify: null, saveSettings: null, settingOf: null, dismissReminders: null };
 const hooksOf = context => ({ ...NO_HOOKS, ...(context.hooks || {}) });
 // Приходится ли срок на день. У повтора — только его экземпляры: закрытый
 // сегодняшний повтор серии, начатой сегодня же, в день больше не встаёт.
@@ -791,8 +792,8 @@ export function reclassifyCapture(db, args, context) {
 }
 
 // Личные настройки голосом: напоминания, тихие часы, уведомления по поводам,
-// слово пробуждения и сон разговора. Ключи и провайдеры — дело администратора,
-// голос их не трогает.
+// слово пробуждения, сон разговора и его очерёдность. Ключи и провайдеры — дело
+// администратора, голос их не трогает.
 export function updateSettings(db, args, context) {
   const hooks = hooksOf(context);
   // Имя — не настройка, а то, как человека зовут в кругах и в «@»: оно живёт в
@@ -808,8 +809,27 @@ export function updateSettings(db, args, context) {
     if (!args.notify || !Object.hasOwn(NOTIFICATION_KINDS, args.notify.kind) || NOTIFICATION_KINDS[args.notify.kind].admin || !['off', 'bell', 'phone'].includes(args.notify.mode)) return { error: 'Уведомления: kind — повод из list_notifications, mode — off, bell или phone.' };
     changes.notify = { kind: args.notify.kind, mode: args.notify.mode };
   }
-  if (!Object.keys(changes).length) return named !== undefined ? { saved: ['displayName'], displayName: named } : { error: 'Что поменять: remindDefault, remindHour, quietHours, notify, wakeWord, sleepAfterSeconds или displayName.' };
+  // Очерёдность разговора — шкала словами: уровень называют прямо или шагом от
+  // того, что стоит сейчас («перебивайся реже», «жди дольше»).
+  const currentSetting = name => hooks.settingOf?.(name) ?? 'normal';
+  if (args.voiceInterrupt !== undefined) {
+    const level = nextVoiceLevel(VOICE_INTERRUPT_LEVELS, VOICE_INTERRUPT_STEPS, currentSetting('voiceInterrupt'), String(args.voiceInterrupt));
+    if (!level) return { error: 'Перебивание: easy, normal, loud или шаг easier, harder.' };
+    changes.voiceInterrupt = level;
+  }
+  if (args.voicePause !== undefined) {
+    const level = nextVoiceLevel(VOICE_PAUSE_LEVELS, VOICE_PAUSE_STEPS, currentSetting('voicePause'), String(args.voicePause));
+    if (!level) return { error: 'Пауза: quick, normal, wait, think или шаг shorter, longer.' };
+    changes.voicePause = level;
+  }
+  if (!Object.keys(changes).length) return named !== undefined ? { saved: ['displayName'], displayName: named } : { error: 'Что поменять: remindDefault, remindHour, quietHours, notify, wakeWord, sleepAfterSeconds, voiceInterrupt, voicePause или displayName.' };
   if (!hooks.saveSettings) return { error: 'Настройки сейчас недоступны.' };
   const saved = hooks.saveSettings(changes);
-  return saved.error || named === undefined ? saved : { ...saved, saved: ['displayName', ...saved.saved], displayName: named };
+  if (saved.error) return saved;
+  const result = named === undefined ? saved : { ...saved, saved: ['displayName', ...saved.saved], displayName: named };
+  if (!changes.voiceInterrupt && !changes.voicePause) return result;
+  // Идущий разговор узнаёт новые правила из ответа: браузер отдаст их OpenAI на
+  // ходу, а модели скажет только, когда поправка заработает.
+  const turn = { interrupt: changes.voiceInterrupt ?? currentSetting('voiceInterrupt'), pause: changes.voicePause ?? currentSetting('voicePause') };
+  return { ...result, voice: { interrupt: VOICE_INTERRUPT_WORDS[turn.interrupt], pause: VOICE_PAUSE_WORDS[turn.pause] }, turn: { openaiInput: openaiAudioInput(turn) } };
 }

@@ -640,6 +640,28 @@
               ><span class="setting-name">Слово пробуждения</span
               ><input id="setting-wakeWord" type="text" placeholder="кизуна" /></label
             >
+            <label class="setting" for="setting-voiceInterrupt"
+              ><span class="setting-name">Перебить Кизуну</span
+              ><select id="setting-voiceInterrupt">
+                <option value="easy">с полуслова</option>
+                <option value="normal">обычно</option>
+                <option value="loud">только громко</option>
+              </select></label
+            >
+            <label class="setting" for="setting-voicePause"
+              ><span class="setting-name">Отвечать после паузы</span
+              ><select id="setting-voicePause">
+                <option value="quick">сразу — 0,3 с</option>
+                <option value="normal">обычно — 0,5 с</option>
+                <option value="wait">подождать — 1 с</option>
+                <option value="think">дать подумать — 2 с</option>
+              </select></label
+            >
+            <p class="setting-hint">
+              Кизуна замолкает от шума или чужих голосов — «только громко».
+              Начинает отвечать, пока вы подбираете слово, — «подождать».
+              Можно и голосом: «не сбивайся от шума», «дай мне подумать».
+            </p>
             <label class="setting setting-wide" for="setting-systemPrompt"
               ><span class="setting-name">Системный промпт</span
               ><textarea

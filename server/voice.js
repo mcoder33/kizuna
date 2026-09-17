@@ -22,6 +22,7 @@ import { completeCapture, listDay, captureDetails, listInbox, respondRequest, as
 import { journalOverview, listJournal } from './journal.js';
 import { rememberFact, forgetFact, recallFacts, memoryDigest } from './memory.js';
 import { dateInZone, shiftDate } from './reports.js';
+import { openaiAudioInput, geminiRealtimeInput } from './voice-turn.js';
 
 export const VOICE_MODEL = 'gpt-realtime';
 export const GEMINI_VOICE_MODEL = 'models/gemini-3.1-flash-live-preview';
@@ -53,6 +54,7 @@ export const VOICE_INSTRUCTIONS = [
   'Закрыть дело или встречу — complete_capture, как кружок «Готово»; вернуть в работу — undo. У повторяющегося дела закрывается один день, серия живёт. Рассказ о сделанном («починил ретрай») — это новая запись-результат, а не закрытие дела.',
   'День целиком — list_today: там же просроченное, взятое у людей и сколько ждёт в «к вам». Люди и круги: list_inbox — кто что просит и кто позвал, respond_request — «беру» или «не я», assign_capture — отдать дело человеку, read_conversation и write_message — обсуждения записей и разговоры кругов, list_circles и manage_circle — сами круги.',
   'Колокольчик — list_notifications и notification_action; страницы заметок — list_pages, place_page и read_capture с full; «Доска» — list_board и board_action; «что я сделал за день или за неделю» — get_report; напоминания — list_reminders, личные настройки — update_settings.',
+  'Жалоба на сам разговор — тоже настройка, а не повод извиниться. «Ты меня перебиваешь», «дай договорить», «дай подумать» — update_settings с voicePause longer; «отвечай быстрее» — voicePause shorter; «сбиваешься от шума», «замолкаешь от телевизора» — voiceInterrupt harder; «тебя не перебить» — voiceInterrupt easier. Скажи, что поменял и когда заработает — это в ответе, в applies.',
   'Сообщение другим людям, выход из круга, удаление колонки и отправку во внешний календарь проговаривай вслух и дожидайся согласия, прежде чем вызвать инструмент.',
 ].join(' ');
 
@@ -617,13 +619,15 @@ export const VOICE_TOOLS = [
   {
     type: 'function',
     name: 'update_settings',
-    description: 'Личные настройки: remindDefault — за сколько минут напоминать о делах со временем (или off); remindHour — в котором часу напоминать о делах без времени (ЧЧ:ММ или off); quietHours — тихие часы (ЧЧ:ММ-ЧЧ:ММ или off); notify — куда слать повод: kind из list_notifications, mode off, bell или phone; wakeWord — слово, которым будят разговор; sleepAfterSeconds — через сколько секунд тишины разговор засыпает; displayName — как человека зовут в кругах.',
+    description: 'Личные настройки: remindDefault — за сколько минут напоминать о делах со временем (или off); remindHour — в котором часу напоминать о делах без времени (ЧЧ:ММ или off); quietHours — тихие часы (ЧЧ:ММ-ЧЧ:ММ или off); notify — куда слать повод: kind из list_notifications, mode off, bell или phone; wakeWord — слово, которым будят разговор; sleepAfterSeconds — через сколько секунд тишины разговор засыпает; displayName — как человека зовут в кругах; voiceInterrupt — насколько легко перебить тебя: easy — с полуслова, normal, loud — только громко (шум и чужие голоса не сбивают), или шаг easier/harder от того, что стоит; voicePause — сколько тишины ждать, прежде чем отвечать: quick — 0,3 с, normal — 0,5 с, wait — 1 с, think — 2 с, или шаг shorter/longer.',
     parameters: {
       type: 'object',
       properties: {
         remindDefault: { type: 'string' }, remindHour: { type: 'string' }, quietHours: { type: 'string' },
         notify: { type: 'object', properties: { kind: { type: 'string' }, mode: { type: 'string', enum: ['off', 'bell', 'phone'] } }, required: ['kind', 'mode'] },
         wakeWord: { type: 'string' }, sleepAfterSeconds: { type: 'integer' }, displayName: { type: 'string' },
+        voiceInterrupt: { type: 'string', enum: ['easy', 'normal', 'loud', 'easier', 'harder'] },
+        voicePause: { type: 'string', enum: ['quick', 'normal', 'wait', 'think', 'shorter', 'longer'] },
       },
     },
   },
@@ -1346,7 +1350,8 @@ export function createVoiceService({
 
   // Токен Gemini живёт до получаса и годен на одно подключение: браузеру
   // достаточно, а утёкший ничего не откроет.
-  async function createGeminiSession(instructions, tools) {
+  async function createGeminiSession(instructions, tools, turn) {
+    const realtimeInputConfig = geminiRealtimeInput(turn);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -1374,6 +1379,9 @@ export function createVoiceService({
             tools: geminiTools(tools),
             inputAudioTranscription: {},
             outputAudioTranscription: {},
+            // Чуткость и паузы идут сюда же: поменять их в открытом сокете
+            // Gemini не даёт.
+            ...(realtimeInputConfig ? { realtimeInputConfig } : {}),
           },
         }),
       });
@@ -1430,12 +1438,13 @@ export function createVoiceService({
     // Короткоживущий токен для браузера: сам ключ наружу не уходит.
     // Провайдера можно выбрать на один разговор; названный без ключа не
     // подменяется молча — приложение честно говорит, что его нет.
-    async createSession({ instructions = VOICE_INSTRUCTIONS, tools = VOICE_TOOLS, provider: chosen = null } = {}) {
+    // turn — очерёдность человека: как легко его перебить и сколько ждать тишины.
+    async createSession({ instructions = VOICE_INSTRUCTIONS, tools = VOICE_TOOLS, provider: chosen = null, turn = {} } = {}) {
       if (chosen === 'openai' && !apiKey) return { mode: 'live', provider: 'openai', error: 'not_configured' };
       if (chosen === 'gemini' && !geminiApiKey) return { mode: 'live', provider: 'gemini', error: 'not_configured' };
       const wanted = chosen === 'openai' || chosen === 'gemini' ? chosen : provider;
       if (!wanted) return { mode: 'mock' };
-      if (wanted === 'gemini') return createGeminiSession(instructions, tools);
+      if (wanted === 'gemini') return createGeminiSession(instructions, tools, turn);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
@@ -1450,7 +1459,7 @@ export function createVoiceService({
               model,
               instructions,
               audio: {
-                input: { transcription: { model: 'whisper-1' }, turn_detection: { type: 'server_vad' } },
+                input: openaiAudioInput(turn),
                 output: { voice },
               },
               tools,

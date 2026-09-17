@@ -4219,6 +4219,9 @@ captureField.element.addEventListener("keydown", (event) => {
 // изменения перезагружаем списки.
 const voiceDialog = createVoiceDialog({
   onJournalChanged: () => load(),
+  // Настройку, поменянную голосом, страница настроек показывает сразу, а не
+  // после перезагрузки.
+  onSettingsChanged: () => loadSettings(),
   // Разговор начинается тем провайдером, которого выбрали в шапке.
   voiceProvider: () => selectedVoiceProvider(),
   // Через сколько тишины засыпать и по какому слову просыпаться — из настроек.
@@ -4483,6 +4486,8 @@ const SETTING_FIELDS = [
   "geminiVoiceName",
   "sleepAfterSeconds",
   "wakeWord",
+  "voiceInterrupt",
+  "voicePause",
   "systemPrompt",
   "aiProvider",
   "timeZone",

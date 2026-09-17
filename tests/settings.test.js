@@ -79,12 +79,34 @@ test('nonsense settings are refused by name and by value', async () => {
     { voiceProvider: 'кто-нибудь' },
     { aiProvider: 'выдуманный' },
     { voiceName: 'голос с пробелом и (скобками)' },
+    { voiceInterrupt: 'никогда' },
+    { voicePause: '1500' },
   ]) {
     const refused = await api.put('/api/settings').send(patch).expect(400);
     assert.equal(refused.body.error.code, 'invalid_setting', JSON.stringify(patch));
   }
   // Отказ ничего не сохранил.
   assert.equal((await api.get('/api/settings').expect(200)).body.settings.sleepAfterSeconds, '25');
+});
+
+// Очерёдность разговора — про человека, а не про установку: каждый правит
+// свою и не трогает соседскую.
+test('turn settings are personal: normal by default, changed by anyone for themselves', async () => {
+  const instance = app();
+  const admin = authed(instance);
+  const user = authed(instance, { email: 'user@kizuna.test', role: 'user' });
+  const before = (await user.get('/api/settings').expect(200)).body;
+  assert.equal(before.settings.voiceInterrupt, 'normal');
+  assert.equal(before.settings.voicePause, 'normal');
+  assert.ok(before.editable.includes('voiceInterrupt') && before.editable.includes('voicePause'), 'не только администратору');
+
+  await user.put('/api/settings').send({ voiceInterrupt: 'loud', voicePause: 'think' }).expect(200);
+  const mine = (await user.get('/api/settings').expect(200)).body.settings;
+  assert.equal(mine.voiceInterrupt, 'loud');
+  assert.equal(mine.voicePause, 'think');
+  const theirs = (await admin.get('/api/settings').expect(200)).body.settings;
+  assert.equal(theirs.voiceInterrupt, 'normal');
+  assert.equal(theirs.voicePause, 'normal');
 });
 
 test('settings survive a data reset and stay out of the export', async () => {

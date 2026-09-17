@@ -271,6 +271,34 @@ test('«Доска», круги, отчёт, напоминания и наст
   assert.equal(app.database.prepare("SELECT COUNT(*) AS n FROM interpretations WHERE capture_id=?").get(later.id).n, 2, 'новая версия разбора');
 });
 
+// «Дай подумать», «не сбивайся от шума» — это настройки, сказанные вслух. Шаг
+// считается от того, что стоит у человека, а ответ несёт и слова для модели, и
+// правила для идущего разговора.
+test('очерёдность голосом: шаг от текущего, край шкалы держит, ответ словами', async () => {
+  const me = authed(freshApp());
+  const longer = await tool(me, 'update_settings', { voicePause: 'longer' });
+  assert.deepEqual(longer.saved, ['voicePause']);
+  assert.deepEqual(longer.voice, { interrupt: 'обычно', pause: 'подождать' });
+  assert.deepEqual(longer.turn.openaiInput.turn_detection, { type: 'server_vad', threshold: 0.5, silence_duration_ms: 1000 });
+
+  assert.equal((await tool(me, 'update_settings', { voicePause: 'longer' })).voice.pause, 'дать подумать');
+  assert.equal((await tool(me, 'update_settings', { voicePause: 'longer' })).voice.pause, 'дать подумать', 'дольше некуда — остаётся');
+  const harder = await tool(me, 'update_settings', { voiceInterrupt: 'harder' });
+  assert.deepEqual(harder.voice, { interrupt: 'только громко', pause: 'дать подумать' });
+  assert.deepEqual(harder.turn.openaiInput.turn_detection, { type: 'server_vad', threshold: 0.75, silence_duration_ms: 2000 });
+
+  const settings = (await me.get('/api/settings').expect(200)).body.settings;
+  assert.equal(settings.voiceInterrupt, 'loud');
+  assert.equal(settings.voicePause, 'think');
+
+  // Уровень можно назвать и прямо; чужое слово — отказ с подсказкой шкалы.
+  assert.equal((await tool(me, 'update_settings', { voicePause: 'quick' })).voice.pause, 'сразу');
+  assert.match(await failure(me, 'update_settings', { voicePause: 'harder' }), /quick, normal, wait, think/);
+  assert.match(await failure(me, 'update_settings', { voiceInterrupt: 'никогда' }), /easy, normal, loud/);
+  // Остальные настройки ответа не меняют: правил разговора в нём нет.
+  assert.equal((await tool(me, 'update_settings', { wakeWord: 'журнал' })).turn, undefined);
+});
+
 test('разговоры круга голосом: переименовать комнату, позвать, выйти; назваться и распустить круг', async () => {
   const { app, sasha, anya } = await pair();
   const petya = authed(app, { email: 'petya@kizuna.test', role: 'user' });
