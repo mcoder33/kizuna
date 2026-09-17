@@ -123,7 +123,8 @@ test("круг: приглашение, просьба, «беру» и разг
   await page.locator("#review-close").click();
   await page.reload();
   await page.locator("#bell-summary").click();
-  await expect(page.locator(".bell-row").filter({ hasText: "Аня зовёт вас в обсуждении" })).not.toHaveClass(/unread/);
+  // Открыл — убрал: разобранный призыв из ленты ушёл.
+  await expect(page.locator(".bell-row").filter({ hasText: "Аня зовёт вас в обсуждении" })).toHaveCount(0);
   await page.locator("#bell-summary").click();
 
   // ── «Я жду»: четыре состояния и ни одного лишнего ──

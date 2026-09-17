@@ -181,7 +181,9 @@ export function gateClassification(c){
 // Ручные параметры записи из карточки ввода. UI говорит на языке трёх типов
 // (todo / outcome / note) — на внутренние типы журнала они отображаются здесь.
 // Срок и важность имеют смысл только у ТУДУ; теги общие для всех типов.
-const userTypeMap={todo:'task',outcome:'outcome_decision',note:'note'};
+// Тип, названный человеком: из поля ввода приходят todo, outcome и note, голос
+// называет ещё встречу и идею.
+const userTypeMap={todo:'task',meeting:'meeting_event',outcome:'outcome_decision',note:'note',idea:'idea_question'};
 export function parseCaptureOverrides(body,now=new Date(),timeZone='Europe/Samara'){
   const src=body||{};const out={};
   if(src.primaryType!==undefined&&src.primaryType!==null){
@@ -215,7 +217,8 @@ export function parseCaptureOverrides(body,now=new Date(),timeZone='Europe/Samar
     }
     if(tags.length)out.tags=tags;
   }
-  if((out.due||out.priority)&&out.primaryType!=='task')return{error:'overrides_require_todo'};
+  // Срок бывает у дела и у встречи, важность — только у дела.
+  if((out.due&&!['task','meeting_event'].includes(out.primaryType))||(out.priority&&out.primaryType!=='task'))return{error:'overrides_require_todo'};
   return{overrides:Object.keys(out).length?out:null};
 }
 

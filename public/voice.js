@@ -457,8 +457,11 @@ export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () =
     if (name === "create_capture" && payload.result?.captureId) {
       const parsed = await runToolCall("read_capture", { captureId: payload.result.captureId });
       if (parsed && !parsed.error) {
-        say("done", `Записал в «${columnFor(parsed)}»: ${parsed.summary}`);
-        return { ...payload.result, type: parsed.type, completed: parsed.completed, summary: parsed.summary, clarity: parsed.clarity };
+        // Из одной фразы могли отделиться дела: разговор называет их сразу,
+        // иначе «и ещё позвонить Ане» молча осело бы отдельной строкой.
+        const parts = Array.isArray(parsed.parts) ? parsed.parts : [];
+        say("done", `Записал в «${columnFor(parsed)}»: ${parsed.summary}${parts.length ? ` · отдельно: ${parts.map((part) => part.title).join("; ")}` : ""}`);
+        return { ...payload.result, type: parsed.type, completed: parsed.completed, summary: parsed.summary, clarity: parsed.clarity, parts };
       }
       say("done", "Записал");
       return payload.result;
@@ -470,7 +473,28 @@ export function createVoiceDialog({ onJournalChanged = () => {}, onClosed = () =
     if (name === "append_note") say("done", "Дописал к записи");
     if (name === "update_capture" && payload.result?.summary)
       say("done", `Поправил · ${columnFor(payload.result)}: ${payload.result.summary}`);
+    const note = doneNote(name, payload.result);
+    if (note) say("done", note);
     return payload.result;
+  }
+
+  // Что изменилось от действий, которых нет в журнале словами: закрытое дело,
+  // ответ на просьбу, письмо человеку, страница, «Доска», настройки.
+  function doneNote(name, result) {
+    if (!result) return null;
+    if (name === "complete_capture") return result.occurrence ? (result.done ? `Закрыл повтор ${result.occurrence}: ${result.title}` : `Вернул повтор ${result.occurrence}: ${result.title}`) : result.done ? `Готово: ${result.title}` : `Снова в работе: ${result.title}`;
+    if (name === "respond_request") return `Просьба «${result.title}»: ${result.answer}`;
+    if (name === "assign_capture") return result.cancelled ? "Снял просьбу" : `Отдал ${result.to}: ждём ответа`;
+    if (name === "write_message" && result.sent) return result.called?.length ? `Написал и позвал: ${result.called.join(", ")}` : "Написал";
+    if (name === "message_action") return "Готово";
+    if (name === "place_page") return result.created ? `Завёл страницу «${result.title}»` : `Переложил «${result.title}»: ${result.place}`;
+    if (name === "board_action") return result.column ? `На «Доске» — в «${result.column}»` : "«Доска» поправлена";
+    if (name === "manage_circle") return result.roomId ? `Завёл разговор «${result.name}»` : `Круг «${result.name}»: готово`;
+    if (name === "notification_action") return result.snoozedUntil ? "Отложил уведомление" : result.responded ? "Ответил на приглашение" : "Отметил прочитанным";
+    if (name === "export_to_calendar") return result.exportedTo ? `Отправил в «${result.exportedTo}»` : `Убрал из «${result.removedFrom}»`;
+    if (name === "update_settings") return "Настройки сохранены";
+    if (name === "reclassify_capture") return `Переразобрал: ${result.summary || ""}`.trim();
+    return null;
   }
 
   // ── живой разговор ────────────────────────────────────────────────────────

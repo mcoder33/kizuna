@@ -230,7 +230,14 @@ function updatePageFromHash() {
   // и с доски, а чужие события приходят синхронизацией в фоне. Первый разбор
   // адреса случается до того, как модуль дошёл до состояния календаря, —
   // вызов откладывается на микрозадачу, когда модуль уже прочитан целиком.
-  if (activePage === "calendar") Promise.resolve().then(() => loadCalendar());
+  // Ссылка из уведомления ведёт на день встречи и открывает её плашку.
+  if (activePage === "calendar") {
+    const date = params.get("date"), event = params.get("event"), item = params.get("item");
+    if (date || event || item) history.replaceState(null, "", "#calendar");
+    Promise.resolve()
+      .then(() => { if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) calState.anchor = date; return loadCalendar(); })
+      .then(() => { if (event || item) openCalendarEvent({ uid: event, id: item, date }); });
+  }
   // «Обзор» пересчитывается при каждом открытии: цифры меняются от каждой
   // записи, а страница может быть открыта спустя часы.
   if (activePage === "reports") loadReports();
@@ -251,6 +258,8 @@ function updatePageFromHash() {
 // Поповеры шапки (настройки ИИ) закрываются по клику вне и Escape.
 const headerMenus = () => [...document.querySelectorAll("header details")];
 document.addEventListener("pointerdown", (event) => {
+  // «Вернуть» в тосте — продолжение действия в меню: лента остаётся открытой.
+  if (event.target.closest?.("#toast")) return;
   for (const menu of headerMenus())
     if (menu.open && !menu.contains(event.target)) menu.removeAttribute("open");
 });
@@ -412,8 +421,17 @@ async function updateCompletion(projections, complete, button) {
         ),
       ),
     );
-    toast(complete ? "Отмечено как готовое" : "Возвращено в работу");
+    // Промах кружком снимается одним нажатием, как удаление и перенос серии.
+    toast(complete ? "Отмечено как готовое" : "Возвращено в работу", complete ? { label: "Вернуть", run: async () => {
+      try {
+        for (const projection of pending) await request(`/api/projections/${projection.id}/undo-complete`, { method: "POST", body: "{}" });
+        toast("Возвращено в работу");
+        await load();
+        refreshOtherViews();
+      } catch (error) { toast(error.message); }
+    } } : null);
     await load();
+    refreshOtherViews();
   } catch (error) {
     toast(error.message);
   } finally {
@@ -432,18 +450,120 @@ async function updateCompletion(projections, complete, button) {
 async function quickDue(entry, days) {
   const schedule = entry.interpretation.classification.entities.schedule || null;
   const date = days === null ? null : shiftDate(currentDayDate || zoneDate(new Date()), days);
+  const move = (target, time) => request(`/api/captures/${entry.id}/corrections`, {
+    method: "POST",
+    body: JSON.stringify({ at: Date.now(), patch: { schedule: { date: target, time: target ? time : null } } }),
+  });
   try {
-    await request(`/api/captures/${entry.id}/corrections`, {
-      method: "POST",
-      body: JSON.stringify({ at: Date.now(), patch: { schedule: { date, time: date ? schedule?.time || null : null } } }),
-    });
-    toast(date ? `Срок: ${scheduleLabel({ state: "ok", date, time: null })}` : "Срок снят");
+    await move(date, schedule?.time || null);
+    // Перенос — тоже решение на лету: «Вернуть» кладёт прежний срок обратно.
+    toast(date ? `Срок: ${scheduleLabel({ state: "ok", date, time: null })}` : "Срок снят", { label: "Вернуть", run: async () => {
+      try { await move(schedule?.date || null, schedule?.time || null); toast("Срок вернулся"); await load(); }
+      catch (error) { toast(error.message); }
+    } });
     await load();
   } catch (error) { toast(error.message || "Срок не изменился"); }
 }
-function quickDueEl(entry) {
-  const wrap = node("div", undefined, "quick-due");
-  for (const [label, days] of [["сегодня", 0], ["завтра", 1], ["без срока", null]]) {
+// Клавиши списка, как в Тудуисте: ↑ ↓ или J / K — по делам, E — готово или
+// вернуть, Enter — открыть карточку, T — срок «сегодня» у дела без срока.
+// Работают в «Дне» и на «Доске», пока фокус не в поле ввода; в русской
+// раскладке — те же клавиши: о, л, у, е.
+const listKeys = { after: null };
+document.addEventListener("keydown", async (event) => {
+  if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+  if (event.target.closest?.("input, textarea, select, [contenteditable='true'], dialog, .bell-popover, details[open]")) return;
+  const scope = !$("#today")?.hidden && $("#todo") && !$("#todo").hidden ? $("#todo") : !$("#board")?.hidden ? $("#board-columns") : null;
+  if (!scope) return;
+  const rows = [...scope.querySelectorAll(".entry[data-capture-id], .board-card[data-capture-id]")].filter((row) => row.getClientRects().length);
+  if (!rows.length) return;
+  const key = event.key.toLowerCase();
+  const current = document.activeElement?.closest?.("[data-capture-id]");
+  const index = current && scope.contains(current) ? rows.indexOf(current) : -1;
+  const focusRow = (row) => { if (!row.hasAttribute("tabindex")) row.tabIndex = -1; row.focus({ preventScroll: true }); row.scrollIntoView({ block: "nearest" }); };
+  const letterDown = key === "j" || key === "о", letterUp = key === "k" || key === "л";
+  const down = event.key === "ArrowDown" || letterDown, up = event.key === "ArrowUp" || letterUp;
+  if ((down || up) && (index >= 0 || letterDown || letterUp)) {
+    event.preventDefault();
+    focusRow(rows[index < 0 ? 0 : Math.max(0, Math.min(rows.length - 1, index + (down ? 1 : -1)))]);
+    return;
+  }
+  if (index < 0) return;
+  const row = rows[index];
+  if (key === "e" || key === "у") {
+    const box = row.querySelector(":scope > .completion-button, :scope > .board-done");
+    if (!box) return;
+    event.preventDefault();
+    listKeys.after = { from: row.dataset.captureId, to: (rows[index + 1] || rows[index - 1])?.dataset.captureId || null };
+    box.click();
+    return;
+  }
+  if (event.key === "Enter" && event.target === row) {
+    event.preventDefault();
+    row.querySelector(".entry-title, .board-title")?.click();
+    return;
+  }
+  if (key === "t" || key === "е") {
+    event.preventDefault();
+    const id = row.dataset.captureId;
+    let entry = todayState.entries.find((candidate) => candidate.id === id);
+    try { if (!entry) entry = (await request(`/api/captures/${encodeURIComponent(id)}`)).entry; }
+    catch (error) { toast(error.message); return; }
+    if (scheduleOf(entry)?.date) { toast("Срок у дела уже есть — перенести можно в карточке"); return; }
+    await quickDue(entry, 0);
+    refreshOtherViews();
+  }
+});
+// После отметки в «Дне» сетка календаря и «Доска», если они открыты, тоже
+// должны увидеть закрытое.
+function refreshOtherViews() {
+  if (!$("#calendar")?.hidden) loadCalendar();
+  if (!$("#board")?.hidden) loadBoard();
+}
+// Смахнуть строку на телефоне, как в Тудуисте: вправо — готово, влево — на
+// сегодня (у дела из запаса). Мышью строка не тянется: там кружок и клавиши.
+function attachRowSwipe(row, { onRight = null, onLeft = null } = {}) {
+  let drag = null;
+  // Название — кнопка во всю строку, поэтому смахивание начинается и на нём;
+  // кружок и кнопки срока нажимаются как обычно.
+  row.addEventListener("pointerdown", (event) => {
+    if (event.pointerType !== "touch" || event.target.closest(".completion-button, .quick-due, a, input")) return;
+    drag = { x: event.clientX, y: event.clientY, id: event.pointerId, moving: false, dx: 0 };
+  });
+  row.addEventListener("pointermove", (event) => {
+    if (!drag || event.pointerId !== drag.id) return;
+    const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+    if (!drag.moving) {
+      if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { drag = null; return; }
+      if (Math.abs(dx) < 12 || (dx < 0 && !onLeft) || (dx > 0 && !onRight)) return;
+      drag.moving = true;
+      try { row.setPointerCapture(event.pointerId); } catch {}
+      row.classList.add("swiping");
+    }
+    drag.dx = Math.max(onLeft ? -120 : 0, Math.min(onRight ? 120 : 0, dx));
+    row.style.transform = `translateX(${drag.dx}px)`;
+    row.dataset.swipe = drag.dx >= 72 ? "right" : drag.dx <= -72 ? "left" : "";
+  });
+  const end = () => {
+    if (!drag) return;
+    const { moving, dx } = drag;
+    drag = null;
+    if (!moving) return;
+    row.classList.remove("swiping");
+    row.style.transform = "";
+    delete row.dataset.swipe;
+    // Смахнутая строка не открывает карточку: нажатие, которым её тянули, не клик.
+    const swallow = (click) => { click.stopPropagation(); click.preventDefault(); };
+    row.addEventListener("click", swallow, { capture: true, once: true });
+    setTimeout(() => row.removeEventListener("click", swallow, { capture: true }), 400);
+    if (dx >= 72) onRight?.();
+    else if (dx <= -72) onLeft?.();
+  };
+  row.addEventListener("pointerup", end);
+  row.addEventListener("pointercancel", end);
+}
+function quickDueEl(entry, choices = [["сегодня", 0], ["завтра", 1], ["без срока", null]]) {
+  const wrap = node("div", undefined, `quick-due${choices.length === 1 ? " take-today" : ""}`);
+  for (const [label, days] of choices) {
     const button = node("button", label, "quick-due-button");
     button.type = "button";
     button.title = days === null ? "Снять срок" : `Перенести на ${label}`;
@@ -452,7 +572,7 @@ function quickDueEl(entry) {
   }
   return wrap;
 }
-function entryCard(entry, { overdue = false, compact = false, dense = false, atTime = false, on = null } = {}) {
+function entryCard(entry, { overdue = false, compact = false, dense = false, atTime = false, on = null, takeToday = false, todayShelf = false } = {}) {
   const c = entry.interpretation.classification,
     projections = completableProjections(entry),
     completed = isClosed(entry),
@@ -464,6 +584,9 @@ function entryCard(entry, { overdue = false, compact = false, dense = false, atT
     ),
     meta = node("div", undefined, "entry-meta");
   card.dataset.captureId = entry.id;
+  // Показанный день повтора — чтобы карточка из списка знала, какой экземпляр
+  // закрывает её кружок.
+  if (c.entities.schedule?.repeat && on && scheduledOn(entry, on)) card.dataset.occurrence = on;
   if (projections.length) {
     const label = completed ? "Вернуть в работу" : "Готово",
       complete = node("button", undefined, "completion-button");
@@ -475,10 +598,14 @@ function entryCard(entry, { overdue = false, compact = false, dense = false, atT
     // остальные повторы живут дальше. Серия целиком закрывается в карточке.
     complete.addEventListener("click", () => {
       const occurrence = c.entities.schedule?.repeat && !completed ? (on && scheduledOn(entry, on) ? on : scheduledOn(entry, currentDayDate) ? currentDayDate : null) : null;
+      // Строка зачёркивается и гаснет сразу, а не после ответа сервера: отклик
+      // на нажатие должен быть под пальцем.
+      if (!completed) card.classList.add("completing");
       if (occurrence) { complete.disabled = true; skipOccurrence({ id: entry.id, ...scheduleTarget(c.entities.schedule) }, occurrence).finally(() => { complete.disabled = false; }); return; }
       updateCompletion(projections, !completed, complete);
     });
     card.append(complete);
+    if (dense) attachRowSwipe(card, { onRight: () => complete.click(), onLeft: takeToday ? () => quickDue(entry, 0) : null });
   }
   const title = markdownNode("button", c.summary, "entry-title", { inline: true, links: false, firstLine: true });
   title.type = "button";
@@ -488,6 +615,8 @@ function entryCard(entry, { overdue = false, compact = false, dense = false, atT
     // карточка открывается на обычное уточнение.
     const review = reviewFromEntry(entry);
     cardOccurrence = c.entities.schedule?.repeat && on && scheduledOn(entry, on) ? on : null;
+    const day = card.closest("#todo");
+    pendingCardList = day ? { label: "День", items: rowsAsList([...day.querySelectorAll(".entry[data-capture-id]")]), id: entry.id, occurrence: card.dataset.occurrence || null } : null;
     // Запись из круга открывается перечитанной: обсуждение и исполнитель
     // меняются у другого человека, и показывать вчерашний разговор нельзя.
     if (entry.foreign || circleOf(entry)) { openSharedCard(entry.id); return; }
@@ -508,6 +637,8 @@ function entryCard(entry, { overdue = false, compact = false, dense = false, atT
     meta.append(node("span", project, "tag project"));
   // Круг виден меткой, а не местом: строка остаётся строкой дня.
   if (overdue && !c.entities.schedule?.repeat && !completed) card.append(quickDueEl(entry));
+  // Дело из запаса берут на сегодня, не открывая карточку.
+  if (takeToday && !completed) card.append(quickDueEl(entry, [["на сегодня", 0]]));
   const mark = circleOf(entry);
   if (mark) meta.append(circleChip(mark, { small: true }));
   // Чьё это дело: взятое — «от Саши», отданное — «Аня · ждёт ответа». Второе и
@@ -533,7 +664,9 @@ function entryCard(entry, { overdue = false, compact = false, dense = false, atT
   // слева. Признак повтора остаётся: он про серию, а не про час, и без него
   // ежедневное дело не отличить от разового.
   const repeats = c.entities.schedule?.repeat ? repeatLabel(c.entities.schedule.repeat, { until: false }) : null;
-  if (due && (!atTime || repeats))
+  // На полке «на сегодня» слово «сегодня» у каждой строки повторяло бы
+  // заголовок полки — остаётся только признак повтора.
+  if (due && (!atTime || repeats) && !(todayShelf && dueToday && !repeats))
     meta.append(
       node(
         "span",
@@ -855,7 +988,9 @@ function renderToday() {
   paintDayList(viewDate);
   paintNotes(notesDate);
   if (keep && !active.isConnected) {
-    const again = keep.drawer && document.querySelector(`#${keep.drawer} [data-capture-id="${CSS.escape(keep.id)}"]`);
+    // Строку закрыли с клавиатуры — фокус встаёт на следующую, а не теряется.
+    const find = (id) => id && keep.drawer && document.querySelector(`#${keep.drawer} [data-capture-id="${CSS.escape(id)}"]`);
+    const again = find(keep.id) || (listKeys.after?.from === keep.id ? find(listKeys.after.to) : null);
     if (again) {
       if (!again.hasAttribute("tabindex")) again.tabIndex = -1;
       again.focus({ preventScroll: true });
@@ -990,12 +1125,13 @@ function dayCountNode(date) {
   const wrap = node("span", undefined, "drawer-count");
   const parts = [];
   if (date === currentDayDate) {
-    const band = todayState.todo.filter((entry) => todoOrder(entry, date) <= 3);
-    const timed = todayState.todo.filter((entry) => isActiveTask(entry) && scheduledOn(entry, date) && scheduleOf(entry)?.time);
+    // Дела в шапке — сегодняшние, как в утренней сводке: со сроком сегодня и
+    // ждущие уточнения. Запас без срока считается у своей полки.
+    const todays = todayState.todo.filter((entry) => !isActiveMeeting(entry) && todoOrder(entry, date) > 0 && todoOrder(entry, date) <= 2);
     const allDay = (todayState.calendar?.external || []).filter((item) => item.date === date && item.allDay).length;
     const meetings = todayMeetings().length + allDay;
     if (calendarConnected() || meetings) parts.push(plural(meetings, MEETINGS));
-    parts.push(plural(band.length + timed.length, DEALS));
+    parts.push(plural(todays.length, DEALS));
     const late = todayState.todo.filter((entry) => isOverdue(entry, date)).length;
     wrap.append(document.createTextNode(parts.join(" · ")));
     if (late) wrap.append(document.createTextNode(" · "), node("em", `${late} просрочено`));
@@ -1248,7 +1384,7 @@ function inboxFoldedRow(item) {
 // Лента уведомлений (подробности — в разделе «уведомления» ниже). Состояние
 // объявлено здесь, до первого разбора адреса: он случается во время чтения
 // файла, и `const` ниже по тексту попал бы в мёртвую зону.
-const bellState = { items: [], counts: { waits: 0, unread: 0 }, kinds: [], filter: "all", loaded: false };
+const bellState = { items: [], counts: { waits: 0, unread: 0 }, kinds: [], filter: "all", loaded: false, menu: null, digest: null };
 const bellDone = new Map();
 // Полоса «к вам» — только то, что ждёт вашего решения: просьбы и приглашения
 // на встречи. Призывы, добавление в круг и остальные новости живут за
@@ -1376,10 +1512,23 @@ function paintTodayList(container) {
     for (const entry of late) strip.append(entryCard(entry, { overdue: true, compact: true, dense: true, on: today }));
     container.append(strip);
   }
-  if (rest.length) {
-    container.append(node("div", "дела", "day-group"));
-    const rows = node("div", undefined, "day-rows");
-    for (const entry of rest) rows.append(entryCard(entry, { compact: true, dense: true, on: today }));
+  // Сегодняшнее — своей полкой, запас без срока — своей: «3 дела на сегодня» из
+  // утренней сводки видно в «Дне» сразу, а не одной меткой среди двенадцати
+  // строк. Запись, ждущая уточнения, — на сегодняшней полке: решить её сегодня.
+  const shelf = rest.filter((entry) => order(entry) <= 2);
+  const stock = rest.filter((entry) => order(entry) === 3);
+  if (shelf.length || stock.length) {
+    container.append(node("div", shelf.length ? `на сегодня · ${shelf.length}` : "на сегодня", "day-group today"));
+    if (shelf.length) {
+      const rows = node("div", undefined, "day-rows");
+      for (const entry of shelf) rows.append(entryCard(entry, { compact: true, dense: true, on: today, todayShelf: true }));
+      container.append(rows);
+    } else container.append(node("p", "Без часа на сегодня ничего — возьмите дело из запаса.", "day-shelf-empty"));
+  }
+  if (stock.length) {
+    container.append(node("div", `без срока · ${stock.length}`, "day-group stock"));
+    const rows = node("div", undefined, "day-rows stock");
+    for (const entry of stock) rows.append(entryCard(entry, { compact: true, dense: true, on: today, takeToday: true }));
     container.append(rows);
   }
   appendMore(container, hidden);
@@ -1583,6 +1732,7 @@ let closeCardSlashMenu = null;
 function closeCard() {
   const dialog = $("#review-dialog");
   cardOccurrence = null;
+  dropCardFlow();
   // Сохранение уходит своим ходом: карточка закрывается сразу, но значения
   // полей читаются сейчас, пока разметка ещё на месте.
   flushCard();
@@ -2521,6 +2671,397 @@ function statusBadge(status) {
 // Карточка открывается модальным окном, а не панелью внутри страницы: панель
 // жила в разделе «Сегодня» и на страницах журнала строилась на скрытой
 // странице — кнопка срабатывала, но человек не видел ничего.
+// ── кружок в карточке: «Отметил — следующее» ────────────────────────────────
+// Кружок у названия закрывает дело сразу, как кружок в «Дне». Карточку открыли
+// из списка («День», «Доска», календарь) — список едет с ней: отмеченное
+// через мгновение сменяется следующим открытым, а ∧ ∨ и K / J листают соседние.
+// Открыли по ссылке, из колокольчика или поиска — листать нечего, отмеченная
+// карточка остаётся на месте со строкой «Сделано».
+let cardList = null;
+let pendingCardList = null;
+let cardAdvance = null;
+let cardArmedUntil = 0;
+let cardAskOutcome = null;
+let cardSnackTimer = null;
+const cardKeys = { toggle: null };
+const CARD_LIST_DONE = { "День": "В «Дне» всё отмечено", "Доска": "На «Доске» всё отмечено", "Календарь": "В календаре всё отмечено" };
+const CARD_TICK_ICON = '<svg class="card-tick-check" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.8 8.4l2.7 2.7 5.7-6.2"/></svg>';
+const CARD_CLOCK_ICON = '<svg class="card-tick-hands" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4.6V8l2.3 1.5"/></svg>';
+const CARD_REPEAT_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.2 7.2A4.6 4.6 0 0 1 11.6 5"/><path d="M12.8 8.8A4.6 4.6 0 0 1 4.4 11"/><path d="M11.8 2.4V5H9.2"/><path d="M4.2 13.6V11h2.6"/></svg>';
+const rowsAsList = (rows) => rows.map((row) => ({ id: row.dataset.captureId, occurrence: row.dataset.occurrence || null }));
+function adoptCardList(entry, fresh) {
+  if (fresh) {
+    const pending = pendingCardList;
+    pendingCardList = null;
+    cardList = null;
+    if (!pending) return;
+    const exact = pending.items.findIndex((item) => item.id === pending.id && (item.occurrence || null) === (pending.occurrence || null));
+    const index = exact >= 0 ? exact : pending.items.findIndex((item) => item.id === pending.id);
+    if (index >= 0) cardList = { label: pending.label, items: pending.items, index };
+    return;
+  }
+  if (cardList && cardList.items[cardList.index]?.id !== entry.id) {
+    const index = cardList.items.findIndex((item) => item.id === entry.id);
+    if (index >= 0) cardList.index = index;
+    else cardList = null;
+  }
+}
+function paintCardNav({ finished = false } = {}) {
+  const dialog = $("#review-dialog");
+  dialog.querySelector(".card-nav")?.remove();
+  if (!cardList) return;
+  const nav = node("div", undefined, "card-nav");
+  const crumb = node("span", undefined, "card-nav-crumb");
+  crumb.append(node("b", cardList.label), document.createTextNode(finished ? " · всё отмечено" : ` · ${cardList.index + 1} из ${cardList.items.length}`));
+  const step = (direction, label, icon) => {
+    const button = node("button", undefined, "card-nav-step");
+    button.type = "button";
+    button.title = label;
+    button.setAttribute("aria-label", label);
+    button.innerHTML = icon;
+    const target = cardList.index + direction;
+    button.disabled = finished ? direction > 0 : target < 0 || target >= cardList.items.length;
+    button.addEventListener("click", () => stepCard(direction));
+    return button;
+  };
+  nav.append(crumb, step(-1, "Предыдущее · K", TALK_ICONS.up), step(1, "Следующее · J", TALK_ICONS.down));
+  dialog.append(nav);
+}
+function cardSnack(text, actions = []) {
+  const dialog = $("#review-dialog");
+  dialog.querySelector(".card-snack")?.remove();
+  clearTimeout(cardSnackTimer);
+  const snack = node("div", undefined, "card-snack");
+  snack.setAttribute("role", "status");
+  snack.append(node("span", text, "card-snack-text"));
+  for (const { label, run } of actions) {
+    const button = node("button", label, "card-snack-act");
+    button.type = "button";
+    button.addEventListener("click", async () => {
+      snack.remove();
+      clearTimeout(cardSnackTimer);
+      try { await run(); } catch (error) { cardSnack(error.message || "Не получилось"); }
+    });
+    snack.append(button);
+  }
+  dialog.append(snack);
+  cardSnackTimer = setTimeout(() => snack.remove(), actions.length ? 6000 : 3000);
+}
+function dropCardFlow() {
+  clearTimeout(cardAdvance);
+  cardAdvance = null;
+  clearTimeout(cardSnackTimer);
+  cardList = null;
+  pendingCardList = null;
+  cardAskOutcome = null;
+  cardArmedUntil = 0;
+  cardKeys.toggle = null;
+  const dialog = $("#review-dialog");
+  dialog.querySelector(".card-nav")?.remove();
+  dialog.querySelector(".card-snack")?.remove();
+  dialog.classList.remove("armed");
+}
+async function stepCard(direction) {
+  if (!cardList) return;
+  const target = cardList.index + direction;
+  if (target < 0 || target >= cardList.items.length) return;
+  await openCardFromList(target);
+}
+// Соседняя карточка встаёт на место текущей: набранное в заметке и свойствах
+// уходит на сервер, разговор и меню прежней записи убираются.
+async function openCardFromList(index, { armed = false } = {}) {
+  clearTimeout(cardAdvance);
+  cardAdvance = null;
+  const item = cardList?.items[index];
+  if (!item) return;
+  let entry;
+  try { entry = (await request(`/api/captures/${encodeURIComponent(item.id)}`)).entry; }
+  catch (error) { cardSnack(error.message || "Запись не открылась"); return; }
+  if (!cardList || !$("#review-dialog").open) return;
+  flushCard();
+  closeCardSlashMenu?.();
+  dropCardTalk();
+  cardList.index = index;
+  cardOccurrence = item.occurrence || null;
+  const dialog = $("#review-dialog");
+  // Новое дело встаёт под курсор: первые 350 мс оно не принимает нажатий, и
+  // двойной клик по кружку не закроет его заодно с прежним.
+  if (armed) {
+    cardArmedUntil = Date.now() + 350;
+    dialog.classList.add("armed");
+    setTimeout(() => dialog.classList.remove("armed"), 350);
+  }
+  const review = reviewFromEntry(entry);
+  showCorrection(entry, review.level === "high" ? undefined : review);
+  const area = $("#review");
+  area.scrollTop = 0;
+  if (motionAllowed()) appear(area, { shift: 12 });
+  keepCardFocus();
+}
+// Перерисовка карточки убирает элемент, на котором стоял фокус: без этого
+// клавиши E и K / J переставали работать после первого же нажатия мышью.
+function keepCardFocus() {
+  const dialog = $("#review-dialog");
+  if (dialog.open && !dialog.contains(document.activeElement)) dialog.focus({ preventScroll: true });
+}
+function openForList(entry, occurrence) {
+  if (!entry || isReportedWork(entry)) return false;
+  if (!completableProjections(entry).length) return needsClarification(entry);
+  if (isClosed(entry)) return false;
+  return occurrence && scheduleOf(entry)?.repeat ? scheduledOn(entry, occurrence) : true;
+}
+async function nextOpenInList(from) {
+  if (!cardList) return -1;
+  const indexes = [...cardList.items.keys()];
+  for (const index of [...indexes.filter((i) => i > from), ...indexes.filter((i) => i < from)]) {
+    const item = cardList.items[index];
+    let entry = todayState.entries.find((candidate) => candidate.id === item.id);
+    if (!entry) {
+      try { entry = (await request(`/api/captures/${encodeURIComponent(item.id)}`)).entry; }
+      catch { continue; }
+    }
+    if (openForList(entry, item.occurrence)) return index;
+  }
+  return -1;
+}
+async function advanceCardFrom(from, snack = null) {
+  cardAdvance = null;
+  if (!cardList || cardList.index !== from) return;
+  const next = await nextOpenInList(from);
+  if (!cardList || cardList.index !== from) return;
+  if (next < 0) paintCardFinish();
+  else await openCardFromList(next, { armed: true });
+  if (snack) cardSnack(snack.text, snack.actions);
+}
+function paintCardFinish() {
+  flushCard();
+  closeCardSlashMenu?.();
+  dropCardTalk();
+  cardKeys.toggle = null;
+  const area = $("#review");
+  clear(area);
+  const box = node("div", undefined, "card-finish");
+  const mark = node("span", undefined, "card-tick is-done big");
+  mark.innerHTML = CARD_TICK_ICON;
+  const close = node("button", "Закрыть", "card-finish-close");
+  close.type = "button";
+  close.addEventListener("click", () => closeCard());
+  box.append(mark, node("h2", CARD_LIST_DONE[cardList?.label] || "Всё отмечено", "card-finish-title"), node("p", "Открытых дел и встреч в этом списке не осталось.", "card-finish-sub"), close);
+  area.append(box);
+  paintCardNav({ finished: true });
+  if (motionAllowed()) appear(area, { shift: 12 });
+  close.focus({ preventScroll: true });
+}
+// Что с делом сейчас: закрыто целиком, закрыт показанный день серии или открыто.
+function cardDoneState(entry) {
+  const c = entry.interpretation.classification;
+  const schedule = scheduleOf(entry);
+  const projections = completableProjections(entry);
+  const today = currentDayDate || zoneDate(new Date());
+  const closed = isClosed(entry);
+  const skip = schedule?.skip || [];
+  const occurrence = schedule?.repeat && schedule.date && !closed
+    ? (cardOccurrence || (skip.includes(today) || scheduledOn(entry, today) ? today : nextRepeatDate(schedule, today)))
+    : null;
+  const occurrenceDone = Boolean(occurrence && skip.includes(occurrence));
+  const assignment = entry.assignment || todayState.assignments?.[entry.id] || null;
+  const taken = Boolean(currentUser && assignment?.assignee?.id === currentUser.id && ["accepted", "done"].includes(assignment.state));
+  const completedAt = closed ? projections.map((projection) => projection.completion?.completedAt).filter(Boolean).sort().at(-1) || null : null;
+  return { c, schedule, projections, closed, occurrence, occurrenceDone, done: closed || occurrenceDone, taken, assignment, own: entry.mine !== false, completedAt, meeting: c.primaryType === "meeting_event", today };
+}
+// Кружок есть у своего дела и встречи и у дела, взятого у человека из круга.
+const cardHasTick = (entry, state) => state.projections.length > 0 && !isReportedWork(entry) && (state.own || state.taken);
+function cardDoneWords(state) {
+  if (state.occurrenceDone) return state.occurrence === state.today ? "Готово на сегодня" : `Готово на ${scheduleLabel({ state: "ok", date: state.occurrence, time: null })}`;
+  const verb = state.meeting ? "Прошла" : "Сделано";
+  if (!state.completedAt) return verb;
+  const day = notifyDay(state.completedAt);
+  const when = day === state.today ? "сегодня" : day === shiftDate(state.today, -1) ? "вчера" : `${day.slice(8, 10)}.${day.slice(5, 7)}`;
+  return `${verb} ${when} в ${notifyClock(state.completedAt)}`;
+}
+async function setCardDone(entry, state, completing) {
+  if (state.occurrence) {
+    // Повтор: отметка — про показанный день, серия живёт дальше.
+    const { entry: current } = await request(`/api/captures/${entry.id}`);
+    const target = scheduleTarget(scheduleOf(current));
+    const skip = (target.skip || []).filter((day) => day !== state.occurrence);
+    const body = { patch: { schedule: { date: target.baseDate, time: target.time, ...(target.time && target.end ? { end: target.end } : {}), skip: completing ? [...skip, state.occurrence] : skip } }, at: Date.now() };
+    await request(`/api/captures/${entry.id}/corrections`, { method: "POST", body: JSON.stringify(body) });
+    return;
+  }
+  const { entry: current } = await request(`/api/captures/${entry.id}`);
+  for (const projection of completableProjections(current).filter((item) => Boolean(item.completion?.completed) !== completing))
+    await request(`/api/projections/${projection.id}/${completing ? "complete" : "undo-complete"}`, { method: "POST", body: "{}" });
+}
+async function rerenderCard(entryId) {
+  let entry;
+  try { entry = (await request(`/api/captures/${encodeURIComponent(entryId)}`)).entry; }
+  catch (error) { cardSnack(error.message || "Запись не открылась"); return null; }
+  if (!$("#review-dialog").open) return null;
+  flushCard();
+  closeCardSlashMenu?.();
+  const review = reviewFromEntry(entry);
+  showCorrection(entry, review.level === "high" ? undefined : review);
+  keepCardFocus();
+  return entry;
+}
+async function toggleCardDone(entry, state, saveFirst = null) {
+  if (Date.now() < cardArmedUntil) return;
+  clearTimeout(cardAdvance);
+  cardAdvance = null;
+  const completing = !state.done;
+  const tick = $("#review .card-tick");
+  if (tick) {
+    tick.disabled = true;
+    tick.classList.toggle("is-done", completing);
+    if (completing) tick.classList.add("just");
+    $("#review .card-title")?.classList.toggle("is-done", completing);
+  }
+  try {
+    await saveFirst?.();
+    await setCardDone(entry, state, completing);
+  } catch (error) {
+    cardSnack(error.message || "Не получилось");
+    await rerenderCard(entry.id);
+    return;
+  }
+  if (state.occurrence) cardOccurrence = state.occurrence;
+  await load().catch(() => {});
+  refreshOtherViews();
+  if (!completing || !cardList) { await rerenderCard(entry.id); return; }
+  const from = cardList.index;
+  await rerenderCard(entry.id);
+  const actions = [{ label: "Вернуть", run: async () => {
+    await setCardDone(entry, state, false);
+    await load().catch(() => {});
+    refreshOtherViews();
+    if (cardList) await openCardFromList(from);
+  } }];
+  if (state.own) actions.push({ label: "+ итог", run: async () => {
+    cardAskOutcome = entry.id;
+    if (cardList) await openCardFromList(from);
+  } });
+  cardAdvance = setTimeout(() => advanceCardFrom(from, { text: `Готово: «${shortTitle(titleOf(entry), 34)}»`, actions }), 700);
+}
+function cardOutcomeField(entry) {
+  const wrap = node("label", undefined, "card-outcome");
+  const input = node("input");
+  input.type = "text";
+  input.id = "card-outcome";
+  input.placeholder = "Чем кончилось — ляжет в «Что делал»";
+  input.autocomplete = "off";
+  input.maxLength = 2000;
+  input.addEventListener("keydown", async (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      cardAskOutcome = null;
+      wrap.remove();
+      return;
+    }
+    if (event.key !== "Enter" || !input.value.trim()) return;
+    event.preventDefault();
+    const text = input.value.trim();
+    input.disabled = true;
+    try {
+      await request(`/api/captures/${entry.id}/outcome`, { method: "POST", body: JSON.stringify({ text }) });
+      cardAskOutcome = null;
+      wrap.replaceWith(node("p", `Итог: «${text}» · в «Что делал»`, "card-outcome-saved"));
+      load().catch(() => {});
+      // Итог дописан посреди разбора — дальше к следующему открытому делу.
+      if (cardList) { const from = cardList.index; cardAdvance = setTimeout(() => advanceCardFrom(from), 700); }
+    } catch (error) {
+      input.disabled = false;
+      cardSnack(error.message || "Итог не сохранился");
+    }
+  });
+  wrap.append(input, node("kbd", "Enter"));
+  requestAnimationFrame(() => input.focus({ preventScroll: true }));
+  return wrap;
+}
+function cardDoneBlock(entry, state) {
+  const block = node("div", undefined, "card-done");
+  const line = node("div", undefined, "card-done-line");
+  const ok = node("span", undefined, "card-done-ok");
+  ok.innerHTML = CARD_TICK_ICON;
+  ok.append(document.createTextNode(cardDoneWords(state)));
+  line.append(ok);
+  const dot = () => node("span", "·", "card-done-sep");
+  const link = (label, run) => {
+    const button = node("button", label, "card-done-link");
+    button.type = "button";
+    button.addEventListener("click", run);
+    return button;
+  };
+  if (state.occurrenceDone) {
+    const next = nextRepeatDate(state.schedule, shiftDate(state.occurrence, 1));
+    if (next) line.append(dot(), node("span", `следующий раз ${scheduleLabel({ state: "ok", date: next, time: state.schedule.time || null })}`, "card-done-note"));
+  }
+  if (state.taken && state.assignment?.assigner?.name) line.append(dot(), node("span", `${state.assignment.assigner.name} видит «сделано»`, "card-done-note"));
+  line.append(dot(), link("Вернуть", () => cardKeys.toggle?.()));
+  if (state.occurrenceDone && state.own)
+    line.append(dot(), link("Закрыть всю серию", async () => {
+      try {
+        for (const projection of state.projections) await request(`/api/projections/${projection.id}/complete`, { method: "POST", body: "{}" });
+        cardOccurrence = null;
+        await load().catch(() => {});
+        refreshOtherViews();
+        await rerenderCard(entry.id);
+        cardSnack("Серия закрыта целиком");
+      } catch (error) { cardSnack(error.message || "Не получилось"); }
+    }));
+  const outcomes = (entry.parts || []).filter((part) => part.type === "outcome_decision");
+  for (const outcome of outcomes) line.append(dot(), link(`Итог: «${shortTitle(outcome.title, 60)}»`, () => openCaptureById(outcome.id)));
+  if (state.own && !outcomes.length && cardAskOutcome !== entry.id)
+    line.append(dot(), link("+ чем кончилось", (event) => {
+      clearTimeout(cardAdvance);
+      cardAdvance = null;
+      cardAskOutcome = entry.id;
+      event.currentTarget.previousElementSibling?.remove();
+      event.currentTarget.remove();
+      block.append(cardOutcomeField(entry));
+    }));
+  block.append(line);
+  if (state.own && !outcomes.length && cardAskOutcome === entry.id) block.append(cardOutcomeField(entry));
+  return block;
+}
+function cardTickButton(entry, state) {
+  const label = state.done ? "Вернуть в работу · E" : state.occurrence ? "Готово на этот день · E" : state.meeting ? "Прошла · E" : "Готово · E";
+  const button = node("button", undefined, "card-tick");
+  button.type = "button";
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.setAttribute("aria-pressed", String(state.done));
+  button.classList.toggle("is-done", state.done);
+  button.classList.toggle("meeting", state.meeting);
+  button.classList.toggle("important", !state.done && !state.meeting && state.c.priority === "high");
+  button.classList.toggle("late", !state.done && isOverdue(entry, state.today));
+  button.innerHTML = CARD_TICK_ICON + (state.meeting ? CARD_CLOCK_ICON : "");
+  if (state.schedule?.repeat) {
+    const badge = node("span", undefined, "card-tick-repeat");
+    badge.innerHTML = CARD_REPEAT_ICON;
+    button.append(badge);
+  }
+  button.addEventListener("click", () => cardKeys.toggle?.());
+  return button;
+}
+// Кружок висит слева от названия, когда у колонки есть поле; в узкой карточке
+// он встаёт в строку, а название сдвигается.
+const cardHeadObserver = typeof ResizeObserver === "function" ? new ResizeObserver(() => hangCardTick()) : null;
+function hangCardTick() {
+  const area = $("#review"), head = area?.querySelector(".card-head.with-tick");
+  if (!head) return;
+  head.classList.toggle("hang", parseFloat(getComputedStyle(area).paddingLeft) >= 62);
+}
+if ($("#review")) cardHeadObserver?.observe($("#review"));
+$("#review-dialog")?.addEventListener("keydown", (event) => {
+  if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+  if (event.target.closest?.("input, textarea, select, [contenteditable='true'], .talk-dock, .card-title-edit")) return;
+  const key = event.key.toLowerCase();
+  if ((key === "e" || key === "у") && cardKeys.toggle) { event.preventDefault(); cardKeys.toggle(); }
+  else if ((key === "j" || key === "о") && cardList) { event.preventDefault(); stepCard(1); }
+  else if ((key === "k" || key === "л") && cardList) { event.preventDefault(); stepCard(-1); }
+});
 function showReview(entry, review, undoGroupId, provenance) {
   const area = $("#review"),
     dialog = $("#review-dialog"),
@@ -2530,6 +3071,11 @@ function showReview(entry, review, undoGroupId, provenance) {
     closeCard();
     return;
   }
+  // Список, из которого открыли карточку, едет с ней; кружок — у своего дела,
+  // встречи и взятого у человека дела.
+  adoptCardList(entry, !dialog.open);
+  const doneState = cardDoneState(entry);
+  const hasTick = cardHasTick(entry, doneState);
   // Заголовок правится на месте: клик превращает его в поле, Enter сохраняет
   // уточнением (правда человека — факт), Escape возвращает как было.
   const cardTitle = markdownNode("h2", c.summary, "card-title", { inline: true, firstLine: true });
@@ -2582,18 +3128,30 @@ function showReview(entry, review, undoGroupId, provenance) {
   cardTitle.addEventListener("keydown", (event) => {
     if (event.key === "Enter") { event.preventDefault(); startTitleEdit(); }
   });
-  area.append(cardTitle);
+  const head = node("div", undefined, `card-head${hasTick ? " with-tick" : ""}`);
+  if (hasTick) {
+    cardTitle.classList.toggle("is-done", doneState.done);
+    head.append(cardTickButton(entry, doneState));
+  }
+  head.append(cardTitle);
+  area.append(head);
+  if (hasTick && doneState.done) area.append(cardDoneBlock(entry, doneState));
+  requestAnimationFrame(hangCardTick);
   // Происхождение: дело, отделённое от записи, помнит, из чего оно вышло, а
   // исходная запись — что из неё вышло. Без этого «Допинать бот-детектор»
   // висело бы ничьим делом, а у отчёта о встрече не было бы следа, что дела
   // из него уже заведены.
-  if (entry.parent || entry.parts?.length) {
+  // Итог дела («+ чем кончилось») — тоже запись с родителем, но это не
+  // отделённое дело: у дела он назван итогом, а сам итог помнит своё дело.
+  const deedParts = (entry.parts || []).filter((part) => part.type !== "outcome_decision" || !["task", "meeting_event"].includes(c.primaryType));
+  const outcomeOfDeed = entry.parent && c.primaryType === "outcome_decision" && ["task", "meeting_event"].includes(entry.parent.type);
+  if (entry.parent || deedParts.length) {
     const origin = node("p", undefined, "card-origin");
     const link = (id, text) => { const button = node("button", text, "text-button"); button.type = "button"; button.addEventListener("click", () => openCaptureById(id)); return button; };
-    if (entry.parent) origin.append(document.createTextNode("Отделено от записи "), link(entry.parent.id, `«${entry.parent.title}»`));
+    if (entry.parent) origin.append(document.createTextNode(outcomeOfDeed ? "Итог дела " : "Отделено от записи "), link(entry.parent.id, `«${entry.parent.title}»`));
     else {
-      origin.append(document.createTextNode(`Из этой записи ${plural(entry.parts.length, DEALS)}: `));
-      entry.parts.forEach((part, index) => {
+      origin.append(document.createTextNode(`Из этой записи ${plural(deedParts.length, DEALS)}: `));
+      deedParts.forEach((part, index) => {
         if (index) origin.append(document.createTextNode(", "));
         origin.append(link(part.id, part.title));
       });
@@ -2749,7 +3307,9 @@ function showReview(entry, review, undoGroupId, provenance) {
     ...(assignWrap && (hasCircles || entry.assignment) ? [assignWrap] : []),
     peopleWrap,
     followUpWrap,
-    propertyRow("Сделано", doneToggle, "done"),
+    // У дела и встречи «сделано» — кружок у названия; строка остаётся у заметки,
+    // идеи и результата, где она делает запись итогом.
+    ...(["task", "meeting_event"].includes(c.primaryType) ? [] : [propertyRow("Сделано", doneToggle, "done")]),
   );
   props.id = "review-props";
   const updateVisibility = () => {
@@ -2798,6 +3358,9 @@ function showReview(entry, review, undoGroupId, provenance) {
     propsSummary.classList.toggle("is-label", propsOpen);
   };
   type.addEventListener("change", () => {
+    // «Результат» — это уже сделанное: у дела строки «Сделано» нет, и выбор
+    // типа сам ставит отметку, как её ставит сервер.
+    if (!notResult() && !done) { done = true; paintDone(); }
     if (done && notResult()) { done = false; paintDone(); }
     updateVisibility();
   });
@@ -2960,6 +3523,10 @@ function showReview(entry, review, undoGroupId, provenance) {
   // Отправить встречу во внешний календарь можно только отсюда, кнопкой:
   // по контракту памяти действие наружу всегда ждёт отдельного подтверждения.
   if (["task", "meeting_event"].includes(c.primaryType) && c.entities.schedule?.date) footerRow.prepend(calendarExportEl(entry));
+  // E — кружок, K / J — соседние дела списка. Свойства, набранные до отметки,
+  // уходят раньше неё: поправка после отметки пересобрала бы дело заново.
+  cardKeys.toggle = hasTick ? () => toggleCardDone(entry, doneState, () => saveProps()) : null;
+  paintCardNav();
   if (!dialog.open) {
     // Прерванное закрытие могло оставить незавершённую анимацию: снимаем её,
     // иначе карточка откроется прозрачной.
@@ -7056,9 +7623,17 @@ async function completeBoardCard(card, element, button) {
   try {
     for (const projectionId of card.projectionIds)
       await request(`/api/projections/${projectionId}/complete`, { method: "POST", body: "{}" });
-    toast("Отмечено как готовое");
+    toast("Отмечено как готовое", { label: "Вернуть", run: async () => {
+      try {
+        for (const projectionId of card.projectionIds) await request(`/api/projections/${projectionId}/undo-complete`, { method: "POST", body: "{}" });
+        toast("Возвращено в работу");
+        loadBoard();
+        load().catch(() => {});
+      } catch (error) { toast(error.message); }
+    } });
     element.remove();
     loadBoard();
+    load().catch(() => {});
   } catch (error) {
     toast(error.message);
     button.disabled = false;
@@ -7108,6 +7683,7 @@ function boardCardEl(card, column, { closed = false } = {}) {
   const element = node("div", undefined, `board-card${closed ? " closed" : ""}`);
   element.draggable = !closed;
   element.dataset.captureId = card.captureId;
+  if (card.due?.repeat && card.due.date) element.dataset.occurrence = card.due.date;
   const done = node("button", undefined, `board-done${closed ? " is-done" : ""}${card.type === "meeting_event" ? " meeting" : ""}`);
   done.type = "button";
   if (card.type === "meeting_event" && !closed) done.innerHTML = BOARD_CLOCK;
@@ -7122,7 +7698,11 @@ function boardCardEl(card, column, { closed = false } = {}) {
   const titleRow = node("div", undefined, "board-title-row");
   const title = node("button", card.title.split("\n")[0], "board-title");
   title.type = "button";
-  title.addEventListener("click", () => openReportEntry(card.captureId));
+  title.addEventListener("click", () => {
+    const columns = $("#board-columns");
+    pendingCardList = columns ? { label: "Доска", items: rowsAsList([...columns.querySelectorAll(".board-card[data-capture-id]:not(.closed)")]), id: card.captureId, occurrence: element.dataset.occurrence || null } : null;
+    openReportEntry(card.captureId);
+  });
   titleRow.append(title);
   if (!closed) {
     // Крестик по наведению — удалить дело прямо с доски. Удаление мягкое, тост
@@ -8073,6 +8653,16 @@ function calEventEl(item) {
   if (item.kind !== "external") { element.draggable = !item.done; element.dataset.own = "1"; element.dataset.occ = item.date; }
   else { if (item.editable) { element.draggable = true; element.dataset.own = "1"; } if (item.color) element.style.setProperty("--cal-c", item.color); }
   const title = node("b", undefined);
+  // Своё дело или встреча со временем закрывается кружком прямо в сетке —
+  // как дело «без времени»: открывать карточку ради одного нажатия незачем.
+  if (item.kind !== "external") {
+    const box = calButton(undefined, `cal-box${item.kind === "meeting" ? " meeting" : ""}${item.done ? " is-done" : ""}`, (event) => { event.stopPropagation(); toggleCalendarDone(item); });
+    box.title = item.recurring ? "Готово: убрать этот повтор, серия останется" : item.done ? "Вернуть в работу" : "Готово";
+    box.setAttribute("aria-label", `${box.title}: ${item.title}`);
+    box.draggable = false;
+    if (item.kind === "meeting" && !item.done) box.innerHTML = BOARD_CLOCK;
+    title.append(box);
+  }
   title.append(node("span", `${item.time} `, "cal-ev-time"), document.createTextNode(item.title));
   element.append(title);
   const sub = item.kind === "external" ? item.calendarName || item.source : [item.project, ...(item.people || [])].filter(Boolean).join(" · ");
@@ -8294,10 +8884,45 @@ function renderCalendar() {
   wrap.append(hint);
   fitCalendarHeight();
 }
+// Встреча из уведомления открывается на своём дне и сразу плашкой: искать её
+// глазами по неделе незачем. Отменённой встречи в сетке нет — тогда просто день.
+function openCalendarAt(date, { uid = null, id = null } = {}) {
+  const params = new URLSearchParams();
+  if (date) params.set("date", date);
+  if (uid) params.set("event", uid);
+  if (id) params.set("item", id);
+  const target = `#calendar${params.size ? `?${params}` : ""}`;
+  if (location.hash === target) updatePageFromHash();
+  else location.hash = target;
+}
+async function openCalendarEvent({ uid = null, id = null, date = null } = {}) {
+  const external = calState.data?.external || [];
+  const item = external.find((candidate) => (id ? candidate.id === id : candidate.uid === uid) && (!date || candidate.date === date))
+    || external.find((candidate) => (id ? candidate.id === id : candidate.uid === uid));
+  if (!item) return;
+  const view = $("#calendar-view");
+  const anchor = view?.querySelector(`[data-id="${CSS.escape(item.id)}"]`);
+  const scroll = view?.querySelector(".cal-scroll");
+  if (anchor && scroll && !item.allDay && scroll.contains(anchor)) {
+    scroll.scrollTop = Math.max(0, anchor.offsetTop - 60);
+    calState.gridScroll = scroll.scrollTop;
+    calState.scrollTop = scroll.scrollTop;
+  }
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  showExternalEvent(item);
+}
 // Клик по своему делу — карточка записи; по чужому событию — плашка с тем,
 // что известно, и «Взять в память».
 function openCalendarItem(item) {
-  if (item.kind !== "external") { openReportEntry(item.id, { occurrence: item.recurring ? item.date : null }); return; }
+  if (item.kind !== "external") {
+    // Свои дела окна — по времени, просроченное первым: этим списком карточка
+    // и листается, и ведёт к следующему после «Готово».
+    const own = [...(calState.data?.overdue || []), ...(calState.data?.items || [])].filter(calOwnVisible)
+      .sort((left, right) => left.date.localeCompare(right.date) || (left.time || "99:99").localeCompare(right.time || "99:99"));
+    pendingCardList = { label: "Календарь", items: own.map((candidate) => ({ id: candidate.id, occurrence: candidate.recurring ? candidate.date : null })), id: item.id, occurrence: item.recurring ? item.date : null };
+    openReportEntry(item.id, { occurrence: item.recurring ? item.date : null });
+    return;
+  }
   showExternalEvent(item);
 }
 function closeCalendarPop() {
@@ -8608,12 +9233,14 @@ function calSnap(minutes) { return Math.max(CAL_H0 * 60, Math.min(CAL_H1 * 60 - 
 async function toggleCalendarDone(item) {
   // Экземпляр своей серии: «готово» убирает его из серии, остальные остаются.
   if (item.recurring) { await skipOccurrence({ id: item.id, baseDate: item.baseDate, time: item.time, end: item.end, skip: item.skip || [] }, item.date); return; }
-  const projectionId = item.projectionIds?.[0];
-  if (!projectionId) return;
+  const ids = item.projectionIds || [];
+  if (!ids.length) return;
   try {
-    await request(`/api/projections/${projectionId}/${item.done ? "undo-complete" : "complete"}`, { method: "POST", body: "{}" });
+    for (const projectionId of ids) await request(`/api/projections/${projectionId}/${item.done ? "undo-complete" : "complete"}`, { method: "POST", body: "{}" });
     await loadCalendar();
-    toast(item.done ? "Снова в работе" : "Сделано");
+    if (item.done) toast("Снова в работе");
+    else toast(`Готово: «${shortTitle(item.title)}»`, { label: "Вернуть", run: () => toggleCalendarDone({ ...item, done: true }) });
+    load().catch(() => {});
   } catch (error) { toast(error.message); }
 }
 // Перенос — уточнение записи: сервер пересобирает проекции. «Вернуть» — не
@@ -9103,8 +9730,8 @@ function notificationMeta(item) {
   if (item.data?.circle) meta.append(circleChip(item.data.circle, { small: true }));
   return meta;
 }
-function notifyButton(label, primary, run) {
-  const button = node("button", label, `bell-act${primary ? " primary" : ""}`);
+function notifyButton(label, primary, run, { ok = false } = {}) {
+  const button = node("button", label, `bell-act${primary ? " primary" : ""}${ok ? " ok" : ""}`);
   button.type = "button";
   button.addEventListener("click", async (event) => {
     event.stopPropagation();
@@ -9115,10 +9742,10 @@ function notifyButton(label, primary, run) {
 }
 // Кнопки строки — те же, что в карточке и в полосе «к вам»: ответить можно, не
 // открывая запись. Сделанное остаётся в строке словами: что стало.
-function notificationActions(item, { after = () => {} } = {}) {
+function notificationActions(item, { after = () => {}, inPanel = false } = {}) {
   if (bellDone.has(item.id)) return node("div", bellDone.get(item.id), "bell-done");
   const acts = node("div", undefined, "bell-acts");
-  const done = (words) => { bellDone.set(item.id, words); after(); loadNotifications(); };
+  const done = (words, { close = true } = {}) => { bellDone.set(item.id, words); if (close) after(); loadNotifications(); };
   if (item.kind === "request" && item.waits) {
     acts.append(
       notifyButton("Беру", true, async () => { await request(`/api/assignments/${item.assignmentId}/respond`, { method: "POST", body: JSON.stringify({ take: true }) }); done("Взято — дело в вашем дне"); load().catch(() => {}); }),
@@ -9133,12 +9760,18 @@ function notificationActions(item, { after = () => {} } = {}) {
       notifyButton("Приму", true, async () => { await answerInvite(item, "accepted"); done("Принято — встреча в календаре"); }),
       notifyButton("Не смогу", false, async () => { await answerInvite(item, "declined"); done("Организатор узнает, что вас не будет"); }),
     );
-  } else if (item.kind === "reminder" && (item.data?.startAt ? Date.parse(item.data.startAt) > Date.now() : notifyDay(item.updatedAt) === currentDayDate)) {
-    if (item.data?.joinUrl) acts.append(notifyButton("К звонку", true, async () => { window.open(item.data.joinUrl, "_blank", "noopener"); done("Звонок открыт в новой вкладке"); }));
-    acts.append(notifyButton("Через 10 минут", !item.data?.joinUrl, async () => {
-      const result = await request(`/api/notifications/${item.id}/snooze`, { method: "POST", body: JSON.stringify({ minutes: 10 }) });
-      done(`Напомню в ${notifyClock(result.snoozedUntil)}`);
-    }));
+  } else if (item.kind === "reminder") {
+    // Дело из напоминания закрывается прямо в строке — открывать карточку ради
+    // одного кружка незачем. Вместе с делом из ленты уходят его напоминания.
+    if (item.captureId && (item.meta || []).includes("дело"))
+      acts.append(notifyButton("Готово", true, async () => { await completeFromNotification(item); done("Готово — дело закрыто", { close: !inPanel }); }, { ok: true }));
+    if (item.data?.startAt ? Date.parse(item.data.startAt) > Date.now() : notifyDay(item.updatedAt) === currentDayDate) {
+      if (item.data?.joinUrl) acts.append(notifyButton("К звонку", true, async () => { window.open(item.data.joinUrl, "_blank", "noopener"); done("Звонок открыт в новой вкладке"); }));
+      acts.append(notifyButton("Через 10 минут", false, async () => {
+        const result = await request(`/api/notifications/${item.id}/snooze`, { method: "POST", body: JSON.stringify({ minutes: 10 }) });
+        done(`Напомню в ${notifyClock(result.snoozedUntil)}`);
+      }));
+    }
   } else if (item.kind === "call" || item.kind === "reply") {
     acts.append(notifyButton("Ответить", false, async () => { after(); openNotification(item); }));
   } else if (item.kind === "clarify" && !item.resolved) {
@@ -9151,30 +9784,262 @@ function notificationActions(item, { after = () => {} } = {}) {
 async function answerInvite(item, status) {
   await request(`/api/notifications/${item.id}/respond`, { method: "POST", body: JSON.stringify({ status }) });
 }
+// «Готово» из ленты — тот же кружок, что в «Дне»: дело закрыто, у повтора —
+// только этот день. «Вернуть» в тосте открывает дело снова.
+async function completeFromNotification(item) {
+  const { entry } = await request(`/api/captures/${item.captureId}`);
+  const schedule = scheduleOf(entry);
+  const projections = completableProjections(entry).filter((projection) => !projection.completion?.completed);
+  if (schedule?.repeat && item.data?.date && scheduledOn(entry, item.data.date)) {
+    await skipOccurrence({ id: entry.id, ...scheduleTarget(schedule) }, item.data.date);
+    dismissNotifications([item.id]);
+    return;
+  }
+  if (!projections.length) throw new Error("Это дело уже закрыто");
+  for (const projection of projections)
+    await request(`/api/projections/${projection.id}/complete`, { method: "POST", body: "{}" });
+  toast(`Готово: «${shortTitle(titleOf(entry))}»`, { label: "Вернуть", run: async () => {
+    try {
+      for (const projection of projections) await request(`/api/projections/${projection.id}/undo-complete`, { method: "POST", body: "{}" });
+      toast("Снова в работе");
+      await load();
+    } catch (error) { toast(error.message); }
+  } });
+  load().catch(() => {});
+}
+const shortTitle = (text, limit = 40) => { const clean = String(text || "").replace(/\s+/g, " ").trim(); return clean.length > limit ? `${clean.slice(0, limit - 1)}…` : clean; };
+// Открыл — убрал: в ленте остаётся только неразобранное. Ждущее ответа не
+// уходит, пока на него не ответили. «Вернуть» кладёт убранное обратно.
+async function dismissNotifications(ids, { announce = null } = {}) {
+  // Строки из всплывашки может ещё не быть в ленте: такие id уходят на сервер
+  // как есть, а ждущее ответа он сам не уберёт.
+  const waiting = new Set(bellState.items.filter((item) => item.waits).map((item) => item.id));
+  const wanted = ids.filter((id) => !waiting.has(id));
+  if (!wanted.length) return [];
+  bellState.items = bellState.items.filter((item) => !wanted.includes(item.id));
+  if ($("#bell-menu")?.open) renderBellPanel();
+  try {
+    const result = await request("/api/notifications/dismiss", { method: "POST", body: JSON.stringify({ ids: wanted }) });
+    bellState.counts = result.counts;
+    paintBell();
+    if (announce) toast(announce, { label: "Вернуть", run: () => restoreNotifications(result.dismissed) });
+    return result.dismissed;
+  } catch (error) {
+    toast(error.message);
+    loadNotifications();
+    return [];
+  }
+}
+async function restoreNotifications(ids) {
+  try { await request("/api/notifications/restore", { method: "POST", body: JSON.stringify({ ids }) }); }
+  catch (error) { toast(error.message); }
+  await loadNotifications();
+}
+// «Заглушить» — меню у строки: убрать её, не напоминать об этом деле, молчать
+// об изменениях в этом календаре или выключить такие поводы совсем.
+const BELL_MUTE_ICON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11.2V7.6a4 4 0 0 1 6.6-3"/><path d="M12 7.4v3.8l1.2 1.3H5"/><path d="M6.6 13.8a1.6 1.6 0 0 0 2.8 0"/><path d="M2.5 2.5l11 11"/></svg>';
+function notificationMenu(item) {
+  const menu = node("div", undefined, "bell-mute-menu");
+  menu.setAttribute("role", "menu");
+  const entry = (title, hint, run) => {
+    const button = node("button", undefined, "bell-mute-item");
+    button.type = "button";
+    button.setAttribute("role", "menuitem");
+    button.append(node("span", title, "bell-mute-title"));
+    if (hint) button.append(node("small", hint));
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      bellState.menu = null;
+      try { await run(); } catch (error) { toast(error.message || "Не получилось"); }
+    });
+    menu.append(button);
+  };
+  if (!item.waits) entry("Убрать из ленты", null, () => dismissNotifications([item.id], { announce: "Убрано из ленты" }));
+  if (item.kind === "reminder" && item.captureId) entry("Не напоминать об этом деле", "срок остаётся, напоминаний больше не будет", () => muteReminder(item));
+  if (["event_added", "event_changed"].includes(item.kind) && item.accountId) {
+    const account = calendarAccountLabel(item.accountId);
+    entry(account ? `Не сообщать об изменениях в «${account}»` : "Не сообщать об изменениях в этом календаре", "календарь в Кизуне остаётся", () => muteCalendarChanges(item, account));
+  }
+  const kind = bellState.kinds.find((candidate) => candidate.key === item.kind);
+  if (kind) entry("Выключить такие", `«${kind.label}» — вернуть можно в настройках`, () => turnOffKind(item, kind));
+  return menu;
+}
+function calendarAccountLabel(accountId) {
+  const accounts = [...(todayState.calendar?.accounts || []), ...(calState.data?.accounts || []), ...(calendarAccountsState.accounts || [])];
+  return accounts.find((account) => account.id === accountId)?.label || null;
+}
+async function muteReminder(item) {
+  const { entry } = await request(`/api/captures/${item.captureId}`);
+  const schedule = scheduleOf(entry);
+  if (!schedule?.date) throw new Error("У дела уже нет срока");
+  const patch = (remind) => ({ patch: { schedule: { date: schedule.date, time: schedule.time || null, ...(schedule.time && schedule.end ? { end: schedule.end } : {}), remind } } });
+  await request(`/api/captures/${entry.id}/corrections`, { method: "POST", body: JSON.stringify(patch("off")) });
+  await dismissNotifications([item.id]);
+  toast("Об этом деле больше не напомню", { label: "Вернуть", run: async () => {
+    try { await request(`/api/captures/${entry.id}/corrections`, { method: "POST", body: JSON.stringify(patch(schedule.remind ?? null)) }); }
+    catch (error) { toast(error.message); }
+    await restoreNotifications([item.id]);
+  } });
+  load().catch(() => {});
+}
+async function saveMutedCalendars(list) {
+  const value = JSON.stringify([...new Set(list)]);
+  paintSettings(await request("/api/settings", { method: "PUT", body: JSON.stringify({ notifyMutedCalendars: value }) }));
+}
+function mutedCalendarsNow() {
+  try { const parsed = JSON.parse(appSettings.notifyMutedCalendars || "[]"); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
+}
+async function muteCalendarChanges(item, label) {
+  const before = mutedCalendarsNow();
+  await saveMutedCalendars([...before, item.accountId]);
+  await dismissNotifications([item.id]);
+  toast(label ? `«${label}» — без уведомлений об изменениях` : "Об изменениях в этом календаре — молчу", { label: "Вернуть", run: async () => {
+    try { await saveMutedCalendars(before); } catch (error) { toast(error.message); }
+    await restoreNotifications([item.id]);
+  } });
+}
+async function turnOffKind(item, kind) {
+  const prefs = notifyPrefsNow();
+  const before = ["off", "bell", "phone"].includes(prefs[kind.key]) ? prefs[kind.key] : kind.default;
+  setNotifyMode(kind, "off");
+  await dismissNotifications([item.id]);
+  toast(`«${kind.label}» — выключено`, { label: "Вернуть", run: async () => { setNotifyMode(kind, before); await restoreNotifications([item.id]); } });
+}
+// «Доброе утро» раскрывается на месте: встречи по часам и дела на сегодня с
+// кружками. Переходить на главную, чтобы увидеть те же шесть строк, незачем.
+function digestBody(item) {
+  const box = node("div", undefined, "bell-digest");
+  const today = currentDayDate;
+  const forToday = (item.data?.date || notifyDay(item.createdAt || item.updatedAt)) === today;
+  if (forToday) {
+    const minutes = nowMinutes();
+    const meetings = todayMeetings().sort((left, right) => left.start - right.start);
+    box.append(node("p", meetings.length ? `Встречи · ${meetings.length}` : "Встреч сегодня нет", "bell-digest-head"));
+    for (const meeting of meetings) {
+      const row = node("button", undefined, "bell-digest-row");
+      row.type = "button";
+      const state = minutes >= meeting.end ? "прошла" : minutes >= meeting.start ? "идёт" : meeting.start - minutes <= 90 ? `через ${meeting.start - minutes} мин` : "";
+      row.append(node("span", hm(meeting.start), "bell-digest-time"), node("i", undefined, "bell-digest-dot"), node("span", meeting.title, "bell-digest-title"), node("span", state, "bell-digest-state"));
+      row.addEventListener("click", (event) => {
+        event.stopPropagation();
+        $("#bell-menu")?.removeAttribute("open");
+        if (String(meeting.id).startsWith("ext:")) openCalendarAt(today, { id: meeting.id });
+        else openCaptureById(meeting.id);
+      });
+      box.append(row);
+    }
+    const deals = todayState.entries
+      .filter((entry) => scheduledOn(entry, today) && !isReportedWork(entry) && projectionOfType(entry, "task") && (isActiveTask(entry) || isClosed(entry)))
+      .sort((left, right) => (scheduleOf(left)?.time || "99").localeCompare(scheduleOf(right)?.time || "99"));
+    box.append(node("p", deals.length ? `Дела на сегодня · ${deals.length}` : "Дел на сегодня нет", "bell-digest-head"));
+    for (const entry of deals) {
+      const closed = isClosed(entry);
+      const row = node("div", undefined, `bell-digest-row deal${closed ? " done" : ""}`);
+      const tick = node("button", undefined, `completion-button${closed ? " is-done" : ""}`);
+      tick.type = "button";
+      tick.title = closed ? "Вернуть в работу" : "Готово";
+      tick.setAttribute("aria-label", `${tick.title}: ${titleOf(entry)}`);
+      tick.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        await updateCompletion(completableProjections(entry), !closed, tick);
+        if ($("#bell-menu")?.open) renderBellPanel();
+      });
+      const title = node("button", titleOf(entry), "bell-digest-title");
+      title.type = "button";
+      title.addEventListener("click", (event) => { event.stopPropagation(); $("#bell-menu")?.removeAttribute("open"); openCaptureById(entry.id); });
+      row.append(node("span", scheduleOf(entry)?.time || "", "bell-digest-time"), tick, title);
+      box.append(row);
+    }
+  }
+  const day = node("button", "Открыть «День» →", "bell-digest-link");
+  day.type = "button";
+  day.addEventListener("click", (event) => {
+    event.stopPropagation();
+    $("#bell-menu")?.removeAttribute("open");
+    todayState.tab = "day";
+    todayState.view = 0;
+    if (location.hash !== "#today") location.hash = "#today";
+    else renderToday();
+    setTimeout(() => $("#todo")?.scrollIntoView({ block: "start", behavior: motionAllowed() ? "smooth" : "auto" }), 80);
+  });
+  box.append(day);
+  return box;
+}
 function notificationRow(item) {
-  const row = node("div", undefined, `bell-row${item.read ? "" : " unread"}`);
+  const row = node("div", undefined, `bell-row${item.read ? "" : " unread"}${item.kind === "digest" ? " digest" : ""}`);
   row.dataset.id = item.id;
   const main = node("div", undefined, "bell-main");
   main.append(notificationText(item));
   const meta = notificationMeta(item);
   if (meta.childNodes.length) main.append(meta);
-  const acts = notificationActions(item, { after: () => $("#bell-menu")?.removeAttribute("open") });
+  if (item.kind === "digest") {
+    const open = bellState.digest === item.id;
+    const toggle = node("button", open ? "Свернуть" : "Показать встречи и дела", `bell-digest-toggle${open ? " open" : ""}`);
+    toggle.type = "button";
+    toggle.setAttribute("aria-expanded", String(open));
+    toggle.addEventListener("click", (event) => { event.stopPropagation(); toggleDigest(item); });
+    main.append(toggle);
+    if (open) main.append(digestBody(item));
+  }
+  const acts = notificationActions(item, { after: () => $("#bell-menu")?.removeAttribute("open"), inPanel: true });
   if (acts) main.append(acts);
-  row.append(notificationFace(item), main, node("span", notifyTime(item.updatedAt), "bell-time"));
-  row.addEventListener("click", (event) => { if (!event.target.closest("button")) openNotification(item); });
+  const side = node("div", undefined, "bell-side");
+  side.append(node("span", notifyTime(item.updatedAt), "bell-time"));
+  const mute = node("button", undefined, "bell-mute");
+  mute.type = "button";
+  mute.title = "Заглушить";
+  mute.setAttribute("aria-label", `Заглушить: ${[item.lead, item.text].filter(Boolean).join(" ")}`);
+  mute.setAttribute("aria-expanded", String(bellState.menu === item.id));
+  mute.innerHTML = BELL_MUTE_ICON;
+  mute.addEventListener("click", (event) => {
+    event.stopPropagation();
+    bellState.menu = bellState.menu === item.id ? null : item.id;
+    renderBellPanel();
+  });
+  side.append(mute);
+  row.append(notificationFace(item), main, side);
+  if (bellState.menu === item.id) row.append(notificationMenu(item));
+  row.addEventListener("click", (event) => {
+    if (event.target.closest("button, .bell-mute-menu")) return;
+    if (bellState.menu) { bellState.menu = null; renderBellPanel(); return; }
+    if (item.kind === "digest") toggleDigest(item);
+    else openNotification(item);
+  });
   return row;
+}
+function toggleDigest(item) {
+  bellState.digest = bellState.digest === item.id ? null : item.id;
+  if (!item.read) markNotificationsRead({ ids: [item.id] });
+  renderBellPanel();
 }
 function renderBellPanel() {
   const panel = $("#bell-popover");
   if (!panel) return;
+  const scroll = panel.scrollTop;
   clear(panel);
   const head = node("div", undefined, "bell-head");
   head.append(node("h3", "Уведомления"));
-  const readAll = node("button", "Прочитать всё", "linklike bell-read-all");
-  readAll.type = "button";
-  readAll.disabled = !bellState.counts.unread;
-  readAll.addEventListener("click", () => markNotificationsRead({ all: true }));
-  head.append(readAll);
+  // «Очистить» — всё, что не ждёт ответа: лента для неразобранного, а не архив.
+  const clearAll = node("button", "Очистить", "linklike bell-read-all");
+  clearAll.type = "button";
+  clearAll.disabled = !bellState.items.some((item) => !item.waits);
+  clearAll.addEventListener("click", async () => {
+    const before = bellState.items;
+    bellState.items = bellState.items.filter((item) => item.waits);
+    bellState.menu = null;
+    renderBellPanel();
+    try {
+      const result = await request("/api/notifications/dismiss", { method: "POST", body: JSON.stringify({ all: true }) });
+      bellState.counts = result.counts;
+      paintBell();
+      if (result.dismissed.length) toast("Лента очищена", { label: "Вернуть", run: () => restoreNotifications(result.dismissed) });
+    } catch (error) {
+      bellState.items = before;
+      renderBellPanel();
+      toast(error.message);
+    }
+  });
+  head.append(clearAll);
   const filters = node("div", undefined, "bell-filters");
   for (const [key, label] of NOTIFY_FILTERS) {
     const chip = node("button", label, "bell-filter");
@@ -9199,23 +10064,28 @@ function renderBellPanel() {
   group("Сегодня", rest.filter((item) => notifyDay(item.updatedAt) === today));
   group("Вчера", rest.filter((item) => notifyDay(item.updatedAt) === yesterday));
   group("Раньше", rest.filter((item) => notifyDay(item.updatedAt) < yesterday));
-  if (!list.childNodes.length) list.append(node("p", bellState.filter === "all" ? "Здесь пусто: всё прочитано и отвечено." : "По этому поводу ничего нет.", "bell-empty"));
+  if (!list.childNodes.length) list.append(node("p", bellState.filter === "all" ? "Всё разобрано. Новое появится здесь." : "По этому поводу ничего нет.", "bell-empty"));
   const foot = node("div", undefined, "bell-foot");
   const settings = node("a", "Настройки уведомлений →");
   settings.href = "#settings";
   settings.addEventListener("click", () => { $("#bell-menu")?.removeAttribute("open"); setTimeout(() => $("#notify-settings")?.scrollIntoView({ block: "start" }), 60); });
-  foot.append(node("span", "Хранится 30 дней"), settings);
+  foot.append(node("span", "Открытое уходит из ленты"), settings);
   panel.append(head, filters, list, foot);
+  panel.scrollTop = scroll;
 }
-// Открыть повод: карточку, разговор, круг или раздел — туда, где он случился.
+// Открыть повод: карточку, разговор, круг или встречу на её дне — туда, где он
+// случился. Открытое уходит из ленты; ждущее ответа остаётся до ответа.
 function openNotification(item) {
   $("#bell-menu")?.removeAttribute("open");
-  if (!item.read) markNotificationsRead({ ids: [item.id] });
+  bellState.menu = null;
+  if (!item.waits) dismissNotifications([item.id]);
+  else if (!item.read) markNotificationsRead({ ids: [item.id] });
   if (["reminder", "clarify"].includes(item.kind) && item.captureId) return openCaptureById(item.captureId);
   if (item.captureId) return openSharedCard(item.captureId, { talk: ["call", "reply", "reaction", "chatter"].includes(item.kind) });
   if (item.roomId) return openRoomFromInbox(item.roomId);
   if (item.kind === "circle" && item.circleId) return openCircleFromInbox(item.circleId);
-  const hash = { invite: "#calendar", event_added: "#calendar", event_changed: "#calendar", signup: "#admin", spend: "#settings", calendar_error: "#settings", digest: "#today" }[item.kind];
+  if (["invite", "event_added", "event_changed"].includes(item.kind)) return openCalendarAt(item.data?.date || null, { uid: item.eventUid || null });
+  const hash = { signup: "#admin", spend: "#settings", calendar_error: "#settings", digest: "#today" }[item.kind];
   if (hash) location.hash = hash;
 }
 async function markNotificationsRead(body) {
@@ -9346,6 +10216,22 @@ function paintNotifySettings() {
       );
       table.append(row);
     }
+  }
+  // Заглушённые из колокольчика календари: здесь их возвращают.
+  const muted = mutedCalendarsNow();
+  if (muted.length) {
+    const line = node("p", "Об изменениях встреч молчат:", "notify-muted");
+    for (const accountId of muted) {
+      const chip = node("button", `${calendarAccountLabel(accountId) || "календарь"} ✕`);
+      chip.type = "button";
+      chip.title = "Снова сообщать об изменениях";
+      chip.addEventListener("click", async () => {
+        try { await saveMutedCalendars(mutedCalendarsNow().filter((id) => id !== accountId)); toast("Об изменениях снова сообщу"); }
+        catch (error) { toast(error.message); }
+      });
+      line.append(chip);
+    }
+    table.append(line);
   }
 }
 

@@ -1103,9 +1103,21 @@ export function replaceInterpretation(db, captureId, classification, provider, c
     if (!previous) return null;
     const interpretationId = id(), undoGroupId = id(), createdAt = now();
     db.prepare("UPDATE interpretations SET status='superseded' WHERE id=?").run(previous.id);
+    // Закрытое дело остаётся закрытым, когда его поправили: перенос срока или
+    // новый заголовок пересобирают проекции, и без этого закрытое кружком дело
+    // молча возвращалось в работу. Отметка переходит к проекции того же типа
+    // со своим прежним временем.
+    const closedTypes = new Map();
+    for (const row of db.prepare("SELECT id, projection_type FROM projections WHERE interpretation_id=? AND status='active' AND projection_type IN ('task','meeting_event')").all(previous.id)) {
+      const completion = completionState(db, row.id);
+      if (completion.completed) closedTypes.set(row.projection_type, completion.completedAt);
+    }
     db.prepare("UPDATE projections SET status='reverted', reverted_at=? WHERE interpretation_id=? AND status='active'").run(createdAt, previous.id);
     db.prepare('INSERT INTO interpretations VALUES(?,?,?,?,?,?,?,?,?,?)').run(interpretationId, captureId, previous.version + 1, 'active', provider, provider === 'manual' ? null : model, JSON.stringify(classification), JSON.stringify(classification.confidence || {}), createdAt, previous.id);
     if(createProjections) insertProjections(db, interpretationId, makeProjections(captureId, classification, undoGroupId), createdAt);
+    if (createProjections && closedTypes.size)
+      for (const row of db.prepare("SELECT id, projection_type FROM projections WHERE interpretation_id=? AND status='active'").all(interpretationId))
+        if (closedTypes.has(row.projection_type)) insertLedgerEvent(db, 'completed', captureId, null, createdAt, { projectionId: row.id, interpretationId, actor: 'user', occurredAt: closedTypes.get(row.projection_type) });
     if (correction) db.prepare('INSERT INTO corrections(id,capture_id,interpretation_id,correction_json,note,created_at,operation_key,request_fingerprint) VALUES(?,?,?,?,?,?,?,?)').run(id(), captureId, interpretationId, JSON.stringify(correction.patch||correction), correction.note || null, createdAt, correction.operationKey||null, correction.requestFingerprint||null);
     db.prepare('INSERT INTO activity_events VALUES(?,?,?,?)').run(id(), 'interpretation_replaced', JSON.stringify({ captureId, undoGroupId }), createdAt);
     return { interpretationId, undoGroupId };
@@ -1157,14 +1169,14 @@ export function serializeEntry(row) { return { id: row.id, raw: row.raw, occurre
 // можно сразу отменить.
 export function splitPartsOf(db, captureId) {
   return db.prepare("SELECT c.id, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.parent_capture_id=? AND c.deleted_at IS NULL ORDER BY c.created_at")
-    .all(captureId).map(part => ({ id: part.id, title: JSON.parse(part.classification_json).summary }));
+    .all(captureId).map(part => { const classification = JSON.parse(part.classification_json); return { id: part.id, title: classification.summary, type: classification.primaryType }; });
 }
 export function fullEntry(db, row) { const entry = serializeEntry(row); entry.note = activeNote(db, row.id); entry.attachments = attachmentsFor(db, row.id); entry.projections = db.prepare("SELECT * FROM projections WHERE capture_id=? AND status='active' ORDER BY created_at").all(row.id).map(p => ({ id:p.id,type:p.projection_type,payload:JSON.parse(p.payload_json),undoGroupId:p.undo_group_id,completion:completionState(db,p.id),completionCandidate:null }));
   // Что отделилось от этой записи и откуда отделилась она сама: карточка
   // показывает происхождение, иначе дело «допинать бот-детектор» висело бы
   // ничьим, а у отчёта о встрече не было бы следа, что дела из него завели.
   entry.parts = splitPartsOf(db, row.id);
-  if (entry.parentId) { const parent = db.prepare("SELECT c.id, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.id=? AND c.deleted_at IS NULL").get(entry.parentId); entry.parent = parent ? { id: parent.id, title: JSON.parse(parent.classification_json).summary } : null; }
+  if (entry.parentId) { const parent = db.prepare("SELECT c.id, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.id=? AND c.deleted_at IS NULL").get(entry.parentId); entry.parent = parent ? { id: parent.id, title: JSON.parse(parent.classification_json).summary, type: JSON.parse(parent.classification_json).primaryType } : null; }
   return entry; }
 export function day(db, userId) { const rows = db.prepare(`SELECT c.*, i.id interpretation_id, i.version, i.provider, i.model, i.classification_json, i.field_confidence_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND c.user_id IS ? ORDER BY c.created_at DESC LIMIT 100`).all(userId); return rows.map(row=>fullEntry(db,row)); }
 export function dayView(db, date, now=new Date(), userId=null) { const entries=day(db,userId); const scheduled=entry=>entry.interpretation.classification.entities.schedule; const onDay=s=>Boolean(s?.date)&&(s.date===date||occursOn(s,date)); const sortAtOf=s=>{if(!s?.sortAt)return null;if(!s.repeat)return s.sortAt;const next=nextOccurrence(s,date);return next?`${next}T${s.time||'23:59'}:00`:null;}; const completable=entry=>entry.projections.find(projection=>['task','meeting_event'].includes(projection.type)); const dayEntries=entries.filter(entry=>onDay(scheduled(entry))); const horizon=new Date(now.getTime()+48*60*60*1000); const upcoming=entries.filter(entry=>{const c=entry.interpretation.classification,s=scheduled(entry),projection=completable(entry);return !projection?.completion.completed&&['meeting_event','task'].includes(c.primaryType)&&sortAtOf(s)&&new Date(sortAtOf(s))>=now&&new Date(sortAtOf(s))<=horizon}).sort((a,b)=>new Date(sortAtOf(scheduled(a)))-new Date(sortAtOf(scheduled(b)))); const attention=entries.filter(entry=>{const c=entry.interpretation.classification,projection=completable(entry);return !projection?.completion.completed&&!c.completed&&((c.primaryType==='task'&&!scheduled(entry)?.date)||c.entities.followUp||c.primaryType==='outcome_decision')}); return {day:dayEntries,upcoming,attention}; }

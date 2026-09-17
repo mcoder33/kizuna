@@ -129,6 +129,25 @@ export function migrateNotifications(db) {
     );
     CREATE INDEX IF NOT EXISTS notifications_user ON notifications(user_id, updated_at);
     CREATE INDEX IF NOT EXISTS notifications_group ON notifications(user_id, group_key);`);
+  // Убранное из ленты: открыли повод, закрыли дело или сказали «убрать».
+  // Строка остаётся до чистки — «Вернуть» возвращает её на место.
+  const columns = new Set(db.prepare('PRAGMA table_info(notifications)').all().map(column => column.name));
+  if (!columns.has('dismissed_at')) db.exec('ALTER TABLE notifications ADD COLUMN dismissed_at TEXT');
+}
+
+// Календари, об изменениях в которых человек попросил не сообщать: список
+// учётных записей в личной настройке. Встречи из них видны как раньше.
+const MUTABLE_CALENDAR_KINDS = new Set(['event_added', 'event_changed']);
+export function validMutedCalendars(value) {
+  let parsed;
+  try { parsed = typeof value === 'string' ? JSON.parse(value) : value; } catch { return false; }
+  return Array.isArray(parsed) && parsed.length <= 50 && parsed.every(item => typeof item === 'string' && item.length > 0 && item.length <= 64);
+}
+export function mutedCalendarsOf(db, userId) {
+  try {
+    const parsed = JSON.parse(personal(db, userId, 'notifyMutedCalendars') || '[]');
+    return new Set(Array.isArray(parsed) ? parsed.filter(item => typeof item === 'string') : []);
+  } catch { return new Set(); }
 }
 
 /**
@@ -142,10 +161,11 @@ export function notify(db, { userId, kind, actorId = null, captureId = null, roo
   const rule = NOTIFICATION_KINDS[kind];
   if (!rule || !userId || actorId === userId) return null;
   if (!notificationPrefs(db, userId)[kind].bell) return null;
+  if (accountId && MUTABLE_CALENDAR_KINDS.has(kind) && mutedCalendarsOf(db, userId).has(accountId)) return null;
   if (once && group && db.prepare('SELECT 1 FROM notifications WHERE user_id=? AND group_key=?').get(userId, group)) return null;
   const payload = { ...data, meta: meta.filter(Boolean).map(item => clip(item, 120)).slice(0, 4) };
   if (group && !once) {
-    const open = db.prepare('SELECT * FROM notifications WHERE user_id=? AND group_key=? AND read_at IS NULL AND resolved_at IS NULL ORDER BY updated_at DESC LIMIT 1').get(userId, group);
+    const open = db.prepare('SELECT * FROM notifications WHERE user_id=? AND group_key=? AND read_at IS NULL AND resolved_at IS NULL AND dismissed_at IS NULL ORDER BY updated_at DESC LIMIT 1').get(userId, group);
     if (open) {
       const previous = JSON.parse(open.data_json || '{}');
       const actors = [actorId, ...(previous.actors || [])].filter((value, index, all) => value && all.indexOf(value) === index).slice(0, 3);
@@ -182,7 +202,7 @@ export function serializeNotification(row) {
     id: row.id, kind: row.kind, group: NOTIFICATION_KINDS[row.kind]?.group || 'other',
     lead: row.lead, text: row.text, meta, data: rest, actorIds: actors.length ? actors : row.actor_id ? [row.actor_id] : [], count: row.count,
     captureId: row.capture_id, roomId: row.room_id, circleId: row.circle_id, assignmentId: row.assignment_id, accountId: row.account_id, eventUid: row.event_uid,
-    waits: Boolean(row.waits) && !row.resolved_at, resolved: Boolean(row.resolved_at), read: Boolean(row.read_at),
+    waits: Boolean(row.waits) && !row.resolved_at, resolved: Boolean(row.resolved_at), read: Boolean(row.read_at), dismissed: Boolean(row.dismissed_at),
     createdAt: row.created_at, updatedAt: row.updated_at,
   };
 }
@@ -192,7 +212,7 @@ export function listNotifications(db, userId, { before = null, limit = PAGE_SIZE
   // а ответить могли и из карточки. Устаревшее закрывается при чтении ленты.
   for (const row of db.prepare('SELECT * FROM notifications WHERE user_id=? AND waits=1 AND resolved_at IS NULL').all(userId))
     if (!stillWaits(row)) resolveNotification(db, row.id);
-  const rows = db.prepare(`SELECT * FROM notifications WHERE user_id=? AND (snoozed_until IS NULL) ${before ? 'AND updated_at < ?' : ''} ORDER BY updated_at DESC LIMIT ?`)
+  const rows = db.prepare(`SELECT * FROM notifications WHERE user_id=? AND snoozed_until IS NULL AND dismissed_at IS NULL ${before ? 'AND updated_at < ?' : ''} ORDER BY updated_at DESC LIMIT ?`)
     .all(...(before ? [userId, before, limit] : [userId, limit]));
   return { notifications: rows, nextCursor: rows.length === limit ? rows.at(-1).updated_at : null };
 }
@@ -200,7 +220,7 @@ export function notificationCounts(db, userId) {
   const row = db.prepare(`SELECT
       SUM(CASE WHEN waits=1 AND resolved_at IS NULL AND snoozed_until IS NULL THEN 1 ELSE 0 END) AS waits,
       SUM(CASE WHEN read_at IS NULL AND snoozed_until IS NULL THEN 1 ELSE 0 END) AS unread
-    FROM notifications WHERE user_id=?`).get(userId);
+    FROM notifications WHERE user_id=? AND dismissed_at IS NULL`).get(userId);
   return { waits: row.waits || 0, unread: row.unread || 0 };
 }
 
@@ -213,6 +233,32 @@ export function readNotifications(db, userId, { ids = null, captureId = null, ro
   if (captureId) return db.prepare('UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL AND capture_id=? AND waits=0').run(at, userId, captureId).changes;
   if (roomId) return db.prepare('UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL AND room_id=?').run(at, userId, roomId).changes;
   return db.prepare('UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL').run(at, userId).changes;
+}
+
+// Убрать из ленты: открытое, закрытое делом или ненужное. Ждущее ответа не
+// убирается — просьба и приглашение уходят, только когда на них ответили.
+// Возвращает, что убрано: по этому списку «Вернуть» кладёт строки обратно.
+export function dismissNotifications(db, userId, { ids = null, captureId = null, kinds = null, all = false, at = now() } = {}) {
+  const where = ['dismissed_at IS NULL', 'NOT (waits=1 AND resolved_at IS NULL)'], args = [];
+  if (userId) { where.push('user_id=?'); args.push(userId); }
+  if (Array.isArray(ids)) {
+    const clean = ids.filter(id => typeof id === 'string').slice(0, 200);
+    if (!clean.length) return [];
+    where.push(`id IN (${clean.map(() => '?').join(',')})`); args.push(...clean);
+  } else if (captureId) { where.push('capture_id=?'); args.push(captureId); }
+  // Очистить ленту — то, что в ней видно: отложенное вернётся в свой срок.
+  else if (all && userId) where.push('snoozed_until IS NULL');
+  else return [];
+  if (Array.isArray(kinds) && kinds.length) { where.push(`kind IN (${kinds.map(() => '?').join(',')})`); args.push(...kinds); }
+  const rows = db.prepare(`SELECT id, user_id FROM notifications WHERE ${where.join(' AND ')}`).all(...args);
+  const update = db.prepare('UPDATE notifications SET dismissed_at=?, read_at=COALESCE(read_at, ?) WHERE id=?');
+  for (const row of rows) update.run(at, at, row.id);
+  return rows;
+}
+export function restoreNotifications(db, userId, ids = []) {
+  const clean = (Array.isArray(ids) ? ids : []).filter(id => typeof id === 'string').slice(0, 200);
+  if (!clean.length) return 0;
+  return db.prepare(`UPDATE notifications SET dismissed_at=NULL WHERE user_id=? AND id IN (${clean.map(() => '?').join(',')})`).run(userId, ...clean).changes;
 }
 
 // Отвеченное гаснет везде сразу: ответили в полосе «к вам», в ленте или в
@@ -241,7 +287,7 @@ export function snoozeNotification(db, userId, id, minutes, at = new Date()) {
   return { snoozedUntil: until };
 }
 export function wakeSnoozed(db, at = new Date(), refresh = row => row) {
-  const due = db.prepare('SELECT * FROM notifications WHERE snoozed_until IS NOT NULL AND snoozed_until<=?').all(at.toISOString());
+  const due = db.prepare('SELECT * FROM notifications WHERE snoozed_until IS NOT NULL AND snoozed_until<=? AND dismissed_at IS NULL').all(at.toISOString());
   for (const row of due) {
     const fresh = refresh(row) || row;
     db.prepare('UPDATE notifications SET snoozed_until=NULL, read_at=NULL, updated_at=?, lead=?, text=? WHERE id=?').run(at.toISOString(), fresh.lead, fresh.text, row.id);

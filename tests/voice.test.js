@@ -51,11 +51,31 @@ test('voice tools are declared once and shared by both modes', () => {
     'delete_capture',
     'restore_capture',
     'update_capture',
+    'complete_capture',
     'list_calendar',
     'update_event',
     'delete_event',
     'respond_event',
     'take_event',
+    'export_to_calendar',
+    'list_inbox',
+    'respond_request',
+    'assign_capture',
+    'list_circles',
+    'manage_circle',
+    'read_conversation',
+    'write_message',
+    'message_action',
+    'list_notifications',
+    'notification_action',
+    'list_pages',
+    'place_page',
+    'list_board',
+    'board_action',
+    'get_report',
+    'list_reminders',
+    'reclassify_capture',
+    'update_settings',
     'remember',
     'recall',
     'forget',
@@ -304,7 +324,7 @@ test('update_capture changes the parse and refuses what is still being parsed', 
   const db = database();
   const queued = runVoiceTool(db, 'create_capture', { text: 'ещё не разобрано' });
   // Пока разбор идёт, поправить нечего — и об этом говорится прямо.
-  assert.match(runVoiceTool(db, 'update_capture', { captureId: queued.captureId, done: true }).error, /разбирается/);
+  assert.match(runVoiceTool(db, 'update_capture', { captureId: queued.captureId, type: 'note' }).error, /разбирается/);
   assert.match(runVoiceTool(db, 'update_capture', { captureId: 'нет-такой' }).error, /не найдена/i);
 
   const captureId = parsedCapture(db, 'подготовить отчёт');
@@ -313,7 +333,10 @@ test('update_capture changes the parse and refuses what is still being parsed', 
   assert.equal(retyped.type, 'заметка');
   const dated = runVoiceTool(db, 'update_capture', { captureId: created.captureId, type: 'todo', due: { date: '2026-08-27' } });
   assert.match(dated.due, /2026-08-27/);
-  const done = runVoiceTool(db, 'update_capture', { captureId: created.captureId, done: true });
+  // «Отметить сделанным» — кружок (complete_capture); здесь — рассказ о
+  // сделанном: тип «результат» ставит отметку «сделано».
+  assert.match(runVoiceTool(db, 'update_capture', { captureId: created.captureId, done: true }).error, /complete_capture/);
+  const done = runVoiceTool(db, 'update_capture', { captureId: created.captureId, type: 'outcome' });
   assert.equal(done.captureId, created.captureId);
   const stored = JSON.parse(db.prepare("SELECT classification_json FROM interpretations WHERE capture_id=? AND status='active'").get(created.captureId).classification_json);
   assert.equal(stored.completed, true);
@@ -324,23 +347,27 @@ test('update_capture changes the parse and refuses what is still being parsed', 
   assert.equal(db.prepare('SELECT raw FROM captures WHERE id=?').get(created.captureId).raw, 'подготовить отчёт');
 });
 
-test('a spoken change reaches the journal: mark done, move, retype', () => {
+test('a spoken change reaches the journal: move, mark done, retype', () => {
   const db = database();
   const now = () => new Date('2026-08-25T09:00:00Z');
-  parsedCapture(db, 'позвонить в банк');
+  const captureId = parsedCapture(db, 'позвонить в банк');
 
   const moved = mockVoiceTurn(db, 'перенеси на завтра', { now });
   assert.equal(moved.calls[0].name, 'update_capture');
   assert.deepEqual(moved.calls[0].arguments.due, { date: '2026-08-26' });
   assert.match(moved.reply, /Перенёс/);
 
+  // «Отметь сделанным» — тот же кружок, что в «Дне»: дело закрыто и осталось делом.
+  const completed = mockVoiceTurn(db, 'отметь как сделанное', { now });
+  assert.equal(completed.calls[0].name, 'complete_capture');
+  assert.match(completed.reply, /Отметил сделанным: позвонить в банк/);
+  const read = runVoiceTool(db, 'read_capture', { captureId });
+  assert.equal(read.type, 'задача');
+  assert.equal(read.closed, true);
+
   const retyped = mockVoiceTurn(db, 'это заметка', { now });
   assert.equal(retyped.calls[0].arguments.type, 'note');
   assert.match(retyped.reply, /Теперь это заметка/);
-
-  const completed = mockVoiceTurn(db, 'отметь как сделанное', { now });
-  assert.equal(completed.calls[0].arguments.done, true);
-  assert.match(completed.reply, /Отметил сделанным/);
 });
 
 test('a question is a conversation, not a silent capture', () => {

@@ -393,6 +393,8 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
         // Ключ серии — чтобы страница знала, какие события уходят вместе с
         // ней: у CalDAV серия это один файл (uid), у Google — recurringEventId.
         recurring: Boolean(row.instance_key), seriesId: busyOnly ? null : row.series_uid || row.uid,
+        // UID события — по нему уведомление о встрече находит её в сетке.
+        uid: busyOnly ? null : row.uid,
         ...(busyOnly ? { attendees: [], organizer: null, repeat: null, url: null, me: null } : eventPeople(row)),
       };
       if (row.all_day) {

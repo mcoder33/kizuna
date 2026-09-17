@@ -4010,6 +4010,243 @@ dialog form > div {
 .bell-foot a:hover {
   color: var(--ink);
 }
+/* Время и «Заглушить» — колонкой справа: значок виден по наведению, на
+   телефоне — всегда, наведения там нет. */
+.bell-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+.bell-mute {
+  appearance: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-right: -5px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--n-66);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.bell-mute svg {
+  width: 15px;
+  height: 15px;
+}
+.bell-row:hover .bell-mute,
+.bell-row:focus-within .bell-mute,
+.bell-mute[aria-expanded="true"] {
+  opacity: 1;
+}
+.bell-mute:hover,
+.bell-mute[aria-expanded="true"] {
+  background: var(--n-94);
+  color: var(--ink);
+}
+@media (hover: none) {
+  .bell-mute { opacity: 1; }
+}
+.bell-mute-menu {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 1px;
+  margin: 6px 0 2px;
+  padding: 4px;
+  border: 1px solid var(--n-93);
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: 0 10px 26px var(--orange-21-a10);
+  cursor: default;
+}
+.bell-mute-item {
+  appearance: none;
+  display: grid;
+  gap: 1px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.bell-mute-item:hover,
+.bell-mute-item:focus-visible {
+  background: var(--n-97);
+}
+.bell-mute-title {
+  font-weight: 600;
+}
+.bell-mute-item small {
+  font-size: 12px;
+  color: var(--n-66);
+}
+/* «Готово» у дела — зелёным, как кружок, который оно ставит. */
+.bell-act.ok {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--green) 14%, var(--paper));
+  color: var(--green);
+  font-weight: 600;
+}
+.bell-act.ok:hover {
+  background: color-mix(in srgb, var(--green) 22%, var(--paper));
+}
+/* «Доброе утро» раскрывается на месте: встречи по часам и дела с кружками. */
+.bell-digest-toggle {
+  appearance: none;
+  justify-self: start;
+  margin: 5px 0 0 -6px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--type-meeting);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.bell-digest-toggle::before {
+  content: "▸ ";
+}
+.bell-digest-toggle.open::before {
+  content: "▾ ";
+}
+.bell-digest-toggle:hover {
+  background: var(--n-96);
+}
+.bell-digest {
+  display: grid;
+  gap: 1px;
+  margin-top: 4px;
+  cursor: default;
+}
+.bell-digest-head {
+  margin: 8px 0 2px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--n-66);
+}
+.bell-digest-row {
+  appearance: none;
+  display: grid;
+  grid-template-columns: 38px 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 30px;
+  padding: 2px 6px 2px 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.bell-digest-row:hover {
+  background: var(--n-97);
+}
+.bell-digest-time {
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
+  color: var(--n-66);
+  font-variant-numeric: tabular-nums;
+}
+.bell-digest-dot {
+  justify-self: center;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--type-outcome);
+}
+.bell-digest-title {
+  appearance: none;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.bell-digest-row.deal {
+  cursor: default;
+}
+.bell-digest-row.deal .completion-button {
+  justify-self: center;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+.bell-digest-row.done .bell-digest-title {
+  color: var(--n-66);
+  text-decoration: line-through;
+}
+.bell-digest-state {
+  font-size: 11.5px;
+  color: var(--n-66);
+  white-space: nowrap;
+}
+.bell-digest-link {
+  appearance: none;
+  justify-self: start;
+  margin: 6px 0 0 -6px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--coral);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.bell-digest-link:hover {
+  background: var(--n-96);
+}
+/* Календари, об изменениях в которых человек попросил молчать. */
+.notify-muted {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.notify-muted button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.notify-muted button:hover {
+  background: var(--n-97);
+}
 .notify-toasts {
   position: fixed;
   right: 16px;
@@ -4676,6 +4913,322 @@ dialog form > div {
   font-weight: 700;
   line-height: 1.2;
   color: var(--nt-text);
+}
+/* Кружок у названия — как в Тудуисте и в «Дне». Висит слева от заголовка, когда
+   у колонки есть поле, а в узкой карточке встаёт в строку. */
+#review-dialog .card-head {
+  position: relative;
+}
+#review-dialog .card-head.with-tick {
+  padding-left: 42px;
+}
+#review-dialog .card-head.with-tick.hang {
+  padding-left: 0;
+}
+#review-dialog .card-tick {
+  position: absolute;
+  left: 0;
+  top: 10px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 2px solid var(--nt-tertiary);
+  border-radius: 50%;
+  background: transparent;
+  color: transparent;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s, color 0.15s;
+}
+#review-dialog .card-head.hang .card-tick {
+  left: -46px;
+}
+#review-dialog .card-tick svg {
+  grid-area: 1 / 1;
+  width: 16px;
+  height: 16px;
+}
+#review-dialog .card-tick:hover,
+#review-dialog .card-tick:focus-visible {
+  border-color: var(--green);
+  color: var(--green);
+}
+#review-dialog .card-tick.important {
+  border-color: var(--red-66);
+  background: color-mix(in srgb, var(--red-66) 10%, transparent);
+}
+#review-dialog .card-tick.late {
+  border-color: var(--red-74);
+}
+#review-dialog .card-tick.meeting:not(.is-done) {
+  color: var(--nt-tertiary);
+}
+#review-dialog .card-tick.meeting:not(.is-done) .card-tick-check,
+#review-dialog .card-tick.meeting:not(.is-done):hover .card-tick-hands {
+  visibility: hidden;
+}
+#review-dialog .card-tick.meeting:not(.is-done):hover {
+  color: var(--green);
+}
+#review-dialog .card-tick.meeting:not(.is-done):hover .card-tick-check {
+  visibility: visible;
+}
+#review-dialog .card-tick.is-done {
+  border-color: var(--green);
+  background: var(--green);
+  color: #fff;
+}
+#review-dialog .card-tick.is-done:hover {
+  background: transparent;
+  color: var(--green);
+}
+#review-dialog .card-tick.is-done .card-tick-hands {
+  display: none;
+}
+#review-dialog .card-tick.just {
+  animation: card-tick-pop 0.26s ease-out;
+}
+@keyframes card-tick-pop {
+  40% { transform: scale(0.84); }
+  100% { transform: scale(1); }
+}
+/* Только что открытое дело не принимает нажатий 350 мс — и не подсвечивает
+   кружок под курсором, будто оно уже отмечено. */
+#review-dialog.armed .card-tick:not(.is-done):hover {
+  border-color: var(--nt-tertiary);
+  color: transparent;
+  cursor: default;
+}
+#review-dialog .card-tick-repeat {
+  position: absolute;
+  right: -7px;
+  bottom: -6px;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--nt-bg);
+  color: var(--nt-secondary);
+}
+#review-dialog .card-tick-repeat svg {
+  width: 11px;
+  height: 11px;
+}
+#review-dialog .review h2.card-title.is-done {
+  color: var(--nt-tertiary);
+  text-decoration-line: line-through;
+  text-decoration-thickness: 2px;
+}
+/* Строка «Сделано» под названием: когда, «Вернуть», итог. */
+#review-dialog .card-done {
+  margin: 2px 0 8px;
+}
+#review-dialog .card-done-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 9px;
+  font-size: 14.5px;
+  color: var(--nt-secondary);
+}
+#review-dialog .card-done-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 650;
+  color: var(--green);
+}
+#review-dialog .card-done-ok svg {
+  width: 15px;
+  height: 15px;
+}
+#review-dialog .card-done-sep {
+  color: var(--nt-tertiary);
+}
+#review-dialog .card-done-link {
+  appearance: none;
+  margin: 0 -4px;
+  padding: 1px 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--nt-secondary);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+#review-dialog .card-done-link:hover {
+  background: var(--nt-hover);
+  color: var(--nt-text);
+}
+#review-dialog .card-outcome {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 560px;
+  height: 40px;
+  margin-top: 8px;
+  padding: 0 8px 0 12px;
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px var(--nt-divider);
+}
+#review-dialog .card-outcome:focus-within {
+  box-shadow: inset 0 0 0 1px var(--green);
+}
+#review-dialog .card-outcome input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--nt-text);
+  font: inherit;
+  font-size: 14.5px;
+}
+#review-dialog .card-outcome kbd {
+  font-size: 11px;
+  color: var(--nt-tertiary);
+}
+#review-dialog .card-outcome-saved {
+  margin: 6px 0 0;
+  font-size: 14px;
+  color: var(--nt-secondary);
+}
+/* Шапка списка, из которого открыли карточку: откуда и который по счёту, и
+   стрелки к соседним делам — слева от крестика. */
+#review-dialog .card-nav {
+  position: absolute;
+  top: 12px;
+  left: 22px;
+  right: 46px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+  pointer-events: none;
+}
+#review-dialog .card-nav > * {
+  pointer-events: auto;
+}
+#review-dialog .card-nav-crumb {
+  min-width: 0;
+  margin-right: auto;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--nt-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#review-dialog .card-nav-crumb b {
+  font-weight: 650;
+  color: var(--nt-secondary);
+}
+#review-dialog .card-nav-step {
+  appearance: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--nt-tertiary);
+  cursor: pointer;
+}
+#review-dialog .card-nav-step:hover:not(:disabled) {
+  background: var(--nt-hover);
+  color: var(--nt-secondary);
+}
+#review-dialog .card-nav-step:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+/* Плашка «Готово · Вернуть · + итог» живёт в самой карточке: общий тост
+   прятался бы под окном. */
+#review-dialog .card-snack {
+  position: absolute;
+  left: 50%;
+  bottom: 86px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100% - 32px);
+  padding: 9px 8px 9px 16px;
+  border-radius: 999px;
+  background: var(--n-25);
+  color: var(--n-100);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.28);
+  font-size: 13.5px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+#review-dialog .card-snack-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#review-dialog .card-snack-act {
+  appearance: none;
+  flex: none;
+  padding: 2px 10px 2px 12px;
+  border: 0;
+  border-left: 1px solid var(--n-100-a25);
+  background: transparent;
+  color: var(--n-100);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+#review-dialog .card-snack-act:hover {
+  color: var(--tint-auto);
+}
+/* Разбор закончен: открытых в списке не осталось. */
+#review-dialog .card-finish {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding-top: 18vh;
+  text-align: center;
+}
+#review-dialog .card-finish .card-tick {
+  position: static;
+  width: 56px;
+  height: 56px;
+  border-width: 2.5px;
+  cursor: default;
+}
+#review-dialog .card-finish .card-tick svg {
+  width: 30px;
+  height: 30px;
+}
+#review-dialog .review h2.card-finish-title {
+  margin: 10px 0 0;
+  font-size: 26px;
+}
+#review-dialog .card-finish-sub {
+  margin: 0 0 10px;
+  color: var(--nt-secondary);
+}
+#review-dialog .card-finish-close {
+  appearance: none;
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--nt-hover);
+  color: var(--nt-text);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+@media (max-width: 760px) {
+  #review-dialog .card-tick {
+    top: 4px;
+  }
 }
 /* «Записано» — первая строка свойств, с часами. */
 #review-dialog .card-written {
@@ -6822,6 +7375,9 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 .cal-box.meeting::before { content: none; }
 .cal-box.meeting svg { width: 10px; height: 10px; display: block; margin: 0 auto; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .cal-box.is-done { background: var(--green); border-color: var(--green); color: var(--paper); }
+/* Кружок в блоке со временем стоит в строке названия, перед часом. */
+.cal-ev .cal-box { display: inline-grid; place-items: center; margin: 0 5px 0 0; vertical-align: -2px; }
+.cal-ev.done b { text-decoration: line-through; color: var(--n-72); }
 .cal-ev {
   --cal-c: var(--type-todo); --cal-bg: var(--tint-todo);
   position: absolute; left: 3px; right: 3px; z-index: 1;
@@ -7107,6 +7663,28 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 /* Просрочка — своей полосой под часами, и заголовок у неё того же цвета, что
    строки внутри: полоса читается целиком, а не по одной строке. */
 .day-group.late { color: var(--red-66); }
+/* Полка «на сегодня» — тем же тоном, что «сегодня» у стрелок дня; запас без
+   срока — тихим заголовком ниже и с воздухом перед ним. */
+.day-group.today { color: var(--coral); }
+.day-group.stock { padding-top: 16px; }
+.day-shelf-empty { margin: 2px 4px 0; font-size: 12px; color: var(--n-66); }
+/* Кружок нажат — строка сразу зачёркивается и гаснет, не дожидаясь ответа. */
+#todo .entry.completing .entry-title { text-decoration: line-through; color: var(--n-66); transition: color 0.3s ease; }
+#todo .entry.completing > .completion-button { border-color: var(--green); background: var(--green); color: var(--n-100); }
+/* Смахивание на телефоне: вправо — готово, влево — на сегодня. */
+#todo .entry.dense { touch-action: pan-y; }
+#todo .entry.swiping { transition: none; user-select: none; }
+#todo .entry.dense:not(.swiping) { transition: transform 0.18s ease-out; }
+#todo .entry.swiping[data-swipe="right"] { background: color-mix(in srgb, var(--green) 18%, var(--paper)); }
+#todo .entry.swiping[data-swipe="left"] { background: var(--tint-wait); }
+/* Строка, до которой дошли клавишами. */
+#todo .entry[data-capture-id]:focus-visible,
+#board-columns .board-card[data-capture-id]:focus-visible { outline: none; box-shadow: inset 0 0 0 1.5px var(--focus); }
+@media (hover: none) {
+  /* На телефоне «на сегодня» — смахиванием влево: пилюля у каждой строки
+     запаса была бы шумом. */
+  .quick-due.take-today { display: none; }
+}
 /* Дело в «Дне» — одна строка: кружок, название, справа то, что что-то говорит.
    Фона состояния у строки нет: просроченное лежит в своей полосе, а тратить на
    подсветку остальных двенадцать плашек не за что. Селектор с #todo — не

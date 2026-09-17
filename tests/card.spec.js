@@ -58,9 +58,12 @@ test("the card shows properties as rows and hides the ones the type does not use
 
   const propsBar = page.locator(".props-bar");
   if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
-  for (const label of ["Тип", "Срок", "Проект", "Участники", "Далее", "Сделано"]) {
+  for (const label of ["Тип", "Срок", "Проект", "Участники", "Далее"]) {
     await expect(page.locator(".prop-label", { hasText: label })).toBeVisible();
   }
+  // У дела «сделано» — кружок у названия, а не строка свойств.
+  await expect(page.locator(".prop-label", { hasText: "Сделано" })).toHaveCount(0);
+  await expect(page.locator("#review-dialog .card-tick")).toBeVisible();
   await page.locator("#review-primary-type").selectOption("note");
   await expect(page.locator("#review-people")).toBeHidden();
   await expect(page.locator("#review-date")).toBeHidden();
@@ -228,7 +231,7 @@ test("a closed decision with an action leaves the day and never returns", async 
   expect(entry.projections.filter((p) => p.type === "task").every((p) => p.completion?.completed)).toBe(true);
 });
 
-test("the done toggle overrides the model and moves the entry into reported work", async ({ page }) => {
+test("reported work is a type: choosing «результат» moves a task into «Что делал»", async ({ page }) => {
   const raw = "Нужно проверить переключатель завершения";
   await page.goto("/");
   await capture(page, raw);
@@ -237,10 +240,9 @@ test("the done toggle overrides the model and moves the entry into reported work
 
   const propsBar = page.locator(".props-bar");
   if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
-  await page.locator("#review-completed").click();
-  await expect(page.locator("#review-completed")).toHaveAttribute("aria-pressed", "true");
-  // Сделанное — результат: отмечать в нём больше нечего.
-  await expect(page.locator("#review-primary-type")).toHaveValue("outcome_decision");
+  // Сделанное — результат: у дела это выбор типа, а кружок у названия просто
+  // закрывает дело.
+  await page.locator("#review-primary-type").selectOption("outcome_decision");
   await page.locator("#review-close").click();
   await expect(page.locator("#journal")).toContainText(raw);
   await expect(page.locator("#todo")).not.toContainText(raw);
@@ -1203,4 +1205,93 @@ test("a cross next to a filled property resets it at once: a dated task becomes 
     const card = JSON.stringify(board).match(new RegExp(`"title":"${raw}"[^}]*`));
     return card ? /"due":null/.test(card[0]) : null;
   }).toBe(true);
+});
+
+// Г «Отметил — следующее»: кружок у названия закрывает дело сразу, а карточка,
+// открытая из «Дня», идёт к следующему открытому делу. Плашка «Готово ·
+// Вернуть · + итог» даёт передумать или дописать, чем кончилось.
+test("кружок в карточке закрывает дело и ведёт к следующему делу «Дня»", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  const today = (await (await request.get("/api/day")).json()).date;
+  for (const raw of ["Разбор: третье дело", "Разбор: второе дело", "Разбор: первое дело"])
+    await request.post("/api/captures", { data: { raw, primaryType: "todo", due: { date: today } } });
+  await page.goto("/");
+  const shelf = page.locator("#todo .day-rows .entry");
+  await expect(shelf).toHaveCount(3, { timeout: 15000 });
+  const titles = await shelf.locator(".entry-title").allInnerTexts();
+  await shelf.first().locator(".entry-title").click();
+
+  const dialog = page.locator("#review-dialog");
+  const title = dialog.locator(".card-title");
+  await expect(title).toHaveText(titles[0]);
+  await expect(dialog.locator(".card-nav-crumb")).toHaveText("День · 1 из 3");
+  // Отметили — дело закрыто сразу, строка «Сделано» видна до перехода.
+  await dialog.locator(".card-tick").click();
+  await expect(dialog.locator(".card-done-ok")).toContainText("Сделано сегодня в");
+  await expect(title).toHaveText(titles[1], { timeout: 5000 });
+  await expect(dialog.locator(".card-nav-crumb")).toHaveText("День · 2 из 3");
+  const snack = dialog.locator(".card-snack");
+  await expect(snack).toContainText(`Готово: «${titles[0].slice(0, 20)}`);
+
+  // «+ итог» возвращает к закрытому делу с полем; после Enter — снова дальше.
+  await snack.getByRole("button", { name: "+ итог" }).click();
+  await expect(title).toHaveText(titles[0]);
+  await expect(dialog.locator("#card-outcome")).toBeFocused();
+  await dialog.locator("#card-outcome").fill("Разобрал первое, всё сошлось");
+  await dialog.locator("#card-outcome").press("Enter");
+  await expect(dialog.locator(".card-outcome-saved")).toContainText("Разобрал первое");
+  await expect(title).toHaveText(titles[1], { timeout: 5000 });
+
+  // Клавиша E — тот же кружок; K — назад к закрытому, J — вперёд. Новое дело
+  // первые 350 мс нажатий не принимает — двойной клик не закроет его заодно.
+  await page.waitForTimeout(400);
+  await dialog.focus();
+  await page.keyboard.press("e");
+  await expect(title).toHaveText(titles[2], { timeout: 5000 });
+  await page.keyboard.press("k");
+  await expect(title).toHaveText(titles[1]);
+  await expect(dialog.locator(".card-title.is-done")).toBeVisible();
+  // «Вернуть» в строке «Сделано» открывает дело снова.
+  await dialog.locator(".card-done-link", { hasText: "Вернуть" }).click();
+  await expect(dialog.locator(".card-tick")).toHaveAttribute("aria-pressed", "false");
+  await page.keyboard.press("j");
+  await expect(title).toHaveText(titles[2]);
+  await dialog.locator(".card-tick").click();
+  // Дальше открыто только второе, вернувшееся в работу.
+  await expect(title).toHaveText(titles[1], { timeout: 5000 });
+  await page.waitForTimeout(400);
+  await dialog.locator(".card-tick").click();
+  await expect(dialog.locator(".card-finish-title")).toHaveText("В «Дне» всё отмечено", { timeout: 5000 });
+  await dialog.locator(".card-finish-close").click();
+
+  await expect(page.locator("#todo .day-rows .entry")).toHaveCount(0);
+  // Итог — запись-результат в «Что делал», дело осталось закрытым делом.
+  await expect.poll(async () => {
+    const { entries } = await (await request.get("/api/entries")).json();
+    return entries.filter((entry) => entry.interpretation.classification.primaryType === "outcome_decision" && entry.parentId).length;
+  }, { timeout: 15000 }).toBe(1);
+  await page.getByRole("tab", { name: /Что делал/ }).click();
+  await expect(page.locator("#journal")).toContainText("Разобрал первое");
+});
+
+// Открытая не из списка карточка никуда не уходит: отметка остаётся на месте,
+// а «Сделано» у дела — кружок, не строка свойств.
+test("карточка по ссылке остаётся на месте после отметки, «Вернуть» открывает дело снова", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  const created = await (await request.post("/api/captures", { data: { raw: "Проверить доступ голосового агента", primaryType: "todo" } })).json();
+  await page.goto(`/#today?open=${created.entry.id}`);
+  const dialog = page.locator("#review-dialog");
+  await expect(dialog.locator(".card-title")).toHaveText("Проверить доступ голосового агента");
+  await expect(dialog.locator(".card-nav")).toHaveCount(0);
+  await dialog.locator(".card-tick").click();
+  await expect(dialog.locator(".card-done-ok")).toContainText("Сделано");
+  await page.waitForTimeout(1200);
+  await expect(dialog.locator(".card-title")).toHaveText("Проверить доступ голосового агента");
+  await expect(dialog.locator(".card-tick")).toHaveAttribute("aria-pressed", "true");
+  const stored = await (await request.get(`/api/captures/${created.entry.id}`)).json();
+  expect(stored.entry.interpretation.classification.primaryType).toBe("task");
+  expect(stored.entry.projections.find((projection) => projection.type === "task").completion.completed).toBe(true);
+  await dialog.locator(".card-done-link", { hasText: "Вернуть" }).click();
+  await expect(dialog.locator(".card-tick")).toHaveAttribute("aria-pressed", "false");
+  await expect(dialog.locator(".card-done")).toHaveCount(0);
 });

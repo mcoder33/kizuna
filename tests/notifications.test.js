@@ -354,3 +354,82 @@ test('календарь перестал обновляться — одна с
   errors = (await feed(api)).notifications.filter(item => item.kind === 'calendar_error');
   assert.equal(errors[0].resolved, true);
 });
+
+test('открытое убирается из ленты: «Очистить» не трогает ждущее ответа, «Вернуть» кладёт строки обратно', async () => {
+  const app = freshApp({ now: () => NOON });
+  const { sasha, anya } = await pair(app);
+  await sasha.post('/api/captures').send({ raw: 'Ане — прислать смету по Хабу' }).expect(201);
+  const rooms = (await sasha.get('/api/rooms').expect(200)).body.rooms;
+  await sasha.post(`/api/rooms/${rooms.find(room => room.kind === 'general').id}/messages`).send({ body: '@Аня глянь смету' }).expect(201);
+  let box = await feed(anya);
+  const call = box.notifications.find(item => item.kind === 'call');
+  const ask = box.notifications.find(item => item.kind === 'request');
+  assert.deepEqual(box.counts, { waits: 1, unread: 2 });
+
+  // Ждущее ответа не уходит даже по прямой просьбе.
+  assert.deepEqual((await anya.post('/api/notifications/dismiss').send({ ids: [ask.id] }).expect(200)).body.dismissed, []);
+  const dismissed = (await anya.post('/api/notifications/dismiss').send({ ids: [call.id] }).expect(200)).body;
+  assert.deepEqual(dismissed.dismissed, [call.id]);
+  assert.deepEqual(dismissed.counts, { waits: 1, unread: 1 }, 'убранное не считается непрочитанным');
+  box = await feed(anya);
+  assert.deepEqual(box.notifications.map(item => item.kind), ['request']);
+
+  await anya.post('/api/notifications/restore').send({ ids: [call.id] }).expect(200);
+  assert.ok((await feed(anya)).notifications.some(item => item.id === call.id && item.read), 'вернулось прочитанным');
+  const cleared = (await anya.post('/api/notifications/dismiss').send({ all: true }).expect(200)).body;
+  assert.deepEqual(cleared.dismissed, [call.id]);
+  assert.deepEqual((await feed(anya)).notifications.map(item => item.kind), ['request']);
+  // Чужое не убирается и не возвращается.
+  assert.deepEqual((await sasha.post('/api/notifications/restore').send({ ids: [call.id] }).expect(200)).body.restored, 0);
+  await anya.post('/api/notifications/dismiss').send({}).expect(400);
+});
+
+test('закрытое дело забирает свои напоминания, а поправка не открывает его заново', async () => {
+  let clock = new Date('2026-09-16T06:45:30.000Z');
+  const app = freshApp({ now: () => clock });
+  const api = authed(app);
+  await api.put('/api/settings').send({ notifyPrefs: JSON.stringify({ digest: 'off' }) }).expect(200);
+  const entry = (await api.post('/api/captures').send({ raw: 'Проверить доступ голосового агента', primaryType: 'todo', due: { date: '2026-09-16', time: '11:00' } }).expect(201)).body.entry;
+  await app.reminders.tick();
+  assert.equal((await feed(api)).notifications.filter(item => item.kind === 'reminder').length, 1);
+  const task = entry.projections.find(projection => projection.type === 'task');
+  const closed = (await api.post(`/api/projections/${task.id}/complete`).send({}).expect(200)).body;
+  assert.equal((await feed(api)).notifications.length, 0, 'напоминание ушло вместе с делом');
+
+  // Перенос срока пересобирает проекции — дело всё равно остаётся закрытым,
+  // и время закрытия то же.
+  clock = new Date('2026-09-16T07:30:00.000Z');
+  const moved = (await api.post(`/api/captures/${entry.id}/corrections`).send({ patch: { schedule: { date: '2026-09-17', time: '12:00' }, summary: 'Проверить доступ голосового агента ко всем функциям' } }).expect(200)).body.entry;
+  const again = moved.projections.find(projection => projection.type === 'task');
+  assert.notEqual(again.id, task.id);
+  assert.equal(again.completion.completed, true);
+  assert.equal(again.completion.completedAt, closed.completion.completedAt);
+  // Сделанное результатом — другое: тип сменился, закрывать больше нечего.
+  const outcome = (await api.post(`/api/captures/${entry.id}/corrections`).send({ patch: { primaryType: 'outcome_decision' } }).expect(200)).body.entry;
+  assert.deepEqual(outcome.projections.map(projection => projection.type), ['outcome_decision']);
+});
+
+test('итог к делу — запись-результат, привязанная к делу; чужому делу итог не пишется', async () => {
+  const app = freshApp({ now: () => NOON });
+  const { sasha, anya } = await pair(app);
+  const entry = (await sasha.post('/api/captures').send({ raw: 'Проверить доступ голосового агента', primaryType: 'todo' }).expect(201)).body.entry;
+  const created = (await sasha.post(`/api/captures/${entry.id}/outcome`).send({ text: 'Доступ есть у всех, кроме календаря' }).expect(201)).body;
+  await sasha.post(`/api/captures/${entry.id}/outcome`).send({ text: '   ' }).expect(400);
+  await anya.post(`/api/captures/${entry.id}/outcome`).send({ text: 'моё' }).expect(404);
+  const child = app.database.prepare('SELECT parent_capture_id, raw FROM captures WHERE id=?').get(created.captureId);
+  assert.deepEqual(child, { parent_capture_id: entry.id, raw: 'Доступ есть у всех, кроме календаря' });
+  const job = app.database.prepare('SELECT overrides_json FROM capture_jobs WHERE capture_id=?').get(created.captureId);
+  assert.deepEqual(JSON.parse(job.overrides_json), { primaryType: 'outcome_decision' });
+});
+
+test('об изменениях в выбранном календаре лента молчит, а приглашения из него приходят', async () => {
+  const app = freshApp({ now: () => NOON });
+  const api = authed(app);
+  await api.put('/api/settings').send({ notifyMutedCalendars: JSON.stringify(['acc-1']) }).expect(200);
+  await api.put('/api/settings').send({ notifyMutedCalendars: 'не список' }).expect(400);
+  const userId = api.user.id;
+  assert.equal(notify(app.database, { userId, kind: 'event_added', accountId: 'acc-1', eventUid: 'a', lead: 'Появилась встреча', text: 'в «Работа»: «Стендап»' }), null);
+  assert.ok(notify(app.database, { userId, kind: 'event_added', accountId: 'acc-2', eventUid: 'b', lead: 'Появилась встреча', text: 'в «Дом»: «Ужин»' }));
+  assert.ok(notify(app.database, { userId, kind: 'invite', accountId: 'acc-1', eventUid: 'c', lead: 'Даниил', text: 'зовёт на встречу «Демо»' }));
+  assert.deepEqual((await feed(api)).notifications.map(item => item.kind).sort(), ['event_added', 'invite']);
+});

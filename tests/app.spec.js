@@ -1321,7 +1321,9 @@ test("«День» показывает сначала встречи, пото�
   const todo = page.locator("#todo");
   await expect(todo.locator(".entry")).toHaveCount(3, { timeout: 15000 });
   // Порядок разделов — это и есть ответ на «что я вижу первым».
-  await expect(todo.locator(".day-group")).toHaveText(["по часам", "просрочено · 1", "дела"]);
+  await expect(todo.locator(".day-group")).toHaveText(["по часам", "просрочено · 1", "на сегодня", "без срока · 1"]);
+  // Сегодняшнее без часа — пусто: полка говорит, что дело можно взять из запаса.
+  await expect(todo.locator(".day-shelf-empty")).toContainText("из запаса");
   await expect(todo.locator(".entry").first()).toContainText("созвон с командой");
 
   // Просрочка — в своей полосе, а не строкой общего списка. Слово «просрочено»
@@ -1633,4 +1635,51 @@ test("карточка ввода тянется за края и помнит �
   await page.locator('#capture-form .capture-resize[data-dir="se"]').dblclick();
   expect(Math.round(await width())).toBe(Math.round(startWidth));
   expect(Math.round(await height())).toBe(Math.round(startHeight));
+});
+
+// Ж «Две полки»: сегодняшнее лежит своей полкой под часами, запас без срока —
+// своей; в шапке «Дня» — столько же дел, сколько в утренней сводке. Дело из
+// запаса берут на сегодня, не открывая карточку, а по списку ходят клавишами.
+test("«День» делит сегодняшнее и запас, берёт дело на сегодня и закрывается с клавиатуры", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  const today = (await (await request.get("/api/day")).json()).date;
+  const created = [];
+  for (const data of [
+    { raw: "проработать тему путешествий", primaryType: "todo", due: { date: today } },
+    { raw: "потыкать новые AI-инструменты", primaryType: "todo" },
+    { raw: "собрать дни рождения команды", primaryType: "todo" },
+  ])
+    created.push(await (await request.post("/api/captures", { data })).json());
+  await page.goto("/");
+  const todo = page.locator("#todo");
+  await expect(todo.locator(".entry")).toHaveCount(3, { timeout: 15000 });
+  await expect(todo.locator(".day-group")).toHaveText(["на сегодня · 1", "без срока · 2"]);
+  await expect(page.locator("#tab-day .drawer-count")).toContainText("1 дело");
+
+  // «на сегодня» по наведению переносит дело из запаса на сегодняшнюю полку.
+  const stock = todo.locator(".day-rows.stock .entry").filter({ hasText: "дни рождения" });
+  await stock.hover();
+  await stock.getByRole("button", { name: "на сегодня" }).click();
+  await expect(todo.locator(".day-group")).toHaveText(["на сегодня · 2", "без срока · 1"]);
+  await expect(page.locator("#tab-day .drawer-count")).toContainText("2 дела");
+  await page.locator("#toast").getByRole("button", { name: "Вернуть" }).click();
+  await expect(todo.locator(".day-group")).toHaveText(["на сегодня · 1", "без срока · 2"]);
+
+  // Клавиши: J — к первому делу, J — ко второму, E — готово; T — на сегодня.
+  await page.locator("body").click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press("j");
+  await expect(todo.locator(".entry").first()).toBeFocused();
+  await page.keyboard.press("e");
+  await expect(todo.locator(".entry").filter({ hasText: "путешествий" })).toHaveCount(0);
+  await expect(page.locator("#toast")).toContainText("Отмечено как готовое");
+  await page.locator("#toast").getByRole("button", { name: "Вернуть" }).click();
+  await expect(todo.locator(".entry").filter({ hasText: "путешествий" })).toHaveCount(1);
+  // До строки запаса — теми же J, пока фокус не встанет на неё.
+  const aiRow = todo.locator(".entry").filter({ hasText: "AI-инструменты" });
+  for (let step = 0; step < 4 && !(await aiRow.evaluate((row) => row === document.activeElement)); step += 1) await page.keyboard.press("j");
+  await expect(aiRow).toBeFocused();
+  await page.keyboard.press("t");
+  await expect(todo.locator(".day-group")).toHaveText(["на сегодня · 2", "без срока · 1"]);
+
+  for (const response of created) await request.delete(`/api/captures/${response.entry.id}`);
 });

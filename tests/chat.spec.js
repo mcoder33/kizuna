@@ -172,9 +172,10 @@ test("разговор круга: общий, комната подмножес
   await expect(call).toBeVisible();
   await call.getByRole("button", { name: "Ответить" }).click();
   await expect(openChip(anya.page)).toHaveText("Смета");
+  // Открыл — убрал: в ленте остаётся только неразобранное.
   await anya.page.goto("/#today");
   await anya.page.locator("#bell-summary").click();
-  await expect(anya.page.locator(".bell-row").filter({ hasText: "разговоре «Смета»" })).not.toHaveClass(/unread/);
+  await expect(anya.page.locator(".bell-row").filter({ hasText: "разговоре «Смета»" })).toHaveCount(0);
 
   // ── стол сворачивается в лица и помнит это ──
   await page.locator(".kc-band").getByRole("button", { name: "Свернуть людей" }).click();
@@ -225,10 +226,10 @@ test("человека из приложения зовут поиском, и �
   await expect(row).toBeVisible();
   await row.click();
   await expect(anya.page.locator(".kc-tab.on .kc-tab-name")).toHaveText("Дом");
-  // Открыл — значит прочитал: строка больше не непрочитанная.
+  // Открыл — убрал: строки в ленте больше нет.
   await anya.page.goto("/#today");
   await anya.page.locator("#bell-summary").click();
-  await expect(anya.page.locator(".bell-row").filter({ hasText: "«Дом»" })).not.toHaveClass(/unread/);
+  await expect(anya.page.locator(".bell-row").filter({ hasText: "«Дом»" })).toHaveCount(0);
 
   await anya.context.close();
   const circleId = (await (await request.get("/api/circles")).json()).circles[0].id;

@@ -12,7 +12,10 @@ test("календарь: неделя, день, месяц, перенос м�
   const slotDay = shift(monday, 2);
   await request.post("/api/captures", { data: { raw: "Собрать список рисков по релизу", primaryType: "todo", due: { date: today, time: "12:00" } } });
   await request.post("/api/captures", { data: { raw: "Прочитать спеку по OAuth", primaryType: "todo", due: { date: slotDay } } });
-  await request.post("/api/captures", { data: { raw: "Написать Антону Гришину по внедрению", primaryType: "todo", due: { date: shift(today, -3) } } });
+  // Просроченное — за неделей: срок внутри показанной недели встаёт в свой день,
+  // а в полосу сегодняшнего дня попадает только то, что раньше неё. С «сегодня
+  // минус три» тест падал с четверга по воскресенье.
+  await request.post("/api/captures", { data: { raw: "Написать Антону Гришину по внедрению", primaryType: "todo", due: { date: shift(monday, -1) } } });
 
   await page.goto("/#calendar");
   await page.evaluate(() => { localStorage.setItem("kizuna-calendar-mode", "week"); });
@@ -396,4 +399,24 @@ test("сетка календаря встаёт по высоте окна и �
   await page.mouse.dblclick(again.x + again.width / 2, again.y + again.height - 1);
   await expect.poll(off(fitted)).toBeLessThanOrEqual(1);
   expect(await page.evaluate(() => localStorage.getItem("kizuna-calendar-height"))).toBeNull();
+});
+
+// Дело со временем закрывается кружком прямо в блоке сетки — как дело «без
+// времени», и промах снимается «Вернуть».
+test("дело со временем закрывается кружком в сетке календаря", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  const today = (await (await request.get("/api/day")).json()).date;
+  const created = await (await request.post("/api/captures", { data: { raw: "Проверить доступ голосового агента", primaryType: "todo", due: { date: today, time: "11:00" } } })).json();
+  await page.goto("/#calendar");
+  await page.evaluate(() => { localStorage.setItem("kizuna-calendar-mode", "week"); });
+  await page.reload();
+  const block = page.locator("#calendar-view .cal-ev.task", { hasText: "голосового агента" });
+  await expect(block).toBeVisible();
+  await block.locator(".cal-box").click();
+  await expect(page.locator("#toast")).toContainText("Готово: «Проверить доступ голосового");
+  await expect(page.locator("#calendar-view .cal-ev.task.done", { hasText: "голосового агента" })).toBeVisible();
+  await expect(page.locator("#review-dialog")).toBeHidden();
+  await page.locator("#toast").getByRole("button", { name: "Вернуть" }).click();
+  await expect(page.locator("#calendar-view .cal-ev.task:not(.done)", { hasText: "голосового агента" })).toBeVisible();
+  await request.delete(`/api/captures/${created.entry.id}`);
 });

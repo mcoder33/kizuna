@@ -103,3 +103,77 @@ test("призыв всплывает в углу открытой вкладк�
 
   await cleanup(request, anya);
 });
+
+// Д «Открыл — убрал»: в ленте только неразобранное. «Очистить» убирает всё,
+// кроме ждущего ответа, «Заглушить» — одну строку или весь повод, и у каждого
+// шага есть «Вернуть».
+test("лента колокольчика: «Очистить», «Заглушить» и «Вернуть», а ждущее ответа остаётся", async ({ page, request, browser }) => {
+  const { anya } = await circleWithAnya(request, browser);
+  await anya.page.request.post("/api/captures", { data: { raw: "Саше — прислать смету по Хабу" } });
+  const rooms = (await (await anya.page.request.get("/api/rooms")).json()).rooms;
+  const general = rooms.find((room) => room.kind === "general");
+  await anya.page.request.post(`/api/rooms/${general.id}/messages`, { data: { body: "@Саша, глянь смету" } });
+  await expect.poll(async () => (await (await request.get("/api/notifications")).json()).notifications.map((item) => item.kind).filter((kind) => ["request", "call"].includes(kind)).sort().join(), { timeout: 15000 }).toBe("call,request");
+
+  await page.goto("/");
+  await page.locator("#bell-summary").click();
+  const call = page.locator(".bell-row").filter({ hasText: "Аня зовёт вас в разговоре" });
+  const ask = page.locator(".bell-row").filter({ hasText: "Аня просит" });
+  await expect(call).toBeVisible();
+  await expect(ask).toBeVisible();
+
+  // «Заглушить» → «Убрать из ленты» и «Вернуть».
+  await call.hover();
+  await call.getByRole("button", { name: /^Заглушить/ }).click();
+  await call.getByRole("menuitem", { name: /Убрать из ленты/ }).click();
+  await expect(call).toHaveCount(0);
+  await page.locator("#toast").getByRole("button", { name: "Вернуть" }).click();
+  await expect(call).toBeVisible();
+
+  // «Очистить» не трогает ждущее ответа.
+  await page.locator(".bell-read-all").click();
+  await expect(call).toHaveCount(0);
+  await expect(ask).toBeVisible();
+  await page.locator("#toast").getByRole("button", { name: "Вернуть" }).click();
+  await expect(call).toBeVisible();
+
+  // «Выключить такие» — тот же выключатель, что в настройках.
+  await call.hover();
+  await call.getByRole("button", { name: /^Заглушить/ }).click();
+  await call.getByRole("menuitem", { name: /Выключить такие/ }).click();
+  await expect(call).toHaveCount(0);
+  await expect.poll(async () => JSON.parse((await (await request.get("/api/settings")).json()).settings.notifyPrefs).call).toBe("off");
+  await page.locator("#toast").getByRole("button", { name: "Вернуть" }).click();
+  await expect.poll(async () => JSON.parse((await (await request.get("/api/settings")).json()).settings.notifyPrefs).call).not.toBe("off");
+
+  // Открыл призыв — строка ушла из ленты, в разговоре она не нужна.
+  await expect(call).toBeVisible();
+  await call.locator(".bell-text").click();
+  await expect(page.locator(".kc-tab.on")).toBeVisible();
+  await page.locator("#bell-summary").click();
+  await expect(page.locator(".bell-row").filter({ hasText: "Аня зовёт вас в разговоре" })).toHaveCount(0);
+  await expect(page.locator(".bell-row").filter({ hasText: "Аня просит" })).toBeVisible();
+
+  await cleanup(request, anya);
+});
+
+// Напоминание о деле закрывается прямо в строке: «Готово» — тот же кружок, и
+// вместе с делом из ленты уходит его напоминание.
+test("«Готово» в напоминании закрывает дело и убирает напоминание из ленты", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await request.put("/api/settings", { data: { notifyPrefs: JSON.stringify({ digest: "off" }) } });
+  const zone = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Samara", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  const parts = Object.fromEntries(zone.formatToParts(new Date(Date.now() + 8 * 60000)).map((part) => [part.type, part.value]));
+  const created = await (await request.post("/api/captures", { data: { raw: "Проверить доступ голосового агента", primaryType: "todo", due: { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}`, remind: 15 } } })).json();
+  // Обход напоминаний идёт раз в полминуты.
+  await expect.poll(async () => (await (await request.get("/api/notifications")).json()).notifications.some((item) => item.kind === "reminder"), { timeout: 45000, intervals: [1000] }).toBe(true);
+
+  await page.goto("/");
+  await page.locator("#bell-summary").click();
+  const reminder = page.locator(".bell-row").filter({ hasText: "Проверить доступ голосового агента" });
+  await reminder.getByRole("button", { name: "Готово" }).click();
+  await expect(reminder).toHaveCount(0);
+  await expect.poll(async () => (await (await request.get(`/api/captures/${created.entry.id}`)).json()).entry.projections.find((projection) => projection.type === "task").completion.completed).toBe(true);
+  await expect.poll(async () => (await (await request.get("/api/notifications")).json()).notifications.filter((item) => item.kind === "reminder").length).toBe(0);
+  await request.put("/api/settings", { data: { notifyPrefs: "{}" } });
+});

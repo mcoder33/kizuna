@@ -49,7 +49,7 @@ export function setDisplayName(db, userId, value) {
 // считается общее начало не короче, чем длина большего имени минус два: так
 // «аня»/«ане» сходятся, а «аня»/«антон» — нет.
 const normalizeName = value => String(value || '').normalize('NFKC').toLocaleLowerCase('ru-RU').replace(/ё/g, 'е').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-function sameName(left, right) {
+export function sameName(left, right) {
   const a = normalizeName(left), b = normalizeName(right);
   if (!a || !b) return false;
   if (a === b) return true;
