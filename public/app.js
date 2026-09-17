@@ -2015,10 +2015,12 @@ function circleRow(entry) {
   paint();
   return wrap;
 }
-// Призвать можно только того, кто в круге этой записи: звать в пустоту и ждать
-// ответа — худшее, что может сделать интерфейс, поэтому подсказка закрытая.
-const MENTION_GROUPS = { record: "в записи", circles: "из ваших кругов", everyone: "все в Кизуне" };
-function mentionPopup(field, callable, onPick, { lead = "", keys = false } = {}) {
+// Позвать можно любого из ваших кругов, но не в пустоту: тому, кто записи или
+// разговора ещё не видит, призыв их открывает — и об этом сказано до отправки.
+const MENTION_GROUPS = { record: "в записи", room: "в разговоре", circle: "в круге", circles: "из ваших кругов", everyone: "все в Кизуне" };
+// Кто и так на месте: этим призыв ничего не открывает, поэтому и приписки у них нет.
+const MENTION_INSIDE = ["record", "room"];
+function mentionPopup(field, callable, onPick, { lead = "", keys = false, note = "увидит запись" } = {}) {
   const pop = node("div", undefined, "mention-pop");
   pop.hidden = true;
   let items = [], active = 0, from = -1;
@@ -2031,7 +2033,7 @@ function mentionPopup(field, callable, onPick, { lead = "", keys = false } = {})
     active = Math.min(active, items.length - 1);
     // Позвать того, кто запись ещё не видит, — значит показать её. В карточке
     // это сказано одной строкой сверху, а не у каждого имени.
-    if (lead && items.some((person) => person.group && person.group !== "record")) {
+    if (lead && items.some((person) => person.group && !MENTION_INSIDE.includes(person.group))) {
       const note = node("p", undefined, "mention-lead");
       note.append(talkIcon("eye"), document.createTextNode(lead));
       pop.append(note);
@@ -2048,7 +2050,7 @@ function mentionPopup(field, callable, onPick, { lead = "", keys = false } = {})
       const row = node("button", undefined, `mention-row${index === active ? " on" : ""}`);
       row.type = "button";
       row.append(avatarEl(person, { size: "mini" }), node("span", person.name));
-      if (!lead && person.group && person.group !== "record") row.append(node("small", "увидит запись", "mention-note"));
+      if (!lead && person.group && !MENTION_INSIDE.includes(person.group)) row.append(node("small", note, "mention-note"));
       row.addEventListener("mousedown", (event) => { event.preventDefault(); pick(index); });
       pop.append(row);
     });
@@ -6189,7 +6191,7 @@ const chatState = { rooms: [], messages: [], more: false, loading: false, drafts
 const kc = {
   circle: null, chat: null, info: null, person: null, table: true, menu: false, talks: false, ctx: null,
   reply: null, share: null, newFrom: null, talk: null, modal: null, invite: null,
-  fresh: false, focusField: false,
+  fresh: false, focusField: false, deedFocus: false,
 };
 const KC_REACTIONS = ["👍", "❤️", "🔥", "🙏", "👀", "✅"];
 // Тип записи — цвет и слово для строки обсуждения.
@@ -6512,6 +6514,13 @@ function renderCircles({ toBottom = false } = {}) {
     kc.focusField = false;
   }
   if (kc.modal && kc.modal.focus) { $("#kc-modal-name")?.focus(); kc.modal.focus = false; }
+  // Поле «поручить дело» открывается уже готовым к набору: кнопка у человека —
+  // это и есть начало записи.
+  if (kc.deedFocus) {
+    const deed = $("#kc-deed-field");
+    if (deed) deed.focus({ preventScroll: true });
+    kc.deedFocus = false;
+  }
   kc.fresh = false;
   kcFit();
 }
@@ -6618,6 +6627,9 @@ function kcSeat(person, circle, current) {
   const seat = kcEl("div", `kc-seat${away ? " away" : ""}`, face,
     kcEl("span", "kc-seat-who", kcEl("b", null, kcEl("span", null, me ? "Вы" : person.name), person.role === "owner" ? kcEl("i", null, "хозяин") : null), line));
   if (!me && !away && current) seat.append(kcButton("kc-seat-at", "@", () => kcInsertCall(person.name), { "aria-label": `Позвать ${person.name} в разговор`, title: `@${person.name}` }));
+  // Дело человеку — прямо отсюда: карточка открывается с готовым полем, писать
+  // в него можно сразу.
+  if (!me && circle) seat.append(kcButton("kc-seat-todo", kcIcon("todo"), () => { kc.deedFocus = true; kcInfoOpen("person", person.id); }, { "aria-label": `Поручить дело: ${person.name}`, title: "Поручить дело" }));
   seat.dataset.person = person.id;
   return seat;
 }
@@ -6899,8 +6911,15 @@ function kcComposer(item) {
   const key = item.key;
   if (kc.share?.chat === key) {
     const names = kc.share.people.map((person) => person.name);
+    const many = names.length > 1;
+    // В разговоре круга призыв открывает сам разговор, а человека из другого
+    // круга ещё и приводит в круг: сказано до отправки, а не после.
+    const strangers = kc.share.people.filter((person) => person.inCircle === false);
     wrap.append(kcEl("div", "kc-share",
-      kcEl("p", null, kcEl("b", null, `${names.join(", ")} ${names.length > 1 ? "получат" : "получит"} доступ к этой записи`), ": заголовок, заметки, файлы и всё обсуждение."),
+      kc.share.join
+        ? kcEl("p", null, kcEl("b", null, `${names.join(", ")} ещё не в этом разговоре`),
+          `: ${many ? "увидят" : "увидит"} его целиком, включая прошлые сообщения${strangers.length ? `. ${strangers.map((person) => person.name).join(", ")} ${strangers.length > 1 ? "войдут" : "войдёт"} и в круг «${item.circle?.name || ""}»: люди круга, общие дела и разговоры` : ""}.`)
+        : kcEl("p", null, kcEl("b", null, `${names.join(", ")} ${many ? "получат" : "получит"} доступ к этой записи`), ": заголовок, заметки, файлы и всё обсуждение."),
       kcEl("div", "kc-share-acts",
         kcButton("kc-btn sm primary", "Позвать и отправить", () => kcSend(item, "yes")),
         kcButton("kc-btn sm", "Отправить без призыва", () => kcSend(item, "no")),
@@ -6918,11 +6937,11 @@ function kcComposer(item) {
   field.placeholder = "Сообщение";
   field.setAttribute("aria-label", `Сообщение в «${item.title}»`);
   field.value = chatState.drafts[key] || "";
-  const callable = item.kind === "room" ? item.room.members.filter((member) => member.id !== currentUser?.id) : kc.talk?.captureId === item.talk.captureId ? kc.talk.callable : [];
+  const callable = item.kind === "room" ? kcRoomCallable(item) : kc.talk?.captureId === item.talk.captureId ? kc.talk.callable : [];
   const send = kcButton("kc-send", kcIcon("send"), () => kcSend(item), { "aria-label": "Отправить" });
   send.disabled = !field.value.trim();
   const changed = () => { chatState.drafts[key] = field.value; send.disabled = !field.value.trim(); kcAutosize(field); };
-  const pop = mentionPopup(field, callable, changed);
+  const pop = mentionPopup(field, callable, changed, { note: item.kind === "room" ? "позовём сюда" : "увидит запись" });
   field.addEventListener("input", changed);
   field.addEventListener("keydown", (event) => {
     if (event.defaultPrevented) return;
@@ -6940,6 +6959,19 @@ function kcComposer(item) {
   wrap.append(pop, at, kcEl("div", "kc-field", field), send);
   return wrap;
 }
+// Кого можно позвать в разговор круга: сначала те, кто уже здесь, потом
+// остальные из этого круга, потом люди из других ваших кругов. Позвать можно
+// любого — тому, кого в разговоре нет, сервер сперва спросит, открывать ли ему
+// разговор.
+function kcRoomCallable(item) {
+  const seen = new Map();
+  const put = (person, group) => { if (person && person.id !== currentUser?.id && !seen.has(person.id)) seen.set(person.id, { ...person, group }); };
+  for (const person of item.room.members || []) put(person, "room");
+  for (const person of item.circle?.members || []) put(person, "circle");
+  for (const circle of circlesState.circles || []) if (circle.id !== item.circle?.id) for (const person of circle.members || []) put(person, "circles");
+  return [...seen.values()];
+}
+
 // «@ Позвать» из кольца и карточки человека: имя встаёт в поле, дальше — как
 // обычный призыв.
 function kcInsertCall(name) {
@@ -6968,12 +7000,20 @@ async function kcSend(item, share = null) {
   if (send) send.disabled = true;
   try {
     if (item.kind === "room") {
-      const result = await request(`/api/rooms/${item.room.id}/messages`, { method: "POST", body: JSON.stringify({ body, ...(replyId ? { replyTo: replyId } : {}) }) });
+      const response = await fetch(`/api/rooms/${item.room.id}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body, ...(replyId ? { replyTo: replyId } : {}), ...(share ? { join: share } : {}) }) });
+      const result = await response.json().catch(() => null);
+      if (response.status === 401) { location.replace("/login"); return; }
+      // Позвали того, кого в разговоре нет: над полем встаёт выбор — позвать
+      // (и, если человек не в круге, привести в круг) или отправить молча.
+      if (response.status === 409 && result?.error?.code === "join_needed") { kc.share = { chat: key, body, people: result.people || [], join: true }; renderCircles(); return; }
+      if (!response.ok) throw new Error(result?.error?.message || "Сообщение не ушло");
       kcEdited();
       if (kc.chat === key && !chatState.messages.some((message) => message.id === result.message.id)) chatState.messages = [...chatState.messages, result.message];
       const room = chatState.rooms.find((entry) => entry.id === item.room.id);
       if (result.room && room) Object.assign(room, result.room, { unread: 0 });
       if (result.called?.length) toast(`Позвали: ${result.called.map((person) => person.name).join(", ")}`);
+      // Позвали того, кого здесь не было, — состав разговора и круга изменился.
+      if (share === "yes") loadCircles();
     } else {
       const response = await fetch(`/api/captures/${item.talk.captureId}/comments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body, ...(replyId ? { parentId: replyId } : {}), ...(share ? { share } : {}) }) });
       const data = await response.json().catch(() => null);
@@ -7377,16 +7417,53 @@ function kcPersonEl(item, member) {
   }
   const more = (member.openDeeds || 0) - deeds.length;
   const acts = me ? null : kcEl("div", "kc-person-acts",
-    kcButton("kc-btn sm tone", "@ Позвать в разговоре", () => { kcInfoClose(); kcInsertCall(member.name); }),
-    kcButton("kc-btn sm", "Поставить дело", () => { location.hash = "#today"; prefillCapture(`${member.name} — `, "todo"); }));
+    kcButton("kc-btn sm tone", "@ Позвать в разговоре", () => { kcInfoClose(); kcInsertCall(member.name); }));
   const avatar = avatarEl(member);
   avatar.classList.add("huge");
   return kcEl("div", `kc-sub ${kcTone(circle.color)}`,
     kcEl("div", "kc-person-head", avatar, kcEl("div", null, kcEl("b", null, me ? `${member.name} · вы` : member.name), kcEl("small", null, `${member.role === "owner" ? "хозяин круга" : "участник"}${since ? ` · в круге с ${since}` : ""}`))),
     kcEl("p", "kc-sect-cap", `Дела в этом круге · ${member.openDeeds || 0}`),
+    me ? null : kcDeedForm(circle, member),
     list,
     more > 0 ? kcEl("p", "kc-hint", `и ещё ${more} — на доске`) : null,
     acts);
+}
+
+// Поручить дело, не уходя из круга: строка у человека — это запись в вашем
+// журнале и просьба ему. Срок пишется словами внутри — разбирает его та же
+// модель, что и обычную запись.
+function kcDeedForm(circle, member) {
+  const form = kcEl("form", "kc-deed-new");
+  const field = kcEl("input");
+  field.id = "kc-deed-field";
+  field.type = "text";
+  field.placeholder = "Что поручить";
+  field.setAttribute("aria-label", `Дело для ${member.name}`);
+  const send = kcEl("button", "kc-btn sm primary", "Отдать");
+  send.type = "submit";
+  form.append(field, send);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const raw = field.value.trim();
+    if (!raw || send.disabled) return;
+    send.disabled = true;
+    send.textContent = "Отдаю…";
+    try {
+      const created = await request("/api/captures", { method: "POST", body: JSON.stringify({ raw, primaryType: "todo" }) });
+      await request(`/api/captures/${created.entry.id}/assign`, { method: "POST", body: JSON.stringify({ assigneeId: member.id, circleId: circle.id }) });
+      field.value = "";
+      toast(`Просьба ушла: ${member.name} ответит «беру» или «не я»`);
+      kc.deedFocus = true;
+      loadCircles();
+      load();
+    } catch (error) {
+      toast(error.message || "Дело не ушло");
+    } finally {
+      send.disabled = false;
+      send.textContent = "Отдать";
+    }
+  });
+  return kcEl("div", "kc-deed-add", form, kcEl("p", "kc-hint", "Срок называйте словами: «прислать смету до пятницы»."));
 }
 function kcRoomAddEl(item) {
   const inRoom = new Set(item.room.members.map((person) => person.id));

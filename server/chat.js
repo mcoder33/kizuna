@@ -11,7 +11,7 @@
 // уходит в личный журнал. Поэтому счётчик живёт только здесь, на комнате, а в
 // день попадает одно: призыв `@имя`. Обычное сообщение не дёргает никого.
 import crypto from 'node:crypto';
-import { displayName, publicUser, circlesOf, membership, membersOf, captureTitle, captureDue } from './circles.js';
+import { displayName, publicUser, circlesOf, membership, membersOf, circleIdsOf, addMember as addCircleMember, captureTitle, captureDue } from './circles.js';
 import { notify } from './notifications.js';
 
 const now = () => new Date().toISOString();
@@ -302,23 +302,53 @@ export function messages(db, roomId, userId, { before = null, limit = PAGE_SIZE 
   };
 }
 
-export function say(db, roomId, userId, body, { replyTo = null } = {}) {
+// Кого можно позвать сюда: те, кто уже в разговоре, остальные из этого круга и
+// люди из других ваших кругов. Звать можно любого из них, но тому, кого в
+// разговоре нет, призыв его открывает — поэтому молча это не делается (см. say).
+export function callableInRoom(db, room, userId) {
+  const seen = new Map();
+  const put = (person, group) => { if (person.id !== userId && !seen.has(person.id)) seen.set(person.id, { ...person, group }); };
+  for (const person of roomMembers(db, room)) put(person, 'room');
+  for (const person of membersOf(db, room.circle_id)) put(person, 'circle');
+  for (const circleId of circleIdsOf(db, userId)) if (circleId !== room.circle_id) for (const person of membersOf(db, circleId)) put(person, 'circles');
+  return [...seen.values()];
+}
+
+export function say(db, roomId, userId, body, { replyTo = null, join = null } = {}) {
   const room = findRoom(db, roomId);
   if (!room || !inRoom(db, room, userId)) return { error: 'not_found' };
   const text = String(body ?? '').trim();
   if (!text || text.length > MESSAGE_LIMIT) return { error: 'invalid_message' };
   const reply = replyTo ? db.prepare("SELECT id, author_id FROM chat_messages WHERE id=? AND room_id=? AND deleted_at IS NULL AND kind='said'").get(replyTo, roomId) : null;
   if (replyTo && !reply) return { error: 'invalid_reply' };
+  // Призыв ищется среди всех ваших людей, а не только среди тех, кто здесь:
+  // «@Лёша» в комнате, где Лёши нет, раньше пропадал молча. Позвать такого —
+  // значит открыть ему разговор (а человека из другого круга — ещё и привести
+  // в круг), поэтому без ответа на вопрос сообщение не уходит.
+  const callable = callableInRoom(db, room, userId);
+  const targets = new Map();
+  for (const name of text.match(/@[\p{L}\p{N}_.-]{2,40}/gu) || []) {
+    const target = callable.find(person => sameName(name.slice(1), person.name) || normalizeName(name.slice(1)) === normalizeName(person.email));
+    if (target) targets.set(target.id, target);
+  }
+  const outside = [...targets.values()].filter(person => person.group !== 'room');
+  if (outside.length && join !== 'yes' && join !== 'no') return { error: 'join_needed', people: outside.map(({ group, ...person }) => ({ ...person, inCircle: group === 'circle' })) };
+  // Позванных приводим до самого сообщения: строка «позвал(а) в комнату» должна
+  // стоять над ним, а не под.
+  if (join === 'yes')
+    for (const person of outside) {
+      if (!membership(db, room.circle_id, person.id) && addCircleMember(db, room.circle_id, userId, person.id).error) continue;
+      if (!wholeCircle(room)) addToRoom(db, room.id, userId, person.id);
+    }
   const messageId = id(), at = now();
   db.prepare("INSERT INTO chat_messages(id,room_id,author_id,body,kind,created_at,reply_to) VALUES(?,?,?,?,'said',?,?)").run(messageId, roomId, userId, text, at, reply?.id || null);
-  // Призвать можно только того, кто в этой комнате: звать в пустоту и ждать
-  // ответа — худшее, что может сделать интерфейс.
   const people = roomMembers(db, room).filter(person => person.id !== userId);
   const called = [];
   const insert = db.prepare('INSERT OR IGNORE INTO chat_mentions(message_id,user_id,created_at) VALUES(?,?,?)');
-  for (const name of text.match(/@[\p{L}\p{N}_.-]{2,40}/gu) || []) {
-    const target = people.find(person => sameName(name.slice(1), person.name) || normalizeName(name.slice(1)) === normalizeName(person.email));
-    if (target && !called.some(person => person.id === target.id)) { insert.run(messageId, target.id, at); called.push(target); }
+  for (const target of targets.values()) {
+    if (!people.some(person => person.id === target.id)) continue;
+    insert.run(messageId, target.id, at);
+    called.push(target);
   }
   markRead(db, roomId, userId, at);
   // Призыв и ответ цитатой — поводы для колокольчика и телефона; обычное

@@ -81,7 +81,7 @@ test('разговор на весь круг: видят все, включая
 });
 
 test('призыв из разговора приходит в ту же полосу «к вам», обычное сообщение — нет',async()=>{
-  const {sasha,anya,general}=await circleOfThree();
+  const {sasha,anya,lesha,general}=await circleOfThree();
   await sasha.post(`/api/rooms/${general.id}/messages`).send({body:'Просто мысль вслух'}).expect(201);
   assert.equal((await anya.get('/api/inbox').expect(200)).body.rows.length,0,'обычное сообщение не дёргает никого');
   await sasha.post(`/api/rooms/${general.id}/messages`).send({body:'@Аня, посмотришь смету?'}).expect(201);
@@ -94,10 +94,50 @@ test('призыв из разговора приходит в ту же пол�
   // Открыл комнату — призыв погас.
   await anya.get(`/api/rooms/${general.id}/messages`).expect(200);
   assert.equal((await anya.get('/api/inbox').expect(200)).body.rows.length,0);
-  // Призвать того, кого нет в комнате, нечем.
+  // Призвать того, кого в комнате нет, можно — но сперва спросив: призыв
+  // открывает ему разговор целиком.
   const room=(await sasha.post(`/api/circles/${general.circleId}/rooms`).send({name:'Смета',members:[anya.user.id]}).expect(201)).body.room;
-  await sasha.post(`/api/rooms/${room.id}/messages`).send({body:'@Лёша, ты тут?'}).expect(201);
+  const asked=await sasha.post(`/api/rooms/${room.id}/messages`).send({body:'@Лёша, ты тут?'}).expect(409);
+  assert.equal(asked.body.error.code,'join_needed');
+  assert.deepEqual(asked.body.people.map(person=>[person.name,person.inCircle]),[['Лёша',true]]);
+  // «Без призыва» — сообщение уходит, Лёша ничего не узнаёт и в комнату не попадает.
+  await sasha.post(`/api/rooms/${room.id}/messages`).send({body:'@Лёша, ты тут?',join:'no'}).expect(201);
   assert.equal((await sasha.get(`/api/rooms/${room.id}/messages`).expect(200)).body.messages.at(-1).mentions.length,0);
+  await lesha.get(`/api/rooms/${room.id}/messages`).expect(404);
+});
+
+// «@» зовёт кого угодно из ваших кругов: своего по кругу — в комнату, человека
+// из другого круга — заодно и в круг. Оба раза с ответом на вопрос, а не молча.
+test('призыв в разговор приводит человека в комнату, а чужого — ещё и в круг',async()=>{
+  const {app,sasha,anya,lesha,circle,general}=await circleOfThree();
+  const room=(await sasha.post(`/api/circles/${circle.id}/rooms`).send({name:'Смета',members:[anya.user.id]}).expect(201)).body.room;
+  const called=await sasha.post(`/api/rooms/${room.id}/messages`).send({body:'@Лёша, ты тут?',join:'yes'}).expect(201);
+  assert.deepEqual(called.body.called.map(person=>person.name),['Лёша']);
+  assert.ok(called.body.room.members.some(member=>member.name==='Лёша'),'позванный теперь в комнате');
+  // Строка «к вам» спрашивается до того, как Лёша откроет разговор: открытый
+  // разговор её гасит.
+  assert.ok((await lesha.get('/api/inbox').expect(200)).body.rows.some(row=>row.kind==='chat'),'позванный узнаёт строкой «к вам»');
+  const seen=(await lesha.get(`/api/rooms/${room.id}/messages`).expect(200)).body.messages;
+  assert.equal(seen.filter(message=>message.kind==='said').at(-1).mentions[0].name,'Лёша');
+  assert.ok(seen.some(message=>message.kind==='added'),'над сообщением стоит строка «позвал в комнату»');
+
+  // Катя в другом круге Саши: позвать её сюда — значит привести в этот круг.
+  const katya=authed(app,{email:'katya@kizuna.test',role:'user'});
+  await katya.patch('/api/account').send({name:'Катя'}).expect(200);
+  const other=(await sasha.post('/api/circles').send({name:'Дом'}).expect(201)).body.circle;
+  const invite=(await sasha.post(`/api/circles/${other.id}/invite`).send({}).expect(201)).body;
+  await katya.post(`/api/circles/invite/${invite.token}/accept`).send({}).expect(200);
+  const stranger=await sasha.post(`/api/rooms/${general.id}/messages`).send({body:'@Катя, нужна твоя смета'}).expect(409);
+  assert.deepEqual(stranger.body.people.map(person=>[person.name,person.inCircle]),[['Катя',false]]);
+  await sasha.post(`/api/rooms/${general.id}/messages`).send({body:'@Катя, нужна твоя смета',join:'yes'}).expect(201);
+  assert.ok((await katya.get('/api/circles').expect(200)).body.circles.some(item=>item.id===circle.id),'Катя теперь в круге');
+  assert.equal((await katya.get(`/api/rooms/${general.id}/messages`).expect(200)).body.messages.at(-1).mentions[0].name,'Катя');
+
+  // Чужого человека «@» не находит вовсе: звать можно только своих по кругам.
+  const outsider=authed(app,{email:'petya@kizuna.test',role:'user'});
+  await outsider.patch('/api/account').send({name:'Петя'}).expect(200);
+  const quiet=await sasha.post(`/api/rooms/${general.id}/messages`).send({body:'@Петя, ты кто?'}).expect(201);
+  assert.deepEqual(quiet.body.called,[]);
 });
 
 test('выключенный круг сворачивает и призывы из разговора',async()=>{

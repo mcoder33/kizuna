@@ -519,7 +519,7 @@ export const VOICE_TOOLS = [
   {
     type: 'function',
     name: 'write_message',
-    description: 'Написать в обсуждение записи (captureId) или в разговор круга (roomId). Позвать человека — «@Имя» в тексте. replyTo — commentId или messageId, на которое отвечаешь. Если позванные ещё не видят запись, ответ попросит спросить человека и повторить с share: yes или no. Текст для других людей проговори перед отправкой.',
+    description: 'Написать в обсуждение записи (captureId) или в разговор круга (roomId). Позвать человека — «@Имя» в тексте. replyTo — commentId или messageId, на которое отвечаешь. Позвать можно любого из кругов человека. Если позванные ещё не видят запись или их нет в этом разговоре, ответ попросит спросить человека и повторить с share: yes (позвать) или no (отправить молча). Текст для других людей проговори перед отправкой.',
     parameters: {
       type: 'object',
       properties: { captureId: { type: 'string' }, roomId: { type: 'string' }, text: { type: 'string' }, replyTo: { type: 'string' }, share: { type: 'string', enum: ['yes', 'no'] } },

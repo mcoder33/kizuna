@@ -8824,13 +8824,27 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0; }
 .kc-seat-who small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted); }
 .kc-seat-who small.late { color: var(--kc-late); }
 /* «@» появляется у места при наведении — текст дела не теряет ширину. */
-.kc-seat-at {
+.kc-seat-at, .kc-seat-todo {
   position: absolute; top: 50%; right: 8px; width: 30px; height: 30px; margin-top: -15px; border: 0; border-radius: 50%;
   background: var(--paper); color: var(--ink); font-size: 14px; font-weight: 750; cursor: pointer;
   box-shadow: 0 0 0 1px var(--line), var(--kc-shadow-sm); opacity: 0; transition: opacity 0.15s;
 }
-.kc-seat:hover .kc-seat-at, .kc-seat:focus-within .kc-seat-at { opacity: 1; }
-.kc-seat-at:hover { background: color-mix(in srgb, var(--kc-tone) 18%, var(--paper)); }
+.kc-seat:hover .kc-seat-at, .kc-seat:focus-within .kc-seat-at,
+.kc-seat:hover .kc-seat-todo, .kc-seat:focus-within .kc-seat-todo { opacity: 1; }
+.kc-seat-at:hover, .kc-seat-todo:hover { background: color-mix(in srgb, var(--kc-tone) 18%, var(--paper)); }
+/* «Дело» стоит слева от «@»: сначала позвать, потом поручить. */
+.kc-seat-todo { right: 42px; display: grid; place-items: center; }
+.kc-seat-todo .kc-ico { width: 16px; height: 16px; }
+/* Поручить дело из карточки человека: поле и кнопка одной строкой. */
+.kc-deed-new { display: flex; gap: 8px; margin: 0; }
+.kc-deed-add { margin: 0 0 12px; }
+.kc-deed-add .kc-hint { margin: 6px 2px 0; }
+.kc-deed-new input {
+  flex: 1; min-width: 0; height: 34px; padding: 0 12px; border: 0; border-radius: 10px;
+  background: var(--paper); color: var(--ink); font: inherit; font-size: 13.5px;
+  box-shadow: 0 0 0 1px var(--line);
+}
+.kc-deed-new input:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--kc-tone); }
 .kc-seat.add {
   flex: none; min-width: 0; max-width: none; grid-template-columns: 44px auto; padding: 7.5px 16px 7.5px 8.5px;
   border: 1.5px dashed color-mix(in srgb, var(--kc-tone) 38%, var(--line)); background: none; box-shadow: none; text-align: left; cursor: pointer;
@@ -9125,9 +9139,9 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0; }
 /* ── ширина ── */
 /* На экране без наведения «@» у места виден сразу, и под него оставлено место. */
 @media (hover: none) {
-  .kc-seat { padding-right: 46px; }
+  .kc-seat { padding-right: 80px; }
   .kc-seat.add { padding-right: 16px; }
-  .kc-seat-at { opacity: 1; }
+  .kc-seat-at, .kc-seat-todo { opacity: 1; }
 }
 @container kc (max-width: 700px) {
   .kc-tabs { height: 46px; }
@@ -9138,7 +9152,7 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0; }
   .kc-seat { flex: none; width: 176px; min-width: 0; grid-template-columns: 38px minmax(0, 1fr); gap: 9px; padding: 8px; }
   .kc-seat.add { width: auto; grid-template-columns: 38px auto; padding: 6.5px 12px 6.5px 6.5px; }
   .kc-seat-face, .kc-seat-face .ava, .kc-seat-plus { width: 38px; height: 38px; }
-  .kc-seat-at, .kc-band-fold { display: none; }
+  .kc-seat-at, .kc-seat-todo, .kc-band-fold { display: none; }
   .kc-threads { padding-top: 6px; padding-bottom: 6px; }
   .kc-folded .kc-wide { display: none; }
   .kc-col { padding: 0 10px; }

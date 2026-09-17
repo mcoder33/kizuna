@@ -470,7 +470,11 @@ export function writeMessage(db, args, context) {
     return { captureId: args.captureId, commentId: result.comment.id, sent: true, called: result.comment.mentions.map(nameOf), opened: result.added.length ? result.participants.filter(person => result.added.includes(person.id)).map(nameOf) : [] };
   }
   if (typeof args.roomId === 'string' && args.roomId) {
-    const result = chat.say(db, args.roomId, userId, body, { replyTo: text(args.replyTo, 64) });
+    const join = ['yes', 'no'].includes(args.share) ? args.share : null;
+    const result = chat.say(db, args.roomId, userId, body, { replyTo: text(args.replyTo, 64), join });
+    // Позвать того, кого в разговоре нет, — значит открыть ему разговор: голос
+    // спрашивает так же, как карточка.
+    if (result.error === 'join_needed') return { needsShare: true, people: result.people.map(nameOf), ask: 'Этих людей в разговоре нет. Спросите, звать ли их туда, и повторите write_message с share yes или no.' };
     if (result.error) return { error: CHAT_WORDS[result.error] || 'Сообщение не отправлено.' };
     hooks.notifyRoom(args.roomId, { except: userId });
     return { roomId: args.roomId, messageId: result.message?.id || null, sent: true, called: result.called.map(nameOf) };

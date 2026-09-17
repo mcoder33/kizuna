@@ -199,3 +199,80 @@ test("фото круга встаёт на знак во вкладке и в �
   await expect(photos(".kc-info .kc-profile")).toHaveCount(1);
   await dissolveCircles(request);
 });
+
+// Дело человеку — не уходя из круга, и призыв через «@» — кого угодно из своих
+// кругов, даже если в этом разговоре его ещё нет.
+test("круг: дело человеку прямо за столом и призыв того, кого в разговоре нет", async ({ page, request, browser }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await dissolveCircles(request);
+  // Соседний человек остаётся от прошлых проверок — и заблокированным ими же.
+  const existing = (await (await request.get("/api/admin/users")).json()).users.find((user) => user.email === ANYA.email);
+  if (existing) {
+    if (existing.status !== "active") await request.post(`/api/admin/users/${existing.id}/unblock`, { data: {} });
+  } else {
+    await request.post("/api/auth/register", { data: ANYA });
+    const pending = (await (await request.get("/api/admin/users")).json()).users.find((user) => user.email === ANYA.email);
+    await request.post(`/api/admin/users/${pending.id}/approve`, { data: {} });
+  }
+  await request.patch("/api/account", { data: { name: "Саша" } });
+  const circle = (await (await request.post("/api/circles", { data: { name: "Хаб" } })).json()).circle;
+  const invite = await (await request.post(`/api/circles/${circle.id}/invite`, { data: {} })).json();
+  const anya = await loginAs(browser, ANYA);
+  await anya.page.request.patch("/api/account", { data: { name: "Аня" } });
+  await anya.page.request.post(`/api/circles/invite/${invite.token}/accept`, { data: {} });
+
+  // ── дело ставится прямо у человека за столом ──
+  await page.clock.install({ time: dayAt(13) });
+  await page.goto("/#circles");
+  const seat = page.locator(".kc-band .kc-seat").filter({ hasText: "Аня" });
+  await expect(seat).not.toContainText("смету");
+  await seat.getByRole("button", { name: "Поручить дело: Аня" }).click();
+  const deedField = page.locator("#kc-deed-field");
+  await expect(deedField).toBeFocused();
+  await deedField.fill("Прислать смету по Хабу");
+  await page.locator(".kc-deed-new").getByRole("button", { name: "Отдать" }).click();
+  await expect(page.locator("#toast")).toContainText("Просьба ушла");
+  // Дело сразу видно и в карточке человека, и у него за столом.
+  await expect(page.locator(".kc-deeds")).toContainText("смету", { timeout: 15000 });
+  await expect(seat).toContainText("смету");
+  await expect(seat).toContainText("ждёт ответа");
+
+  // У Ани это обычная просьба: строка «к вам», ответ «беру».
+  await anya.page.goto("/#today");
+  const ask = anya.page.locator(".inbox-row.request").filter({ hasText: "смету" });
+  await expect(ask).toBeVisible({ timeout: 15000 });
+  await expect(ask).toContainText("просит Саша");
+
+  // ── «@» зовёт того, кого в разговоре нет ──
+  // Комната заводится с Аней — и Аня из неё выходит: теперь её тут нет, а
+  // позвать всё равно надо.
+  const anyaId = (await (await request.get("/api/admin/users")).json()).users.find((user) => user.email === ANYA.email).id;
+  const room = (await (await request.post(`/api/circles/${circle.id}/rooms`, { data: { name: "Смета", members: [anyaId] } })).json()).room;
+  await anya.page.request.post(`/api/rooms/${room.id}/leave`, { data: {} });
+  await page.goto("/#circles");
+  await page.locator(".kc-chip").filter({ hasText: "Смета" }).click();
+  const field = page.locator("#kc-field");
+  await field.click();
+  await field.type("@");
+  const pop = page.locator(".mention-pop");
+  await expect(pop).toBeVisible();
+  await expect(pop).toContainText("в круге");
+  await pop.locator(".mention-row").filter({ hasText: "Аня" }).click();
+  await field.type("посмотри, пожалуйста");
+  await page.locator(".kc-send").click();
+  // Молча разговор никому не открывается: сперва вопрос.
+  const ask2 = page.locator(".kc-share");
+  await expect(ask2).toContainText("Аня ещё не в этом разговоре");
+  await ask2.getByRole("button", { name: "Позвать и отправить" }).click();
+  await expect(page.locator(".kc-bb .call")).toHaveText("@Аня");
+  await expect(page.locator(".kc-band .kc-seat").filter({ hasText: "Аня" })).toBeVisible();
+
+  // Аня теперь видит и разговор, и призыв в нём.
+  await anya.page.goto("/#circles");
+  await anya.page.locator(".kc-chip").filter({ hasText: "Смета" }).click();
+  await expect(anya.page.locator(".kc-bb")).toContainText("посмотри, пожалуйста");
+  await anya.context.close();
+  // Уборка, как в соседних проверках: круг распущен, сосед заблокирован.
+  await dissolveCircles(request);
+  await request.post(`/api/admin/users/${anyaId}/block`, { data: { reason: "конец прогона" } });
+});
