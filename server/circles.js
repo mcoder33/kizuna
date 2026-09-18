@@ -801,6 +801,48 @@ export function mutedSummary(db, userId) {
     .map(row => ({ id: row.id, name: row.name, color: row.color, deeds: row.deeds }));
 }
 
+/** Люди из всех ваших кругов — для подсказки «@» там, где круг ещё не выбран. */
+export function peopleAround(db, userId) {
+  const seen = new Map();
+  for (const circleId of circleIdsOf(db, userId)) {
+    const circle = circleBrief(db, circleId);
+    for (const person of membersOf(db, circleId)) {
+      if (person.id === userId) continue;
+      const known = seen.get(person.id);
+      if (known) { if (circle?.name) known.circles.push(circle.name); continue; }
+      // membersOf уже отдаёт человека наружу — заворачивать второй раз нельзя:
+      // publicUser пересобрал бы имя из почты.
+      seen.set(person.id, { id: person.id, name: person.name, email: person.email, avatar: person.avatar ?? null, circles: circle?.name ? [circle.name] : [] });
+    }
+  }
+  return [...seen.values()];
+}
+
+/**
+ * Призыв прямо в записи: «@Аня — прислать смету» значит, что Аня эту запись
+ * видит и знает о ней. Тому, кому запись и так досталась делом, второй раз не
+ * звоним: просьба уже пришла своей строкой.
+ */
+export function callFromText(db, { captureId, authorId, raw = '', assigneeId = null, at = now() }) {
+  const people = peopleAround(db, authorId);
+  if (!people.length) return [];
+  const targets = new Map();
+  for (const name of String(raw).match(/@[\p{L}\p{N}_.-]{2,40}/gu) || []) {
+    const target = people.find(person => sameName(name.slice(1), person.name) || normalizeName(name.slice(1)) === normalizeName(person.email));
+    if (target && target.id !== assigneeId) targets.set(target.id, target);
+  }
+  if (!targets.size) return [];
+  const title = titleOf(db, captureId, 'запись');
+  const circle = circlesForCapture(db, captureId)[0] || null;
+  const called = [];
+  for (const person of targets.values()) {
+    addParticipant(db, captureId, person.id, authorId, at);
+    notify(db, { userId: person.id, kind: 'call', actorId: authorId, captureId, circleId: circle?.id || null, text: `зовёт вас в записи «${title}»`, data: { circle }, at });
+    called.push(person);
+  }
+  return called;
+}
+
 // Дело уходит человеку тем же одним полем. Приложение не изобретает намерение:
 // исполнителем становится тот участник круга, которого назвал сам разбор, и
 // только если он один — угадывать, кому досталось дело, нельзя.

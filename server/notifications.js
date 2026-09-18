@@ -18,7 +18,7 @@ import { gateClassification } from './classifier.js';
 // колокольчике считает только такие.
 export const NOTIFICATION_KINDS = {
   request: { group: 'people', label: 'Просят сделать дело', hint: 'ждёт вашего ответа: беру или не я', bell: true, phone: true, waits: true },
-  call: { group: 'people', label: 'Зовут по имени', hint: '@имя в обсуждении карточки или в разговоре круга', bell: true, phone: true },
+  call: { group: 'people', label: 'Зовут по имени', hint: '@имя в записи, в обсуждении карточки или в разговоре круга', bell: true, phone: true },
   reply: { group: 'people', label: 'Отвечают на ваше сообщение', hint: 'ответ цитатой в разговоре или обсуждении', bell: true, phone: true },
   answer: { group: 'people', label: 'Ответили на вашу просьбу', hint: 'берут, возвращают, сделали', bell: true, phone: false },
   circle: { group: 'people', label: 'Добавили в круг', hint: '', bell: true, phone: false },

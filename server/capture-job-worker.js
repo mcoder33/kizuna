@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { claimCaptureJob, completeCaptureJob, failCaptureJob, releaseCaptureJob, renewCaptureJobLease, recordUsage } from './db.js';
-import { autoAssign } from './circles.js';
+import { autoAssign, callFromText } from './circles.js';
 import { applyUserOverrides } from './classifier.js';
 import { memoryPrompt } from './memory.js';
 import { noticeUnclear } from './notifications.js';
@@ -79,7 +79,10 @@ export class CaptureJobWorker {
       if (completeCaptureJob(this.db, claim, result)) {
         // Просьба уходит человеку и тогда, когда разбор закончился в фоне:
         // иначе «Ане — прислать смету» из очереди не дошло бы ни до кого.
-        try { autoAssign(this.db, { captureId:claim.capture_id, userId:claim.user_id ?? null, classification:result.classification }); } catch {}
+        let assigned = null;
+        try { assigned = autoAssign(this.db, { captureId:claim.capture_id, userId:claim.user_id ?? null, classification:result.classification }); } catch {}
+        // «@Аня» в самой записи — тоже призыв: Аня её видит и знает о ней.
+        try { callFromText(this.db, { captureId:claim.capture_id, authorId:claim.user_id ?? null, raw:claim.raw, assigneeId:assigned?.assignee?.id || null }); } catch {}
         // Разобрано в фоне, а человек мог уже уйти: неясная запись ждёт его за колокольчиком.
         try { noticeUnclear(this.db, { userId:claim.user_id ?? null, captureId:claim.capture_id, classification:result.classification, raw:claim.raw }); } catch {}
         this.report({event:'capture_job_succeeded',jobId:claim.id,provider:claim.selected_provider,usedProvider:result.usedProvider||result.provider,fallbackReason:result.fallbackReason||null,durationMs:Date.now()-startedAt});

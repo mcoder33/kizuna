@@ -271,6 +271,31 @@ test("круг: дело человеку прямо за столом и при
   await anya.page.goto("/#circles");
   await anya.page.locator(".kc-chip").filter({ hasText: "Смета" }).click();
   await expect(anya.page.locator(".kc-bb")).toContainText("посмотри, пожалуйста");
+
+  // ── «@» в самом поле записи ──
+  await page.goto("/#today");
+  await page.locator("#capture-input").click();
+  await page.keyboard.type("@");
+  const menu = page.locator(".mention-menu");
+  await expect(menu).toBeVisible();
+  await expect(menu).toContainText("Аня");
+  await expect(menu).toContainText("Хаб");
+  await menu.locator(".mention-option").filter({ hasText: "Аня" }).click();
+  await page.keyboard.type("глянь смету по Хабу");
+  await expect(page.locator("#capture-input")).toContainText("@Аня глянь смету");
+  await page.locator("#capture-form button[type=submit]").click();
+  await expect
+    .poll(async () => (await (await request.get("/api/entries?limit=5")).json()).entries.some((entry) => entry.raw.includes("глянь смету")), { timeout: 15000 })
+    .toBe(true);
+
+  // Позванная видит запись у себя за колокольчиком и может её открыть.
+  await anya.page.goto("/#today");
+  await anya.page.locator("#bell-summary").click();
+  const call = anya.page.locator(".bell-row").filter({ hasText: "зовёт вас в записи" }).first();
+  await expect(call).toBeVisible({ timeout: 15000 });
+  await call.locator(".bell-text").click();
+  await expect(anya.page.locator("#review-dialog")).toContainText("глянь смету");
+  await anya.page.locator("#review-close").click();
   await anya.context.close();
   // Уборка, как в соседних проверках: круг распущен, сосед заблокирован.
   await dissolveCircles(request);

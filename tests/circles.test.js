@@ -259,3 +259,32 @@ test('фото круга: ставит хозяин, видят все в кр�
   await sasha.delete(`/api/circles/${circle.id}`).expect(200);
   assert.equal(app.database.prepare('SELECT COUNT(*) AS n FROM circle_photos').get().n,0);
 });
+
+// «@» в самой записи — призыв: человек из круга видит запись и узнаёт о ней.
+// Дело, которое ему же и досталось, второй раз не звонит.
+test('призыв «@» в записи открывает её человеку и кладёт строку за колокольчиком',async()=>{
+  const {sasha,anya}=await pair();
+  const people=(await sasha.get('/api/people').expect(200)).body.people;
+  assert.deepEqual(people.map(person=>[person.name,person.circles]),[['Аня',['Хаб']]]);
+  assert.deepEqual((await anya.get('/api/people').expect(200)).body.people.map(person=>person.name),['Саша'],'у каждого свои люди');
+
+  const note=(await sasha.post('/api/captures').send({raw:'Смета по Хабу готова, @Аня — глянь',primaryType:'note'}).expect(201)).body.entry;
+  // Позванная видит запись целиком и стоит в её участниках.
+  assert.equal((await anya.get(`/api/captures/${note.id}`).expect(200)).body.entry.interpretation.classification.summary.length>0,true);
+  assert.ok((await sasha.get(`/api/captures/${note.id}`).expect(200)).body.entry.participants.some(person=>person.name==='Аня'));
+  const called=(await anya.get('/api/notifications').expect(200)).body.notifications.filter(item=>item.kind==='call');
+  assert.equal(called.length,1);
+  assert.match(called[0].text,/зовёт вас в записи/);
+
+  // Постороннего «@» не находит: звать можно только своих по кругам.
+  const petya=authed((await pair()).app,{email:'petya@kizuna.test',role:'user'});
+  const alone=(await sasha.post('/api/captures').send({raw:'@Петя, ты кто',primaryType:'note'}).expect(201)).body.entry;
+  assert.equal((await sasha.get(`/api/captures/${alone.id}`).expect(200)).body.entry.participants.length,0);
+  await petya.get(`/api/captures/${alone.id}`).expect(404);
+
+  // Дело, которое досталось Ане, зовёт её просьбой — и не дублирует призывом.
+  await sasha.post('/api/captures').send({raw:'@Аня — прислать смету по Хабу',primaryType:'todo'}).expect(201);
+  const hers=(await anya.get('/api/notifications').expect(200)).body.notifications;
+  assert.equal(hers.filter(item=>item.kind==='call').length,1,'нового призыва нет');
+  assert.equal(hers.filter(item=>item.kind==='request').length,1,'просьба пришла одна');
+});

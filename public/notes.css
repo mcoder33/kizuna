@@ -700,6 +700,36 @@ button.notes-head-emo:hover { background: var(--nt-hover); }
 .link-hint { flex: none; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--n-66); }
 .link-create .link-title { color: var(--n-52); }
 
+/* ── подсказка людей после «@» — в той же мерке, что и страницы ── */
+.mention-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 240px;
+  max-width: 340px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--n-100);
+  border: 1px solid var(--n-93);
+  border-radius: 14px;
+  box-shadow: 0 16px 44px var(--orange-21-a10);
+}
+.mention-option {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1.3;
+}
+.mention-option.is-active { background: var(--n-96); }
+.mention-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--n-25); }
+.mention-hint { flex: none; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--n-66); }
+.mention-foot { margin: 4px 10px 2px; font-size: 11.5px; color: var(--n-66); }
+
 /* ── выбор места ── */
 .notes-picker {
   position: fixed;

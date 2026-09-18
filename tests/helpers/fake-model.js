@@ -66,7 +66,8 @@ function people(text) {
   const found = [];
   // «Ане — прислать смету»: кому дело, названо первым словом и тире. Модель
   // достаёт такого человека сама, и разбор без него не узнал бы исполнителя.
-  const addressed = text.match(/^\s*([А-ЯЁ][а-яё-]{1,30})\s*[—–-]\s+/u);
+  // «@» перед именем настоящая модель тоже не считает частью имени.
+  const addressed = text.match(/^\s*@?([А-ЯЁ][а-яё-]{1,30})\s*[—–-]\s+/u);
   if (addressed) found.push(addressed[1]);
   for (const match of text.matchAll(/(?:^|[\s,])(?:с|со|для|от)\s+([А-ЯЁ][а-яё-]{1,30}|[A-ZА-ЯЁ]{2,10})(?=$|[\s,.:;])/g)) {
     const candidate = match[1], lower = candidate.toLowerCase();

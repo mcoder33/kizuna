@@ -2,6 +2,7 @@ import { renderMarkdown, renderInlineMarkdown } from "./markdown.js";
 import { createMarkdownField } from "./markdown-live.js";
 import { attachSlashMenu } from "./slash-menu.js";
 import { attachLinkMenu } from "./link-menu.js";
+import { attachMentionMenu, forgetMentionPeople } from "./mention-menu.js";
 import { attachFormatToolbar } from "./format-toolbar.js";
 import { createVoiceDialog } from "./voice.js";
 import { openNotes, refreshNotes } from "./notes.js";
@@ -3841,6 +3842,8 @@ const captureField = createMarkdownField({
 $("#capture-form").prepend(captureField.element);
 attachSlashMenu(captureField);
 attachLinkMenu(captureField);
+// «@» прямо в записи: люди из ваших кругов, позванный увидит запись.
+attachMentionMenu(captureField);
 attachFormatToolbar(captureField, { prefs: window.pagentText });
 // Одна кнопка на два дела: пока писать нечего — это разговор, как только
 // появился текст — отправка. Две кнопки рядом заставляли бы выбирать там, где
@@ -6424,6 +6427,9 @@ async function loadCircles({ then = null } = {}) {
   // круге). Второй вызов не теряется: круги перечитываются, как только первая
   // закончится, иначе на экране оставался бы список до правки.
   if (circlesState.loading) { circlesState.again = { then: then || circlesState.again?.then || null }; return; }
+  // Круги перечитывают — значит состав мог измениться: подсказка «@» в поле
+  // записи спросит людей заново.
+  forgetMentionPeople();
   circlesState.loading = true;
   kcEdited();
   try {
