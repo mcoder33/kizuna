@@ -219,10 +219,12 @@ test('утренняя сводка: одна на день, в час напо�
   assert.match(digests[0].text, /1 дело на сегодня/);
   assert.ok(digests[0].meta.some(line => /Саша ждёт ответа: «/.test(line)));
 
-  // Вечером сводка уже не утренняя — следующий день её не догоняет.
+  // Вечером сводка уже не утренняя — следующий день её не догоняет. А вчерашняя
+  // уходит из ленты сама: «3 дела на сегодня» про вчера только мешает.
   clock = new Date('2026-09-17T15:00:00.000Z');
   await app.notificationTick();
-  assert.equal((await feed(anya)).notifications.filter(item => item.kind === 'digest').length, 1);
+  assert.equal((await feed(anya)).notifications.filter(item => item.kind === 'digest').length, 0, 'вчерашняя сводка ушла');
+  assert.equal(app.database.prepare("SELECT COUNT(*) AS n FROM notifications WHERE kind='digest' AND user_id=?").get(anya.user.id).n, 1, 'новой не завелось');
 });
 
 test('потолок расходов: по одному уведомлению на 80% и на 100% в месяц', async () => {

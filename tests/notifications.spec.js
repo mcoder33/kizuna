@@ -177,3 +177,62 @@ test("«Готово» в напоминании закрывает дело и 
   await expect.poll(async () => (await (await request.get("/api/notifications")).json()).notifications.filter((item) => item.kind === "reminder").length).toBe(0);
   await request.put("/api/settings", { data: { notifyPrefs: "{}" } });
 });
+
+// «Доброе утро» — единственный повод, который раскрывается на месте, а не ведёт
+// в другое место. Поэтому «открыл — убрал» у него значит «раскрыл»: строка
+// стоит, пока её читают, и не возвращается, когда колокольчик открыли снова.
+test("раскрытая сводка уходит из ленты", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  const today = new Date().toISOString().slice(0, 10);
+  const digest = {
+    id: "digest-e2e",
+    kind: "digest",
+    lead: "Доброе утро:",
+    text: "4 встречи",
+    meta: ["Одно дело просрочено."],
+    data: { date: today },
+    actors: [],
+    actorIds: [],
+    read: false,
+    waits: false,
+    snoozedUntil: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  let listed = [digest];
+  let dismissed = null;
+  await page.route("**/api/notifications", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ notifications: listed, counts: { waits: 0, unread: listed.filter((item) => !item.read).length }, kinds: [] }),
+    }),
+  );
+  await page.route("**/api/notifications/read", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ counts: { waits: 0, unread: 0 } }) }),
+  );
+  await page.route("**/api/notifications/dismiss", (route) => {
+    dismissed = JSON.parse(route.request().postData() || "{}").ids;
+    listed = listed.filter((item) => !dismissed.includes(item.id));
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ dismissed: dismissed.map((id) => ({ id })), counts: { waits: 0, unread: 0 } }),
+    });
+  });
+
+  await page.goto("/");
+  await page.locator("#bell-summary").click();
+  const row = page.locator(".bell-row.digest");
+  await expect(row).toContainText("Доброе утро");
+  await row.getByRole("button", { name: "Показать встречи и дела" }).click();
+  // Читать не мешаем: раскрытая сводка остаётся на месте.
+  await expect(page.locator(".bell-digest")).toBeVisible();
+  await expect(row).toBeVisible();
+  await expect.poll(() => dismissed).toEqual(["digest-e2e"]);
+
+  // Закрыли колокольчик, открыли снова — сводки нет.
+  await page.locator("#bell-summary").click();
+  await page.locator("#bell-summary").click();
+  await expect(page.locator(".bell-row.digest")).toHaveCount(0);
+});

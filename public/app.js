@@ -9892,14 +9892,16 @@ async function completeFromNotification(item) {
 const shortTitle = (text, limit = 40) => { const clean = String(text || "").replace(/\s+/g, " ").trim(); return clean.length > limit ? `${clean.slice(0, limit - 1)}…` : clean; };
 // Открыл — убрал: в ленте остаётся только неразобранное. Ждущее ответа не
 // уходит, пока на него не ответили. «Вернуть» кладёт убранное обратно.
-async function dismissNotifications(ids, { announce = null } = {}) {
+// keep — убрать на сервере, но оставить строку на экране: так уходит сводка,
+// которую человек прямо сейчас читает.
+async function dismissNotifications(ids, { announce = null, keep = false } = {}) {
   // Строки из всплывашки может ещё не быть в ленте: такие id уходят на сервер
   // как есть, а ждущее ответа он сам не уберёт.
   const waiting = new Set(bellState.items.filter((item) => item.waits).map((item) => item.id));
   const wanted = ids.filter((id) => !waiting.has(id));
   if (!wanted.length) return [];
-  bellState.items = bellState.items.filter((item) => !wanted.includes(item.id));
-  if ($("#bell-menu")?.open) renderBellPanel();
+  if (!keep) bellState.items = bellState.items.filter((item) => !wanted.includes(item.id));
+  if (!keep && $("#bell-menu")?.open) renderBellPanel();
   try {
     const result = await request("/api/notifications/dismiss", { method: "POST", body: JSON.stringify({ ids: wanted }) });
     bellState.counts = result.counts;
@@ -10090,8 +10092,12 @@ function notificationRow(item) {
   return row;
 }
 function toggleDigest(item) {
-  bellState.digest = bellState.digest === item.id ? null : item.id;
+  const open = bellState.digest !== item.id;
+  bellState.digest = open ? item.id : null;
   if (!item.read) markNotificationsRead({ ids: [item.id] });
+  // Раскрыл — значит посмотрел: сводка уходит из ленты, как и любой открытый
+  // повод. Но не из-под рук: строка стоит на месте, пока колокольчик открыт.
+  if (open && !item.seen) { item.seen = true; dismissNotifications([item.id], { keep: true }); }
   renderBellPanel();
 }
 function renderBellPanel() {

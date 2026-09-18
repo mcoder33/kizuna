@@ -298,6 +298,20 @@ export function wakeSnoozed(db, at = new Date(), refresh = row => row) {
 
 // Лента — уведомления, а не архив: старше 30 дней это уже история, и она есть
 // в самих записях и разговорах.
+/**
+ * Вчерашняя сводка — новость о дне, который кончился: «3 встречи и 3 дела на
+ * сегодня» про вчера только мешает. Она уходит из ленты сама, как только настал
+ * новый день, и открывать её ради этого не нужно.
+ */
+export function dismissStaleDigests(db, today, at = now()) {
+  const rows = db
+    .prepare("SELECT id FROM notifications WHERE kind='digest' AND dismissed_at IS NULL AND group_key IS NOT NULL AND group_key<?")
+    .all(`digest:${today}`);
+  const update = db.prepare('UPDATE notifications SET dismissed_at=?, read_at=COALESCE(read_at, ?) WHERE id=?');
+  for (const row of rows) update.run(at, at, row.id);
+  return rows.length;
+}
+
 export function purgeNotifications(db, at = new Date()) {
   const cutoff = new Date(at.getTime() - NOTIFICATION_RETENTION_DAYS * 86400000).toISOString();
   return db.prepare('DELETE FROM notifications WHERE updated_at<? AND (waits=0 OR resolved_at IS NOT NULL)').run(cutoff).changes;

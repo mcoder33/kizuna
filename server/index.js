@@ -25,7 +25,7 @@ import { createSecretBox } from './secrets.js';
 import { createReminderService, ReminderWorker, validRemindHour, REMIND_MAX_MINUTES } from './reminders.js';
 import { createPushService } from './push.js';
 import { validVoiceInterrupt, validVoicePause } from './voice-turn.js';
-import { NOTIFICATION_KINDS, DEFAULT_QUIET_HOURS, validNotifyPrefs, validQuietHours, notify, setNotificationSink, notificationPrefs, quietHoursOf, isQuiet, serializeNotification, listNotifications, notificationCounts, readNotifications, resolveNotifications, findNotification, snoozeNotification, wakeSnoozed, purgeNotifications, dismissNotifications, restoreNotifications, validMutedCalendars } from './notifications.js';
+import { NOTIFICATION_KINDS, DEFAULT_QUIET_HOURS, validNotifyPrefs, validQuietHours, notify, setNotificationSink, notificationPrefs, quietHoursOf, isQuiet, serializeNotification, listNotifications, notificationCounts, readNotifications, resolveNotifications, findNotification, snoozeNotification, wakeSnoozed, purgeNotifications, dismissNotifications, dismissStaleDigests, restoreNotifications, validMutedCalendars } from './notifications.js';
 import { zonedToUtc } from './ics.js';
 import { correctCapture } from './corrections.js';
 import { captureOwner, attachmentOwner, projectionOwner, undoGroupOwner, openVoiceSession, closeVoiceSession, closeStaleVoiceSessions, voiceSpend, monthlySpend, findUserById, countUsers } from './db.js';
@@ -392,6 +392,8 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     const at = now();
     try { wakeSnoozed(db, at, refreshSnoozed); } catch {}
     try { purgeNotifications(db, at); } catch {}
+    // Сводка живёт свой день: с новым утром вчерашняя уходит из ленты сама.
+    try { dismissStaleDigests(db, dateInTimeZone(at, configuredTimeZone)); } catch {}
     for (const user of db.prepare("SELECT * FROM users WHERE status='active'").all()) {
       try { morningDigest(user, at); } catch {}
       try { spendThresholds(user); } catch {}
