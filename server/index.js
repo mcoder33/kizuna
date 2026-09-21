@@ -513,7 +513,9 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     res.json({ restored, counts: notificationCounts(db, req.user.id) });
   }catch(error){next(error);}});
   app.post('/api/notifications/:id/snooze',(req,res,next)=>{try{
-    const result = snoozeNotification(db, req.user.id, req.params.id, Number(req.body?.minutes ?? 10), now());
+    // Без minutes срок выбирает сервер: полчаса, потом вдвое дольше.
+    const minutes = req.body?.minutes === undefined || req.body?.minutes === null ? undefined : Number(req.body.minutes);
+    const result = snoozeNotification(db, req.user.id, req.params.id, minutes, now());
     if (result.error === 'not_found') return res.status(404).json({ error: { code: 'not_found', message: 'Уведомление не найдено.' } });
     if (result.error) return res.status(400).json({ error: { code: result.error, message: 'Отложить можно на срок от минуты до суток.' } });
     countsChanged(req.user.id);

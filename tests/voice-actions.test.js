@@ -209,6 +209,8 @@ test('колокольчик голосом: список, прочитано, �
   const snoozed = await tool(anya, 'notification_action', { action: 'snooze', notificationId: request.notificationId, minutes: 30 });
   assert.equal(snoozed.snoozedUntil, '2026-09-17T09:30:00.000Z');
   assert.ok(!(await tool(anya, 'list_notifications')).items.some(item => item.notificationId === request.notificationId), 'отложенное уходит до срока');
+  // Без срока — как кнопка: следующее откладывание вдвое дольше прежнего.
+  assert.equal((await tool(anya, 'notification_action', { action: 'snooze', notificationId: request.notificationId })).minutes, 60);
   assert.equal((await tool(anya, 'notification_action', { action: 'read_all' })).counts.unread, 0);
   // «Убери» и «очисти» — как в колокольчике: ждущее ответа не уходит.
   assert.match(await failure(anya, 'notification_action', { action: 'dismiss', notificationId: request.notificationId }), /ждёт ответа/);

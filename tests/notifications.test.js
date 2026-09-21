@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server/index.js';
 import { recordUsage } from '../server/db.js';
-import { notify, isQuiet } from '../server/notifications.js';
+import { notify, isQuiet, nextSnoozeMinutes } from '../server/notifications.js';
 import { fakeModelService } from './helpers/fake-model.js';
 import { authed } from './helpers/auth.js';
 import { fakeYandex } from './caldav.test.js';
@@ -195,6 +195,44 @@ test('напоминание — строка за колокольчиком с
   assert.equal(push.sent.length, 2);
   await api.post(`/api/notifications/${note.id}/snooze`).send({ minutes: 0 }).expect(400);
   await api.post('/api/notifications/нет-такого/snooze').send({ minutes: 5 }).expect(404);
+});
+
+test('«Отложить»: полчаса, потом вдвое дольше, не больше суток; встреча возвращается не позже начала', async () => {
+  let clock = new Date('2026-09-16T05:00:30.000Z'); // 09:00:30 по Самаре
+  const app = freshApp({ now: () => clock });
+  const api = authed(app);
+  await api.put('/api/settings').send({ notifyPrefs: JSON.stringify({ digest: 'off' }) }).expect(200);
+  const task = (await api.post('/api/captures').send({ raw: 'сдать отчёт', primaryType: 'todo', due: { date: '2026-09-16' } }).expect(201)).body.entry;
+  await app.reminders.tick();
+  const reminderOf = async captureId => (await feed(api)).notifications.find(item => item.kind === 'reminder' && item.captureId === captureId);
+  let note = await reminderOf(task.id);
+  const spans = [];
+  for (let round = 0; round < 3; round += 1) {
+    spans.push(note.snoozeMinutes);
+    const { snoozedUntil } = (await api.post(`/api/notifications/${note.id}/snooze`).send({}).expect(200)).body;
+    assert.equal(Date.parse(snoozedUntil) - clock.getTime(), note.snoozeMinutes * 60000);
+    assert.equal(await reminderOf(task.id), undefined, 'до срока строки в ленте нет');
+    clock = new Date(snoozedUntil);
+    await app.notificationTick();
+    note = await reminderOf(task.id);
+    assert.equal(note.read, false, 'вернулась непрочитанной');
+  }
+  assert.deepEqual(spans, [30, 60, 120]);
+  assert.equal(note.snoozeMinutes, 240);
+  assert.deepEqual([4, 5, 6, 12].map(nextSnoozeMinutes), [480, 960, 1440, 1440]);
+
+  // Встреча в 13:00, напоминание за 15 минут: полчаса увели бы его за начало.
+  const meeting = (await api.post('/api/captures').send({ raw: 'созвон с подрядчиком', primaryType: 'todo', due: { date: '2026-09-16', time: '13:00' } }).expect(201)).body.entry;
+  await api.post(`/api/captures/${meeting.id}/corrections`).send({ patch: { primaryType: 'meeting_event', completed: false } }).expect(200);
+  clock = new Date('2026-09-16T08:45:30.000Z');
+  await app.reminders.tick();
+  note = await reminderOf(meeting.id);
+  assert.equal(note.lead, 'Через 15 мин');
+  const snoozed = (await api.post(`/api/notifications/${note.id}/snooze`).send({}).expect(200)).body;
+  assert.equal(snoozed.snoozedUntil, '2026-09-16T09:00:00.000Z');
+  clock = new Date('2026-09-16T09:00:00.000Z');
+  await app.notificationTick();
+  assert.equal((await reminderOf(meeting.id)).lead, 'Сейчас');
 });
 
 test('утренняя сводка: одна на день, в час напоминаний и только когда есть что сказать', async () => {

@@ -589,11 +589,12 @@ export function notificationAction(db, args, context) {
     return { notificationId: row.id, read: true, counts: notificationCounts(db, userId) };
   }
   if (action === 'snooze') {
-    const minutes = args.minutes === undefined ? 10 : Number(args.minutes);
+    // Без срока — как кнопка в колокольчике: полчаса, потом вдвое дольше.
+    const minutes = args.minutes === undefined || args.minutes === null ? undefined : Number(args.minutes);
     const result = snoozeNotification(db, userId, row.id, minutes, now());
     if (result.error) return { error: 'Отложить можно на срок от минуты до суток.' };
     hooks.countsChanged(userId);
-    return { notificationId: row.id, snoozedUntil: result.snoozedUntil, counts: notificationCounts(db, userId) };
+    return { notificationId: row.id, snoozedUntil: result.snoozedUntil, minutes: result.minutes, counts: notificationCounts(db, userId) };
   }
   if (action === 'respond') {
     if (row.kind !== 'invite') return { error: 'Ответить можно на приглашение на встречу.' };

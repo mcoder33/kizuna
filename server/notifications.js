@@ -133,6 +133,8 @@ export function migrateNotifications(db) {
   // Строка остаётся до чистки — «Вернуть» возвращает её на место.
   const columns = new Set(db.prepare('PRAGMA table_info(notifications)').all().map(column => column.name));
   if (!columns.has('dismissed_at')) db.exec('ALTER TABLE notifications ADD COLUMN dismissed_at TEXT');
+  // Сколько раз строку уже откладывали: от этого зависит следующий срок.
+  if (!columns.has('snooze_count')) db.exec('ALTER TABLE notifications ADD COLUMN snooze_count INTEGER NOT NULL DEFAULT 0');
 }
 
 // Календари, об изменениях в которых человек попросил не сообщать: список
@@ -204,6 +206,8 @@ export function serializeNotification(row) {
     captureId: row.capture_id, roomId: row.room_id, circleId: row.circle_id, assignmentId: row.assignment_id, accountId: row.account_id, eventUid: row.event_uid,
     waits: Boolean(row.waits) && !row.resolved_at, resolved: Boolean(row.resolved_at), read: Boolean(row.read_at), dismissed: Boolean(row.dismissed_at),
     createdAt: row.created_at, updatedAt: row.updated_at,
+    // На сколько отложит следующее «Отложить» — кнопка пишет это на себе.
+    snoozeMinutes: nextSnoozeMinutes(row.snooze_count),
   };
 }
 
@@ -276,15 +280,26 @@ export function resolveNotifications(db, { userId = null, kind, assignmentId = n
   return db.prepare(`UPDATE notifications SET resolved_at=?, read_at=COALESCE(read_at, ?) WHERE ${where.join(' AND ')}`).run(at, at, ...args).changes;
 }
 
-// «Напомнить через 10 минут»: строка уходит из ленты и возвращается в срок —
-// заново непрочитанной и со свежей доставкой.
+// «Отложить»: строка уходит из ленты и возвращается в срок — заново
+// непрочитанной и со свежей доставкой. Без явного срока первый раз — на
+// полчаса, каждый следующий вдвое дольше, но не больше суток: то, что снова и
+// снова откладывают, дёргает всё реже. Напоминание о встрече возвращается не
+// позже её начала — после начала «через полчаса» уже никому не нужно.
+export const SNOOZE_FIRST_MINUTES = 30;
+export const SNOOZE_MAX_MINUTES = 24 * 60;
+export function nextSnoozeMinutes(count = 0) {
+  return Math.min(SNOOZE_MAX_MINUTES, SNOOZE_FIRST_MINUTES * 2 ** Math.max(0, Number(count) || 0));
+}
 export function snoozeNotification(db, userId, id, minutes, at = new Date()) {
   const row = db.prepare('SELECT * FROM notifications WHERE id=? AND user_id=?').get(id, userId);
   if (!row) return { error: 'not_found' };
-  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 24 * 60) return { error: 'invalid_snooze' };
-  const until = new Date(at.getTime() + minutes * 60000).toISOString();
-  db.prepare('UPDATE notifications SET snoozed_until=?, read_at=? WHERE id=?').run(until, at.toISOString(), id);
-  return { snoozedUntil: until };
+  const span = minutes === undefined || minutes === null ? nextSnoozeMinutes(row.snooze_count) : minutes;
+  if (!Number.isInteger(span) || span < 1 || span > SNOOZE_MAX_MINUTES) return { error: 'invalid_snooze' };
+  const startAt = Date.parse(JSON.parse(row.data_json || '{}').startAt || '');
+  const wake = at.getTime() + span * 60000;
+  const until = new Date(startAt > at.getTime() && startAt < wake ? startAt : wake).toISOString();
+  db.prepare('UPDATE notifications SET snoozed_until=?, read_at=?, snooze_count=snooze_count+1 WHERE id=?').run(until, at.toISOString(), id);
+  return { snoozedUntil: until, minutes: span };
 }
 export function wakeSnoozed(db, at = new Date(), refresh = row => row) {
   const due = db.prepare('SELECT * FROM notifications WHERE snoozed_until IS NOT NULL AND snoozed_until<=? AND dismissed_at IS NULL').all(at.toISOString());

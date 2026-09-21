@@ -553,7 +553,7 @@ export const VOICE_TOOLS = [
   {
     type: 'function',
     name: 'notification_action',
-    description: 'С уведомлением: read — отметить прочитанным, read_all — прочитать всё, dismiss — убрать из ленты, clear — очистить ленту (ждущее ответа остаётся), snooze — напомнить позже (minutes, по умолчанию 10), respond — ответить на приглашение (status accepted, declined или tentative). Выключить повод целиком — update_settings.',
+    description: 'С уведомлением: read — отметить прочитанным, read_all — прочитать всё, dismiss — убрать из ленты, clear — очистить ленту (ждущее ответа остаётся), snooze — напомнить позже (minutes; без него — на 30 минут, каждое следующее откладывание того же уведомления вдвое дольше, напоминание о встрече — не позже её начала), respond — ответить на приглашение (status accepted, declined или tentative). Выключить повод целиком — update_settings.',
     parameters: {
       type: 'object',
       properties: { action: { type: 'string', enum: ['read', 'read_all', 'dismiss', 'clear', 'snooze', 'respond'] }, notificationId: { type: 'string' }, minutes: { type: 'integer' }, status: { type: 'string', enum: ['accepted', 'declined', 'tentative'] } },

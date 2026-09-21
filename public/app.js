@@ -9859,6 +9859,13 @@ function notificationMeta(item) {
   if (item.data?.circle) meta.append(circleChip(item.data.circle, { small: true }));
   return meta;
 }
+// Срок «Отложить» словами: «30 минут», «час», «2 часа», «сутки».
+function snoozeWords(minutes) {
+  if (minutes >= 24 * 60) return "сутки";
+  if (minutes % 60) return `${minutes} ${pluralRu(minutes, "минуту", "минуты", "минут")}`;
+  const hours = minutes / 60;
+  return hours === 1 ? "час" : `${hours} ${pluralRu(hours, "час", "часа", "часов")}`;
+}
 function notifyButton(label, primary, run, { ok = false } = {}) {
   const button = node("button", label, `bell-act${primary ? " primary" : ""}${ok ? " ok" : ""}`);
   button.type = "button";
@@ -9896,8 +9903,13 @@ function notificationActions(item, { after = () => {}, inPanel = false } = {}) {
       acts.append(notifyButton("Готово", true, async () => { await completeFromNotification(item); done("Готово — дело закрыто", { close: !inPanel }); }, { ok: true }));
     if (item.data?.startAt ? Date.parse(item.data.startAt) > Date.now() : notifyDay(item.updatedAt) === currentDayDate) {
       if (item.data?.joinUrl) acts.append(notifyButton("К звонку", true, async () => { window.open(item.data.joinUrl, "_blank", "noopener"); done("Звонок открыт в новой вкладке"); }));
-      acts.append(notifyButton("Через 10 минут", false, async () => {
-        const result = await request(`/api/notifications/${item.id}/snooze`, { method: "POST", body: JSON.stringify({ minutes: 10 }) });
+      // Отложить: первый раз на полчаса, каждый следующий вдвое дольше — срок
+      // считает сервер. Встреча возвращается не позже начала, и кнопка так и
+      // говорит.
+      const snooze = item.snoozeMinutes || 30;
+      const toStart = item.data?.startAt && Date.parse(item.data.startAt) - Date.now() < snooze * 60000;
+      acts.append(notifyButton(toStart ? "Напомнить к началу" : `Через ${snoozeWords(snooze)}`, false, async () => {
+        const result = await request(`/api/notifications/${item.id}/snooze`, { method: "POST", body: JSON.stringify({}) });
         done(`Напомню в ${notifyClock(result.snoozedUntil)}`);
       }));
     }

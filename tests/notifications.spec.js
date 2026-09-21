@@ -171,6 +171,8 @@ test("«Готово» в напоминании закрывает дело и 
   await page.goto("/");
   await page.locator("#bell-summary").click();
   const reminder = page.locator(".bell-row").filter({ hasText: "Проверить доступ голосового агента" });
+  // До начала восемь минут, а «Отложить» — полчаса: кнопка обещает вернуть к началу.
+  await expect(reminder.getByRole("button", { name: "Напомнить к началу" })).toBeVisible();
   await reminder.getByRole("button", { name: "Готово" }).click();
   await expect(reminder).toHaveCount(0);
   await expect.poll(async () => (await (await request.get(`/api/captures/${created.entry.id}`)).json()).entry.projections.find((projection) => projection.type === "task").completion.completed).toBe(true);
