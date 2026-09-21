@@ -7378,9 +7378,15 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 /* Кружок в блоке со временем стоит в строке названия, перед часом. */
 .cal-ev .cal-box { display: inline-grid; place-items: center; margin: 0 5px 0 0; vertical-align: -2px; }
 .cal-ev.done b { text-decoration: line-through; color: var(--n-72); }
+/* Место блока в группе пересекающихся (calLayoutDay): колонка --col из --cols
+   шириной в --span колонок. По краям дня — 3px, между соседями — 2px; без
+   переменных блок во всю ширину, как раньше. Блок — сам себе контейнер:
+   «К звонку» прячется по ширине блока, а не дня. */
 .cal-ev {
   --cal-c: var(--type-todo); --cal-bg: var(--tint-todo);
-  position: absolute; left: 3px; right: 3px; z-index: 1;
+  position: absolute; z-index: 1; container-type: inline-size;
+  left: calc(3px + (100% - 4px) * var(--col, 0) / var(--cols, 1));
+  width: calc((100% - 4px) * var(--span, 1) / var(--cols, 1) - 2px);
   border-radius: 7px; padding: 4px 7px; font-size: 11.5px; line-height: 1.25;
   overflow: hidden; cursor: pointer; background: var(--cal-bg); color: var(--ink);
   box-shadow: 0 0 0 1px var(--paper);
@@ -7407,13 +7413,17 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 .cal-ev.done b { text-decoration: line-through; color: var(--n-72); }
 .cal-ev.short { padding: 2px 7px; }
 .cal-ev.short small { display: none; }
-.cal-ev:has(.cal-join) b { padding-right: 48px; }
+/* Узкий блок обрезает название чаще — значок повтора не должен ложиться на текст. */
+.cal-ev:has(.cal-ev-repeat) b { padding-right: 14px; }
+.cal-ev:has(.cal-join) b { padding-right: 62px; }
 .cal-join {
   position: absolute; right: 6px; top: 5px;
   font-size: 10px; font-weight: 700; color: var(--paper); background: var(--cal-c);
   border-radius: 5px; padding: 2px 6px; text-decoration: none;
 }
-@container (max-width: 150px) { .cal-ev .cal-join { display: none; } }
+@container (max-width: 150px) { .cal-ev .cal-join { display: none; } .cal-ev:has(.cal-join) b { padding-right: 0; } }
+/* В узком блоке час и так виден по месту в сетке — место отдаётся названию. */
+@container (max-width: 120px) { .cal-ev .cal-ev-time { display: none; } }
 
 /* день: сетка и повестка рядом */
 .cal-day { display: grid; grid-template-columns: minmax(0, 1fr) 320px; }

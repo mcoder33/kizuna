@@ -8730,13 +8730,53 @@ function calChipEl(item, { overdue = false } = {}) {
   chip.addEventListener("click", () => openCalendarItem(item));
   return chip;
 }
-function calEventEl(item) {
+// Раскладка дня: блоки, пересекающиеся по времени, встают рядом, как в
+// Календаре Apple, а не друг на друга — иначе дело в 11:00 целиком закрывало
+// встречу того же часа. Пересечение считается по видимому блоку: короткое
+// событие тянется до высоты 18px и тоже налезает на соседа. Группа
+// пересекающихся делится на колонки жадно, по началу (длинное — левее), а
+// блок растягивается вправо на соседние колонки, пока они свободны.
+const CAL_EV_MIN_PX = 18;
+function calLayoutDay(items) {
+  const boxes = items.map((item) => {
+    const start = calMinutes(item.time);
+    return { item, start, end: Math.max(calMinutes(calEndOf(item)), start + (CAL_EV_MIN_PX / CAL_HOUR_PX) * 60) };
+  }).sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+  const places = new Map();
+  let group = [], columns = [], groupEnd = -Infinity;
+  const settle = () => {
+    for (const box of group) {
+      let span = 1;
+      while (box.col + span < columns.length && !columns[box.col + span].some((other) => other.start < box.end && other.end > box.start)) span += 1;
+      places.set(box.item, { col: box.col, span, cols: columns.length });
+    }
+    group = []; columns = []; groupEnd = -Infinity;
+  };
+  for (const box of boxes) {
+    if (box.start >= groupEnd) settle();
+    let col = columns.findIndex((column) => column[column.length - 1].end <= box.start);
+    if (col < 0) { col = columns.length; columns.push([]); }
+    columns[col].push(box);
+    box.col = col;
+    group.push(box);
+    groupEnd = Math.max(groupEnd, box.end);
+  }
+  settle();
+  return places;
+}
+function calEventEl(item, place = null) {
   const start = calMinutes(item.time), end = calMinutes(calEndOf(item));
   const top = ((start - CAL_H0 * 60) / 60) * CAL_HOUR_PX;
-  const height = Math.max(((end - start) / 60) * CAL_HOUR_PX - 2, 18);
+  const height = Math.max(((end - start) / 60) * CAL_HOUR_PX - 2, CAL_EV_MIN_PX);
   const element = node("div", undefined, `cal-ev ${item.kind}${item.done ? " done" : ""}${item.overdue ? " late" : ""}${height < 34 ? " short" : ""}${calAwaitingAnswer(item) ? " unanswered" : ""}`);
   element.style.top = `${top}px`;
   element.style.height = `${height}px`;
+  // Место в группе пересекающихся; одиночный блок — во всю ширину, как раньше.
+  if (place && place.cols > 1) {
+    element.style.setProperty("--col", String(place.col));
+    element.style.setProperty("--span", String(place.span));
+    element.style.setProperty("--cols", String(place.cols));
+  }
   element.dataset.id = item.id;
   if (item.kind !== "external") { element.draggable = !item.done; element.dataset.own = "1"; element.dataset.occ = item.date; }
   else { if (item.editable) { element.draggable = true; element.dataset.own = "1"; } if (item.color) element.style.setProperty("--cal-c", item.color); }
@@ -8874,8 +8914,9 @@ function calGridEl(dates) {
     const col = node("div", undefined, `cal-col${isToday ? " today" : ""}${weekend ? " wknd" : ""}`);
     col.dataset.date = date;
     col.style.setProperty("--n", String(CAL_H1 - CAL_H0));
-    for (const item of external.filter((entry) => !entry.allDay)) col.append(calEventEl(item));
-    for (const item of own.filter((entry) => entry.time !== null)) col.append(calEventEl(item));
+    const timed = external.filter((entry) => !entry.allDay).concat(own.filter((entry) => entry.time !== null));
+    const places = calLayoutDay(timed);
+    for (const item of timed) col.append(calEventEl(item, places.get(item)));
     if (isToday) { const line = node("div", undefined, "cal-now"); line.style.top = `${((nowMinutes - CAL_H0 * 60) / 60) * CAL_HOUR_PX}px`; col.append(line); }
     grid.append(col);
   }
