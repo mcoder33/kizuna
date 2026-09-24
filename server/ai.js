@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { answerSchema, classificationSchema, unclassifiedCapture, normalizeClassification, validateCitations } from './classifier.js';
+import { answerSchema, classificationSchema, unclassifiedCapture, normalizeClassification, validateCitations, applyExplicitType } from './classifier.js';
 import { createCliConfig, publicProviderAvailability, validateProviderId, validateRemoteModel } from './cli-config.js';
 import { createCliRunner, CliRunnerError } from './cli-runner.js';
 import { createCliProviders, answerSchemaJson, classificationSchemaJson, classifyGuidance } from './cli-providers.js';
@@ -59,8 +59,10 @@ function usableOpenAiModels(ids) {
     .map(id => ({ id, name: id }));
 }
 
+// Тип, названный человеком в начале записи («закинь заметку — …»), сильнее
+// вывода модели — и у любого провайдера, и у записи без разбора.
 function validatedClassification(candidate, raw, now, timeZone) {
-  try { return normalizeClassification(classificationSchema.parse(candidate), raw, now(), 'model', timeZone); }
+  try { return applyExplicitType(normalizeClassification(classificationSchema.parse(candidate), raw, now(), 'model', timeZone), raw, now(), timeZone); }
   catch { throw Object.assign(new Error('schema invalid'), { code:'schema_invalid' }); }
 }
 
@@ -91,7 +93,7 @@ export function createAiService({ apiKey = process.env.OPENAI_API_KEY, model = p
   function provenance(requested, used, reason = null, usedModel = null) {
     return { provider:used, model:usedModel, reason, requestedProvider:requested, usedProvider:used, fallbackReason:reason };
   }
-  function fallbackClassification(raw, requested, reason) { return { classification:unclassifiedCapture(raw), ...provenance(requested, 'fallback', reason, null) }; }
+  function fallbackClassification(raw, requested, reason) { return { classification:applyExplicitType(unclassifiedCapture(raw), raw, now(), timeZone), ...provenance(requested, 'fallback', reason, null) }; }
   function fallbackAnswer(query, sources, requested, reason) { return { ...lexicalAnswer(query, sources), ...provenance(requested, 'fallback', reason, null) }; }
   // Последний расход OpenAI: их SDK отдаёт его вместе с ответом, а наружу он
   // уходит рядом с провенансом.

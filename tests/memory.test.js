@@ -96,6 +96,20 @@ test('поправка становится правилом, а не повто
   assert.deepEqual(learnQuietly(db, { userId: 'u1', raw: 'Релизил хаб', before: null, after }), []);
 });
 
+// Пример для памяти — слова человека, а не вложенная переписка со ссылками:
+// урок, привязанный к «…/call/13008», в другой раз не сработает.
+test('урок поправки берёт слова человека до тире или ссылки', () => {
+  const db = database();
+  const raw = 'закинь заметку - доработака ботдетектора войс опс - ❯ https://ai-pomogi.ru/#/call/13008?back=x Боту смс отправили\n  https://ai-pomogi.ru/#/call/13108 еще бот';
+  const before = classificationOf(raw, { primaryType: 'outcome_decision', completed: true });
+  const after = classificationOf(raw, { primaryType: 'note', completed: false });
+  const bodies = learnFromCorrection(db, { userId: 'u1', raw, before, after }).map(item => item.body);
+  assert.deepEqual(bodies, ['«закинь заметку» — это заметка, а не результат.', '«закинь заметку» — ещё предстоит, а не сделанное.']);
+  // Запись, начатая ссылкой, своих слов не имеет — пример берётся из заголовка.
+  const linked = learnFromCorrection(db, { userId: 'u1', raw: 'https://ai-pomogi.ru/#/call/13008 разобрать', before: classificationOf('x', { summary: 'Разбор звонка 13008', primaryType: 'note' }), after: classificationOf('x', { summary: 'Разбор звонка 13008', primaryType: 'task' }) });
+  assert.match(linked[0].body, /^«Разбор звонка 13008» — это задача, а не заметка/);
+});
+
 test('подсказка разбора несёт словарь журнала и решённое', () => {
   const db = database();
   createLedger(db, { raw: 'Созвон по Hub с Даниилом', classification: classificationOf('Созвон по Hub с Даниилом', { primaryType: 'meeting_event', entities: { projects: ['Hub'], people: ['Даниил'], when: null, followUp: null } }), provider: 'manual' });

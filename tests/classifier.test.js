@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { unclassifiedCapture, normalizeClassification, gateClassification, scheduleFromModel, shouldMaterializeProjections, validateCitations, settleCompleted, makeProjections, modelCompleted } from '../server/classifier.js';
+import { unclassifiedCapture, normalizeClassification, gateClassification, scheduleFromModel, shouldMaterializeProjections, validateCitations, settleCompleted, makeProjections, modelCompleted, explicitType, applyExplicitType } from '../server/classifier.js';
 
 const now = new Date('2026-08-21T10:00:00Z');
 const zone = 'Europe/Samara';
@@ -167,4 +167,39 @@ test('citation validation is unchanged', () => {
   assert.equal(validateCitations(['outside'], new Set(['a'])), false);
   assert.equal(validateCitations([], new Set(['a'])), false);
   assert.equal(validateCitations(['a', 'a'], new Set(['a'])), false);
+});
+
+// 24.09: «закинь заметку - …» с пересланной перепиской о ботах модель разобрала
+// как результат — слова человека о типе для текста не значили ничего.
+test('явно названный в начале записи тип сильнее вывода модели', () => {
+  const forwarded = 'закинь заметку - доработака ботдетектора войс опс - ❯ https://ai-pomogi.ru/#/call/13008 Боту смс отправили\n  https://ai-pomogi.ru/#/call/13108 еще бот который не определился';
+  assert.equal(explicitType(forwarded), 'note');
+  assert.equal(explicitType('Задача: купить молоко'), 'task');
+  assert.equal(explicitType('Итог — договорились о релизе'), 'outcome_decision');
+  assert.equal(explicitType('запиши идею про кэш'), 'idea_question');
+  assert.equal(explicitType('сделай мне задачу на завтра'), 'task');
+  assert.equal(explicitType('Созвон: с Ваней в 11'), 'meeting_event');
+  // Слово-тип не в роли команды — обычный текст: тип решает модель.
+  for (const plain of ['Дело в том, что всё сломалось', 'заметка оказалась полезной', 'Итоги квартала выложены', 'обсудили и решили добавь задачу', 'Встреча с Даниилом завтра', 'Нужно позвонить маме завтра в 18:00']) assert.equal(explicitType(plain), null, plain);
+
+  const modelSaid = normalize(forwarded, { primaryType: 'outcome_decision', summary: 'Доработка ботдетектора', completed: true });
+  assert.equal(modelSaid.primaryType, 'outcome_decision');
+  const settled = applyExplicitType(modelSaid, forwarded, now, zone);
+  assert.equal(settled.primaryType, 'note');
+  assert.equal(settled.completed, false, 'заметка сделанной не бывает');
+  assert.equal(settled.summary, 'Доработка ботдетектора', 'заголовок модели остаётся');
+  const claim = settled.claims.find(item => item.field === 'type');
+  assert.equal(claim.confidence, 1);
+  assert.equal(claim.provenance.source, 'raw');
+  assert.equal(shouldMaterializeProjections(settled), true);
+
+  const agreed = normalize('Заметка — доступы к стенду', { primaryType: 'note', summary: 'Доступы к стенду' });
+  assert.equal(applyExplicitType(agreed, 'Заметка — доступы к стенду', now, zone), agreed, 'модель и человек согласны — разбор не переписывается');
+  const plain = normalize('Релизил хаб', { primaryType: 'outcome_decision', summary: 'Релиз хаба', completed: true });
+  assert.equal(applyExplicitType(plain, 'Релизил хаб', now, zone), plain);
+
+  const unclassified = applyExplicitType(unclassifiedCapture('запиши задачу: проверить бэкапы'), 'запиши задачу: проверить бэкапы', now, zone);
+  assert.equal(unclassified.primaryType, 'task');
+  assert.equal(unclassified.unclassified, undefined, 'названный тип — уже разбор');
+  assert.equal(unclassified.ambiguity, null);
 });

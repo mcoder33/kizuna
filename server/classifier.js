@@ -262,6 +262,30 @@ export function applyUserOverrides(classification,overrides,now=new Date(),timeZ
   return out;
 }
 
+// Тип, названный самим человеком в начале записи: «закинь заметку — …»,
+// «запиши задачу: …», «Итог: …». Модель таких слов не знает: 24.09 «закинь
+// заметку» с пересланной перепиской о ботах она разобрала как результат —
+// текст был в прошедшем времени. У голоса свои слова ловились всегда
+// (voice.js), у текста и Telegram — нет. Правило узкое: только команда или
+// слово-тип с двоеточием в самом начале; «дело в том, что…» или «заметка
+// оказалась полезной» типом не считаются.
+const EXPLICIT_TYPE_WORDS={note:'заметк\\p{L}*',task:'задач\\p{L}*|дел[оа]|туду|тудушк\\p{L}*',outcome_decision:'итог\\p{L}*|результат\\p{L}*|отч[её]т\\p{L}*',idea_question:'иде[яюи]|мысл[ьи]|вопрос\\p{L}*',meeting_event:'встреч\\p{L}*|созвон\\p{L}*'};
+const EXPLICIT_VERBS='закинь|кинь|запиши|добавь|создай|сохрани|положи|занеси|оформи|заведи|сделай';
+const EXPLICIT_HEAD=80;
+const explicitPatterns=Object.entries(EXPLICIT_TYPE_WORDS).map(([type,words])=>({type,command:new RegExp(`^[^\\p{L}]*(?:${EXPLICIT_VERBS})\\s+(?:(?:в|как|это|мне|себе)\\s+)*(?:${words})(?![\\p{L}])`,'iu'),label:new RegExp(`^[^\\p{L}]*(?:${words})\\s*[:—–-]`,'iu')}));
+export function explicitType(raw){
+  const head=String(raw||'').slice(0,EXPLICIT_HEAD);
+  for(const {type,command,label} of explicitPatterns)if(command.test(head)||label.test(head))return type;
+  return null;
+}
+// Названный тип ложится поверх разбора как ручной override: факт с уверенностью
+// 1, «сделано» только у результата, неразобранность и вопрос о типе сняты.
+export function applyExplicitType(classification,raw,now=new Date(),timeZone='Europe/Samara'){
+  const type=explicitType(raw);
+  if(!type||!classification||(classification.primaryType===type&&!classification.unclassified))return classification;
+  return applyUserOverrides(classification,{primaryType:type},now,timeZone);
+}
+
 export function shouldMaterializeProjections(c){return primaryTypes.includes(c.primaryType)&&!c.unclassified&&!c.conflicts?.schedule&&!c.conflicts?.projects}
 export function makeProjections(captureId,c,undoGroupId){return [c.primaryType,...(c.additionalTypes||[])].map(projectionType=>({captureId,projectionType,payload:{title:c.summary,...c.entities},undoGroupId}))}
 export function validateCitations(ids,allowed){return Array.isArray(ids)&&new Set(ids).size===ids.length&&(allowed.size===0?ids.length===0:ids.length>0)&&ids.every(id=>typeof id==='string'&&allowed.has(id))}

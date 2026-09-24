@@ -176,8 +176,14 @@ export function memoryPrompt(db, options) {
 const EXCERPT_LIMIT = 90;
 const priorityNames = { high: 'важное', low: 'неважное', normal: 'обычное' };
 
+// Пример — это слова человека, а не всё, что он вложил: до первой строки,
+// тире или ссылки. Урок «закинь заметку - … https://…/call/13008…» — это
+// заметка» привязан к одной ссылке и в другой раз не сработает; «закинь
+// заметку» — это заметка» сработает.
+const EXCERPT_CUT = /\s+(?:[-—–]|❯|›)\s+|https?:\/\/|\n/u;
 function excerptOf(raw, classification) {
-  const text = trim(raw, EXCERPT_LIMIT * 2) || trim(classification?.summary, EXCERPT_LIMIT * 2);
+  const own = String(raw || '').split(EXCERPT_CUT)[0];
+  const text = trim(own, EXCERPT_LIMIT * 2) || trim(classification?.summary, EXCERPT_LIMIT * 2) || trim(raw, EXCERPT_LIMIT * 2);
   return text.length > EXCERPT_LIMIT ? `${text.slice(0, EXCERPT_LIMIT)}…` : text;
 }
 
