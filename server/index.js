@@ -20,7 +20,9 @@ import { createCalendarService, CalendarSyncWorker } from './calendar.js';
 import * as circles from './circles.js';
 import { AVATAR_IMAGE_LIMIT } from './avatars.js';
 import * as chat from './chat.js';
-import { registerNotesRoutes } from './notes-tree.js';
+import { registerNotesRoutes, afterCapture } from './notes-tree.js';
+import { createTelegramService, TELEGRAM_API } from './telegram.js';
+import QRCode from 'qrcode';
 import { createSecretBox } from './secrets.js';
 import { createReminderService, ReminderWorker, validRemindHour, REMIND_MAX_MINUTES } from './reminders.js';
 import { createPushService } from './push.js';
@@ -72,6 +74,10 @@ const SETTINGS = {
   // общий на всех, как и ключи моделей.
   googleClientId: { env:'PAGENT_GOOGLE_CLIENT_ID', admin:true, check:value => typeof value === 'string' && value.length <= 300 },
   googleClientSecret: { env:'PAGENT_GOOGLE_CLIENT_SECRET', secret:true, admin:true, check:value => typeof value === 'string' && value.length <= 300 },
+  // Бот Telegram — второй вход в журнал (server/telegram.js). Токен выдаёт
+  // @BotFather; бот один на всё приложение, а свой Telegram каждый привязывает
+  // сам в настройках.
+  telegramBotToken: { env:'PAGENT_TELEGRAM_BOT_TOKEN', secret:true, admin:true, check:value => typeof value === 'string' && /^\s*\d{5,20}:[A-Za-z0-9_-]{20,80}\s*$/.test(value) },
   aiProvider: { env:'PAGENT_AI_PROVIDER', admin:true, check:value => providerIds.has(value) },
   voiceProvider: { env:'PAGENT_VOICE_PROVIDER', admin:true, check:value => value === 'openai' || value === 'gemini' },
   // Голос выбирается из каталога: от него зависит род, в котором модель говорит
@@ -188,7 +194,7 @@ function environmentWith(stored, env) {
 // списке, уходит как поток байтов с Content-Disposition: attachment — браузер
 // такой ответ не выполнит и не покажет как страницу.
 const INLINE_TYPES = new Set(['image/png','image/jpeg','image/gif','image/webp','image/avif','image/heic','application/pdf','text/plain','text/markdown']);
-const ATTACHMENT_TYPES = new Set([...INLINE_TYPES, 'application/zip','application/json','text/csv','audio/mpeg','audio/wav','video/mp4','application/octet-stream']);
+const ATTACHMENT_TYPES = new Set([...INLINE_TYPES, 'application/zip','application/json','text/csv','audio/mpeg','audio/wav','audio/ogg','video/mp4','application/octet-stream']);
 // Имя приходит от человека: оставляем только базовую часть без путей и
 // управляющих символов, а на диске файл всё равно называется своим id.
 function safeFilename(value) {
@@ -210,7 +216,7 @@ function noteUsage(db, result, kind, userId = null) {
 // Уточнение из карточки. Правила — в server/corrections.js, общие с голосом.
 function applyCorrection(db,req,res,next,notify=()=>{}){try{const body=req.body||{},patch=body.patch||body,providedKey=req.get('Idempotency-Key');if(providedKey!==undefined&&!validIdempotencyKey(providedKey))return res.status(400).json({error:{code:'invalid_idempotency_key',message:'Некорректный ключ идемпотентности.'}});const result=correctCapture(db,{captureId:req.params.id,userId:req.user?.id??null,patch,operationKey:providedKey||null});if(result.error)return res.status(result.error.status).json({error:{code:result.error.code,message:result.error.message}});notify();res.json({entry:result.entry,undoGroupId:result.undoGroupId,review:result.review,replayed:result.replayed});}catch(error){next(error);}}
 async function snapshotProvider(ai, requested) { if (requested) return requested; const status = await ai.status(); return providerIds.has(status?.selectedProvider) ? status.selectedProvider : providerIds.has(status?.defaultProvider) ? status.defaultProvider : 'fallback'; }
-export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.join(__dirname, '..', 'data', 'pagent.sqlite'), aiService, voiceService, timeZone = process.env.PAGENT_TIMEZONE || 'Europe/Samara', now = () => new Date(), workerOptions, audit = () => {}, secureCookies = process.env.PAGENT_SECURE_COOKIES === 'on', calendarService = null, calendarFetch = globalThis.fetch, calendarWorkerOptions = {}, calendarKey = null, pushTransport = null, reminderWorkerOptions = {} } = {}) {
+export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.join(__dirname, '..', 'data', 'pagent.sqlite'), aiService, voiceService, timeZone = process.env.PAGENT_TIMEZONE || 'Europe/Samara', now = () => new Date(), workerOptions, audit = () => {}, secureCookies = process.env.PAGENT_SECURE_COOKIES === 'on', calendarService = null, calendarFetch = globalThis.fetch, calendarWorkerOptions = {}, calendarKey = null, pushTransport = null, reminderWorkerOptions = {}, telegramFetch = globalThis.fetch, telegramOptions = {} } = {}) {
   const db = openDatabase(databasePath);
   const accounts = createAccounts({ db, now, secureCookies, audit, timeZone: () => configuredTimeZone });
   // Настройки читаются из базы поверх окружения: то, что человек поменял в
@@ -253,7 +259,9 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     for (const userId of who) notifyUser(userId, 'journal', { reason:'circle', at: now().toISOString() });
   };
   // Разбор заканчивается в воркере, а не в запросе: там журнал и меняется.
-  const workerAudit = (event) => { try { audit(event); } finally { if (event?.event === 'capture_job_succeeded' || event?.event === 'capture_job_failed') notifyJournal('job'); } };
+  // Запись из Telegram ждёт итога там же: ответ «ИИ разбирает…» правится.
+  let telegram = null;
+  const workerAudit = (event) => { try { audit(event); } finally { if (event?.event === 'capture_job_succeeded' || event?.event === 'capture_job_failed') { notifyJournal('job'); telegram?.answer(event.jobId).catch(() => {}); } } };
   const captureJobWorker = new CaptureJobWorker({ db, ai, now, audit: workerAudit, ...workerOptions });
   let voice = voiceService || createVoiceService(voiceOptions(environment()));
   // Смена ключа, голоса или пояса пересобирает службы на месте: перезапускать
@@ -265,6 +273,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     if (!aiService) ai = createAiService({ timeZone:configuredTimeZone, now, env });
     if (!voiceService) voice = createVoiceService(voiceOptions(env));
     captureJobWorker.ai = ai;
+    telegram?.reconfigure();
   }
   app.captureJobWorker = captureJobWorker;
   // Внешние календари: учётные данные шифруются ключом рядом с базой, а
@@ -447,6 +456,80 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     captureJobWorker.wake();
     return queued;
   } });
+  // ── Telegram ──
+  // Бот — второй вход в журнал (server/telegram.js). Всё, что касается
+  // журнала, служба делает через эти крючки — теми же шагами, что запись с
+  // главной: очередь разбора под потолком расходов, место и ссылки заметки,
+  // вложения, живое обновление вкладок.
+  telegram = createTelegramService({
+    db, now, audit,
+    token: () => environment().PAGENT_TELEGRAM_BOT_TOKEN || null,
+    apiBase: () => process.env.PAGENT_TELEGRAM_API_BASE || TELEGRAM_API,
+    fetch: telegramFetch,
+    timeZone: () => configuredTimeZone,
+    userActive: userId => findUserById(db, userId)?.status === 'active',
+    queueCapture: async ({ userId, raw, occurredAt, origin }) => {
+      const user = findUserById(db, userId);
+      if (!user || user.status !== 'active') return { error: 'inactive' };
+      const gate = await spendGate(user, undefined);
+      const selectedProvider = await snapshotProvider(ai, gate.provider);
+      const queued = enqueueCaptureJob(db, { userId, raw, occurredAt, selectedProvider, selectedModel: null, overrides: null, origin });
+      // Как у записи с главной: «в Страница: …» и [[ссылки]] раскладываются
+      // сразу, не дожидаясь разбора.
+      try { afterCapture(db, { captureId: queued.captureId, userId }); } catch {}
+      captureJobWorker.wake();
+      notifyJournal('queued');
+      const duplicate = db.prepare('SELECT id FROM captures WHERE deleted_at IS NULL AND user_id IS ? AND raw=? AND id!=? AND created_at>=? ORDER BY created_at DESC LIMIT 1').get(userId, raw, queued.captureId, new Date(now().getTime() - 24 * 60 * 60 * 1000).toISOString());
+      return { ...queued, duplicate: Boolean(duplicate), spent: !gate.budget.allowed };
+    },
+    attach: ({ captureId, filename, contentType, bytes }) => {
+      const saved = addAttachment(db, captureId, { filename: safeFilename(filename), contentType: ATTACHMENT_TYPES.has(contentType) ? contentType : 'application/octet-stream', bytes });
+      if (saved.notFound || saved.tooMany) return false;
+      fs.writeFileSync(attachmentPath(saved.id), bytes, { mode: 0o600 });
+      reportAudit(audit, { event: 'attachment_added', result: 'succeeded' });
+      notifyJournal('attachment');
+      return true;
+    },
+    // Итог разбора для ответа в Telegram — то же, что видно на главной после
+    // записи: тип, срок, отделённые дела, вопрос модели.
+    describe: ({ captureId, jobId }) => {
+      const job = getCaptureJob(db, jobId);
+      if (!job || !['succeeded', 'failed', 'cancelled'].includes(job.state)) return null;
+      const capture = db.prepare('SELECT deleted_at FROM captures WHERE id=?').get(captureId);
+      if (!capture || capture.deleted_at) return { state: job.state, captureGone: true };
+      const row = getAggregate(db, captureId);
+      return { state: job.state, classification: row ? JSON.parse(row.classification_json) : null, parts: job.state === 'succeeded' ? splitPartsOf(db, captureId) : [] };
+    },
+    onLink: userId => notifyUser(userId, 'telegram', { at: now().toISOString() }),
+    ...telegramOptions,
+  });
+  app.telegram = telegram;
+  const telegramErrors = {
+    telegram_off: [409, 'Бот Telegram не подключён: администратор добавляет его токен в «Ключах».'],
+    telegram_unavailable: [503, 'Бот Telegram сейчас не на связи — попробуйте чуть позже.'],
+  };
+  // Что видно в настройках: бот и своя привязка. Причину сбоя бота видит
+  // только администратор — остальным она ничего не даст.
+  const telegramView = user => {
+    const bot = telegram.status();
+    return { bot: { ...bot, error: user.role === 'admin' ? bot.error : bot.error ? 'Бот сейчас не на связи.' : null }, link: telegram.linkOf(user.id), canSetup: user.role === 'admin' };
+  };
+  app.get('/api/telegram', (req, res) => res.json(telegramView(req.user)));
+  app.post('/api/telegram/link', async (req, res, next) => {
+    try {
+      // Адрес Кизуны запоминается вместе с кодом: по нему бот потом ведёт
+      // кнопкой «Открыть в Кизуне» к записи.
+      const base = (process.env.PAGENT_PUBLIC_URL || `${req.get('x-forwarded-proto') || req.protocol}://${req.get('x-forwarded-host') || req.get('host')}`).replace(/\/+$/, '');
+      const result = await telegram.createLink(req.user.id, base);
+      if (result.error) { const [status, message] = telegramErrors[result.error]; return res.status(status).json({ error: { code: result.error, message } }); }
+      const qr = await QRCode.toString(result.url, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }).catch(() => null);
+      res.status(201).json({ ...telegramView(req.user), url: result.url, expiresAt: result.expiresAt, qr: qr ? `data:image/svg+xml;base64,${Buffer.from(qr).toString('base64')}` : null });
+    } catch (error) { next(error); }
+  });
+  app.delete('/api/telegram/link', (req, res) => {
+    telegram.unlink(req.user.id);
+    res.json(telegramView(req.user));
+  });
   app.get('/api/events',(req,res)=>{
     res.set({ 'Content-Type':'text/event-stream', 'Cache-Control':'no-store', Connection:'keep-alive', 'X-Accel-Buffering':'no' });
     res.flushHeaders?.();
@@ -1149,11 +1232,11 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
 // (удаление записи, экспорт, блокировка, ошибки календаря), но сборщик по
 // умолчанию пустой, и они падали в никуда. Одной строкой в JSON, чтобы журнал
 // можно было грепать и читать через `journalctl -u kizuna -o cat | jq`.
-if(process.argv[1]===fileURLToPath(import.meta.url)){const app=createApp({audit:(event)=>{try{console.log(JSON.stringify({at:new Date().toISOString(),...event}));}catch{}}});const server=app.listen(Number(process.env.PORT||3000),process.env.HOST||'127.0.0.1',()=>{app.attachVoiceRelay(server);app.captureJobWorker.start();app.calendarSyncWorker.start();app.reminderWorker.start();console.log('Kizuna server started.');});let shuttingDown=false;const shutdown=()=>{if(shuttingDown)return;shuttingDown=true;
+if(process.argv[1]===fileURLToPath(import.meta.url)){const app=createApp({audit:(event)=>{try{console.log(JSON.stringify({at:new Date().toISOString(),...event}));}catch{}}});const server=app.listen(Number(process.env.PORT||3000),process.env.HOST||'127.0.0.1',()=>{app.attachVoiceRelay(server);app.captureJobWorker.start();app.calendarSyncWorker.start();app.reminderWorker.start();app.telegram.start();console.log('Kizuna server started.');});let shuttingDown=false;const shutdown=()=>{if(shuttingDown)return;shuttingDown=true;
   // Потоки событий держали ответы открытыми, и server.close ждал их вечно:
   // systemd убивал процесс по таймауту через 90 с — каждый деплой давал
   // полторы минуты простоя. Потоки закрываем сами, простаивающие соединения
   // тоже, а на всё выключение — жёсткий срок.
   const deadline=setTimeout(()=>process.exit(0),10000);deadline.unref();
   app.closeEventStreams();
-  Promise.allSettled([app.captureJobWorker.stop(),app.calendarSyncWorker.stop(),app.reminderWorker.stop()]).finally(()=>{server.close(()=>process.exit(0));server.closeIdleConnections?.();});};process.once('SIGTERM',shutdown);process.once('SIGINT',shutdown);}
+  Promise.allSettled([app.captureJobWorker.stop(),app.calendarSyncWorker.stop(),app.reminderWorker.stop(),app.telegram.stop()]).finally(()=>{server.close(()=>process.exit(0));server.closeIdleConnections?.();});};process.once('SIGTERM',shutdown);process.once('SIGINT',shutdown);}

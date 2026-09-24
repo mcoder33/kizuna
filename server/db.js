@@ -458,6 +458,7 @@ function migrateUsers(db) {
   migrateConversation(db);
   migrateCirclePhotos(db);
   migrateEveryoneRooms(db);
+  migrateTelegram(db);
 }
 // Участники записи: кого позвали в обсуждение одной записи без круга. Позванный
 // видит эту запись и её разговор — и больше ничего из журнала автора.
@@ -521,6 +522,46 @@ function migrateEveryoneRooms(db) {
   const columns = new Set(db.prepare('PRAGMA table_info(chat_rooms)').all().map(column => column.name));
   if (!columns.has('everyone')) db.exec('ALTER TABLE chat_rooms ADD COLUMN everyone INTEGER NOT NULL DEFAULT 0');
   db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(23, now());
+}
+// Миграция 24: Telegram — второй вход в журнал (server/telegram.js). Привязка
+// человека к своему Telegram, одноразовые коды привязки и принятые сообщения:
+// по ним отсекается повторная доставка и находится ответ, который правится
+// после разбора. Внешних ключей на users и captures нет намеренно, как у
+// памяти помощника: сброс журнала и удаление человека чистят эти строки сами.
+// У задания разбора — откуда пришёл текст: пересланное из Telegram написал не
+// хозяин журнала, и поручать по нему дела или звать людей нельзя.
+function migrateTelegram(db) {
+  db.exec(`CREATE TABLE IF NOT EXISTS telegram_links (
+      user_id TEXT PRIMARY KEY,
+      telegram_id INTEGER NOT NULL UNIQUE,
+      chat_id INTEGER NOT NULL,
+      username TEXT,
+      name TEXT,
+      app_url TEXT,
+      linked_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS telegram_codes (
+      code_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      app_url TEXT,
+      expires_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS telegram_messages (
+      chat_id INTEGER NOT NULL,
+      message_id INTEGER NOT NULL,
+      user_id TEXT NOT NULL,
+      capture_id TEXT,
+      job_id TEXT,
+      reply_id INTEGER,
+      note TEXT,
+      answered_at TEXT,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (chat_id, message_id)
+    );
+    CREATE INDEX IF NOT EXISTS telegram_messages_job ON telegram_messages(job_id) WHERE job_id IS NOT NULL;`);
+  const jobColumns = new Set(db.prepare('PRAGMA table_info(capture_jobs)').all().map(column => column.name));
+  if (!jobColumns.has('origin')) db.exec('ALTER TABLE capture_jobs ADD COLUMN origin TEXT');
+  db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(24, now());
 }
 // Круги: общая полка поверх личных журналов. Запись остаётся у автора, в круг
 // её кладёт отдельная строка `capture_circles` — так «убрать из круга» не
@@ -928,7 +969,7 @@ function insertLedgerEvent(db, eventType, captureId, jobId, createdAt, { project
   db.prepare('INSERT INTO ledger_events(id,event_type,capture_id,job_id,projection_id,interpretation_id,actor,occurred_at,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(id(), eventType, captureId, jobId, projectionId, interpretationId, actor, occurredAt, createdAt);
 }
 
-export function enqueueCaptureJob(db, { raw, occurredAt, selectedProvider, selectedModel = null, idempotencyKey = null, requestFingerprint = null, overrides = null, userId = null }) {
+export function enqueueCaptureJob(db, { raw, occurredAt, selectedProvider, selectedModel = null, idempotencyKey = null, requestFingerprint = null, overrides = null, userId = null, origin = null }) {
   const createdAt = now();
   return withImmediateTransaction(db, () => {
     if (idempotencyKey) {
@@ -942,8 +983,8 @@ export function enqueueCaptureJob(db, { raw, occurredAt, selectedProvider, selec
     }
     const captureId = id(), jobId = id();
     db.prepare(INSERT_CAPTURE).run(captureId, raw, 'text', occurredAt || createdAt, createdAt, 'private', userId);
-    db.prepare(`INSERT INTO capture_jobs(id,capture_id,selected_provider,selected_model,state,stage,retryable,retry_of_id,idempotency_key,request_fingerprint,overrides_json,created_at,user_id)
-      VALUES(?,?,?,?,'pending','queued',0,NULL,?,?,?,?,?)`).run(jobId, captureId, selectedProvider, selectedModel, idempotencyKey, requestFingerprint, overrides ? JSON.stringify(overrides) : null, createdAt, userId);
+    db.prepare(`INSERT INTO capture_jobs(id,capture_id,selected_provider,selected_model,state,stage,retryable,retry_of_id,idempotency_key,request_fingerprint,overrides_json,created_at,user_id,origin)
+      VALUES(?,?,?,?,'pending','queued',0,NULL,?,?,?,?,?,?)`).run(jobId, captureId, selectedProvider, selectedModel, idempotencyKey, requestFingerprint, overrides ? JSON.stringify(overrides) : null, createdAt, userId, origin);
     insertJobEvent(db, jobId, 'queued', createdAt);
     insertLedgerEvent(db, 'capture_queued', captureId, jobId, createdAt);
     return { captureId, jobId, state:'pending', existing:false };
@@ -1039,8 +1080,8 @@ export function retryCaptureJob(db, jobId) {
     if (!previous) return null;
     if (!['failed','cancelled'].includes(previous.state) || !previous.retryable) return { invalidState:true };
     const retryId = id();
-    db.prepare(`INSERT INTO capture_jobs(id,capture_id,selected_provider,selected_model,state,stage,retryable,retry_of_id,created_at,user_id)
-      VALUES(?,?,?,?,'pending','queued',0,?,?,?)`).run(retryId, previous.capture_id, previous.selected_provider, previous.selected_model || null, previous.id, createdAt, previous.user_id ?? null);
+    db.prepare(`INSERT INTO capture_jobs(id,capture_id,selected_provider,selected_model,state,stage,retryable,retry_of_id,created_at,user_id,origin)
+      VALUES(?,?,?,?,'pending','queued',0,?,?,?,?)`).run(retryId, previous.capture_id, previous.selected_provider, previous.selected_model || null, previous.id, createdAt, previous.user_id ?? null, previous.origin ?? null);
     insertJobEvent(db, retryId, 'queued', createdAt);
     insertLedgerEvent(db, 'capture_retry_queued', previous.capture_id, retryId, createdAt);
     return { captureId:previous.capture_id, jobId:retryId, state:'pending' };
@@ -1331,6 +1372,9 @@ const ownedRows = {
   note_bases: ['user_id IS ?', 1],
   note_order: ['user_id IS ?', 1],
   note_icons: ['user_id IS ?', 1],
+  // Принятые из Telegram сообщения ссылаются на записи — уходят вместе с ними.
+  // Сама привязка Telegram остаётся: это подключение, а не журнал.
+  telegram_messages: ['user_id IS ?', 1],
 };
 const mineWhere = table => 'WHERE ' + ownedRows[table][0];
 function exportRowCount(db, userId) { return exportTables.reduce((total, table) => total + db.prepare(`SELECT COUNT(*) AS count FROM ${table} ${mineWhere(table)}`).get(userId).count, 0); }
@@ -1365,7 +1409,7 @@ export function resetLedger(db, userId = null) {
     db.exec('DROP TRIGGER IF EXISTS ledger_events_no_update; DROP TRIGGER IF EXISTS ledger_events_no_delete;');
     try {
       // Порядок важен: сначала то, что ссылается, потом то, на что ссылаются.
-      for (const table of ['note_icons','note_order','note_links','note_places','note_bases','agent_memories','activity_events','reminder_sends','daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','comment_mentions','comment_reactions','comment_reads','comments','capture_people','assignments','capture_circles','interpretations','capture_attachments','capture_notes','usage_events','board_placements','board_columns','calendar_links','calendar_events','calendar_accounts','captures']) db.prepare(`DELETE FROM ${table} ${mineWhere(table)}`).run(userId);
+      for (const table of ['telegram_messages','note_icons','note_order','note_links','note_places','note_bases','agent_memories','activity_events','reminder_sends','daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','comment_mentions','comment_reactions','comment_reads','comments','capture_people','assignments','capture_circles','interpretations','capture_attachments','capture_notes','usage_events','board_placements','board_columns','calendar_links','calendar_events','calendar_accounts','captures']) db.prepare(`DELETE FROM ${table} ${mineWhere(table)}`).run(userId);
     } finally { createLedgerEventGuards(db); }
   });
 }

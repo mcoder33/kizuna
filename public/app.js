@@ -213,6 +213,7 @@ function updatePageFromHash() {
     paintUpcomingReminders();
     loadUsage();
     loadCalendarAccounts();
+    loadTelegram();
     loadMemory();
     loadVoiceModels();
     // Google возвращает сюда после согласия с итогом в адресе: без слова
@@ -4484,6 +4485,7 @@ const SETTING_FIELDS = [
   "openrouterKey",
   "googleClientId",
   "googleClientSecret",
+  "telegramBotToken",
   "voiceProvider",
   "voiceModel",
   "geminiVoiceModel",
@@ -4511,7 +4513,7 @@ const SETTING_FIELDS = [
   "modelReasoning",
   "monthlyLimitUsd",
 ];
-const SECRET_FIELDS = ["openaiKey", "geminiKey", "openrouterKey", "googleClientSecret"];
+const SECRET_FIELDS = ["openaiKey", "geminiKey", "openrouterKey", "googleClientSecret", "telegramBotToken"];
 let appSettings = {};
 function settingInput(name) {
   return document.getElementById(`setting-${name}`);
@@ -4825,6 +4827,8 @@ async function saveSettings(patch, { announce = "Настройки сохран
     );
     status.textContent = "Сохранено";
     if (announce) toast(announce);
+    // Новый токен бота — раздел «Telegram» ждёт, пока бот выйдет на связь.
+    if (Object.hasOwn(patch, "telegramBotToken")) loadTelegram();
   } catch (error) {
     status.textContent = "";
     toast(error.message);
@@ -5092,6 +5096,8 @@ function listenToJournal() {
     return;
   }
   journalStream.addEventListener("journal", reloadJournalSoon);
+  // В Telegram нажали «Запустить» по ссылке из настроек — привязка готова.
+  journalStream.addEventListener("telegram", () => loadTelegram({ announce: true }));
   // Уведомление в открытую вкладку: строка за колокольчиком и, если повод из
   // тех, что идут на телефон, всплывашка в углу. Push сюда не дублируется —
   // сервер шлёт его, только когда вкладок нет.
@@ -9476,6 +9482,89 @@ async function moveCalendarItem(item, schedule, { announce = true } = {}) {
     loadCalendar();
   });
 }
+
+// ── Telegram в настройках ───────────────────────────────────────────────────
+// Бот один на всё приложение, привязка — своя у каждого. Ссылка с кодом
+// открывает бота; когда в Telegram нажали «Запустить», сервер присылает в
+// поток событие «telegram», и раздел сам показывает, что всё подключено.
+let telegramView = null;
+let telegramRetry = null;
+async function loadTelegram({ announce = false } = {}) {
+  if (!$("#telegram-settings")) return;
+  try {
+    const view = await request("/api/telegram");
+    // Состояние читается только после ответа: страница, открытая сразу на
+    // настройках, зовёт это раньше, чем модуль дошёл до объявлений ниже.
+    const wasLinked = Boolean(telegramView?.link);
+    paintTelegram(view);
+    if (announce && !wasLinked && telegramView?.link) toast("Telegram подключён");
+  } catch {
+    // Раздел не обновился — остальные настройки работают и без него.
+  }
+}
+function telegramAnchor(username) {
+  const anchor = node("a", `@${username}`);
+  anchor.href = `https://t.me/${username}`;
+  anchor.target = "_blank";
+  anchor.rel = "noopener";
+  return anchor;
+}
+const telegramBotLink = (bot) => (bot?.bot?.username ? telegramAnchor(bot.bot.username) : document.createTextNode("Кизуны"));
+function paintTelegram(view) {
+  const group = $("#telegram-settings");
+  if (!group || !view?.bot) return;
+  telegramView = view;
+  const { bot, link, canSetup } = view;
+  // Пока бота нет, раздел нужен только тому, кто может его завести.
+  group.hidden = !bot.configured && !canSetup;
+  const state = $("#telegram-state");
+  clear(state);
+  state.classList.toggle("is-error", bot.state === "error");
+  if (!bot.configured) state.append("Бот ещё не заведён: создайте его у ", telegramAnchor("BotFather"), " командой /newbot и вставьте токен в «Ключах» выше.");
+  else if (bot.state === "error") state.append(`Бот не на связи: ${bot.error || "Telegram не отвечает."}`);
+  else if (link) {
+    const who = `${link.name || "Telegram"}${link.username ? ` (@${link.username})` : ""}`;
+    state.append(`Подключён ${who}. Пишите боту `, telegramBotLink(bot), " или пересылайте ему сообщения.");
+  } else if (bot.state === "connecting") state.append("Бот выходит на связь…");
+  else state.append("Бот ", telegramBotLink(bot), " на связи. Подключите свой Telegram — и пишите ему.");
+  const linkButton = $("#telegram-link");
+  linkButton.hidden = !bot.configured || Boolean(link);
+  $("#telegram-unlink").hidden = !link;
+  if (link || !bot.configured) {
+    $("#telegram-connect").hidden = true;
+    linkButton.textContent = "Подключить Telegram";
+  }
+  // Токен только что сохранили: пара секунд — и бот на связи.
+  clearTimeout(telegramRetry);
+  if (bot.configured && bot.state === "connecting" && $("#settings")?.hidden === false) telegramRetry = setTimeout(() => loadTelegram(), 1500);
+}
+$("#telegram-link")?.addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const result = await request("/api/telegram/link", { method: "POST", body: "{}" });
+    paintTelegram(result);
+    const qr = $("#telegram-qr");
+    qr.hidden = !result.qr;
+    if (result.qr) qr.src = result.qr;
+    $("#telegram-open").href = result.url;
+    $("#telegram-connect").hidden = false;
+    // Нажать ещё раз — значит взять новую ссылку: прежняя тут же гаснет.
+    button.textContent = "Новая ссылка";
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+$("#telegram-unlink")?.addEventListener("click", async () => {
+  try {
+    paintTelegram(await request("/api/telegram/link", { method: "DELETE" }));
+    toast("Telegram отключён");
+  } catch (error) {
+    toast(error.message);
+  }
+});
 
 // ── Календари в настройках ──────────────────────────────────────────────────
 const CAL_PRESET_HINTS = {

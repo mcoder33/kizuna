@@ -49,6 +49,10 @@ export default defineConfig({
           'GEMINI_API_KEY=',
           'GOOGLE_API_KEY=',
           'PAGENT_TIMEZONE=Europe/Samara',
+          // Telegram — та же заглушка: бот опрашивает её, как api.telegram.org.
+          // Токен задаёт сам тест в настройках, до этого бот молчит.
+          `PAGENT_TELEGRAM_API_BASE=http://127.0.0.1:${fakeOpenRouterPort}/telegram`,
+          'PAGENT_TELEGRAM_BOT_TOKEN=',
           'PAGENT_CODEX_PATH=$PWD/tests/fixtures/codex',
           'PAGENT_CLAUDE_PATH=$PWD/tests/fixtures/claude',
           'node server/index.js',

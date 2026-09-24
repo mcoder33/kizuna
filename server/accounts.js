@@ -429,6 +429,9 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
         db.prepare('DELETE FROM agent_memories WHERE user_id=?').run(target.id);
         forgetAvatar(db, target.id);
         db.prepare('DELETE FROM notifications WHERE user_id=?').run(target.id);
+        // Привязанный Telegram без хозяина писал бы в пустоту — отвязываем.
+        db.prepare('DELETE FROM telegram_links WHERE user_id=?').run(target.id);
+        db.prepare('DELETE FROM telegram_codes WHERE user_id=?').run(target.id);
         db.prepare('DELETE FROM users WHERE id=?').run(target.id);
         logAuthEvent(db, { email: target.email, event: 'admin_delete', result: 'succeeded', detail: `от ${req.user.email}` });
         res.json({ ok: true });

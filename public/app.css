@@ -7588,6 +7588,17 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 .calendar-connect-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .calendar-connect-row button, .calendar-google { font-size: 12.5px; padding: 5px 11px; text-decoration: none; display: inline-flex; align-items: center; }
 .calendar-google.is-disabled { opacity: 0.55; }
+/* Telegram в настройках: код для телефона и кнопка «открыть бота» — рядом,
+   на узком экране друг под другом. Код остаётся чёрным по белому и в тёмной
+   теме — иначе камера его не прочтёт. */
+.telegram-state { margin: 10px 0 0; font-size: 13px; color: var(--ink); }
+.telegram-state.is-error { color: var(--red-49); }
+.telegram-state a { color: inherit; font-weight: 600; }
+.telegram-connect { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 18px; margin: 12px 0 2px; }
+.telegram-qr { width: 148px; height: 148px; background: #fff; border: 1px solid var(--n-93); border-radius: 12px; padding: 6px; }
+.telegram-connect-side { display: grid; gap: 8px; justify-items: start; max-width: 320px; }
+.telegram-open { font-size: 13px; font-weight: 700; padding: 10px 18px; border-radius: 99px; background: var(--type-auto); color: var(--n-100); text-decoration: none; }
+.telegram-open:hover { background: var(--red-54); }
 .calendar-connect { margin-top: 12px; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
 .calendar-connect-title { margin: 0; font-weight: 600; }
 .calendar-connect-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

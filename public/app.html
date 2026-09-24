@@ -528,12 +528,23 @@
                 placeholder="GOCSPX-…"
               /><span class="setting-state" id="state-googleClientSecret"></span
             ></label>
+            <label class="setting" for="setting-telegramBotToken"
+              ><span class="setting-name">Telegram · токен бота</span
+              ><input
+                id="setting-telegramBotToken"
+                type="password"
+                autocomplete="off"
+                placeholder="123456789:AA…"
+              /><span class="setting-state" id="state-telegramBotToken"></span
+            ></label>
             <p class="setting-hint">
               Пустое поле оставляет ключ как есть. Чтобы убрать введённый здесь
               ключ и снова взять его из <code>.env</code>, нажмите «Забыть».
               Для Google Calendar нужен свой проект в Google Cloud с клиентом
               OAuth типа «веб-приложение» и адресом возврата
               <code>&lt;адрес Кизуны&gt;/api/calendar/google/callback</code>.
+              Бота Telegram заводят у <code>@BotFather</code> командой
+              <code>/newbot</code> — он пришлёт токен для этого поля.
             </p>
           </fieldset>
 
@@ -573,6 +584,35 @@
                 <span class="setting-state" id="calendar-connect-state" role="status"></span>
               </div>
             </form>
+          </fieldset>
+
+          <!-- Telegram — второй вход в журнал. Бот один на всё приложение
+               (токен в «Ключах»), свой Telegram каждый привязывает здесь
+               одноразовой ссылкой: бот узнаёт по ней, чей это журнал. -->
+          <fieldset class="settings-group telegram-settings" id="telegram-settings" hidden>
+            <legend>Telegram</legend>
+            <p class="setting-hint">
+              Пишите боту Кизуны или пересылайте ему сообщения — они ложатся в
+              журнал и разбираются так же, как запись на главной: дело, встреча,
+              заметка или идея. Фото и файлы приходят вложениями, а
+              пересланное разом становится одной записью.
+            </p>
+            <p class="telegram-state" id="telegram-state" role="status"></p>
+            <div class="telegram-connect" id="telegram-connect" hidden>
+              <img id="telegram-qr" class="telegram-qr" alt="QR-код ссылки на бота" />
+              <div class="telegram-connect-side">
+                <a id="telegram-open" class="telegram-open" href="#" target="_blank" rel="noopener">Открыть бота в Telegram</a>
+                <p class="setting-hint">
+                  Или наведите камеру телефона на код. В Telegram нажмите
+                  «Запустить» — бот ответит, что всё подключено. Ссылка
+                  одноразовая и действует 15 минут.
+                </p>
+              </div>
+            </div>
+            <div class="setting-actions">
+              <button id="telegram-link" class="secondary" type="button" hidden>Подключить Telegram</button>
+              <button id="telegram-unlink" class="secondary" type="button" hidden>Отключить</button>
+            </div>
           </fieldset>
 
           <fieldset class="settings-group">
