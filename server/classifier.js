@@ -48,6 +48,36 @@ export function scheduleFromModel(when,now=new Date(),timeZone='Europe/Samara'){
   return {state:'ok',date,time,...(endValid?{end}:{}),...(repeatValid?{repeat:repeatValid}:{}),sortAt:date?`${date}T${time||'23:59'}:00`:null,display:scheduleDisplay({date,time,end:endValid?end:null,repeat:repeatValid})};
 }
 
+// День сделанного. «Доработал TCAM — поставь это на пятницу как результат»:
+// у результата нет срока, зато есть день, когда это было. Раньше дата у
+// сделанного отбрасывалась вместе со сроком, и запись, набранная в субботу
+// ночью, ложилась в субботнее «Что делал». Будущее у сделанного — ошибка
+// разбора («в пятницу» разрешили вперёд), такая дата отбрасывается.
+export function doneOnFromModel(when,now=new Date(),timeZone='Europe/Samara'){
+  const parsed=scheduleFromModel(when,now,timeZone);
+  if(!parsed?.date||parsed.date>currentDate(now,timeZone))return null;
+  return {date:parsed.date,time:parsed.time||null};
+}
+// Момент сделанного для occurred_at записи: названный день, время — названное
+// или то, в которое запись набрали (дата сдвигается, часы остаются).
+const wallParts=(at,timeZone)=>Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone,hourCycle:'h23',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).formatToParts(at).filter(part=>part.type!=='literal').map(part=>[part.type,Number(part.value)]));
+export function doneOccurredAt(doneOn,baseIso,timeZone='Europe/Samara'){
+  if(!doneOn?.date||!isoDate.test(doneOn.date))return null;
+  const base=new Date(baseIso);
+  if(Number.isNaN(base.getTime()))return null;
+  const baseWall=wallParts(base,timeZone);
+  const [hours,minutes]=doneOn.time&&isoTime.test(doneOn.time)?doneOn.time.split(':').map(Number):[baseWall.hour,baseWall.minute];
+  const seconds=doneOn.time?0:baseWall.second;
+  const [year,month,day]=doneOn.date.split('-').map(Number);
+  const wanted=Date.UTC(year,month-1,day,hours,minutes,seconds);
+  // Стенное время в поясе → мгновение: берём догадку в UTC и поправляем на
+  // сдвиг, который пояс показывает для этой догадки.
+  const guess=new Date(wanted);
+  const seen=wallParts(guess,timeZone);
+  const offset=Date.UTC(seen.year,seen.month-1,seen.day,seen.hour,seen.minute,seen.second)-wanted;
+  return new Date(wanted-offset).toISOString();
+}
+
 // Заземление: сущность принимается, только если её начало встречается в записи.
 // Модель нормализует падеж («Даниилом» → «Даниил»), но не имеет права
 // добавлять людей и проекты, которых в тексте нет.
@@ -146,6 +176,7 @@ export function normalizeClassification(candidate,raw='',now=new Date(),source='
   const primaryType=completed&&OPEN_TYPES.includes(parsed.primaryType)?'outcome_decision':parsed.primaryType;
   const scheduleRelevant=['meeting_event','task'].includes(primaryType)&&!completed;
   const schedule=scheduleRelevant?scheduleFromModel(parsed.entities.when,now,timeZone):null;
+  const doneOn=completed?doneOnFromModel(parsed.entities.when,now,timeZone):null;
   const people=groundedValues(parsed.entities.people,raw,8);
   const projects=groundedValues(parsed.entities.projects,raw,6);
   const followUp=parsed.entities.followUp&&raw.toLowerCase().includes(parsed.entities.followUp.trim().toLowerCase().slice(0,Math.min(parsed.entities.followUp.trim().length,12)))?parsed.entities.followUp.trim().slice(0,500):null;
@@ -161,7 +192,7 @@ export function normalizeClassification(candidate,raw='',now=new Date(),source='
     claim('people',people,false,0.88,'fact',source),
     claim('followUp',followUp,false,0.88,'inference',source),
   ];
-  const out={primaryType,summary,entities:{projects,people,schedule,followUp},additionalTypes,proposedActions:groundedActions(parsed.proposedActions,raw,{summary,followUp}),completed,ambiguity,claims,confidence:Object.fromEntries(claims.map(c=>[c.field,c.confidence])),conflicts:{projects:ambiguity?.field==='projects',schedule:ambiguity?.field==='schedule'}};
+  const out={primaryType,summary,entities:{projects,people,schedule,followUp,...(doneOn?{doneOn}:{})},additionalTypes,proposedActions:groundedActions(parsed.proposedActions,raw,{summary,followUp}),completed,ambiguity,claims,confidence:Object.fromEntries(claims.map(c=>[c.field,c.confidence])),conflicts:{projects:ambiguity?.field==='projects',schedule:ambiguity?.field==='schedule'}};
   return out;
 }
 
@@ -244,6 +275,14 @@ export function applyUserOverrides(classification,overrides,now=new Date(),timeZ
     // делал», остальные типы — нет. Без этого запись с ручным «результатом»
     // оседала в заметках: признак «сделано» ставит только модель.
     out.completed=overrides.primaryType==='outcome_decision';
+    // Срок у результата — это день, когда это было: «закинь результат —
+    // в пятницу доработал X» не должен оставлять результат со сроком.
+    if(out.completed&&out.entities.schedule){
+      const doneOn=doneOnFromModel(out.entities.schedule,now,timeZone);
+      out.entities={...out.entities,schedule:null,...(doneOn?{doneOn}:{})};
+      const scheduleIndex=out.claims.findIndex(item=>item.field==='schedule');
+      if(scheduleIndex>=0)out.claims[scheduleIndex]={...out.claims[scheduleIndex],value:null,kind:'unknown',confidence:0};
+    }
   }
   const scheduleAllowed=['task','meeting_event'].includes(out.primaryType)&&!out.completed;
   if(overrides.due&&scheduleAllowed){
@@ -272,10 +311,18 @@ export function applyUserOverrides(classification,overrides,now=new Date(),timeZ
 const EXPLICIT_TYPE_WORDS={note:'заметк\\p{L}*',task:'задач\\p{L}*|дел[оа]|туду|тудушк\\p{L}*',outcome_decision:'итог\\p{L}*|результат\\p{L}*|отч[её]т\\p{L}*',idea_question:'иде[яюи]|мысл[ьи]|вопрос\\p{L}*',meeting_event:'встреч\\p{L}*|созвон\\p{L}*'};
 const EXPLICIT_VERBS='закинь|кинь|запиши|добавь|создай|сохрани|положи|занеси|оформи|заведи|сделай';
 const EXPLICIT_HEAD=80;
-const explicitPatterns=Object.entries(EXPLICIT_TYPE_WORDS).map(([type,words])=>({type,command:new RegExp(`^[^\\p{L}]*(?:${EXPLICIT_VERBS})\\s+(?:(?:в|как|это|мне|себе)\\s+)*(?:${words})(?![\\p{L}])`,'iu'),label:new RegExp(`^[^\\p{L}]*(?:${words})\\s*[:—–-]`,'iu')}));
+// Просьба помощнику бывает и в конце записи: «Доработал TCAM — только поставь
+// это на пятницу как результат», «оформи это как задачу». Ловится команда с
+// «как/в» перед словом-типом в любом месте и «как <тип>» в самом хвосте.
+// Просто «в заметку» в хвосте («закинул ссылку в заметку») типом не считается.
+const EXPLICIT_TAIL=60;
+const EXPLICIT_TAIL_VERBS=`${EXPLICIT_VERBS}|поставь|отметь|запиши|занеси`;
+const explicitPatterns=Object.entries(EXPLICIT_TYPE_WORDS).map(([type,words])=>({type,command:new RegExp(`^[^\\p{L}]*(?:${EXPLICIT_VERBS})\\s+(?:(?:в|как|это|мне|себе)\\s+)*(?:${words})(?![\\p{L}])`,'iu'),label:new RegExp(`^[^\\p{L}]*(?:${words})\\s*[:—–-]`,'iu'),ask:new RegExp(`(?:^|[^\\p{L}])(?:${EXPLICIT_TAIL_VERBS})\\s+(?:(?:это|мне|себе|его|её|их)\\s+)*(?:как|в)\\s+(?:${words})(?![\\p{L}])`,'iu'),tail:new RegExp(`(?:^|[^\\p{L}])как\\s+(?:${words})[^\\p{L}]*$`,'iu')}));
 export function explicitType(raw){
-  const head=String(raw||'').slice(0,EXPLICIT_HEAD);
+  const text=String(raw||'');
+  const head=text.slice(0,EXPLICIT_HEAD),tail=text.trimEnd().slice(-EXPLICIT_TAIL);
   for(const {type,command,label} of explicitPatterns)if(command.test(head)||label.test(head))return type;
+  for(const {type,ask,tail:tailPattern} of explicitPatterns)if(ask.test(text)||tailPattern.test(tail))return type;
   return null;
 }
 // Названный тип ложится поверх разбора как ручной override: факт с уверенностью

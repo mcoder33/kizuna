@@ -239,7 +239,7 @@ export function resultText({ state, classification = null, parts = [], captureGo
   if (state !== 'succeeded' || !classification) return '⚠️ Записано, но не разобрано — тип можно указать в карточке записи.';
   if (classification.unclassified) return '⚠️ Записано без разбора — тип можно указать в карточке записи.';
   const lines = [];
-  const when = whenText(classification.entities?.schedule, today);
+  const when = whenText(classification.entities?.schedule || classification.entities?.doneOn, today);
   lines.push(`${TYPE_LINES[classification.primaryType] || TYPE_LINES.note} «${clip(classification.summary, 140)}»${when ? ` — ${when}` : ''}`);
   const projects = (classification.entities?.projects || []).filter(Boolean);
   if (projects.length) lines.push(`Проект: ${projects.join(', ')}`);

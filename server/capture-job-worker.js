@@ -8,7 +8,7 @@ import { noticeUnclear } from './notifications.js';
 const safeErrorCodes = new Set(['unavailable','busy','timeout','aborted','nonzero','malformed_output','absent_output','oversize_output','schema_invalid','rate_limited','invalid_provider','not_configured']);
 
 export class CaptureJobWorker {
-  constructor({ db, ai, leaseMs = 30_000, pollMs = 250, maxConcurrent = 1, shutdownGraceMs = 5_000, now = () => new Date(), audit = () => {} }) {
+  constructor({ db, ai, leaseMs = 30_000, pollMs = 250, maxConcurrent = 1, shutdownGraceMs = 5_000, now = () => new Date(), audit = () => {}, timeZone = 'Europe/Samara' }) {
     this.db = db;
     this.ai = ai;
     this.leaseMs = leaseMs;
@@ -16,6 +16,7 @@ export class CaptureJobWorker {
     this.maxConcurrent = maxConcurrent;
     this.shutdownGraceMs = shutdownGraceMs;
     this.now = now;
+    this.timeZone = timeZone;
     this.audit = audit;
     this.owner = crypto.randomUUID();
     this.timer = null;
@@ -74,9 +75,9 @@ export class CaptureJobWorker {
       if (controller.signal.aborted || this.stopping) return;
       // Ручные параметры карточки ввода перекрывают разбор модели.
       if (claim.overrides_json) {
-        try { result.classification = applyUserOverrides(result.classification, JSON.parse(claim.overrides_json), this.now()); } catch {}
+        try { result.classification = applyUserOverrides(result.classification, JSON.parse(claim.overrides_json), this.now(), this.timeZone); } catch {}
       }
-      if (completeCaptureJob(this.db, claim, result)) {
+      if (completeCaptureJob(this.db, claim, result, { timeZone: this.timeZone })) {
         // Просьба уходит человеку и тогда, когда разбор закончился в фоне:
         // иначе «Ане — прислать смету» из очереди не дошло бы ни до кого.
         // Пересланное из Telegram написал не хозяин журнала: коллега, чьё

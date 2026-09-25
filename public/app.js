@@ -3428,7 +3428,12 @@ function showReview(entry, review, undoGroupId, provenance) {
   footer.append(attachmentsBlock(entry));
   const footerRow = node("div", undefined, "card-footer-row");
   if (written) {
-    const stamp = node("p", `Записано: ${written}`, "card-written card-footer-line");
+    // Запись, положенная в другой день («поставь это на пятницу как
+    // результат», пересланное из Telegram), честно говорит оба времени:
+    // когда это было и когда набрано.
+    const typedDay = entry.createdAt ? entryDate({ createdAt: entry.createdAt }) : null;
+    const moved = typedDay && entry.occurredAt && typedDay !== entryDate(entry);
+    const stamp = node("p", moved ? `Было: ${written} · записано ${entryClock({ createdAt: entry.createdAt })}` : `Записано: ${written}`, "card-written card-footer-line");
     stamp.prepend(propIcon("written"));
     footerRow.append(stamp);
   }

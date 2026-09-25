@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { unclassifiedCapture, normalizeClassification, gateClassification, scheduleFromModel, shouldMaterializeProjections, validateCitations, settleCompleted, makeProjections, modelCompleted, explicitType, applyExplicitType } from '../server/classifier.js';
+import { unclassifiedCapture, normalizeClassification, gateClassification, scheduleFromModel, shouldMaterializeProjections, validateCitations, settleCompleted, makeProjections, modelCompleted, explicitType, applyExplicitType, applyUserOverrides, doneOnFromModel, doneOccurredAt } from '../server/classifier.js';
 
 const now = new Date('2026-08-21T10:00:00Z');
 const zone = 'Europe/Samara';
@@ -202,4 +202,56 @@ test('явно названный в начале записи тип сильн
   assert.equal(unclassified.primaryType, 'task');
   assert.equal(unclassified.unclassified, undefined, 'названный тип — уже разбор');
   assert.equal(unclassified.ambiguity, null);
+});
+
+// «Доработал TCAM нов правила + авторелиз — только поставь это на пятницу как
+// результат»: у сделанного нет срока, но есть день, когда это было. Раньше
+// дата отбрасывалась вместе со сроком, и запись, набранная в субботу ночью,
+// ложилась в субботнее «Что делал».
+test('a done record keeps the day it happened instead of a deadline', () => {
+  const saturdayNight = new Date('2026-09-25T22:32:00Z'); // 26.09 02:32 по Самаре
+  const raw = 'Доработал TCAM нов правила + авторелиз - только поставь это на пятницу как результат';
+  const done = normalizeClassification(candidate({ primaryType: 'outcome_decision', summary: 'Доработал TCAM: новые правила и авторелиз', completed: true, entities: { projects: ['TCAM'], people: [], when: { date: '2026-09-25', time: null }, followUp: null } }), raw, saturdayNight, 'model', zone);
+  assert.equal(done.primaryType, 'outcome_decision');
+  assert.equal(done.entities.schedule, null, 'срока у результата нет');
+  assert.deepEqual(done.entities.doneOn, { date: '2026-09-25', time: null });
+  // Будущая дата у сделанного — ошибка разбора («в пятницу» разрешили вперёд).
+  assert.equal(doneOnFromModel({ date: '2026-10-02', time: null }, saturdayNight, zone), null);
+  assert.deepEqual(doneOnFromModel({ date: '2026-09-25', time: '18:00', end: '19:00', repeat: { freq: 'weekly', interval: 1 } }, saturdayNight, zone), { date: '2026-09-25', time: '18:00' });
+  // У недоделанного when остаётся сроком, дня сделанного нет.
+  const open = normalize('доработать TCAM в пятницу', { primaryType: 'task', entities: { projects: [], people: [], when: { date: '2026-08-28', time: null }, followUp: null } });
+  assert.equal(open.entities.doneOn, undefined);
+  assert.equal(open.entities.schedule.date, '2026-08-28');
+});
+
+test('the moment of a done record shifts the date and keeps the clock unless a time was named', () => {
+  const typedAt = '2026-09-25T22:32:10.000Z'; // суббота 02:32:10 по Самаре
+  assert.equal(doneOccurredAt({ date: '2026-09-25', time: null }, typedAt, zone), '2026-09-24T22:32:10.000Z', 'пятница 02:32:10 по Самаре');
+  assert.equal(doneOccurredAt({ date: '2026-09-25', time: '18:00' }, typedAt, zone), '2026-09-25T14:00:00.000Z', 'пятница 18:00 по Самаре');
+  assert.equal(doneOccurredAt({ date: '2026-09-25', time: null }, '2026-09-25T20:15:00.000Z', 'Pacific/Honolulu'), '2026-09-25T20:15:00.000Z', 'тот же день — момент не меняется');
+  assert.equal(doneOccurredAt(null, typedAt, zone), null);
+  assert.equal(doneOccurredAt({ date: 'вчера' }, typedAt, zone), null);
+});
+
+test('a request to the assistant at the end of the record names the type', () => {
+  assert.equal(explicitType('Доработал ТСАМ нов правила + авторелиз - только поставь это на пятницу как результат'), 'outcome_decision');
+  assert.equal(explicitType('созвонились с Даниилом, оформи это как задачу, срочно'), 'task');
+  assert.equal(explicitType('ссылка на доку https://x.y/z — запиши как заметку'), 'note');
+  for (const plain of ['закинул ссылку в заметку', 'получили 20 процентов в результате', 'как результат сработало не сразу, но потом ок']) assert.equal(explicitType(plain), null, plain);
+});
+
+test('naming the type «result» turns a model deadline into the day it happened', () => {
+  const saturdayNight = new Date('2026-09-25T22:32:00Z');
+  const asTask = normalizeClassification(candidate({ primaryType: 'task', summary: 'Доработать TCAM', entities: { projects: ['TCAM'], people: [], when: { date: '2026-09-25', time: null }, followUp: null } }), 'в пятницу доработал TCAM — поставь как результат', saturdayNight, 'model', zone);
+  assert.equal(asTask.entities.schedule.date, '2026-09-25');
+  const settled = applyExplicitType(asTask, 'в пятницу доработал TCAM — поставь как результат', saturdayNight, zone);
+  assert.equal(settled.primaryType, 'outcome_decision');
+  assert.equal(settled.completed, true);
+  assert.equal(settled.entities.schedule, null);
+  assert.deepEqual(settled.entities.doneOn, { date: '2026-09-25', time: null });
+  assert.equal(settled.claims.find(item => item.field === 'schedule').confidence, 0);
+  // Срок в будущем у «результата» отбрасывается целиком: дня сделанного нет.
+  const future = applyUserOverrides(normalize('доработать TCAM', { primaryType: 'task', entities: { projects: [], people: [], when: { date: '2026-10-02', time: null }, followUp: null } }), { primaryType: 'outcome_decision' }, saturdayNight, zone);
+  assert.equal(future.entities.schedule, null);
+  assert.equal(future.entities.doneOn, undefined);
 });

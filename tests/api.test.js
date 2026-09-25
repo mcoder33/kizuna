@@ -192,3 +192,19 @@ test('a stored done note loses the flag when the model set it and becomes an out
     db.close();
   }
 });
+
+// «Доработал TCAM … поставь это на пятницу как результат», набранное в субботу
+// ночью: запись ложится в пятничное «Что делал» — occurred_at сдвигается на
+// названный день, часы набора остаются. Оба входа — синхронный и через очередь.
+// Часы приложения настоящие: у очереди аренда задачи сверяется с ними.
+test('a done record named for Friday lands on Friday in the journal',async()=>{const saturdayNight=()=>new Date('2026-09-25T22:32:10Z');const raw='Доработал TCAM нов правила + авторелиз - только поставь это на пятницу как результат';const day=at=>new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Samara',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at));
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pagent-done-day-'));const application=createApp({aiService:fakeModelService({now:saturdayNight}),databasePath:path.join(dir,'test.sqlite')});const api=authed(application);
+  const sync=(await api.post('/api/captures').send({raw}).expect(201)).body.entry;
+  assert.equal(sync.interpretation.classification.primaryType,'outcome_decision');assert.deepEqual(sync.interpretation.classification.entities.doneOn,{date:'2026-09-25',time:null});assert.equal(sync.interpretation.classification.entities.schedule,null);
+  const clock=at=>new Intl.DateTimeFormat('ru-RU',{timeZone:'Europe/Samara',hour:'2-digit',minute:'2-digit'}).format(new Date(at));
+  assert.equal(day(sync.occurredAt),'2026-09-25','пятница, а не день набора');assert.equal(clock(sync.occurredAt),clock(sync.createdAt),'часы набора остались');assert.notEqual(day(sync.createdAt),day(sync.occurredAt),'когда набрано — не переписывается');
+  application.captureJobWorker.start();const queued=(await api.post('/api/captures').set('Prefer','respond-async').send({raw}).expect(202)).body;for(let attempt=0;attempt<80;attempt++){const job=(await api.get(queued.statusUrl)).body;if(job.state==='succeeded')break;await new Promise(resolve=>setTimeout(resolve,25))}
+  const queuedEntry=(await api.get('/api/entries')).body.entries.find(item=>item.id===queued.captureId);assert.equal(day(queuedEntry.occurredAt),'2026-09-25');assert.equal(queuedEntry.interpretation.classification.primaryType,'outcome_decision');
+  // Сделанное без названного дня остаётся в дне набора.
+  const plain=(await api.post('/api/captures').send({raw:'Доработал TCAM нов правила'}).expect(201)).body.entry;assert.equal(plain.occurredAt,plain.createdAt);assert.equal(plain.interpretation.classification.entities.doneOn,undefined);
+  await application.captureJobWorker.stop()});

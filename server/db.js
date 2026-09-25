@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { makeProjections, gateClassification, shouldMaterializeProjections, actionClassification, settleCompleted, NOTE_TYPES } from './classifier.js';
+import { makeProjections, gateClassification, shouldMaterializeProjections, actionClassification, settleCompleted, NOTE_TYPES, doneOccurredAt } from './classifier.js';
 import { occursOn, nextOccurrence } from './repeat.js';
 import { migrateNotifications } from './notifications.js';
 import { migrateNotesTree } from './notes-schema.js';
@@ -942,11 +942,23 @@ function splitOffActions(db, { parentId, classification, provider, model = null,
   }
   return parts;
 }
-export function createLedger(db, { raw, occurredAt, classification, provider, model = null, createProjections = true, userId = null }) {
+// День сделанного, названный в самой записи («поставь это на пятницу как
+// результат»), — это и есть момент записи для журнала: «Что делал» раскладывает
+// записи по occurred_at, и результат ложится в свой день, а не в день набора.
+function settleOccurredAt(db, captureId, classification, timeZone) {
+  const doneOn = classification?.entities?.doneOn;
+  if (!doneOn?.date) return null;
+  const current = db.prepare('SELECT occurred_at FROM captures WHERE id=?').get(captureId);
+  const at = current ? doneOccurredAt(doneOn, current.occurred_at, timeZone) : null;
+  if (at && at !== current.occurred_at) db.prepare('UPDATE captures SET occurred_at=? WHERE id=?').run(at, captureId);
+  return at;
+}
+export function createLedger(db, { raw, occurredAt, classification, provider, model = null, createProjections = true, userId = null, timeZone = 'Europe/Samara' }) {
   const captureId = id(), interpretationId = id(), undoGroupId = id(), createdAt = now();
   let parts = [];
   const write = db.transaction(() => {
     db.prepare(INSERT_CAPTURE).run(captureId, raw, 'text', occurredAt || createdAt, createdAt, 'private', userId);
+    settleOccurredAt(db, captureId, classification, timeZone);
     db.prepare('INSERT INTO interpretations VALUES(?,?,?,?,?,?,?,?,?,NULL)').run(interpretationId, captureId, 1, 'active', provider, model, JSON.stringify(classification), JSON.stringify(classification.confidence || {}), createdAt);
     if(createProjections) insertProjections(db, interpretationId, makeProjections(captureId, classification, undoGroupId), createdAt);
     db.prepare('INSERT INTO activity_events VALUES(?,?,?,?)').run(id(), 'capture_created', JSON.stringify({ captureId, undoGroupId }), createdAt);
@@ -1008,13 +1020,14 @@ export function claimCaptureJob(db, { owner, leaseToken, leaseMs, currentTime = 
   });
 }
 
-export function completeCaptureJob(db, claim, { classification, provider, model = null, fallbackReason = null }) {
+export function completeCaptureJob(db, claim, { classification, provider, model = null, fallbackReason = null }, { timeZone = 'Europe/Samara' } = {}) {
   const completedAt = now();
   return withImmediateTransaction(db, () => {
     const current = db.prepare(`SELECT * FROM capture_jobs WHERE id=? AND state='running' AND lease_owner=? AND lease_token=? AND lease_fence=? AND lease_expires_at > ?`).get(claim.id, claim.lease_owner, claim.lease_token, claim.lease_fence, completedAt);
     if (!current) return null;
     const review = gateClassification(classification);
     const interpretationId = id(), undoGroupId = id();
+    settleOccurredAt(db, claim.capture_id, classification, timeZone);
     db.prepare('INSERT INTO interpretations VALUES(?,?,?,?,?,?,?,?,?,NULL)').run(interpretationId, claim.capture_id, 1, 'active', provider, model, JSON.stringify(classification), JSON.stringify(classification.confidence || {}), completedAt);
     if (shouldMaterializeProjections(classification)) insertProjections(db, interpretationId, makeProjections(claim.capture_id, classification, undoGroupId), completedAt);
     // Задача «успешна» и с откатом на заглушку — но причина отката остаётся
@@ -1137,8 +1150,9 @@ function settleCompletedRecords(db) {
     if (settled !== classification) replaceInterpretation(db, row.capture_id, settled, row.provider, null, shouldMaterializeProjections(settled), row.model);
   }
 }
-export function replaceInterpretation(db, captureId, classification, provider, correction = null, createProjections = true, model = null) {
+export function replaceInterpretation(db, captureId, classification, provider, correction = null, createProjections = true, model = null, { timeZone = 'Europe/Samara' } = {}) {
   return withImmediateTransaction(db,()=>{
+    settleOccurredAt(db, captureId, classification, timeZone);
     if(correction?.operationKey){const existing=db.prepare('SELECT interpretation_id,request_fingerprint FROM corrections WHERE capture_id=? AND operation_key=?').get(captureId,correction.operationKey);if(existing){if(existing.request_fingerprint!==correction.requestFingerprint)return { conflict:true };const projection=db.prepare('SELECT undo_group_id FROM projections WHERE interpretation_id=? ORDER BY created_at LIMIT 1').get(existing.interpretation_id);return { interpretationId:existing.interpretation_id,undoGroupId:projection?.undo_group_id||null,replayed:true };}}
     const previous = db.prepare("SELECT * FROM interpretations WHERE capture_id=? AND status='active'").get(captureId);
     if (!previous) return null;

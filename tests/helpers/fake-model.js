@@ -6,7 +6,7 @@ import { normalizeClassification } from '../../server/classifier.js';
 const projectsKnown = ['Hub', 'TCAM', 'Монетизация', 'CP'];
 const projectAliases = new Map([['хаб', 'Hub']]);
 const weekdays = { понедельник:1, понедельника:1, вторник:2, вторника:2, среда:3, среду:3, среды:3, четверг:4, четверга:4, пятница:5, пятницу:5, пятницы:5, суббота:6, субботу:6, субботы:6, воскресенье:0, воскресенья:0 };
-const dateWords = /(сегодня|завтра|послезавтра|понедельник(?:а)?|вторник(?:а)?|сред(?:а|у|ы)|четверг(?:а)?|пятниц(?:а|у|ы)|суббот(?:а|у|ы)|воскресень(?:е|я))/gi;
+const dateWords = /(сегодня|вчера|позавчера|завтра|послезавтра|понедельник(?:а)?|вторник(?:а)?|сред(?:а|у|ы)|четверг(?:а)?|пятниц(?:а|у|ы)|суббот(?:а|у|ы)|воскресень(?:е|я))/gi;
 const numericDate = /\b\d{1,2}[.\-/]\d{1,2}(?:[.\-/]\d{2,4})?\b/g;
 const listNumeration = /^\s*\d{1,2}[.)](?=\s)/gm;
 const explicitTime = /\b(\d{1,2}):(\d{2})\b/g;
@@ -21,6 +21,7 @@ function todayIn(now, timeZone) {
 }
 const addDays = (date, count) => new Date(date.getFullYear(), date.getMonth(), date.getDate() + count);
 const nextWeekday = (date, target) => addDays(date, (target - date.getDay() + 7) % 7 || 7);
+const previousWeekday = (date, target) => addDays(date, -((date.getDay() - target + 7) % 7 || 7));
 
 // Повтор: «каждый день», «раз в две недели», «каждый понедельник», «по
 // пятницам», с «до <дата>». Совпавшие слова снимаются с текста, чтобы «до
@@ -53,6 +54,16 @@ function resolveToken(token, base) {
   const parts = token.split(/[.\-/]/).map(Number);
   if (parts.length < 2 || !parts[0] || !parts[1] || parts[0] > 31 || parts[1] > 12) return null;
   return new Date(parts[2] ? (parts[2] < 100 ? 2000 + parts[2] : parts[2]) : base.getFullYear(), parts[1] - 1, parts[0]);
+}
+
+// День сделанного: «вчера», «в пятницу», «поставь на пятницу» у отчёта — назад
+// от сегодняшней даты, как и велит промпт настоящей модели.
+function resolvePast(token, base) {
+  if (token === 'сегодня') return base;
+  if (token === 'вчера') return addDays(base, -1);
+  if (token === 'позавчера') return addDays(base, -2);
+  if (weekdays[token] !== undefined) return previousWeekday(base, weekdays[token]);
+  return null;
 }
 
 function mentions(lower, name, wholeWord = true) {
@@ -134,9 +145,12 @@ export function fakeModelCandidate(raw, now = new Date(), timeZone = 'Europe/Sam
   // У повтора без названной даты первый экземпляр — сегодня (или ближайший
   // названный день недели).
   const anchor = uniqueDates[0] || (repeat ? plain(repeat.anchor || base) : null);
-  const when = ambiguity?.field === 'schedule' || !scheduleRelevant
-    ? null
-    : (anchor || times.size ? { date: anchor, time: times.size ? [...times][0] : null, ...(repeat && anchor ? { repeat: repeat.rule } : {}) } : null);
+  const doneDay = completed ? [...cleaned.matchAll(dateWords)].map(match => resolvePast(match[0].toLowerCase(), base)).find(Boolean) || null : null;
+  const when = completed
+    ? (doneDay ? { date: plain(doneDay), time: times.size ? [...times][0] : null } : null)
+    : ambiguity?.field === 'schedule' || !scheduleRelevant
+      ? null
+      : (anchor || times.size ? { date: anchor, time: times.size ? [...times][0] : null, ...(repeat && anchor ? { repeat: repeat.rule } : {}) } : null);
 
   return {
     primaryType,
