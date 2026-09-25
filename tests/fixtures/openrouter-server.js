@@ -4,7 +4,7 @@
 // Сеть при прогоне тестов не используется.
 import http from 'node:http';
 import { fakeModelCandidate } from '../helpers/fake-model.js';
-import { createFakeTelegram } from '../helpers/fake-telegram.js';
+import { createFakeTelegram, readForm } from '../helpers/fake-telegram.js';
 
 const port = Number(process.env.FAKE_OPENROUTER_PORT || 3099);
 const catalogue = {
@@ -23,6 +23,16 @@ function readBody(request) {
   });
 }
 
+// Байты как есть: в форме multipart едет картинка, строкой её не собрать.
+function readRaw(request) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    request.on('data', chunk => { chunks.push(chunk); size += chunk.length; if (size > 11_000_000) reject(new Error('too large')); });
+    request.on('end', () => resolve(Buffer.concat(chunks)));
+    request.on('error', reject);
+  });
+}
 function classificationFor(userMessage) {
   const raw = (userMessage.match(/<untrusted-capture>\n([\s\S]*?)\n<\/untrusted-capture>/) || [])[1] || '';
   // Метка в тексте роняет заглушку: так e2e получает запись «без разбора»,
@@ -50,8 +60,12 @@ async function telegramRoute(request, response, send) {
   // приложения не должен держать заглушку.
   const controller = new AbortController();
   response.on('close', () => controller.abort());
-  const body = await readBody(request);
-  const result = await telegram.handle(pathname, body ? JSON.parse(body) : {}, { signal: controller.signal });
+  const type = String(request.headers['content-type'] || '');
+  const raw = await readRaw(request);
+  const { params, uploads } = type.startsWith('multipart/form-data')
+    ? await readForm(await new Request('http://fake.local/', { method: 'POST', headers: { 'content-type': type }, body: raw }).formData())
+    : { params: raw.length ? JSON.parse(raw.toString('utf8')) : {}, uploads: {} };
+  const result = await telegram.handle(pathname, params, { signal: controller.signal, uploads });
   if (result.bytes) { response.writeHead(result.status); return response.end(result.bytes); }
   return send(result.status, result.body);
 }

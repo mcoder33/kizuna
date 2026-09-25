@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server/index.js';
-import { entitiesToMarkdown, composeCapture, resultText } from '../server/telegram.js';
+import { entitiesToMarkdown, composeCapture, resultText, BOT_AVATAR_PATH } from '../server/telegram.js';
 import { authed } from './helpers/auth.js';
 import { fakeModelService } from './helpers/fake-model.js';
 import { createFakeTelegram } from './helpers/fake-telegram.js';
@@ -345,4 +345,50 @@ test('the running bot collects a burst by the pause and fills in its commands on
     // Всё забранное подтверждено: Telegram больше ничего не держит.
     await eventually(() => assert.equal(ctx.fake.pending.length, 0));
   } finally { await ctx.app.telegram.stop(); }
+});
+
+test('the bot wears the Kizuna logo from the site: uploaded once per bot and picture, not on every restart', async () => {
+  const run = async ctx => {
+    ctx.app.telegram.start();
+    try { await eventually(async () => assert.equal((await ctx.api.get('/api/telegram').expect(200)).body.bot.state, 'ok')); }
+    finally { await ctx.app.telegram.stop(); }
+  };
+  const first = fixture({ telegramOptions: { pollTimeoutSeconds: 1 } });
+  await first.api.put('/api/settings').send({ telegramBotToken: first.fake.token }).expect(200);
+  await run(first);
+  assert.equal(first.fake.bot.photos.length, 1);
+  assert.deepEqual(first.fake.bot.photos[0], fs.readFileSync(BOT_AVATAR_PATH));
+  assert.equal(first.fake.bot.photos[0].subarray(0, 3).toString('hex'), 'ffd8ff', 'Telegram берёт фото профиля только в JPG');
+
+  // Релиз перезапускает сервер: тот же бот и та же картинка — второго фото
+  // в профиле бота не появляется.
+  const again = fixture({ databasePath: first.databasePath, fake: first.fake, telegramOptions: { pollTimeoutSeconds: 1 } });
+  await run(again);
+  assert.equal(first.fake.bot.photos.length, 1);
+
+  // Картинку поменяли — бот получает новую.
+  const redrawn = Buffer.from('ffd8ffe000104a46494600', 'hex');
+  const changed = fixture({ databasePath: first.databasePath, fake: first.fake, telegramOptions: { pollTimeoutSeconds: 1, avatar: () => redrawn } });
+  await run(changed);
+  assert.equal(first.fake.bot.photos.length, 2);
+  assert.deepEqual(first.fake.bot.photos[1], redrawn);
+});
+
+test('a Telegram that refuses the picture leaves the bot working and tries again after the next restart', async () => {
+  const fake = createFakeTelegram();
+  let refuse = true;
+  const refusing = { ...fake, fetch: async (url, init = {}) => refuse && url.endsWith('/setMyProfilePhoto') ? new Response(JSON.stringify({ ok: false, error_code: 400, description: 'Bad Request: PHOTO_INVALID_DIMENSIONS' }), { status: 400 }) : fake.fetch(url, init) };
+  const ctx = fixture({ fake: refusing, telegramOptions: { pollTimeoutSeconds: 1 } });
+  await ctx.api.put('/api/settings').send({ telegramBotToken: fake.token }).expect(200);
+  ctx.app.telegram.start();
+  try { await eventually(async () => assert.equal((await ctx.api.get('/api/telegram').expect(200)).body.bot.state, 'ok')); }
+  finally { await ctx.app.telegram.stop(); }
+  assert.equal(fake.bot.photos.length, 0);
+
+  refuse = false;
+  const next = fixture({ databasePath: ctx.databasePath, fake: refusing, telegramOptions: { pollTimeoutSeconds: 1 } });
+  next.app.telegram.start();
+  try { await eventually(async () => assert.equal((await next.api.get('/api/telegram').expect(200)).body.bot.state, 'ok')); }
+  finally { await next.app.telegram.stop(); }
+  assert.equal(fake.bot.photos.length, 1);
 });

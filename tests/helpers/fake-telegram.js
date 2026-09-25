@@ -6,13 +6,24 @@
 // ниже, а без него отдаёт неподтверждённое снова.
 export const FAKE_BOT_TOKEN = '123456789:fake-telegram-token-for-tests-000';
 
+// Форма multipart, как её разбирает Telegram: строки — поля запроса, файлы —
+// загруженные части, на которые поля ссылаются через attach://<имя части>.
+export async function readForm(form) {
+  const params = {}, uploads = {};
+  for (const [name, value] of form.entries()) {
+    if (typeof value === 'string') params[name] = value;
+    else uploads[name] = Buffer.from(await value.arrayBuffer());
+  }
+  return { params, uploads };
+}
+
 export function createFakeTelegram({ token = FAKE_BOT_TOKEN, username = 'kizuna_test_bot', firstName = 'Кизуна' } = {}) {
   let updateId = 100, messageId = 1000, sentId = 5000, fileSeq = 1;
   const pending = [];
   const sent = [];
   const files = new Map();
   const waiters = new Set();
-  const bot = { description: '', shortDescription: '', commands: [] };
+  const bot = { description: '', shortDescription: '', commands: [], photos: [] };
   const user = { id: 777001, is_bot: false, first_name: 'Саша', username: 'sasha' };
 
   function message(fields = {}) {
@@ -43,7 +54,7 @@ export function createFakeTelegram({ token = FAKE_BOT_TOKEN, username = 'kizuna_
   const ok = result => ({ status: 200, body: { ok: true, result } });
   const fail = (status, description) => ({ status, body: { ok: false, error_code: status, description } });
 
-  async function method(name, params = {}, { signal } = {}) {
+  async function method(name, params = {}, { signal, uploads = {} } = {}) {
     switch (name) {
       case 'getMe': return ok({ id: 424242, is_bot: true, first_name: firstName, username });
       case 'getUpdates': {
@@ -67,6 +78,15 @@ export function createFakeTelegram({ token = FAKE_BOT_TOKEN, username = 'kizuna_
       case 'setMyDescription': bot.description = params.description || ''; return ok(true);
       case 'getMyShortDescription': return ok({ short_description: bot.shortDescription });
       case 'setMyShortDescription': bot.shortDescription = params.short_description || ''; return ok(true);
+      // Фото профиля Telegram берёт только свежей загрузкой: attach://<часть>.
+      case 'setMyProfilePhoto': {
+        let photo = params.photo;
+        try { if (typeof photo === 'string') photo = JSON.parse(photo); } catch { photo = null; }
+        const part = String(photo?.photo || '').match(/^attach:\/\/(.+)$/)?.[1];
+        if (photo?.type !== 'static' || !part || !uploads[part]) return fail(400, 'Bad Request: photo must be uploaded as a new file');
+        bot.photos.push(uploads[part]);
+        return ok(true);
+      }
       case 'getFile': {
         const file = files.get(params.file_id);
         return file ? ok({ file_id: params.file_id, file_unique_id: params.file_id, file_size: file.bytes.length, file_path: file.path }) : fail(400, 'Bad Request: invalid file_id');
@@ -92,7 +112,8 @@ export function createFakeTelegram({ token = FAKE_BOT_TOKEN, username = 'kizuna_
   async function fetch(url, init = {}) {
     if (init.signal?.aborted) throw aborted();
     const { pathname } = new URL(url);
-    const result = await handle(pathname, init.body ? JSON.parse(init.body) : {}, { signal: init.signal });
+    const { params, uploads } = init.body instanceof FormData ? await readForm(init.body) : { params: init.body ? JSON.parse(init.body) : {}, uploads: {} };
+    const result = await handle(pathname, params, { signal: init.signal, uploads });
     if (init.signal?.aborted) throw aborted();
     if (result.bytes) return new Response(result.bytes, { status: result.status });
     return new Response(JSON.stringify(result.body), { status: result.status, headers: { 'Content-Type': 'application/json' } });

@@ -18,7 +18,11 @@
 // становится одной записью: Telegram присылает такие сообщения по одному
 // подряд, и бот ждёт полторы секунды тишины, прежде чем сложить их вместе.
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { gateClassification } from './classifier.js';
+import { readSettings, writeSettings } from './db.js';
 import { describeRepeat } from './repeat.js';
 import { dateInZone, shiftDate } from './reports.js';
 
@@ -28,6 +32,12 @@ export const LINK_TTL_MS = 15 * 60 * 1000;
 const RAW_LIMIT = 10000;
 const GROUP_QUIET_MS = 1500;
 const POLL_TIMEOUT_S = 50;
+// Аватарка бота — знак Кизуны с сайта (public/icon.svg): те же белые ворота на
+// том же красном, только красное во весь квадрат. Telegram показывает фото
+// профиля кругом, и скруглённые углы значка обрезались бы по краю. Формат —
+// JPG: другого Telegram для фото профиля не принимает.
+export const BOT_AVATAR_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'telegram-avatar.jpg');
+const AVATAR_SETTING = 'telegramBotAvatar';
 const HOLD_TICK_MS = 300;
 const IDLE_MS = 5000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -275,6 +285,7 @@ export function createTelegramService({
   attachmentsPerCapture = 10,
   groupWindowMs = GROUP_QUIET_MS,
   pollTimeoutSeconds = POLL_TIMEOUT_S,
+  avatar = () => fs.readFileSync(BOT_AVATAR_PATH),
 } = {}) {
   const note = event => { try { audit(event); } catch {} };
   const at = () => now().toISOString();
@@ -287,14 +298,19 @@ export function createTelegramService({
   const seen = new Set();
   const sending = new Set();
 
-  async function call(method, params = {}, { signal, key = token() } = {}) {
+  async function call(method, params = {}, { signal, key = token(), files = null } = {}) {
     if (!key) { const error = new Error('Токен бота не задан.'); error.status = 401; throw error; }
-    const response = await fetchImpl(`${apiBase().replace(/\/+$/, '')}/bot${key}/${method}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-      signal,
-    });
+    let request = { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params) };
+    // Файл Telegram принимает только формой multipart: поля-объекты в ней —
+    // строки JSON, а сам файл — отдельная часть, на которую поле ссылается
+    // как attach://<имя части>.
+    if (files) {
+      const form = new FormData();
+      for (const [name, value] of Object.entries(params)) form.append(name, typeof value === 'string' ? value : JSON.stringify(value));
+      for (const [name, file] of Object.entries(files)) form.append(name, new Blob([file.bytes], { type: file.type }), file.filename);
+      request = { body: form };
+    }
+    const response = await fetchImpl(`${apiBase().replace(/\/+$/, '')}/bot${key}/${method}`, { method: 'POST', ...request, signal });
     let body = null;
     try { body = await response.json(); } catch {}
     if (!body?.ok) {
@@ -334,14 +350,29 @@ export function createTelegramService({
     bot = me; botToken = key;
     return me;
   }
-  // Команды и описание — один раз на токен. Описание, заданное в @BotFather,
-  // не трогаем: заполняем, только если его нет.
+  // Аватарка — одна загрузка на бота и на картинку. Сервер перезапускается с
+  // каждым релизом, а каждая загрузка добавляла бы в профиль бота ещё одно
+  // такое же фото. Поэтому в настройках лежит метка «бот:отпечаток картинки»:
+  // другой бот или новая картинка — загрузка заново, а фото, которое потом
+  // поменяли в @BotFather, сервер уже не трогает.
+  async function setupAvatar() {
+    const bytes = avatar();
+    if (!bot?.id || !bytes?.length) return;
+    const mark = `${bot.id}:${crypto.createHash('sha256').update(bytes).digest('hex').slice(0, 16)}`;
+    if (readSettings(db)[AVATAR_SETTING] === mark) return;
+    await call('setMyProfilePhoto', { photo: { type: 'static', photo: 'attach://avatar' } }, { files: { avatar: { bytes, type: 'image/jpeg', filename: 'kizuna.jpg' } } });
+    writeSettings(db, { [AVATAR_SETTING]: mark });
+    note({ event: 'telegram_avatar_set' });
+  }
+  // Команды, описание и аватарка — один раз на токен. Описание, заданное в
+  // @BotFather, не трогаем: заполняем, только если его нет.
   async function setupBot() {
     await call('setMyCommands', { commands: [{ command: 'help', description: 'Как записывать в Кизуну' }] }).catch(() => {});
     const current = await call('getMyDescription', {}).catch(() => null);
     if (current && !current.description) await call('setMyDescription', { description: 'Пишите или пересылайте сюда сообщения — Кизуна запишет их в ваш журнал и разберёт: дела, встречи, заметки, идеи.' }).catch(() => {});
     const short = await call('getMyShortDescription', {}).catch(() => null);
     if (short && !short.short_description) await call('setMyShortDescription', { short_description: 'Второй вход в журнал Кизуны' }).catch(() => {});
+    await setupAvatar().catch(error => note({ event: 'telegram_avatar_failed', errorCode: error?.status || error?.code || 'avatar_error' }));
   }
 
   // ── привязка ──
