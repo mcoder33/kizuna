@@ -76,9 +76,13 @@
         ></summary>
         <div class="bell-popover" id="bell-popover"></div>
       </details>
-      <!-- «?» — страница «Как пользоваться»: вопросы и прогоны в копии
-           интерфейса. Рядом с настройками, потому что ищут её там же. -->
-      <a class="settings-link help-link" href="#guide" aria-label="Как пользоваться" title="Как пользоваться">?</a>
+      <!-- «?» — «Как пользоваться»: список вопросов, а шаги идут пузырём
+           поверх настоящих страниц (public/guide.js). Рядом с настройками,
+           потому что ищут её там же. -->
+      <details class="account-menu help-menu">
+        <summary class="settings-link help-link" aria-label="Как пользоваться" title="Как пользоваться">?</summary>
+        <div class="account-menu-popover help-popover" id="help-popover"></div>
+      </details>
       <a class="settings-link" href="#settings" aria-label="Настройки">
         <svg
           viewBox="0 0 24 24"
@@ -428,9 +432,6 @@
           </div>
         </section>
       </section>
-      <!-- «Как пользоваться»: карточки-вопросы и прогон во весь экран.
-           Всё внутри рисует public/guide.js. -->
-      <section id="guide" class="app-page guide-page" hidden aria-label="Как пользоваться"></section>
       <section id="settings" class="app-page" hidden>
         <section class="settings-form" aria-label="Настройки приложения">
           <div class="page-heading">

@@ -1,69 +1,97 @@
 import { test, expect } from "@playwright/test";
 
-// «Как пользоваться»: карточки-вопросы и прогон во весь экран. Прогон идёт в
-// копии интерфейса, шаг делается рукой, в конце из обучения можно выйти или
-// унести фразу в настоящее поле.
+// «Как пользоваться»: вопросы в «?» в шапке, шаги идут пузырём поверх
+// настоящих страниц. Отправка и кружок настоящие, после прогона запись есть в
+// журнале; с любого шага можно выйти, в конце — «Выйти из обучения».
+// Сегодня в 13:00: записи сервер ставит на сегодня, и днём открыт ящик «День».
+const dayAt = (hour) => { const at = new Date(); at.setHours(hour, 0, 0, 0); return at; };
 test.beforeEach(async ({ page }) => {
-  await page.clock.install({ time: new Date("2026-09-25T13:00:00") });
+  await page.clock.install({ time: dayAt(13) });
 });
 
-test("«?» в шапке открывает вопросы, прогон про поручение проходится руками и заканчивается выходом", async ({ page }) => {
+test("прогон про поручение идёт по живым страницам: круги, настоящая запись, карточка, выход", async ({ page }) => {
   await page.goto("/#today");
-  await page.getByRole("link", { name: "Как пользоваться" }).first().click();
-  await expect(page.locator("#guide")).toBeVisible();
-  await expect(page.locator("#guide .gd-card")).toHaveCount(18);
+  await page.locator(".help-menu > summary").click();
+  const menu = page.locator("#help-popover");
+  await expect(menu).toBeVisible();
+  await expect(menu.locator(".gd-q")).toHaveCount(18);
+  await menu.locator('.gd-q[data-guide="assign"]').click();
+  await expect(menu).toBeHidden();
 
-  await page.getByRole("button", { name: /Как поручить дело человеку/ }).click();
-  const story = page.getByRole("dialog", { name: "Как поручить дело человеку" });
-  await expect(story).toBeVisible();
-  await expect(story.locator(".gd-count")).toHaveText("шаг 1 из 8");
-  // Шаг 1: круг. Дальше.
-  await expect(story.locator(".gd-kc-band")).toHaveClass(/gd-spot/);
-  await story.getByRole("button", { name: "Дальше" }).click();
-  // Шаг 2: фраза печатается сама, стрелка подсвечивается только после набора.
-  await expect(story.locator(".gd-cap-text")).toHaveText("Ане — прислать смету по Хабу до пятницы", { timeout: 5000 });
-  await expect(story.locator(".gd-cap-send")).toHaveClass(/gd-spot/);
-  await story.locator(".gd-cap-send").click();
-  // Шаг 3: дело с меткой «ждёт ответа».
-  await expect(story.locator(".gd-entry.new .gd-tag.assign")).toHaveText("Аня · ждёт ответа");
-  await story.getByRole("button", { name: "Дальше" }).click();
-  // Шаг 4: за Аню нажимаем «Беру».
-  await story.getByRole("button", { name: "Беру" }).click();
-  await expect(story.locator(".gd-entry.new .gd-tag.assign")).toHaveText("Аня · взяла");
-  await story.getByRole("button", { name: "Дальше" }).click();
-  await expect(story.locator(".gd-prop-assign")).toHaveClass(/gd-spot/);
-  await story.getByRole("button", { name: "Дальше" }).click();
-  await expect(story.locator(".gd-kc-deed input")).toHaveValue("Прислать смету по Хабу до пятницы");
-  await story.getByRole("button", { name: "Дальше" }).click();
-  await expect(story.locator(".gd-count")).toHaveText("шаг 8 из 8");
-  // Пройдено — есть выход из обучения, он ведёт на «Сегодня».
-  await story.getByRole("button", { name: "Выйти из обучения" }).click();
-  await expect(story).toHaveCount(0);
+  const bubble = page.getByRole("dialog", { name: "Как поручить дело человеку" });
+  // Шаг 1: «Круги», у нового человека кругов нет — пузырь у пустой карточки.
+  await expect(page.locator("#circles")).toBeVisible();
+  await expect(bubble.locator(".gd-b-count")).toHaveText("шаг 1 из 7");
+  await expect(bubble).toContainText("кругов пока нет");
+  await expect(page.locator(".kc-empty-card")).toHaveClass(/gd-spot/);
+  await bubble.getByRole("button", { name: "Дальше" }).click();
+  // Шаг 2: «Сегодня», пример уже в поле, отправка настоящая.
   await expect(page.locator("#today")).toBeVisible();
-  await expect(page.locator("#guide")).toBeHidden();
-  // Пройденный вопрос помечен.
-  await page.goto("/#guide");
-  await expect(page.locator('.gd-card[data-guide="assign"]')).toHaveClass(/done/);
-  await expect(page.locator('.gd-card[data-guide="assign"] .gd-done-mark')).toHaveText("✓ пройдено");
+  await expect(page.getByLabel("Новая запись")).toContainText("Ане — прислать смету по Хабу до пятницы");
+  await expect(page.locator("#capture-submit")).toHaveClass(/gd-spot/);
+  const posted = page.waitForResponse((response) => response.url().endsWith("/api/captures") && response.request().method() === "POST");
+  await page.locator("#capture-submit").click();
+  expect((await posted).status()).toBe(202);
+  // Шаг 3: разбор закончился — приложение само сообщает о записи. Дело на
+  // пятницу встаёт в свой день, поэтому строка в сегодняшнем списке может быть,
+  // а может не быть; тогда в пузыре кнопка «Открыть запись».
+  await expect(bubble.locator(".gd-b-count")).toHaveText("шаг 3 из 7", { timeout: 15000 });
+  await bubble.getByRole("button", { name: "Дальше" }).click();
+  // Шаг 4: открыть карточку — по названию или кнопкой.
+  await expect(bubble.locator(".gd-b-count")).toHaveText("шаг 4 из 7");
+  const title = page.locator("[data-capture-id].gd-spot .entry-title");
+  const openButton = bubble.getByRole("button", { name: "Открыть запись" });
+  await expect(title.or(openButton)).toBeVisible({ timeout: 6000 });
+  if (await title.isVisible()) await title.click(); else await openButton.click();
+  await expect(page.locator("#review-dialog")).toBeVisible();
+  // Шаг 5: строки «Исполнитель» без круга нет — запасной текст, пузырь внизу.
+  await expect(bubble.locator(".gd-b-count")).toHaveText("шаг 5 из 7");
+  await expect(bubble).toContainText("появляется, когда есть круг", { timeout: 6000 });
+  await bubble.getByRole("button", { name: "Дальше" }).click();
+  // Шаг 6: карточка закрыта, снова «Круги».
+  await expect(page.locator("#review-dialog")).toBeHidden();
+  await expect(page.locator("#circles")).toBeVisible();
+  await expect(bubble.locator(".gd-b-count")).toHaveText("шаг 6 из 7");
+  await bubble.getByRole("button", { name: "Дальше" }).click();
+  // Шаг 7: ловушка про «@» и выход.
+  await expect(bubble).toContainText("призыв, не поручение");
+  await bubble.getByRole("button", { name: "Выйти из обучения" }).click();
+  await expect(bubble).toHaveCount(0);
+  await expect(page.locator("#today")).toBeVisible();
+  // Пройденный вопрос помечен, а запись из прогона осталась в журнале.
+  await page.locator(".help-menu > summary").click();
+  await expect(menu.locator('.gd-q[data-guide="assign"]')).toHaveClass(/done/);
+  const entries = await (await page.request.get("/api/entries")).text();
+  expect(entries).toContain("смету по Хабу");
 });
 
-test("«Попробовать по-настоящему» уносит фразу шага в настоящее поле, Escape закрывает прогон", async ({ page }) => {
-  await page.goto("/#guide");
-  await page.getByRole("button", { name: /Как записать результат/ }).click();
-  const story = page.getByRole("dialog", { name: "Как записать результат" });
-  await expect(story.locator(".gd-cap-send")).toHaveClass(/gd-spot/, { timeout: 5000 });
-  await story.locator(".gd-cap-send").click();
-  await story.getByRole("button", { name: "Дальше" }).click();
-  await story.getByRole("button", { name: "Дальше" }).click();
-  await story.getByRole("button", { name: "Попробовать по-настоящему" }).click();
-  await expect(story).toHaveCount(0);
-  await expect(page.locator("#today")).toBeVisible();
-  await expect(page.getByLabel("Новая запись")).toContainText("Починил ретрай в очереди уведомлений");
-
-  await page.goto("/#guide");
-  await page.getByRole("button", { name: /Как назначить встречу/ }).click();
-  const plain = page.getByRole("dialog", { name: "Как назначить встречу" });
-  await expect(plain.locator(".gd-plain li")).toHaveCount(4);
+test("вопрос по разделам ведёт в настройки, «#guide» открывает список, Escape и «×» выходят", async ({ page }) => {
+  await page.goto("/#settings");
+  await page.getByRole("link", { name: "Как пользоваться Кизуной →" }).click();
+  const menu = page.locator("#help-popover");
+  await expect(menu).toBeVisible();
+  await expect(page).toHaveURL(/#settings$/);
+  await menu.locator("#guide-search").fill("telegram");
+  await expect(menu.locator(".gd-q")).toHaveCount(1);
+  await menu.locator('.gd-q[data-guide="telegram"]').click();
+  const bubble = page.getByRole("dialog", { name: "Как писать из Telegram" });
+  await expect(bubble).toBeVisible();
+  await expect(page.locator("#settings fieldset.gd-spot legend")).toHaveText("Telegram");
+  await bubble.getByRole("button", { name: "Дальше" }).click();
+  await expect(bubble.locator(".gd-b-count")).toHaveText("шаг 2 из 3");
   await page.keyboard.press("Escape");
-  await expect(plain).toHaveCount(0);
+  await expect(bubble).toHaveCount(0);
+  await expect(page.locator(".gd-spot")).toHaveCount(0);
+
+  // «#guide» открывает список там, где человек стоит, адрес возвращается.
+  await page.goto("/#guide");
+  await expect(menu).toBeVisible();
+  await expect(page.locator("#settings")).toBeVisible();
+  await expect(page).toHaveURL(/#settings$/);
+  await menu.locator('.gd-q[data-guide="board"]').click();
+  await expect(page.locator("#board")).toBeVisible();
+  // «×» прерывает обучение на любом шаге, подсветка снимается.
+  await page.getByRole("button", { name: "Прервать обучение" }).click();
+  await expect(page.getByRole("dialog", { name: "Как устроена доска" })).toHaveCount(0);
+  await expect(page.locator(".gd-spot")).toHaveCount(0);
 });
