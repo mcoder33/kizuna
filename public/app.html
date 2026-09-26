@@ -15,6 +15,7 @@
     <script src="/public/theme.js"></script>
     <link rel="stylesheet" href="/public/app.css" />
     <link rel="stylesheet" href="/public/notes.css" />
+    <link rel="stylesheet" href="/public/guide.css" />
   </head>
   <body>
     <a class="skip-link" href="#capture-input">К полю записи</a>
@@ -75,6 +76,9 @@
         ></summary>
         <div class="bell-popover" id="bell-popover"></div>
       </details>
+      <!-- «?» — страница «Как пользоваться»: вопросы и прогоны в копии
+           интерфейса. Рядом с настройками, потому что ищут её там же. -->
+      <a class="settings-link help-link" href="#guide" aria-label="Как пользоваться" title="Как пользоваться">?</a>
       <a class="settings-link" href="#settings" aria-label="Настройки">
         <svg
           viewBox="0 0 24 24"
@@ -424,6 +428,9 @@
           </div>
         </section>
       </section>
+      <!-- «Как пользоваться»: карточки-вопросы и прогон во весь экран.
+           Всё внутри рисует public/guide.js. -->
+      <section id="guide" class="app-page guide-page" hidden aria-label="Как пользоваться"></section>
       <section id="settings" class="app-page" hidden>
         <section class="settings-form" aria-label="Настройки приложения">
           <div class="page-heading">
@@ -435,6 +442,7 @@
               компьютере и в браузер не возвращаются — видно только последние
               знаки.
             </p>
+            <p><a href="#guide">Как пользоваться Кизуной →</a></p>
           </div>
 
           <!-- Учётная запись — первой: лицо, имя и тему ищут в настройках чаще

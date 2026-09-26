@@ -6,6 +6,7 @@ import { attachMentionMenu, forgetMentionPeople } from "./mention-menu.js";
 import { attachFormatToolbar } from "./format-toolbar.js";
 import { createVoiceDialog } from "./voice.js";
 import { openNotes, refreshNotes } from "./notes.js";
+import { mountGuide } from "./guide.js";
 import { phaseOf, coverFor, endedRecently, plural, hm, duration, minutesOf, longDate, shortDate, isWeekend, MEETINGS, DEALS, PHASE_NAMES } from "./today-cover.js";
 
 const $ = (selector) => document.querySelector(selector);
@@ -206,6 +207,7 @@ function updatePageFromHash() {
   // Вернулись на «Сегодня» — обложка и строка «сейчас» пересчитываются: пока
   // страница была скрыта, время шло.
   if (activePage === "today") renderToday();
+  if (activePage === "guide") renderGuide();
   // Открыли настройки — перечитываем расход: он меняется от каждой записи, а
   // страница может висеть открытой долго.
   if (activePage === "settings") {
@@ -1019,7 +1021,21 @@ function firstStepNode() {
     row.append(button);
   }
   box.append(row);
+  // Кроме примеров — обучение: прогоны показывают, как всё устроено, руками.
+  const help = node("a", "Как пользоваться →", "start-help");
+  help.href = "#guide";
+  box.append(help);
   return box;
+}
+// «Как пользоваться» перерисовывается при каждом открытии: галочки пройденного
+// живут в браузере и меняются в прогоне. «Попробовать по-настоящему» ведёт на
+// «Сегодня» и подставляет фразу шага в настоящее поле, как пример первого шага.
+function renderGuide() {
+  mountGuide($("#guide"), {
+    onTry: (text) => { location.hash = "#today"; updatePageFromHash(); prefillCapture(text, null); },
+    onGo: (hash) => { location.hash = hash; },
+    onExit: () => { location.hash = "#today"; },
+  });
 }
 // Вопрос в поле и тип записи — по фазе, но только пока поле пустое и тип не
 // выбран рукой: страница не меняется под руками.
