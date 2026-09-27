@@ -3,128 +3,147 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Кизуна — личный журнал, который сам раскладывает записанное</title>
-    <meta
-      name="description"
-      content="Пишите одной строкой, как думается: «завтра в 11 созвон с Аней», «созвонились по ВойсОпс, решили допинать детектор». Кизуна сама поймёт, что это — встреча, дело или отчёт, — поставит срок и разложит по дню, доске и календарю."
-    />
-    <!-- Проба на живых людях, а не запуск: в поиске страницу пока не ждут. -->
+    <title>Кизуна — меньше в голове, больше жизни</title>
+    <meta name="description" content="Запиши как думаешь. Кизуна превратит фразу в дело, встречу или заметку и поможет увидеть свой день целиком. Личное место для всего важного." />
+    <!-- Ранний доступ: индексацию открываем отдельно от обновления страницы. -->
     <meta name="robots" content="noindex" />
-    <link
-      rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='2' y='2' width='60' height='60' rx='14' fill='%23c73e3a'/%3E%3Cg fill='none' stroke='white' stroke-linecap='round' stroke-width='6'%3E%3Cpath d='M8 17q24 -6 48 0'/%3E%3Cline x1='14' y1='27' x2='50' y2='27'/%3E%3Cline x1='19' y1='22' x2='21' y2='54'/%3E%3Cline x1='45' y1='22' x2='43' y2='54'/%3E%3C/g%3E%3C/svg%3E"
-    />
-    <!-- Тема ставится до отрисовки: иначе тёмной странице предшествует белая
-         вспышка. Отдельным файлом — встроенные скрипты запрещены политикой. -->
+    <link rel="icon" href="/public/icon.svg" type="image/svg+xml" />
     <script src="/public/theme.js"></script>
     <link rel="stylesheet" href="/public/app.css" />
-    <link rel="stylesheet" href="/public/auth.css" />
+    <link rel="stylesheet" href="/public/hello.css" />
   </head>
-  <body class="auth-body">
-    <main class="hello-shell">
-      <a class="brand" href="/"
-        ><svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true" focusable="false"
-          ><rect class="hanko-pad" x="2" y="2" width="60" height="60" rx="14" fill="#c73e3a" /><g
-            class="torii"
-            fill="none"
-            stroke-linecap="round"
-            stroke-width="6"
-            ><path class="roof" d="M8 17q24 -6 48 0" /><line x1="14" y1="27" x2="50" y2="27" /><line
-              x1="19"
-              y1="22"
-              x2="21"
-              y2="54"
-            /><line x1="45" y1="22" x2="43" y2="54" /></g></svg
-        ><span class="brand-word">Кизуна</span></a
-      >
+  <body class="hello-body">
+    <a class="hello-skip" href="#main">К содержимому</a>
+    <header class="hello-header">
+      <a class="brand" href="/" aria-label="Кизуна — главная">
+        <svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+          <rect x="2" y="2" width="60" height="60" rx="14" fill="#c73e3a" />
+          <g class="torii" fill="none" stroke-linecap="round" stroke-width="6">
+            <path d="M8 17q24 -6 48 0" /><path d="M14 27h36M19 22l2 32M45 22l-2 32" />
+          </g>
+        </svg>
+        <span class="brand-word">Кизуна</span>
+      </a>
+      <nav class="hello-nav" aria-label="Навигация по странице">
+        <a class="hello-nav-anchor" href="#how-it-works">Как это работает</a>
+        <a class="hello-nav-anchor" href="#your-day">Что внутри</a>
+        <a class="hello-login" href="/login">Войти <span aria-hidden="true">↗</span></a>
+      </nav>
+    </header>
 
-      <h1 class="hello-title">Одно поле вместо десяти</h1>
-      <p class="hello-lead">
-        Списки дел требуют выбрать проект, поставить срок, назначить тег — и вы
-        закрываете их, не записав мысль. Здесь вы пишете фразу как думаете.
-        Разбирает приложение.
-      </p>
-
-      <!-- Показ вместо рассказа: та же карточка ввода, что внутри, и то, во что
-           превращается сказанное. Фразы и разбор настоящие — так оно и
-           раскладывает. -->
-      <div class="demo" aria-label="Как приложение разбирает фразу">
-        <div class="demo-card">
-          <p class="demo-line"><span id="demo-text"></span><i class="demo-caret" aria-hidden="true"></i></p>
-          <div class="demo-foot">
-            <span class="demo-chip">Авто</span>
-            <span class="demo-hint" id="demo-hint">пишите как говорите</span>
+    <main id="main" class="hello-shell" tabindex="-1">
+      <section class="hello-hero" aria-labelledby="hello-title">
+        <div class="hello-intro">
+          <p class="hello-eyebrow"><span class="hello-status-dot" aria-hidden="true"></span>Личное место для важного</p>
+          <h1 id="hello-title" class="hello-title">Меньше в голове.<br /><em>Больше жизни.</em></h1>
+          <p class="hello-lead">Дела, встречи, внезапные идеи. Просто запиши, как думаешь, — Кизуна разложит всё по местам.</p>
+          <div class="hello-actions">
+            <a class="hello-primary" href="/login?join">Хочу попробовать <span aria-hidden="true">↗</span></a>
+            <a class="hello-text-link" href="#how-it-works">Сначала посмотреть <span aria-hidden="true">↓</span></a>
+          </div>
+          <p class="hello-access">Ранний доступ · вход после одобрения заявки</p>
+          <div class="hello-intro-note">
+            <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path d="M7 16l6 6L26 9M5 9l3-4M21 27l5-2" /></svg>
+            <span>Можно начать с одной мысли.<br />Даже с «не забыть купить кофе».</span>
           </div>
         </div>
-        <div class="demo-out" id="demo-out" aria-live="polite"></div>
-      </div>
 
-      <div class="hello-actions">
-        <a class="hello-primary" href="/login?join">Попробовать</a>
-        <a class="hello-secondary" href="/login">Войти</a>
-      </div>
-
-      <section class="hello-why" aria-label="Что это даёт">
-        <article>
-          <h3>Ничего не заполнять</h3>
-          <p>
-            Ни форм, ни обязательных полей, ни выпадающих списков. Срок, проект,
-            участники и тип записи модель достаёт из самой фразы — и показывает,
-            что поняла, чтобы можно было поправить одним нажатием.
-          </p>
-        </article>
-        <article>
-          <h3>День, а не список задач</h3>
-          <p>
-            Сверху — что идёт сейчас и сколько осталось до встречи. Ниже — день
-            целиком: просроченное, сегодняшнее и встречи из Яндекса, Google или
-            iCloud в одной ленте. Вечером — «Что делал», из того же, что вы
-            записали, без отдельного отчёта.
-          </p>
-        </article>
-        <article>
-          <h3>Записанное не пропадает</h3>
-          <p>
-            Журнал неизменяемый: исходная фраза остаётся как есть навсегда, а
-            правки живут версиями поверх неё. Забрать всё файлом или стереть без
-            остатка — одно нажатие в настройках.
-          </p>
-        </article>
+        <div class="hello-demo-stage" id="how-it-works">
+          <div class="hello-demo-top"><span class="hello-eyebrow">Из мысли — в порядок</span><span class="hello-demo-label">ПРИМЕР</span></div>
+          <div class="hello-demo-options" role="group" aria-label="Выбери пример записи" hidden>
+            <button type="button" data-example="todo" aria-pressed="true" aria-controls="demo-preview">Дело</button>
+            <button type="button" data-example="meeting" aria-pressed="false" aria-controls="demo-preview">Встреча</button>
+            <button type="button" data-example="idea" aria-pressed="false" aria-controls="demo-preview">Идея</button>
+            <button type="button" data-example="outcome" aria-pressed="false" aria-controls="demo-preview">Итог дня</button>
+          </div>
+          <div class="hello-demo-preview" id="demo-preview">
+            <div class="hello-demo-input">
+              <p class="hello-demo-step"><span>01</span> Ты пишешь как думаешь</p>
+              <p id="demo-text" class="hello-demo-text">Нужно забрать посылку до пятницы</p>
+              <div class="hello-demo-input-foot"><span class="hello-auto"><span aria-hidden="true">✳</span> Авто</span><span>Одной фразой, без заполнения полей</span></div>
+            </div>
+            <div class="hello-demo-connector" aria-hidden="true"><span>↓</span><span>Кизуна находит суть</span></div>
+            <div class="hello-demo-output" aria-live="polite" aria-atomic="true">
+              <p class="hello-demo-step"><span>02</span> Всё уже на своём месте</p>
+              <div id="demo-out">
+                <div class="hello-result-heading"><span class="hello-result-icon" aria-hidden="true">✓</span><p class="hello-result-title">Забрать посылку</p></div>
+                <div class="hello-result-tags"><span class="hello-result-tag is-todo">Дело</span><span class="hello-result-tag">До пятницы</span></div>
+                <p class="hello-result-note">Появится на доске дел и в плане дня на пятницу. Срок уже на месте.</p>
+              </div>
+            </div>
+          </div>
+          <p class="hello-demo-caption" id="demo-caption">Пример того, как Кизуна разбирает запись.</p>
+        </div>
       </section>
 
-      <section class="hello-plain" aria-label="Что нужно знать">
-        <h2>Честно, до того как вы начнёте</h2>
-        <ul>
-          <li>
-            <b>Журнал у каждого свой.</b> Записи, отчёты и память видит только
-            их автор — ни другие люди, ни администратор в чужие записи не
-            заглядывают.
-          </li>
-          <li>
-            <b>Текст записи уходит в языковую модель</b> — иначе её некому
-            разобрать. Это внешний сервис; пишите с тем же расчётом, с каким
-            писали бы в любой облачный сервис заметок.
-          </li>
-          <li>
-            <b>Забрать всё и уйти можно в одно нажатие.</b> «Экспорт» отдаёт
-            весь журнал файлом, «Очистить данные» стирает его без остатка.
-          </li>
-          <li>
-            <b>Заявку одобряет человек.</b> Регистрация свободная, но вход
-            открывается после подтверждения — поэтому это пока не сервис для
-            всех, а проба на живых людях.
-          </li>
-        </ul>
+      <div class="hello-promise-strip" aria-label="Главное о Кизуне">
+        <p><span aria-hidden="true">↳</span> Пиши своими словами</p>
+        <p><span aria-hidden="true">✳</span> Порядок появляется сам</p>
+        <p><span aria-hidden="true">↗</span> Важное остаётся под рукой</p>
+      </div>
+
+      <section class="hello-day-section" id="your-day" aria-labelledby="day-title">
+        <div class="hello-section-heading">
+          <div><p class="hello-eyebrow">В твоём ритме</p><h2 id="day-title">У дня появляется<br /><em>ясная картина.</em></h2></div>
+          <p>Утром — понять, что впереди.<br />Днём — освободить голову.<br />Вечером — увидеть, сколько уже сделано.</p>
+        </div>
+        <div class="hello-day-grid">
+          <article class="hello-day-card is-morning">
+            <div class="hello-day-time"><span>01 / УТРО</span><svg viewBox="0 0 40 40" aria-hidden="true" focusable="false"><path d="M5 28h30M10 25a10 10 0 0 1 20 0M20 5v5M6 13l4 4M34 13l-4 4" /></svg></div>
+            <h3>Начать без суеты</h3>
+            <p>Дела и встречи в одном дне. Видно, что сейчас, что дальше и к чему готовиться.</p>
+            <div class="hello-mini-agenda" aria-label="Пример плана дня">
+              <div><span>10:00</span><span><b>Обсудить новый проект</b><small>Встреча с командой</small></span></div>
+              <div><span>14:30</span><span><b>Забрать посылку</b><small>Дело на сегодня</small></span></div>
+            </div>
+          </article>
+          <article class="hello-day-card is-afternoon">
+            <div class="hello-day-time"><span>02 / ДЕНЬ</span><svg viewBox="0 0 40 40" aria-hidden="true" focusable="false"><circle cx="20" cy="20" r="7" /><path d="M20 3v5M20 32v5M3 20h5M32 20h5M8 8l4 4M28 28l4 4M8 32l4-4M28 12l4-4" /></svg></div>
+            <h3>Поймать мысль и идти дальше</h3>
+            <p>Не нужно решать, куда записать. Идеи, планы и итоги начинаются с одного поля.</p>
+            <div class="hello-mini-note"><span>ЗАМЕТКА СЕБЕ</span><p>А что, если на выходных<br />уехать к морю?</p><span class="hello-mini-note-label">Идея сохранена <span aria-hidden="true">↗</span></span></div>
+          </article>
+          <article class="hello-day-card is-evening">
+            <div class="hello-day-time"><span>03 / ВЕЧЕР</span><svg viewBox="0 0 40 40" aria-hidden="true" focusable="false"><path d="M30 27A14 14 0 0 1 13 7a14 14 0 1 0 17 20Z" /><path d="M28 5v8M24 9h8" /></svg></div>
+            <h3>Увидеть, что день был не зря</h3>
+            <p>Закрытые дела и записанные итоги уже собраны. Легче вспомнить, на что ушёл день.</p>
+            <div class="hello-mini-done" aria-label="Пример итогов дня"><span>СЕГОДНЯ ПОЛУЧИЛОСЬ</span><p><span aria-hidden="true">✓</span> Обсудить новый проект</p><p><span aria-hidden="true">✓</span> Забрать посылку</p><small>Можно выдохнуть.</small></div>
+          </article>
+        </div>
       </section>
 
-      <div class="hello-actions hello-actions-foot">
-        <a class="hello-primary" href="/login?join">Завести учётную запись</a>
-      </div>
-      <p class="hello-foot">
-        Кизуна — личный журнал, а не таск-трекер: она не заставляет заполнять
-        поля и не просит выбрать проект из списка. Вы пишете, она раскладывает.
-      </p>
+      <section class="hello-keep-section" aria-labelledby="keep-title">
+        <div class="hello-keep-art" aria-hidden="true">
+          <div class="hello-keep-ring"></div>
+          <div class="hello-memory-note"><span>ЗАПИСАНО СВОИМИ СЛОВАМИ</span><p>«Хочу чаще находить<br />время для своего»</p><div><span>Мысль сохранена</span><span>↗</span></div></div>
+          <span class="hello-memory-stamp">絆</span>
+          <span class="hello-keep-caption">Для того, что важно тебе.</span>
+        </div>
+        <div class="hello-keep-copy">
+          <p class="hello-eyebrow">Личная память</p>
+          <h2 id="keep-title">Мысли не теряются.<br /><em>Ты к ним возвращаешься.</em></h2>
+          <p>Идея из прошлой недели, решение после встречи, планы на потом — записанное можно найти, когда оно снова понадобится.</p>
+          <ul><li>Исходная запись остаётся, даже если ты уточнишь детали.</li><li>Разбор можно поправить — последнее слово за тобой.</li><li>Свои записи можно экспортировать или удалить в настройках.</li></ul>
+        </div>
+      </section>
+
+      <section class="hello-faq-section" aria-labelledby="faq-title">
+        <div><p class="hello-eyebrow">Без недосказанности</p><h2 id="faq-title">До первой <br /><em>записи.</em></h2><p class="hello-faq-intro">Несколько вещей, которые<br />полезно знать заранее.</p></div>
+        <div class="hello-faq-list">
+          <details><summary>Можно сразу начать пользоваться?<span aria-hidden="true">+</span></summary><p>Кизуна сейчас в раннем доступе. Зарегистрируйся — заявку проверит человек. Войти получится после одобрения. Автоматического письма о готовности пока нет.</p></details>
+          <details><summary>Кто видит мои записи?<span aria-hidden="true">+</span></summary><p>Личный журнал привязан к твоей учётной записи. В интерфейсе другие пользователи не видят его. В круги ты отдельно добавляешь записи, которыми хочешь поделиться.</p></details>
+          <details><summary>Как Кизуна понимает, что я написал?<span aria-hidden="true">+</span></summary><p>Текст отправляется во внешний сервис языковой модели. Она определяет тип записи и находит детали: например, срок или участника встречи. Разбор может ошибиться — его можно поправить.</p></details>
+          <details><summary>А если я захочу забрать записи?<span aria-hidden="true">+</span></summary><p>В настройках есть экспорт журнала файлом и очистка своих данных. Исходные фразы сохраняются вместе с историей изменений.</p></details>
+        </div>
+      </section>
+
+      <section class="hello-last-call" aria-labelledby="start-title">
+        <div><p class="hello-eyebrow">Большие планы начинаются с малого</p><h2 id="start-title">Начни с одной мысли.<br /><em>Остальное — по ходу жизни.</em></h2></div>
+        <div class="hello-last-action"><a class="hello-primary" href="/login?join">Хочу попробовать <span aria-hidden="true">↗</span></a><p>Ранний доступ<br />Вход после одобрения заявки</p></div>
+      </section>
     </main>
+
+    <footer class="hello-footer"><a href="/" class="hello-footer-brand">Кизуна <span>絆</span></a><p>Чуть больше порядка. Чуть больше спокойствия.</p><a href="#main">Наверх <span aria-hidden="true">↑</span></a></footer>
     <script src="/public/hello.js"></script>
   </body>
 </html>
