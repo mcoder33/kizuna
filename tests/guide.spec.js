@@ -107,3 +107,62 @@ test("на телефоне сначала список, потом прогон
   await expect(guide.locator(".gd-side")).toBeVisible();
   await expect(guide.locator('.gd-q[data-guide="todo"]')).toBeFocused();
 });
+
+// Демо идёт само, как видео: курсор летит к подсвеченному и нажимает, шаги
+// сменяются после паузы на чтение. Время в проверке ускоряют часы Playwright.
+async function playTo(page, locator, text) {
+  await expect
+    .poll(async () => { await page.clock.fastForward(700); return locator.textContent(); }, { timeout: 25000, intervals: [60] })
+    .toBe(text);
+}
+
+test("демо идёт само: курсор нажимает, пауза останавливает, в конце «Смотреть ещё раз», «Пройти самому» возвращает руки", async ({ page }) => {
+  await page.goto("/#guide?q=todo");
+  const guide = page.locator("#guide");
+  const count = guide.locator(".gd-count");
+  await expect(count).toHaveText("шаг 1 из 6");
+  await guide.getByRole("button", { name: "Смотреть демо" }).click();
+  await expect(page).toHaveURL(/#guide\?q=todo&demo=1$/);
+  await expect(count).toHaveText("демо · шаг 1 из 6");
+  await expect(guide.locator(".gd-demo-bar i")).toHaveCount(6);
+  await expect(guide.locator(".gd-cursor")).toHaveClass(/on/);
+  // Поле нажимает курсор, фраза печатается сама, стрелку нажимает курсор.
+  await playTo(page, count, "демо · шаг 2 из 6");
+  await expect(guide.locator(".gd-cap-text")).toHaveText("Оплатить хостинг до пятницы", { timeout: 5000 });
+  await playTo(page, count, "демо · шаг 3 из 6");
+  await expect(guide.locator(".gd-entry.new")).toBeVisible();
+  // Пауза останавливает ход, «Продолжить» пускает дальше.
+  await guide.getByRole("button", { name: "Пауза" }).click();
+  for (let i = 0; i < 5; i++) await page.clock.fastForward(3000);
+  await expect(count).toHaveText("демо · шаг 3 из 6");
+  await guide.getByRole("button", { name: "Продолжить" }).click();
+  await guide.getByRole("button", { name: "Скорость 1×" }).click();
+  await expect(guide.getByRole("button", { name: "Скорость 2×" })).toBeVisible();
+  // Кружок курсор тоже нажимает сам: дело закрыто.
+  await playTo(page, count, "демо · шаг 6 из 6");
+  await expect(guide.locator(".gd-entry.new")).toHaveClass(/done/);
+  await expect(guide.locator('.gd-q[data-guide="todo"] .gd-q-side')).toHaveText("✓");
+  await guide.getByRole("button", { name: "Смотреть ещё раз" }).click();
+  await expect(count).toHaveText("демо · шаг 1 из 6");
+  // «Пройти самому» — ручной режим с первого шага, курсора нет.
+  await guide.getByRole("button", { name: "Пройти самому" }).click();
+  await expect(count).toHaveText("шаг 1 из 6");
+  await expect(page).toHaveURL(/#guide\?q=todo$/);
+  await expect(guide.locator(".gd-cursor")).toHaveCount(0);
+  await expect(guide.getByRole("button", { name: "Или дальше" })).toBeVisible();
+});
+
+test("ссылка с «&demo=1» сразу показывает демо, и пустая правая половина его предлагает", async ({ page }) => {
+  const entriesBefore = await (await page.request.get("/api/entries")).text();
+  await page.goto("/#guide?q=assign&demo=1");
+  const guide = page.locator("#guide");
+  const count = guide.locator(".gd-count");
+  await expect(count).toHaveText("демо · шаг 1 из 8");
+  await playTo(page, count, "демо · шаг 3 из 8");
+  await page.goto("/#guide");
+  await guide.getByRole("button", { name: "Смотреть демо: как поручить дело" }).click();
+  await expect(count).toHaveText("демо · шаг 1 из 8");
+  await expect(page).toHaveURL(/#guide\?q=assign&demo=1$/);
+  // Демо идёт в копии: в журнале ничего не прибавилось.
+  expect(await (await page.request.get("/api/entries")).text()).toBe(entriesBefore);
+});

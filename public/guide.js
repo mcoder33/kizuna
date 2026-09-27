@@ -10,7 +10,7 @@
 // У вопроса свой адрес «#guide?q=assign» — на него можно дать ссылку.
 // Пройденные вопросы помечаются галочкой; это удобство одного браузера, поэтому
 // живёт в localStorage и не мешает, если его нет.
-import { GUIDE_GROUPS, GUIDES, guideLength } from "./guide-data.js";
+import { GUIDE_GROUPS, GUIDES, guideLength, demoPause } from "./guide-data.js";
 import { longDate, shortDate } from "./today-cover.js";
 
 const DONE_KEY = "kizuna.guide.done";
@@ -209,28 +209,153 @@ function ensureVisible(el) {
 }
 
 /* ── прогон справа ── */
-function createPlayer({ onTry, onGo, onExit, onBack, onDone }) {
-  let guide = null, id = null, idx = 0;
+// Два режима. «Пройти самому» — шаг ждёт нажатия человека. «Смотреть демо» —
+// прогон идёт сам, как видео: курсор летит к подсвеченному и нажимает, фраза
+// печатается, шаги сменяются с паузой на чтение; пауза, «Сначала» и скорость —
+// как у видео. Демо тоже идёт в копии: в журнал ничего не пишется.
+const CURSOR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 2v16.5l4.4-4.2 2.9 6.6 2.7-1.2-2.9-6.5H16z" fill="#1b1b1b" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/></svg>';
+// Значок перед словом — только для глаз: имя кнопки остаётся словом.
+const withMark = (mark, text) => { const icon = h("span", "gd-ic-mark", mark); icon.setAttribute("aria-hidden", "true"); return [icon, text]; };
+
+function createPlayer({ onTry, onGo, onExit, onBack, onDone, onMode }) {
+  let guide = null, id = null, idx = 0, mode = "hands";
+  // Номер хода гасит ожидания прошлого шага; пауза и скорость применяются на лету.
+  const demo = { run: 0, paused: false, speed: 1 };
   const back = button("gd-back", "‹ Вопросы", () => onBack());
   const title = h("h3", "gd-p-title");
   title.tabIndex = -1;
+  const handsButton = button("", "Пройти самому", () => setMode("hands"));
+  const demoButton = button("", withMark("▶", "Смотреть демо"), () => setMode("demo"));
+  const modes = h("div", "gd-modes", handsButton, demoButton);
+  modes.setAttribute("role", "group");
+  modes.setAttribute("aria-label", "Как смотреть вопрос");
   const count = h("span", "gd-count");
-  const head = h("div", "gd-p-head", back, title, count);
+  const head = h("div", "gd-p-head", back, title, modes, count);
+  const bar = h("div", "gd-demo-bar");
+  bar.setAttribute("aria-hidden", "true");
   const stage = h("div", "gd-stage");
   const rail = h("div", "gd-rail");
   rail.setAttribute("aria-live", "polite");
-  const root = h("div", "gd-player", head, stage, rail);
+  const root = h("div", "gd-player", head, bar, stage, rail);
+  const cursor = h("div", "gd-cursor");
+  cursor.innerHTML = CURSOR;
+  cursor.setAttribute("aria-hidden", "true");
 
-  function exitButtons(first) {
+  function setMode(next) {
+    mode = next;
+    idx = 0;
+    demo.paused = false;
+    root.classList.remove("paused");
+    cursor.classList.remove("on");
+    onMode?.(id, mode);
+    render();
+  }
+  const alive = (token) => token === demo.run && root.isConnected;
+  // Ожидание по часам демо: на паузе, на скрытой странице и в фоновой вкладке
+  // время стоит, а скорость ускоряет его.
+  function wait(ms, token, onProgress) {
+    return new Promise((resolve) => {
+      let left = ms, last = Date.now();
+      const timer = setInterval(() => {
+        if (!alive(token)) { clearInterval(timer); return; }
+        const now = Date.now();
+        if (!demo.paused && !document.hidden && !root.closest("[hidden]")) left -= (now - last) * demo.speed;
+        last = now;
+        if (onProgress && ms > 0) onProgress(Math.min(1, Math.max(0, 1 - left / ms)));
+        if (left <= 0) { clearInterval(timer); resolve(); }
+      }, 50);
+    });
+  }
+  // Курсор живёт внутри копии, в её координатах: копия прокручивается сама, и
+  // курсор едет вместе с ней.
+  function pointAt(el) {
+    const box = stage.getBoundingClientRect(), rect = el.getBoundingClientRect();
+    return {
+      x: Math.round(rect.left - box.left - stage.clientLeft + stage.scrollLeft + Math.min(rect.width / 2, 60)),
+      y: Math.round(rect.top - box.top - stage.clientTop + stage.scrollTop + Math.min(rect.height / 2, 24)),
+    };
+  }
+  function parkCursor() {
+    cursor.style.transitionDuration = "0ms";
+    cursor.style.transform = `translate(${Math.max(0, stage.clientWidth - 90)}px, ${Math.max(0, stage.clientHeight - 70)}px)`;
+  }
+  function moveCursor(el, token) {
+    const { x, y } = pointAt(el);
+    const ms = motion() ? Math.round(650 / demo.speed) : 0;
+    cursor.style.transitionDuration = `${ms}ms`;
+    cursor.classList.add("on");
+    cursor.style.transform = `translate(${x}px, ${y}px)`;
+    return wait(ms + 80, token);
+  }
+  async function press(token) {
+    cursor.classList.add("press");
+    const ripple = h("span", "gd-ripple");
+    ripple.style.transform = cursor.style.transform;
+    stage.append(ripple);
+    await wait(motion() ? 380 : 150, token);
+    cursor.classList.remove("press");
+    ripple.remove();
+  }
+  async function runDemo(step, token, typed) {
+    await wait(300, token);
+    if (!alive(token)) return;
+    // Фраза печатается сама — курсор в это время у поля, потом у стрелки.
+    if (step.state.typing) {
+      const field = stage.querySelector(".gd-cap-text");
+      if (field) await moveCursor(field, token);
+      await typed;
+      if (!alive(token)) return;
+    }
+    const target = stage.querySelector(step.target);
+    if (target) {
+      ensureVisible(target);
+      await wait(250, token);
+      if (!alive(token)) return;
+      await moveCursor(target, token);
+      if (!alive(token)) return;
+    }
+    const segment = bar.children[idx];
+    await wait(demoPause(step.say), token, (part) => segment?.style.setProperty("--p", part));
+    if (!alive(token) || step.act === "finish") return;
+    if (step.act === "click" && target) {
+      await press(token);
+      if (!alive(token)) return;
+    }
+    next();
+  }
+  function demoControls() {
+    const acts = h("div", "gd-acts");
+    const pause = button("gd-act primary", withMark(demo.paused ? "▶" : "❚❚", demo.paused ? "Продолжить" : "Пауза"), () => {
+      demo.paused = !demo.paused;
+      root.classList.toggle("paused", demo.paused);
+      pause.replaceChildren(...withMark(demo.paused ? "▶" : "❚❚", demo.paused ? "Продолжить" : "Пауза"));
+    });
+    const speed = button("gd-act", `Скорость ${demo.speed}×`, () => {
+      demo.speed = demo.speed === 1 ? 2 : 1;
+      speed.textContent = `Скорость ${demo.speed}×`;
+    });
+    acts.append(pause, button("gd-act", withMark("↺", "Сначала"), () => setMode("demo")), speed);
+    return acts;
+  }
+  function exitButtons(first, again) {
     const acts = h("div", "gd-acts");
     if (first) acts.append(first);
+    if (again) acts.append(again);
     acts.append(button("gd-act", "К вопросам", () => onBack()));
     acts.append(button("gd-act ghost", "Выйти из обучения", () => onExit()));
     return acts;
   }
   function render() {
+    const token = ++demo.run;
+    const watching = mode === "demo" && Boolean(guide.steps);
+    root.classList.toggle("demo", watching);
     title.textContent = guide.q;
-    count.textContent = guide.steps ? `шаг ${idx + 1} из ${guideLength(guide)}` : "";
+    modes.hidden = !guide.steps;
+    handsButton.setAttribute("aria-pressed", String(!watching));
+    demoButton.setAttribute("aria-pressed", String(watching));
+    count.textContent = guide.steps ? `${watching ? "демо · " : ""}шаг ${idx + 1} из ${guideLength(guide)}` : "";
+    bar.hidden = !watching;
+    if (watching) bar.replaceChildren(...guide.steps.map((_, i) => h("i", i < idx ? "done" : i === idx ? "on" : "")));
     stage.classList.toggle("plain", Boolean(guide.plain));
     stage.scrollTop = 0;
     if (guide.plain) {
@@ -245,15 +370,24 @@ function createPlayer({ onTry, onGo, onExit, onBack, onDone }) {
       if (armed || !target) return;
       armed = true;
       target.classList.add("gd-spot");
-      if (step.act === "click") target.addEventListener("click", (event) => { event.preventDefault(); next(); }, { once: true });
+      if (step.act === "click" && !watching) target.addEventListener("click", (event) => { event.preventDefault(); next(); }, { once: true });
       ensureVisible(target);
     };
-    stage.replaceChildren(scene(step.state, { onTyped: (send) => arm(send) }));
+    let typedDone;
+    const typed = new Promise((resolve) => { typedDone = resolve; });
+    stage.replaceChildren(scene(step.state, { onTyped: (send) => { arm(send); typedDone(); } }));
+    if (watching) {
+      stage.append(cursor);
+      if (!cursor.classList.contains("on")) parkCursor();
+    }
     const no = h("div", "gd-no" + (step.act === "finish" ? " end" : ""), step.act === "finish" ? "✓" : String(idx + 1));
     const body = h("div", null, h("p", "gd-say", step.say));
     if (step.act === "finish") {
-      body.append(exitButtons(step.tryText ? button("gd-act primary", "Попробовать по-настоящему", () => onTry(step.tryText)) : null));
+      const again = watching ? button("gd-act", withMark("↺", "Смотреть ещё раз"), () => setMode("demo")) : null;
+      body.append(exitButtons(step.tryText ? button("gd-act primary", "Попробовать по-настоящему", () => onTry(step.tryText)) : null, again));
       onDone(id);
+    } else if (watching) {
+      body.append(demoControls());
     } else {
       const acts = h("div", "gd-acts");
       if (step.act === "click") acts.append(h("span", "gd-hint", h("i"), "Нажмите подсвеченное"), button("gd-act ghost", "Или дальше", next));
@@ -264,11 +398,21 @@ function createPlayer({ onTry, onGo, onExit, onBack, onDone }) {
     rail.replaceChildren(no, body);
     // Печатающаяся фраза подсвечивает стрелку только после набора.
     if (!(step.state.typing && step.target === ".gd-cap-send")) arm(stage.querySelector(step.target));
+    if (watching) runDemo(step, token, typed);
   }
   function next() { if (guide.steps && idx < guide.steps.length - 1) { idx++; render(); } }
   return {
     el: root,
-    play(nextId) { id = nextId; guide = GUIDES[nextId]; idx = 0; render(); },
+    play(nextId, { watch = false } = {}) {
+      id = nextId;
+      guide = GUIDES[nextId];
+      idx = 0;
+      mode = watch && guide.steps ? "demo" : "hands";
+      demo.paused = false;
+      root.classList.remove("paused");
+      cursor.classList.remove("on");
+      render();
+    },
     focus() { title.focus({ preventScroll: true }); },
   };
 }
@@ -280,7 +424,7 @@ let sizedHost = null;
 const sizeTop = () => sizedHost?.style.setProperty("--guide-top", `${Math.round(document.querySelector("header")?.getBoundingClientRect().height ?? 72)}px`);
 window.addEventListener("resize", sizeTop);
 
-export function mountGuide(host, { initial = null, onTry, onGo, onExit } = {}) {
+export function mountGuide(host, { initial = null, initialDemo = false, onTry, onGo, onExit } = {}) {
   host.replaceChildren();
   sizedHost = host;
   sizeTop();
@@ -301,11 +445,14 @@ export function mountGuide(host, { initial = null, onTry, onGo, onExit } = {}) {
   host.append(shell);
 
   let current = null;
-  const setAddress = (id) => history.replaceState(null, "", id ? `#guide?q=${id}` : "#guide");
+  // Адрес помнит вопрос и режим: ссылку «#guide?q=assign&demo=1» открывают
+  // сразу смотрящим демо.
+  const setAddress = (id, watching = false) => history.replaceState(null, "", id ? `#guide?q=${id}${watching ? "&demo=1" : ""}` : "#guide");
   const player = createPlayer({
     onTry, onGo, onExit,
     onBack: () => back(),
     onDone: (id) => { markDone(id); paintList(); },
+    onMode: (id, mode) => setAddress(id, mode === "demo"),
   });
 
   function paintList() {
@@ -332,15 +479,17 @@ export function mountGuide(host, { initial = null, onTry, onGo, onExit } = {}) {
       h("span", "gd-big", "?"),
       h("b", null, "Выберите вопрос слева"),
       h("span", null, "Вопросы с красной точкой проходятся руками в копии интерфейса: в журнал ничего не запишется, пока вы сами не нажмёте «Попробовать по-настоящему». Остальные показывают шаги по порядку."),
-      button("gd-act primary", "Начать с первого: как завести дело", () => pick("todo"))));
+      h("div", "gd-acts gd-empty-acts",
+        button("gd-act primary", "Начать с первого: как завести дело", () => pick("todo")),
+        button("gd-act", withMark("▶", "Смотреть демо: как поручить дело"), () => pick("assign", { watch: true })))));
   }
-  function pick(id, { focus = true } = {}) {
+  function pick(id, { focus = true, watch = false } = {}) {
     current = id;
     shell.classList.add("playing");
     paintList();
     main.replaceChildren(player.el);
-    player.play(id);
-    setAddress(id);
+    player.play(id, { watch });
+    setAddress(id, watch && Boolean(GUIDES[id].steps));
     main.scrollTop = 0;
     if (focus) player.focus();
   }
@@ -356,6 +505,6 @@ export function mountGuide(host, { initial = null, onTry, onGo, onExit } = {}) {
   }
   input.addEventListener("input", paintList);
   paintList();
-  if (initial && GUIDES[initial]) pick(initial, { focus: false });
+  if (initial && GUIDES[initial]) pick(initial, { focus: false, watch: initialDemo });
   else empty();
 }

@@ -208,9 +208,10 @@ function updatePageFromHash() {
   // страница была скрыта, время шло.
   if (activePage === "today") renderToday();
   // «?» в шапке залит, пока открыта страница «Как пользоваться»; вопрос из
-  // адреса «#guide?q=…» открывается сразу — на него можно дать ссылку.
+  // адреса «#guide?q=…» открывается сразу — на него можно дать ссылку, а с
+  // «&demo=1» он сразу идёт демо.
   document.querySelector(".help-link")?.classList.toggle("active", activePage === "guide");
-  if (activePage === "guide") renderGuide(params.get("q"));
+  if (activePage === "guide") renderGuide(params.get("q"), params.has("demo"));
   // Открыли настройки — перечитываем расход: он меняется от каждой записи, а
   // страница может висеть открытой долго.
   if (activePage === "settings") {
@@ -1034,9 +1035,10 @@ function firstStepNode() {
 // пройденного живут в браузере и меняются в прогоне. «Попробовать
 // по-настоящему» ведёт на «Сегодня» и подставляет фразу шага в настоящее поле,
 // как пример первого шага; «Выйти из обучения» — просто на «Сегодня».
-function renderGuide(initial) {
+function renderGuide(initial, initialDemo = false) {
   mountGuide($("#guide"), {
     initial,
+    initialDemo,
     onTry: (text) => { location.hash = "#today"; updatePageFromHash(); prefillCapture(text, null); },
     onGo: (hash) => { location.hash = hash; },
     onExit: () => { location.hash = "#today"; },

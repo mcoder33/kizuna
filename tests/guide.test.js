@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { GUIDE_GROUPS, GUIDES, guideLength } from '../public/guide-data.js';
+import { GUIDE_GROUPS, GUIDES, guideLength, demoPause } from '../public/guide-data.js';
 
 const ACTS = new Set(['click', 'next', 'finish']);
 const VIEWS = new Set(['today', 'card', 'circles', 'anna']);
@@ -78,4 +78,19 @@ test('каждая цель шага — класс, который рисует
 
 test('у вопроса свой адрес: id годится для «#guide?q=…»', () => {
   for (const id of Object.keys(GUIDES)) assert.match(id, /^[a-z]+$/);
+});
+
+// Демо идёт само, как видео: на шаге оно стоит, пока текст читают. Слишком
+// коротко — не успеть прочитать, слишком долго — ролик тянется; весь прогон
+// на обычной скорости укладывается примерно в минуту.
+test('демо держит шаг, пока текст читают, и весь ролик укладывается примерно в минуту', () => {
+  assert.equal(demoPause('коротко'), 2600);
+  assert.equal(demoPause('x'.repeat(1000)), 9000);
+  assert.ok(demoPause('x'.repeat(120)) < demoPause('x'.repeat(160)));
+  for (const [id, guide] of Object.entries(GUIDES)) {
+    if (!guide.steps) continue;
+    // Сверх чтения на шаге — около полутора секунд: курсор едет и нажимает.
+    const seconds = guide.steps.reduce((sum, step) => sum + demoPause(step.say) + 1500, 0) / 1000;
+    assert.ok(seconds <= 75, `${id}: демо ${Math.round(seconds)} с`);
+  }
 });

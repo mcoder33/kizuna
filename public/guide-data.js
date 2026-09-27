@@ -77,3 +77,7 @@ for (const group of GUIDE_GROUPS) for (const id of group.items) GUIDES[id].group
 
 // Сколько шагов у вопроса: у живого прогона — шаги, у списка — пункты.
 export const guideLength = (guide) => (guide.steps ? guide.steps.length : guide.plain.length);
+
+// Сколько демо стоит на шаге, пока текст читают: примерно как читают вслух
+// про себя, но не меньше двух с половиной секунд и не дольше девяти.
+export const demoPause = (text) => Math.min(9000, Math.max(2600, 1400 + String(text).length * 38));
