@@ -1,13 +1,17 @@
-// «Как пользоваться»: вопросы в «?» в шапке и прогон поверх настоящих
-// страниц. Ничего не имитируется: пузырь встаёт у живого элемента, фраза
-// примера подставляется в настоящее поле, отправка и кружок — настоящие, и
-// после прогона запись уже есть в журнале. Шаг ждёт действия человека
-// («capture» — новая запись, «click» — нажатие на цель) или кнопки «Дальше»;
-// с любого шага можно выйти, в конце — «Выйти из обучения».
+// Страница «Как пользоваться»: слева вопросы с поиском, справа прогон в копии
+// интерфейса. На телефоне сначала список, потом экран прогона с «‹ Вопросы».
 //
-// Пройденные вопросы помечаются галочкой; это удобство одного браузера,
-// поэтому живёт в localStorage и не мешает, если его нет.
-import { GUIDE_GROUPS, GUIDES, isHandsOn } from "./guide-data.js";
+// Прогон идёт в копии, а не в самом журнале: шаг делается рукой (нажать поле,
+// отправить, закрыть кружком, ответить «Беру» за Аню), но в журнал ничего не
+// пишется, пока человек не нажал «Попробовать по-настоящему». Тогда фраза шага
+// подставляется в настоящее поле на «Сегодня». В конце прогона можно выйти из
+// обучения совсем.
+//
+// У вопроса свой адрес «#guide?q=assign» — на него можно дать ссылку.
+// Пройденные вопросы помечаются галочкой; это удобство одного браузера, поэтому
+// живёт в localStorage и не мешает, если его нет.
+import { GUIDE_GROUPS, GUIDES, guideLength } from "./guide-data.js";
+import { longDate, shortDate } from "./today-cover.js";
 
 const DONE_KEY = "kizuna.guide.done";
 const h = (tag, cls, ...kids) => {
@@ -23,7 +27,6 @@ const button = (cls, label, onClick, attrs = {}) => {
   if (onClick) b.addEventListener("click", onClick);
   return b;
 };
-const visible = (el) => Boolean(el) && el.getClientRects().length > 0;
 const motion = () => !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
 function readDone() {
@@ -34,157 +37,257 @@ function markDone(id) {
   done.add(id);
   try { localStorage.setItem(DONE_KEY, JSON.stringify([...done])); } catch {}
 }
+// Дата в копии «Сегодня» — настоящая: пример с позавчерашним числом выглядел
+// бы забытым макетом.
+const isoDay = (shift = 0) => {
+  const day = new Date();
+  day.setDate(day.getDate() + shift);
+  return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+};
 
-/* ── где цель шага ── */
-function findTarget(spec, newId) {
-  if (!spec) return { el: null, index: 0 };
-  if (Array.isArray(spec)) {
-    for (let i = 0; i < spec.length; i++) { const el = findTarget(spec[i], newId).el; if (el) return { el, index: i }; }
-    return { el: null, index: 0 };
-  }
-  if (typeof spec === "string") {
-    if (spec.startsWith("@new")) {
-      if (!newId) return { el: null, index: 0 };
-      spec = `[data-capture-id="${newId}"]` + spec.slice(4);
-    }
-    return { el: [...document.querySelectorAll(spec)].find(visible) || null, index: 0 };
-  }
-  if (spec.legend) {
-    const legend = [...document.querySelectorAll("#settings legend")].find((el) => el.textContent.trim() === spec.legend);
-    return { el: legend && visible(legend) ? legend.closest("fieldset") : null, index: 0 };
-  }
-  if (spec.prop) {
-    const row = [...document.querySelectorAll("#review-props .prop")].find((el) => el.querySelector(".prop-label")?.textContent.trim() === spec.prop);
-    return { el: visible(row) ? row : null, index: 0 };
-  }
-  return { el: null, index: 0 };
+/* ── иконки ── */
+function icon(paths, extra = "") {
+  const wrap = h("span");
+  wrap.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ${extra} aria-hidden="true">${paths}</svg>`;
+  return wrap.firstChild;
 }
-// Ящик на «Сегодня» открывается вкладкой; пока цель не видна, пробуем вкладки
-// по очереди — запись могла лечь в «День», «Что делал» или «Заметки».
-function openTab(step, attempt) {
-  const tabs = [step.tab].flat().filter(Boolean);
-  if (!tabs.length) return;
-  const tab = document.querySelector(tabs[attempt % tabs.length]);
-  if (tab && tab.getAttribute("aria-selected") !== "true") tab.click();
-}
+const waveIcon = () => icon('<path d="M3 9.5v5"/><path d="M7.5 7v10"/><path d="M12 4v16"/><path d="M16.5 7v10"/><path d="M21 9.5v5"/>', 'stroke-width="2.2"');
+const expandIcon = () => icon('<path d="M9 4.5H6.5a2 2 0 0 0-2 2V9"/><path d="M15 4.5h2.5a2 2 0 0 1 2 2V9"/><path d="M9 19.5H6.5a2 2 0 0 1-2-2V15"/><path d="M15 19.5h2.5a2 2 0 0 0 2-2V15"/>', 'stroke-width="1.6"');
+const todoIcon = () => icon('<circle cx="12" cy="12" r="8.5"/><path d="m8.5 12.5 2.3 2.3L15.5 10"/>');
 
-const isNewTarget = (spec) => typeof spec === "string" && spec.startsWith("@new");
-
-/* ── прогон ── */
-function startTour(id, { prefill, openCard, closeCard, onExit, onAnother }) {
-  const guide = GUIDES[id];
-  const steps = guide.steps;
-  let idx = 0, newId = null, current = null, tick = null, waitCapture = null, attempts = 0, scrolled = false;
-  const bubble = h("div", "gd-bubble");
-  bubble.setAttribute("role", "dialog");
-  bubble.setAttribute("aria-label", guide.q);
-  const onKey = (event) => { if (event.key === "Escape") { event.preventDefault(); finishTour(false); } };
-  document.addEventListener("keydown", onKey);
-  const onClickTarget = () => setTimeout(next, 0);
-
-  function unbind() {
-    clearInterval(tick); tick = null;
-    if (waitCapture) document.removeEventListener("kizuna:captured", waitCapture);
-    waitCapture = null;
-    if (current) { current.classList.remove("gd-spot"); current.removeEventListener("click", onClickTarget, true); }
-    current = null;
+/* ── сцены: копии интерфейса ── */
+function todayScene(state, hooks) {
+  const root = h("div", "gd-today");
+  root.append(h("p", "gd-cover-date", `${longDate(isoDay())} · `, h("span", "gd-phase", "день")), h("p", "gd-cover-brief", state.brief));
+  const cap = h("div", "gd-capture");
+  const hasText = Boolean(state.text) || Boolean(state.typing);
+  const text = h("div", "gd-cap-text" + (hasText ? "" : " empty"));
+  text.tabIndex = 0;
+  text.setAttribute("role", "textbox");
+  text.setAttribute("aria-label", "Поле записи в примере");
+  text.textContent = state.text || (state.typing ? "" : "Запишите мысль, план, встречу или итог дня");
+  const foot = h("div", "gd-cap-foot");
+  const dots = h("div", "gd-type-dots");
+  for (const [value, label] of [["auto", "Авто"], ["todo", "ТУДУ"], ["outcome", "Результат"], ["note", "Заметка"]]) {
+    const dot = button("gd-type-dot" + (value === "auto" ? " on" : ""), [h("span", "gd-mark"), h("span", "gd-label", label)], null, { "aria-label": label });
+    dot.style.setProperty("--c", `var(--type-${value})`);
+    dot.style.setProperty("--tint", `var(--tint-${value})`);
+    dots.append(dot);
   }
-  function finishTour(toToday, another = false) {
-    unbind();
-    bubble.remove();
-    document.removeEventListener("keydown", onKey);
-    if (toToday) { closeCard(); location.hash = "#today"; }
-    if (another) onAnother?.(); else onExit?.();
-  }
-  function next() { if (idx < steps.length - 1) show(idx + 1); }
-
-  function paint(step, index, found) {
-    bubble.replaceChildren();
-    const head = h("div", "gd-b-head", h("b", null, guide.q), h("span", "gd-b-count", `шаг ${idx + 1} из ${steps.length}`), button("gd-b-x", "×", () => finishTour(false), { "aria-label": "Прервать обучение", title: "Прервать обучение" }));
-    const say = Array.isArray(step.say) ? step.say[index] : step.say;
-    const text = h("p", "gd-b-say", found || !step.missing ? say : step.missing);
-    const acts = h("div", "gd-b-acts");
-    if (step.act === "finish") {
-      acts.append(button("gd-act primary", "Выйти из обучения", () => { markDone(id); finishTour(true); }));
-      acts.append(button("gd-act", "Другой вопрос", () => { markDone(id); finishTour(false, true); }));
-    } else {
-      if (step.act === "click") acts.append(h("span", "gd-hint", h("i"), found ? "Нажмите подсвеченное" : "Когда будет на что нажать"));
-      if (step.act === "capture") acts.append(h("span", "gd-hint", h("i"), "Отправьте запись"));
-      acts.append(button("gd-act" + (step.act === "next" ? " primary" : " ghost"), step.act === "next" ? "Дальше" : "Или дальше", next));
-      // Строки новой записи не видно (дело на другой день, другой ящик) —
-      // запись всё равно есть, её можно открыть прямо отсюда.
-      if (!found && newId && isNewTarget(step.target)) acts.prepend(button("gd-act primary", "Открыть запись", () => { openCard(newId); if (step.act === "click") setTimeout(next, 0); }));
-      if (idx > 0) acts.append(button("gd-act ghost", "Назад", () => show(idx - 1)));
-    }
-    bubble.append(head, text, acts);
-  }
-  function place(target) {
-    // Открытое модальное окно (карточка записи) лежит поверх всего: пузырь,
-    // оставленный в body, оказался бы под ним и не нажимался бы.
-    const dialog = target?.closest("dialog[open]") || [...document.querySelectorAll("dialog[open]")].find((el) => { try { return el.matches(":modal"); } catch { return false; } });
-    const host = dialog || document.body;
-    if (bubble.parentNode !== host) host.append(bubble);
-    if (!target) { bubble.className = "gd-bubble docked"; bubble.style.cssText = ""; return; }
-    const rect = target.getBoundingClientRect();
-    const width = Math.min(360, window.innerWidth - 16);
-    bubble.style.width = width + "px";
-    const height = bubble.offsetHeight;
-    const below = rect.bottom + 12;
-    const fitsBelow = below + height <= window.innerHeight - 8;
-    const fitsAbove = rect.top - 12 - height >= 8;
-    if (!fitsBelow && !fitsAbove) { bubble.className = "gd-bubble docked"; bubble.style.width = ""; return; }
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
-    bubble.className = "gd-bubble " + (fitsBelow ? "below" : "above");
-    bubble.style.left = left + "px";
-    bubble.style.top = (fitsBelow ? below : rect.top - 12 - height) + "px";
-    bubble.style.setProperty("--arrow", Math.max(14, Math.min(width - 22, rect.left + Math.min(rect.width / 2, 40) - left)) + "px");
-  }
-  function bind(step, target) {
-    if (current === target) return;
-    if (current) { current.classList.remove("gd-spot"); current.removeEventListener("click", onClickTarget, true); }
-    current = target;
-    if (!target) return;
-    target.classList.add("gd-spot");
-    if (step.act === "click") target.addEventListener("click", onClickTarget, true);
-    if (!scrolled) { scrolled = true; target.scrollIntoView({ block: "center", behavior: motion() ? "smooth" : "auto" }); }
-  }
-  function show(i) {
-    unbind();
-    idx = i; attempts = 0; scrolled = false;
-    const step = steps[i];
-    if (step.closeCard) closeCard();
-    const here = location.hash.split("?")[0] || "#today";
-    if (step.page && here !== step.page) location.hash = step.page;
-    // Пример подставляется после того, как раздел показан: поле живёт на «Сегодня».
-    if (step.prefill) setTimeout(() => prefill(step.prefill), 0);
-    // Новую запись называет само приложение, когда разбор закончился.
-    if (step.act === "capture") {
-      waitCapture = (event) => { newId = event.detail?.captureId || null; if (newId) next(); };
-      document.addEventListener("kizuna:captured", waitCapture);
-    }
-    let painted = false;
-    const look = () => {
-      let { el, index } = findTarget(step.target, newId);
-      if (!el && step.tab && attempts < 12) { openTab(step, attempts); ({ el, index } = findTarget(step.target, newId)); }
-      attempts++;
-      // Цель ищется до трёх секунд: раздел мог ещё рисоваться. Потом пузырь
-      // встаёт внизу экрана с текстом «если бы цель была».
-      if (!el && attempts < 20 && step.target) return;
-      if (!painted || (el && !current) || (!el && current)) { painted = true; paint(step, index, Boolean(el)); }
-      bind(step, el);
-      place(el);
+  const send = button("gd-cap-send", "→", null, { "aria-label": "Сохранить запись в примере" });
+  send.hidden = !state.text;
+  const expand = button("gd-cap-expand", expandIcon(), null, { "aria-label": "Увеличить поле в примере" });
+  const voice = button("gd-cap-voice", waveIcon(), null, { "aria-label": "Поговорить с журналом в примере" });
+  foot.append(dots, h("span", "gd-sep"), h("span", "gd-tags", "#тег…"), expand, voice, send);
+  cap.append(text, foot);
+  root.append(cap);
+  if (state.typing) {
+    const caret = h("i", "gd-caret");
+    text.append(caret);
+    const full = state.typing;
+    let i = 0;
+    const step = () => {
+      if (!text.isConnected) return;
+      i = motion() ? i + 1 : full.length;
+      text.textContent = full.slice(0, i);
+      text.append(caret);
+      if (i < full.length) setTimeout(step, 26);
+      else { send.hidden = false; hooks?.onTyped?.(send); }
     };
-    look();
-    tick = setInterval(look, 150);
+    setTimeout(step, 240);
   }
-  show(0);
-  return { exit: () => finishTour(false) };
+  const tabs = h("div", "gd-today-tabs");
+  const doneCount = state.doneEntries.length, dayCount = state.entries.filter((e) => !e.done).length;
+  tabs.append(
+    button("gd-today-tab" + (state.tab === "done" ? " on" : ""), ["Что делал", h("b", null, String(doneCount))]),
+    button("gd-today-tab" + (state.tab === "day" ? " on" : ""), ["День", h("b", null, `${dayCount} ${dayCount === 1 ? "дело" : dayCount > 1 && dayCount < 5 ? "дела" : "дел"}`)]),
+  );
+  root.append(tabs);
+  root.append(h("div", "gd-day-head", h("span", null, `‹ ${shortDate(isoDay(-1))}`), h("span", "gd-mid", longDate(isoDay()), h("i", null, "Сегодня")), h("span", "gd-r", `${shortDate(isoDay(1))} ›`)));
+  const list = h("div", "gd-entries");
+  if (state.tab === "day") {
+    root.append(h("p", "gd-shelf", "Без времени"));
+    for (const entry of state.entries) list.append(entryRow(entry));
+  } else {
+    root.append(h("p", "gd-shelf", "Сделано сегодня"));
+    if (!state.doneEntries.length) list.append(h("p", "gd-cover-brief", "Пока нет зафиксированной работы за сегодня."));
+    for (const entry of state.doneEntries) list.append(entryRow(entry));
+  }
+  root.append(list);
+  if (state.toast) root.append(h("div", "gd-toast", state.toast));
+  return root;
+}
+function entryRow(entry) {
+  const row = h("div", "gd-entry" + (entry.isNew ? " new" : "") + (entry.done ? " done" : "") + (entry.type === "task" ? "" : " no-check"));
+  if (entry.type === "task") row.append(button("gd-check", "", null, { "aria-label": entry.done ? "Вернуть в работу" : "Готово" }));
+  row.append(button("gd-title", entry.title));
+  const meta = h("div", "gd-meta");
+  meta.append(h("span", "gd-tag " + entry.type, { task: "задача", outcome: "результат", note: "заметка", meeting: "встреча" }[entry.type]));
+  if (entry.project) meta.append(h("span", "gd-tag project", entry.project));
+  if (entry.from) meta.append(h("span", "gd-tag from", entry.from));
+  if (entry.assign) meta.append(h("span", "gd-tag assign" + (entry.taken ? " taken" : ""), entry.assign));
+  if (entry.when) meta.append(h("span", null, entry.when));
+  if (entry.due) meta.append(h("span", "gd-tag due" + (entry.ontime ? " ontime" : ""), "срок: " + entry.due));
+  if (entry.undated && !entry.done) meta.append(h("span", "gd-tag", "без срока"));
+  if (entry.due && entry.ontime && !entry.done) meta.append(h("span", "gd-tag ontime", "в срок"));
+  if (entry.done) meta.append(h("span", "gd-tag done", "готово"));
+  row.append(meta);
+  return row;
+}
+function cardScene(state) {
+  const root = h("div", "gd-cardv");
+  root.append(h("div", "gd-card-head", "Сегодня / запись", button("gd-round", "×", null, { "aria-label": "Закрыть карточку в примере" })), h("p", "gd-card-title", state.title));
+  const props = h("div", "gd-props");
+  const typeVal = h("div", "gd-prop-val");
+  if (state.choices) {
+    for (const [id, word] of [["note", "заметка"], ["task", "задача"], ["meeting", "встреча"], ["outcome", "результат"], ["idea", "идея"]])
+      typeVal.append(button(`gd-choice gd-choice-${id}` + (word === state.type ? " on" : ""), word));
+  } else typeVal.append(h("span", "gd-select", state.type));
+  props.append(h("div", "gd-prop", h("span", "gd-prop-name", "Тип"), typeVal));
+  props.append(h("div", "gd-prop", h("span", "gd-prop-name", "Срок"), h("div", "gd-prop-val", state.due ? h("span", "gd-select", state.due) : h("span", "gd-ghost", "без срока"))));
+  props.append(h("div", "gd-prop", h("span", "gd-prop-name", "Проект"), h("div", "gd-prop-val", h("span", "gd-select", state.project || "—"))));
+  if (state.assignee !== undefined) {
+    const val = h("div", "gd-prop-val", h("span", "gd-select", state.assignee || "— никому"));
+    if (state.assignWord) val.append(h("span", "gd-origin", "— " + state.assignWord));
+    props.append(h("div", "gd-prop gd-prop-assign", h("span", "gd-prop-name", "Исполнитель"), val));
+  }
+  root.append(props);
+  if (state.lesson) root.append(h("p", "gd-lesson", h("span", "gd-mk", "✓"), state.lesson));
+  root.append(h("div", "gd-card-src", "Исходная запись: ", h("b", null, `«${state.title}»`), " · сегодня, 12:05. Она хранится как есть, правки живут поверх."));
+  return root;
+}
+function circlesScene(state) {
+  const root = h("div", "gd-circles");
+  const band = h("div", "gd-kc-band", h("div", "gd-kc-title", h("span", "gd-kc-dot"), "ВойсОпс ", h("span", "gd-kc-sub", "3 за столом")));
+  const seats = h("div", "gd-kc-seats");
+  for (const person of [{ n: "Саша", sub: "вы", me: true, cls: "me" }, { n: "Аня", sub: "1 открытое дело", cls: "a" }, { n: "Миша", sub: "открытых дел нет", cls: "m" }]) {
+    const seat = h("div", "gd-kc-seat", h("span", "gd-ava " + person.cls, person.n[0]), h("span", null, h("span", "gd-kc-name", person.n), h("span", "gd-kc-sub", person.sub)));
+    if (!person.me && (state.showTodo || person.n === "Аня")) seat.append(button("gd-kc-todo", todoIcon(), null, { title: "Поручить дело", "aria-label": "Поручить дело: " + person.n }));
+    seats.append(seat);
+  }
+  seats.append(h("div", "gd-kc-seat add", h("span", "gd-ava", "+"), h("span", "gd-kc-name", "Позвать")));
+  band.append(seats);
+  root.append(band);
+  if (state.panel) {
+    const panel = h("div", "gd-kc-panel", h("div", "gd-kc-panel-head", h("span", "gd-ava a", "А"), state.panel, h("span", "gd-kc-sub", "в круге ВойсОпс")));
+    const input = h("input");
+    input.type = "text";
+    input.placeholder = "Что поручить";
+    input.value = state.deed || "";
+    input.setAttribute("aria-label", "Дело для " + state.panel + " в примере");
+    panel.append(h("div", "gd-kc-deed", input, button("gd-act primary", "Отдать")), h("p", "gd-kc-hint", "Срок пишется словами внутри: «до пятницы». Разбирает та же модель, что и обычную запись."));
+    root.append(panel);
+  }
+  return root;
+}
+function annaScene(state) {
+  const root = h("div", "gd-anna", h("p", "gd-as-label", h("span", "gd-ava a", "А"), "Так это видит Аня"));
+  const bell = h("div", "gd-bell", h("div", "gd-bell-h", "Колокольчик", h("span", "gd-n", "1")));
+  const notice = h("div", "gd-notice" + (state.taken ? " taken" : ""), h("span", "gd-ava s", "С"));
+  if (!state.taken) {
+    notice.append(h("div", null, h("b", null, "Саша"), " просит: «Прислать смету по Хабу»", h("div", "gd-notice-meta", "срок: пятница · круг ВойсОпс")));
+    notice.append(h("div", "gd-notice-acts", button("gd-act primary gd-take", "Беру"), button("gd-act", "Не я")));
+  } else notice.append(h("div", null, h("b", null, "Взято"), ", дело в вашем дне"));
+  bell.append(notice);
+  root.append(bell);
+  if (state.taken) root.append(h("div", "gd-anna-day", h("p", "gd-shelf", "День Ани · без времени"), h("div", "gd-entries", entryRow({ title: "Прислать смету по Хабу", type: "task", due: "пятница", ontime: true, from: "от Саши", when: "ссылка на запись Саши" }))));
+  return root;
+}
+function scene(state, hooks) {
+  if (state.view === "card") return cardScene(state);
+  if (state.view === "circles") return circlesScene(state);
+  if (state.view === "anna") return annaScene(state);
+  return todayScene(state, hooks);
 }
 
-/* ── список вопросов в «?» ── */
-export function installGuide({ menu, popover, prefill, openCard, closeCard }) {
-  let tour = null;
-  const search = h("label", "gd-search", "⌕");
+// Цель шага должна быть видна: в низком окне копия ужата и прокручивается
+// сама, и подсвеченное может оказаться за её краем.
+function ensureVisible(el) {
+  const box = el.closest(".gd-stage")?.getBoundingClientRect();
+  const rect = el.getBoundingClientRect();
+  if (box && (rect.top < box.top || rect.bottom > box.bottom)) el.scrollIntoView({ block: "center", behavior: motion() ? "smooth" : "auto" });
+}
+
+/* ── прогон справа ── */
+function createPlayer({ onTry, onGo, onExit, onBack, onDone }) {
+  let guide = null, id = null, idx = 0;
+  const back = button("gd-back", "‹ Вопросы", () => onBack());
+  const title = h("h3", "gd-p-title");
+  title.tabIndex = -1;
+  const count = h("span", "gd-count");
+  const head = h("div", "gd-p-head", back, title, count);
+  const stage = h("div", "gd-stage");
+  const rail = h("div", "gd-rail");
+  rail.setAttribute("aria-live", "polite");
+  const root = h("div", "gd-player", head, stage, rail);
+
+  function exitButtons(first) {
+    const acts = h("div", "gd-acts");
+    if (first) acts.append(first);
+    acts.append(button("gd-act", "К вопросам", () => onBack()));
+    acts.append(button("gd-act ghost", "Выйти из обучения", () => onExit()));
+    return acts;
+  }
+  function render() {
+    title.textContent = guide.q;
+    count.textContent = guide.steps ? `шаг ${idx + 1} из ${guideLength(guide)}` : "";
+    stage.classList.toggle("plain", Boolean(guide.plain));
+    stage.scrollTop = 0;
+    if (guide.plain) {
+      stage.replaceChildren(h("div", "gd-plain", h("ol", null, ...guide.plain.map((text) => h("li", null, text)))));
+      rail.replaceChildren(h("div", "gd-no end", "✓"), h("div", null, h("p", "gd-say", "Шаги по порядку. Кнопка ведёт в нужный раздел приложения, там всё уже по-настоящему."), exitButtons(button("gd-act primary", "Открыть раздел", () => onGo(guide.go || "#today")))));
+      onDone(id);
+      return;
+    }
+    const step = guide.steps[idx];
+    let armed = false;
+    const arm = (target) => {
+      if (armed || !target) return;
+      armed = true;
+      target.classList.add("gd-spot");
+      if (step.act === "click") target.addEventListener("click", (event) => { event.preventDefault(); next(); }, { once: true });
+      ensureVisible(target);
+    };
+    stage.replaceChildren(scene(step.state, { onTyped: (send) => arm(send) }));
+    const no = h("div", "gd-no" + (step.act === "finish" ? " end" : ""), step.act === "finish" ? "✓" : String(idx + 1));
+    const body = h("div", null, h("p", "gd-say", step.say));
+    if (step.act === "finish") {
+      body.append(exitButtons(step.tryText ? button("gd-act primary", "Попробовать по-настоящему", () => onTry(step.tryText)) : null));
+      onDone(id);
+    } else {
+      const acts = h("div", "gd-acts");
+      if (step.act === "click") acts.append(h("span", "gd-hint", h("i"), "Нажмите подсвеченное"), button("gd-act ghost", "Или дальше", next));
+      if (step.act === "next") acts.append(button("gd-act primary", "Дальше", next));
+      if (idx > 0) acts.append(button("gd-act ghost", "Назад", () => { idx--; render(); }));
+      body.append(acts);
+    }
+    rail.replaceChildren(no, body);
+    // Печатающаяся фраза подсвечивает стрелку только после набора.
+    if (!(step.state.typing && step.target === ".gd-cap-send")) arm(stage.querySelector(step.target));
+  }
+  function next() { if (guide.steps && idx < guide.steps.length - 1) { idx++; render(); } }
+  return {
+    el: root,
+    play(nextId) { id = nextId; guide = GUIDES[nextId]; idx = 0; render(); },
+    focus() { title.focus({ preventScroll: true }); },
+  };
+}
+
+/* ── страница: список слева, прогон справа ── */
+// Страница занимает окно под шапкой: высота шапки своя у каждой ширины окна,
+// поэтому пересчитывается и при смене размера.
+let sizedHost = null;
+const sizeTop = () => sizedHost?.style.setProperty("--guide-top", `${Math.round(document.querySelector("header")?.getBoundingClientRect().height ?? 72)}px`);
+window.addEventListener("resize", sizeTop);
+
+export function mountGuide(host, { initial = null, onTry, onGo, onExit } = {}) {
+  host.replaceChildren();
+  sizedHost = host;
+  sizeTop();
+  const shell = h("div", "gd-shell");
+  const side = h("aside", "gd-side");
+  side.setAttribute("aria-label", "Вопросы");
+  const search = h("label", "gd-search", h("span", "gd-search-mark", "⌕"));
   const input = h("input");
   input.type = "search";
   input.id = "guide-search";
@@ -192,8 +295,20 @@ export function installGuide({ menu, popover, prefill, openCard, closeCard }) {
   input.setAttribute("aria-label", "Поиск по вопросам");
   search.append(input);
   const list = h("div", "gd-list");
-  popover.replaceChildren(h("p", "gd-title", "Как пользоваться"), h("p", "gd-sub", "Нажмите вопрос: шаги пойдут прямо по приложению, в вашем журнале."), search, list);
-  const paint = () => {
+  side.append(h("h2", "gd-side-title", "Как пользоваться"), h("p", "gd-side-sub", "Нажмите вопрос: справа покажется, как это делается, в копии интерфейса. С красной точкой — руками, по шагам."), search, list);
+  const main = h("div", "gd-main");
+  shell.append(side, main);
+  host.append(shell);
+
+  let current = null;
+  const setAddress = (id) => history.replaceState(null, "", id ? `#guide?q=${id}` : "#guide");
+  const player = createPlayer({
+    onTry, onGo, onExit,
+    onBack: () => back(),
+    onDone: (id) => { markDone(id); paintList(); },
+  });
+
+  function paintList() {
     const done = readDone();
     const query = input.value.trim().toLowerCase();
     list.replaceChildren();
@@ -203,24 +318,44 @@ export function installGuide({ menu, popover, prefill, openCard, closeCard }) {
       list.append(h("p", "gd-group", group.name));
       for (const id of items) {
         const guide = GUIDES[id];
-        const row = button("gd-q" + (done.has(id) ? " done" : ""), [h("span", "gd-q-text", h("b", null, guide.q), h("span", null, guide.sum)), h("span", "gd-q-side", done.has(id) ? "✓" : `${guide.steps.length}`, isHandsOn(guide) ? h("i", null) : null)], () => start(id), { "data-guide": id, title: done.has(id) ? "Пройдено" : `${guide.steps.length} шагов${isHandsOn(guide) ? ", руками" : ""}` });
+        const mark = done.has(id) ? h("span", "gd-q-side done", "✓") : guide.steps ? h("span", "gd-q-side live") : h("span", "gd-q-side", "шаги");
+        const hint = done.has(id) ? "Пройдено" : guide.steps ? `${guide.steps.length} шагов, руками` : `${guide.plain.length} шага списком`;
+        const row = button("gd-q" + (id === current ? " on" : "") + (done.has(id) ? " done" : ""), [h("span", "gd-q-text", guide.q), mark], () => pick(id), { "data-guide": id, title: hint });
+        if (id === current) row.setAttribute("aria-current", "true");
         list.append(row);
       }
     }
-    if (!list.childNodes.length) list.append(h("p", "gd-sub", "Такого вопроса пока нет."));
-  };
-  input.addEventListener("input", paint);
-  const open = () => { paint(); menu.open = true; input.focus({ preventScroll: true }); };
-  const close = () => { menu.open = false; };
-  function start(id) {
-    // Следующий раз список открывается целиком, а не с прошлым поиском.
-    input.value = "";
-    close();
-    tour?.exit();
-    tour = startTour(id, { prefill, openCard, closeCard, onExit: () => { tour = null; paint(); }, onAnother: () => { tour = null; open(); } });
+    if (!list.childNodes.length) list.append(h("p", "gd-side-sub", "Такого вопроса пока нет."));
   }
-  menu.addEventListener("toggle", () => { if (menu.open) paint(); });
-  document.addEventListener("click", (event) => { if (menu.open && !menu.contains(event.target)) close(); });
-  paint();
-  return { open, start };
+  function empty() {
+    main.replaceChildren(h("div", "gd-empty-player",
+      h("span", "gd-big", "?"),
+      h("b", null, "Выберите вопрос слева"),
+      h("span", null, "Вопросы с красной точкой проходятся руками в копии интерфейса: в журнал ничего не запишется, пока вы сами не нажмёте «Попробовать по-настоящему». Остальные показывают шаги по порядку."),
+      button("gd-act primary", "Начать с первого: как завести дело", () => pick("todo"))));
+  }
+  function pick(id, { focus = true } = {}) {
+    current = id;
+    shell.classList.add("playing");
+    paintList();
+    main.replaceChildren(player.el);
+    player.play(id);
+    setAddress(id);
+    main.scrollTop = 0;
+    if (focus) player.focus();
+  }
+  function back() {
+    const was = current;
+    current = null;
+    shell.classList.remove("playing");
+    paintList();
+    empty();
+    setAddress(null);
+    const row = was && list.querySelector(`[data-guide="${was}"]`);
+    if (row) { row.focus({ preventScroll: true }); row.scrollIntoView({ block: "nearest" }); }
+  }
+  input.addEventListener("input", paintList);
+  paintList();
+  if (initial && GUIDES[initial]) pick(initial, { focus: false });
+  else empty();
 }

@@ -6,7 +6,7 @@ import { attachMentionMenu, forgetMentionPeople } from "./mention-menu.js";
 import { attachFormatToolbar } from "./format-toolbar.js";
 import { createVoiceDialog } from "./voice.js";
 import { openNotes, refreshNotes } from "./notes.js";
-import { installGuide } from "./guide.js";
+import { mountGuide } from "./guide.js";
 import { phaseOf, coverFor, endedRecently, plural, hm, duration, minutesOf, longDate, shortDate, isWeekend, MEETINGS, DEALS, PHASE_NAMES } from "./today-cover.js";
 
 const $ = (selector) => document.querySelector(selector);
@@ -186,15 +186,7 @@ function updatePageFromHash() {
   // разовое действие, поэтому разбирается до страниц.
   if (hash.startsWith("join/")) { openInvite(hash.slice(5)); return; }
   const separator = hash.indexOf("?");
-  let pageId = (separator >= 0 ? hash.slice(0, separator) : hash) || "today";
-  // «#guide» — не страница, а список вопросов в «?»: ссылка из настроек и с
-  // пустой главной открывает его там, где человек стоит, адрес возвращается.
-  let openHelp = false;
-  if (pageId === "guide") {
-    openHelp = true;
-    pageId = document.querySelector(".app-page:not([hidden])")?.id || "today";
-    history.replaceState(null, "", `#${pageId}`);
-  }
+  const pageId = (separator >= 0 ? hash.slice(0, separator) : hash) || "today";
   const params = new URLSearchParams(separator >= 0 ? hash.slice(separator + 1) : "");
   const page = document.getElementById(pageId);
   const activePage = page?.classList.contains("app-page") ? pageId : "today";
@@ -215,7 +207,10 @@ function updatePageFromHash() {
   // Вернулись на «Сегодня» — обложка и строка «сейчас» пересчитываются: пока
   // страница была скрыта, время шло.
   if (activePage === "today") renderToday();
-  if (openHelp) { const menu = document.querySelector(".help-menu"); if (menu) menu.open = true; }
+  // «?» в шапке залит, пока открыта страница «Как пользоваться»; вопрос из
+  // адреса «#guide?q=…» открывается сразу — на него можно дать ссылку.
+  document.querySelector(".help-link")?.classList.toggle("active", activePage === "guide");
+  if (activePage === "guide") renderGuide(params.get("q"));
   // Открыли настройки — перечитываем расход: он меняется от каждой записи, а
   // страница может висеть открытой долго.
   if (activePage === "settings") {
@@ -1035,16 +1030,18 @@ function firstStepNode() {
   box.append(help);
   return box;
 }
-// «Как пользоваться»: список вопросов в «?» и прогон поверх настоящих страниц.
-// Пример шага подставляется в настоящее поле, как пример первого шага, а
-// карточку записи прогон закрывает сам, когда уходит с неё.
-installGuide({
-  menu: $(".help-menu"),
-  popover: $("#help-popover"),
-  prefill: (text) => prefillCapture(text, null),
-  openCard: (id) => openCaptureById(id),
-  closeCard: () => { if ($("#review-dialog")?.open) $("#review-close").click(); },
-});
+// «Как пользоваться» собирается заново при каждом открытии: галочки
+// пройденного живут в браузере и меняются в прогоне. «Попробовать
+// по-настоящему» ведёт на «Сегодня» и подставляет фразу шага в настоящее поле,
+// как пример первого шага; «Выйти из обучения» — просто на «Сегодня».
+function renderGuide(initial) {
+  mountGuide($("#guide"), {
+    initial,
+    onTry: (text) => { location.hash = "#today"; updatePageFromHash(); prefillCapture(text, null); },
+    onGo: (hash) => { location.hash = hash; },
+    onExit: () => { location.hash = "#today"; },
+  });
+}
 // Вопрос в поле и тип записи — по фазе, но только пока поле пустое и тип не
 // выбран рукой: страница не меняется под руками.
 function applyCoverComposer(cover = todayState.cover) {
@@ -3791,9 +3788,6 @@ async function pollCapture(record) {
       activeCapture(record).terminal = true;
       if (job.state === "succeeded") {
         await load();
-        // Прогон «Как пользоваться» ждёт именно эту запись: дело со сроком на
-        // другой день в сегодняшний список не встаёт, по строкам его не найти.
-        document.dispatchEvent(new CustomEvent("kizuna:captured", { detail: { captureId: record.captureId } }));
         if (!activeCapture(record)) return;
         toast("Готово: запись разобрана");
         return;
