@@ -12,7 +12,8 @@ test("без входа приложение не открывается", async
   await page.goto("/");
   await expect(page.locator(".hello-title")).toBeVisible();
   await expect(page.locator("#today")).toHaveCount(0);
-  await page.getByRole("link", { name: "Войти" }).click();
+  // «Войти» в шапке; «Уже есть доступ? Войти» под заявкой ведёт туда же.
+  await page.getByRole("link", { name: "Войти", exact: true }).click();
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole("heading", { name: "Вход" })).toBeVisible();
   await context.close();

@@ -4,7 +4,20 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Кизуна — меньше в голове, больше жизни</title>
-    <meta name="description" content="Запиши как думаешь. Кизуна превратит фразу в дело, встречу или заметку и поможет увидеть свой день целиком. Личное место для всего важного." />
+    <meta name="description" content="Дела, встречи и заметки в одном поле. Напишите или скажите одной фразой, и Кизуна сама поставит срок, время и людей. Ранний доступ." />
+    <!-- Превью ссылки в мессенджерах: новые люди приходят по ссылке от знакомых.
+         Страница статическая, поэтому адрес картинки записан целиком. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Кизуна" />
+    <meta property="og:locale" content="ru_RU" />
+    <meta property="og:url" content="https://kizuna.agent-hub.space/" />
+    <meta property="og:title" content="Дела, встречи и заметки одной фразой" />
+    <meta property="og:description" content="Напишите или скажите как думаете. Кизуна сама поставит срок, время и людей. Ранний доступ." />
+    <meta property="og:image" content="https://kizuna.agent-hub.space/public/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Кизуна: фраза «Нужно забрать посылку до пятницы» становится делом со сроком в пятницу" />
+    <meta name="twitter:card" content="summary_large_image" />
     <!-- Ранний доступ: индексацию открываем отдельно от обновления страницы. -->
     <meta name="robots" content="noindex" />
     <link rel="icon" href="/public/icon.svg" type="image/svg+xml" />
@@ -25,9 +38,9 @@
         <span class="brand-word">Кизуна</span>
       </a>
       <nav class="hello-nav" aria-label="Навигация по странице">
-        <a class="hello-nav-anchor" href="#how-it-works">Как это работает</a>
-        <a class="hello-nav-anchor" href="#your-day">Что внутри</a>
-        <a class="hello-login" href="/login">Войти <span aria-hidden="true">↗</span></a>
+        <a class="hello-nav-anchor" href="#more">Что умеет</a>
+        <a class="hello-nav-anchor" href="/login?join">Ранний доступ</a>
+        <a class="hello-login" href="/login">Войти</a>
       </nav>
     </header>
 
@@ -36,55 +49,90 @@
         <div class="hello-intro">
           <p class="hello-eyebrow"><span class="hello-status-dot" aria-hidden="true"></span>Личное место для важного</p>
           <h1 id="hello-title" class="hello-title">Меньше в голове.<br /><em>Больше жизни.</em></h1>
-          <p class="hello-lead">Дела, встречи, внезапные идеи. Просто запиши, как думаешь, — Кизуна разложит всё по местам.</p>
+          <p class="hello-lead">Дела, встречи и заметки в одном поле. Напишите или скажите одной фразой, и Кизуна сама поставит срок, время и людей.</p>
           <div class="hello-actions">
-            <a class="hello-primary" href="/login?join">Хочу попробовать <span aria-hidden="true">↗</span></a>
-            <a class="hello-text-link" href="#how-it-works">Сначала посмотреть <span aria-hidden="true">↓</span></a>
+            <a class="hello-primary" href="/login?join">Оставить заявку <span aria-hidden="true">→</span></a>
+            <a class="hello-text-link" href="/login">Уже есть доступ? Войти</a>
           </div>
-          <p class="hello-access">Ранний доступ · вход после одобрения заявки</p>
-          <div class="hello-intro-note">
-            <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path d="M7 16l6 6L26 9M5 9l3-4M21 27l5-2" /></svg>
-            <span>Можно начать с одной мысли.<br />Даже с «не забыть купить кофе».</span>
-          </div>
+          <p class="hello-access">Ранний доступ: заявку смотрит человек, войти получится после одобрения.</p>
         </div>
 
-        <div class="hello-demo-stage" id="how-it-works">
-          <div class="hello-demo-top"><span class="hello-eyebrow">Из мысли — в порядок</span><span class="hello-demo-label">ПРИМЕР</span></div>
-          <div class="hello-demo-options" role="group" aria-label="Выбери пример записи" hidden>
-            <button type="button" data-example="todo" aria-pressed="true" aria-controls="demo-preview">Дело</button>
-            <button type="button" data-example="meeting" aria-pressed="false" aria-controls="demo-preview">Встреча</button>
-            <button type="button" data-example="idea" aria-pressed="false" aria-controls="demo-preview">Идея</button>
-            <button type="button" data-example="outcome" aria-pressed="false" aria-controls="demo-preview">Итог дня</button>
-          </div>
-          <div class="hello-demo-preview" id="demo-preview">
-            <div class="hello-demo-input">
-              <p class="hello-demo-step"><span>01</span> Ты пишешь как думаешь</p>
-              <p id="demo-text" class="hello-demo-text">Нужно забрать посылку до пятницы</p>
-              <div class="hello-demo-input-foot"><span class="hello-auto"><span aria-hidden="true">✳</span> Авто</span><span>Одной фразой, без заполнения полей</span></div>
-            </div>
-            <div class="hello-demo-connector" aria-hidden="true"><span>↓</span><span>Кизуна находит суть</span></div>
-            <div class="hello-demo-output" aria-live="polite" aria-atomic="true">
-              <p class="hello-demo-step"><span>02</span> Всё уже на своём месте</p>
-              <div id="demo-out">
-                <div class="hello-result-heading"><span class="hello-result-icon" aria-hidden="true">✓</span><p class="hello-result-title">Забрать посылку</p></div>
-                <div class="hello-result-tags"><span class="hello-result-tag is-todo">Дело</span><span class="hello-result-tag">До пятницы</span></div>
-                <p class="hello-result-note">Появится на доске дел и в плане дня на пятницу. Срок уже на месте.</p>
+        <!-- Ролик в копии «Сегодня» (public/hello.js). В разметке — его первый
+             кадр: страница не прыгает, пока грузится скрипт, и без JavaScript
+             видна неподвижная копия. -->
+        <figure class="hello-demo" id="demo" aria-labelledby="demo-caption">
+          <div class="hello-app" id="demo-app" aria-hidden="true">
+            <p class="hello-app-date"><span id="demo-date">Сегодня</span> · <span class="hello-app-phase">день</span></p>
+            <p class="hello-app-brief">Встреч сегодня нет. На сегодня — забрать посылку.</p>
+            <div class="hello-app-capture">
+              <div class="hello-app-text is-empty">Запишите мысль, план, встречу или итог дня</div>
+              <div class="hello-app-foot">
+                <span class="hello-app-types"><span class="hello-app-type is-on" data-type="auto"><i></i><span>Авто</span></span><span class="hello-app-type" data-type="todo"><i></i></span><span class="hello-app-type" data-type="outcome"><i></i></span><span class="hello-app-type" data-type="note"><i></i></span></span>
+                <span class="hello-app-sep"></span>
+                <span class="hello-app-tags">#тег…</span>
+                <span class="hello-app-voice"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" focusable="false"><path d="M3 9.5v5" /><path d="M7.5 7v10" /><path d="M12 4v16" /><path d="M16.5 7v10" /><path d="M21 9.5v5" /></svg></span>
               </div>
             </div>
+            <div class="hello-app-tabs">
+              <span class="hello-app-tab" data-tab="journal">Что делал <b>1</b></span>
+              <span class="hello-app-tab is-on" data-tab="day">День <b>1 дело</b></span>
+              <span class="hello-app-tab" data-tab="notes">Заметки <b>2</b></span>
+            </div>
+            <div class="hello-app-nav">
+              <span class="hello-app-step" data-step="-1"><i>‹</i> вчера</span>
+              <span class="hello-app-current"><b>Сегодня</b><span>сегодня</span></span>
+              <span class="hello-app-step" data-step="1">завтра <i>›</i></span>
+            </div>
+            <p class="hello-app-shelf is-today">на сегодня · 1</p>
+            <div class="hello-app-rows">
+              <div class="hello-app-row" data-id="parcel"><span class="hello-app-check"></span><span class="hello-app-title">Забрать посылку</span></div>
+            </div>
+            <p class="hello-app-shelf">без срока · 1</p>
+            <div class="hello-app-rows">
+              <div class="hello-app-row" data-id="service"><span class="hello-app-check"></span><span class="hello-app-title">Позвонить в сервис насчёт стиралки</span></div>
+            </div>
           </div>
-          <p class="hello-demo-caption" id="demo-caption">Пример того, как Кизуна разбирает запись.</p>
+          <div class="hello-demo-bar" aria-hidden="true"><i id="demo-progress"></i></div>
+          <figcaption class="hello-demo-foot">
+            <span id="demo-caption">Так выглядит «Сегодня» внутри</span>
+            <span class="hello-demo-controls" id="demo-controls" hidden>
+              <button type="button" id="demo-pause" aria-pressed="false">Пауза</button>
+              <button type="button" id="demo-again">Сначала</button>
+            </span>
+          </figcaption>
+          <p class="hello-sr">Пример: фраза «Завтра в 11 созвон с Аней, а смету отправить сегодня» становится встречей на завтра в 11:00 и делом на сегодня. Кружок у дела отмечает его готовым, и оно уходит в «Что делал».</p>
+        </figure>
+      </section>
+
+      <section class="hello-more" id="more" aria-labelledby="more-title">
+        <h2 id="more-title">Что ещё умеет <em>Кизуна</em></h2>
+        <div class="hello-more-grid">
+          <article class="hello-more-card">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4" /></svg>
+            <h3>Голосом</h3>
+            <p>Скажите «перенеси созвон с Аней на пятницу», и Кизуна перенесёт. Голосом работает всё, что есть в приложении.</p>
+          </article>
+          <article class="hello-more-card">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="9" cy="8" r="3.2" /><path d="M3.5 19c.8-3.2 3-5 5.5-5s4.7 1.8 5.5 5" /><path d="M15.5 9h6M18.5 6l3 3-3 3" /></svg>
+            <h3>Дело человеку</h3>
+            <p>Позовите человека в общий круг и напишите «Ане — прислать смету до пятницы». У Ани появится просьба с кнопками «Беру» и «Не я», у вас — строка в «Я жду».</p>
+          </article>
+          <article class="hello-more-card">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M21 4 3 11l6 2.2L11 20l3.2-4.4L19 19z" /><path d="M9 13.2 21 4" /></svg>
+            <h3>Из Telegram</h3>
+            <p>Пишите боту или пересылайте ему сообщения. Запись разберётся так же, как в приложении.</p>
+          </article>
+          <article class="hello-more-card">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3.5" y="5" width="17" height="15" rx="2.5" /><path d="M3.5 10h17M8 3v4M16 3v4" /></svg>
+            <h3>С вашим календарём</h3>
+            <p>Встречи из Google Календаря стоят в том же дне, что и дела.</p>
+          </article>
         </div>
       </section>
 
-      <div class="hello-promise-strip" aria-label="Главное о Кизуне">
-        <p><span aria-hidden="true">↳</span> Пиши своими словами</p>
-        <p><span aria-hidden="true">✳</span> Порядок появляется сам</p>
-        <p><span aria-hidden="true">↗</span> Важное остаётся под рукой</p>
-      </div>
-
       <section class="hello-day-section" id="your-day" aria-labelledby="day-title">
         <div class="hello-section-heading">
-          <div><p class="hello-eyebrow">В твоём ритме</p><h2 id="day-title">У дня появляется<br /><em>ясная картина.</em></h2></div>
+          <div><p class="hello-eyebrow">В вашем ритме</p><h2 id="day-title">У дня появляется<br /><em>ясная картина.</em></h2></div>
           <p>Утром — понять, что впереди.<br />Днём — освободить голову.<br />Вечером — увидеть, сколько уже сделано.</p>
         </div>
         <div class="hello-day-grid">
@@ -101,7 +149,7 @@
             <div class="hello-day-time"><span>02 / ДЕНЬ</span><svg viewBox="0 0 40 40" aria-hidden="true" focusable="false"><circle cx="20" cy="20" r="7" /><path d="M20 3v5M20 32v5M3 20h5M32 20h5M8 8l4 4M28 28l4 4M8 32l4-4M28 12l4-4" /></svg></div>
             <h3>Поймать мысль и идти дальше</h3>
             <p>Не нужно решать, куда записать. Идеи, планы и итоги начинаются с одного поля.</p>
-            <div class="hello-mini-note"><span>ЗАМЕТКА СЕБЕ</span><p>А что, если на выходных<br />уехать к морю?</p><span class="hello-mini-note-label">Идея сохранена <span aria-hidden="true">↗</span></span></div>
+            <div class="hello-mini-note"><span>ЗАМЕТКА СЕБЕ</span><p>А что, если на выходных <br />уехать к морю?</p><span class="hello-mini-note-label">Идея сохранена <span aria-hidden="true">↗</span></span></div>
           </article>
           <article class="hello-day-card is-evening">
             <div class="hello-day-time"><span>03 / ВЕЧЕР</span><svg viewBox="0 0 40 40" aria-hidden="true" focusable="false"><path d="M30 27A14 14 0 0 1 13 7a14 14 0 1 0 17 20Z" /><path d="M28 5v8M24 9h8" /></svg></div>
@@ -117,33 +165,33 @@
           <div class="hello-keep-ring"></div>
           <div class="hello-memory-note"><span>ЗАПИСАНО СВОИМИ СЛОВАМИ</span><p>«Хочу чаще находить<br />время для своего»</p><div><span>Мысль сохранена</span><span>↗</span></div></div>
           <span class="hello-memory-stamp">絆</span>
-          <span class="hello-keep-caption">Для того, что важно тебе.</span>
+          <span class="hello-keep-caption">Для того, что важно вам.</span>
         </div>
         <div class="hello-keep-copy">
           <p class="hello-eyebrow">Личная память</p>
-          <h2 id="keep-title">Мысли не теряются.<br /><em>Ты к ним возвращаешься.</em></h2>
+          <h2 id="keep-title">Мысли не теряются.<br /><em>Вы к ним возвращаетесь.</em></h2>
           <p>Идея из прошлой недели, решение после встречи, планы на потом — записанное можно найти, когда оно снова понадобится.</p>
-          <ul><li>Исходная запись остаётся, даже если ты уточнишь детали.</li><li>Разбор можно поправить — последнее слово за тобой.</li><li>Свои записи можно экспортировать или удалить в настройках.</li></ul>
+          <ul><li>Исходная запись остаётся, даже если вы уточните детали.</li><li>Разбор можно поправить — последнее слово за вами.</li><li>Свои записи можно экспортировать или удалить в настройках.</li></ul>
         </div>
       </section>
 
-      <section class="hello-faq-section" aria-labelledby="faq-title">
-        <div><p class="hello-eyebrow">Без недосказанности</p><h2 id="faq-title">До первой <br /><em>записи.</em></h2><p class="hello-faq-intro">Несколько вещей, которые<br />полезно знать заранее.</p></div>
+      <section class="hello-faq-section" id="faq" aria-labelledby="faq-title">
+        <div><p class="hello-eyebrow">Без недосказанности</p><h2 id="faq-title">До первой <br /><em>записи.</em></h2><p class="hello-faq-intro">Несколько вещей, которые <br />полезно знать заранее.</p></div>
         <div class="hello-faq-list">
-          <details><summary>Можно сразу начать пользоваться?<span aria-hidden="true">+</span></summary><p>Кизуна сейчас в раннем доступе. Зарегистрируйся — заявку проверит человек. Войти получится после одобрения. Автоматического письма о готовности пока нет.</p></details>
-          <details><summary>Кто видит мои записи?<span aria-hidden="true">+</span></summary><p>Личный журнал привязан к твоей учётной записи. В интерфейсе другие пользователи не видят его. В круги ты отдельно добавляешь записи, которыми хочешь поделиться.</p></details>
+          <details><summary>Можно сразу начать пользоваться?<span aria-hidden="true">+</span></summary><p>Кизуна сейчас в раннем доступе. Оставьте заявку — её проверит человек. Войти получится после одобрения. Автоматического письма о готовности пока нет.</p></details>
+          <details><summary>Кто видит мои записи?<span aria-hidden="true">+</span></summary><p>Личный журнал привязан к вашей учётной записи. Другие пользователи его не видят. Они видят только то, чем вы поделились: дело, отданное человеку, запись с проектом общего круга и запись, куда вы позвали человека через @.</p></details>
           <details><summary>Как Кизуна понимает, что я написал?<span aria-hidden="true">+</span></summary><p>Текст отправляется во внешний сервис языковой модели. Она определяет тип записи и находит детали: например, срок или участника встречи. Разбор может ошибиться — его можно поправить.</p></details>
           <details><summary>А если я захочу забрать записи?<span aria-hidden="true">+</span></summary><p>В настройках есть экспорт журнала файлом и очистка своих данных. Исходные фразы сохраняются вместе с историей изменений.</p></details>
         </div>
       </section>
 
       <section class="hello-last-call" aria-labelledby="start-title">
-        <div><p class="hello-eyebrow">Большие планы начинаются с малого</p><h2 id="start-title">Начни с одной мысли.<br /><em>Остальное — по ходу жизни.</em></h2></div>
-        <div class="hello-last-action"><a class="hello-primary" href="/login?join">Хочу попробовать <span aria-hidden="true">↗</span></a><p>Ранний доступ<br />Вход после одобрения заявки</p></div>
+        <div><p class="hello-eyebrow">Большие планы начинаются с малого</p><h2 id="start-title">Начните с одной мысли.<br /><em>Остальное — по ходу жизни.</em></h2></div>
+        <div class="hello-last-action"><a class="hello-primary" href="/login?join">Оставить заявку <span aria-hidden="true">→</span></a><p>Ранний доступ<br />Вход после одобрения заявки</p></div>
       </section>
     </main>
 
     <footer class="hello-footer"><a href="/" class="hello-footer-brand">Кизуна <span>絆</span></a><p>Чуть больше порядка. Чуть больше спокойствия.</p><a href="#main">Наверх <span aria-hidden="true">↑</span></a></footer>
-    <script src="/public/hello.js"></script>
+    <script type="module" src="/public/hello.js"></script>
   </body>
 </html>
