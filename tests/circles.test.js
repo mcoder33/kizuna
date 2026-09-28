@@ -83,6 +83,21 @@ test('«беру» опускает дело в день, чекбокс зак�
   assert.equal((await sasha.get('/api/inbox').expect(200)).body.waiting[0].state,'accepted');
 });
 
+test('автор закрыл дело сам, пока просьба ждёт ответа: она закрыта и у него, и у исполнителя',async()=>{
+  const {sasha,anya}=await pair();
+  const entry=await ask(sasha);
+  const projectionId=entry.projections.find(projection=>projection.type==='task').id;
+  await sasha.post(`/api/projections/${projectionId}/complete`).send({}).expect(200);
+  const waiting=(await sasha.get('/api/inbox').expect(200)).body.waiting[0];
+  assert.equal(waiting.state,'done');
+  assert.ok(waiting.doneAt);
+  assert.equal((await anya.get('/api/day').expect(200)).body.inbox.length,0,'закрытая просьба не висит в «к вам»');
+  // Возврат в работу возвращает просьбу туда, где она была: человек так и не ответил.
+  await sasha.post(`/api/projections/${projectionId}/undo-complete`).send({}).expect(200);
+  assert.equal((await sasha.get('/api/inbox').expect(200)).body.waiting[0].state,'pending');
+  assert.equal((await anya.get('/api/day').expect(200)).body.inbox.length,1);
+});
+
 test('«не я» возвращает дело автору вместе с причиной',async()=>{
   const {sasha,anya}=await pair();
   await ask(sasha);

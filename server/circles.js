@@ -437,15 +437,22 @@ export function respond(db, assignmentId, userId, take, reason = null) {
   return { assignment: assignmentFor(db, row.capture_id) };
 }
 // Закрытое дело закрывает и просьбу: автор узнаёт об этом в «Я жду», а в свой
-// журнал чужую работу не записывает — он её не делал.
+// журнал чужую работу не записывает — он её не делал. Закрыть может и сам
+// автор, пока просьба ещё ждёт ответа: тогда она уходит из «к вам» у
+// исполнителя, а возврат в работу снова ставит её туда.
 export function noteCompletion(db, captureId, completed) {
   const row = db.prepare('SELECT * FROM assignments WHERE capture_id=? AND cancelled_at IS NULL').get(captureId);
   if (!row) return;
+  const at = now();
   if (completed && row.state === 'accepted') {
-    db.prepare("UPDATE assignments SET state='done', done_at=? WHERE id=?").run(now(), row.id);
+    db.prepare("UPDATE assignments SET state='done', done_at=? WHERE id=?").run(at, row.id);
     notify(db, { userId: row.assigner_id, kind: 'answer', actorId: row.assignee_id, captureId, circleId: row.circle_id, assignmentId: row.id, text: `отмечает сделанным «${titleOf(db, captureId)}»`, meta: ['ваша просьба закрыта'], data: { circle: circleBrief(db, row.circle_id), state: 'done' } });
   }
-  if (!completed && row.state === 'done') db.prepare("UPDATE assignments SET state='accepted', done_at=NULL WHERE id=?").run(row.id);
+  if (completed && row.state === 'pending') {
+    db.prepare("UPDATE assignments SET state='done', done_at=? WHERE id=?").run(at, row.id);
+    resolveNotifications(db, { kind: 'request', assignmentId: row.id, at });
+  }
+  if (!completed && row.state === 'done') db.prepare('UPDATE assignments SET state=?, done_at=NULL WHERE id=?').run(row.responded_at ? 'accepted' : 'pending', row.id);
 }
 
 // Дела, которые я отдал: четыре состояния и ни одного лишнего — ждёт ответа,

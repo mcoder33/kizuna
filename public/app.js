@@ -6205,7 +6205,7 @@ function boardWaitingEl(waiting) {
     const days = item.state === "pending" ? daysBetween(item.createdAt) : null;
     state.textContent = item.state === "pending" && days >= 1
       ? `ждёт ответа ${days === 1 ? "второй день" : `${days} ${pluralRu(days, "день", "дня", "дней")}`}`
-      : `${WAIT_WORDS[item.state]}${item.respondedAt && item.state !== "pending" ? ` ${agoWords(item.doneAt || item.respondedAt) || ""}` : ""}`;
+      : `${WAIT_WORDS[item.state]}${(item.doneAt || item.respondedAt) && item.state !== "pending" ? ` ${agoWords(item.doneAt || item.respondedAt) || ""}` : ""}`;
     row.append(who, main, state);
     rowsWrap.append(row);
   }
