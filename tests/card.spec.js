@@ -1227,7 +1227,7 @@ test("смена режима в открытой карточке не теря
   await expect.poll(async () => (await (await request.get(`/api/captures/${deed.id}`)).json()).entry.note?.body).toBe("дописано до смены режима");
 });
 
-test("сбоку страница жива: щелчок по другой карточке доски меняет открытую, а не открывает вторую", async ({ page, request }) => {
+test("сбоку страница жива: щелчок по другой карточке доски меняет открытую, а не открывает вторую; щелчок мимо закрывает", async ({ page, request }) => {
   await resetAll(request);
   await page.setViewportSize({ width: 1440, height: 900 });
   await makeDeed(request, "Альфа дело режима");
@@ -1262,9 +1262,7 @@ test("сбоку страница жива: щелчок по другой ка�
   await boardTitle("Гамма").click();
   await expect(dialog.locator(".card-title")).toHaveText("Гамма дело режима");
 
-  // Щелчок по самой странице карточку не закрывает; стрелки листают соседние дела.
-  await page.locator("#board .page-heading h2").click({ position: { x: 20, y: 10 } });
-  await expect(dialog).toBeVisible();
+  // Стрелки листают соседние дела.
   const before = await dialog.locator(".card-title").innerText();
   await dialog.locator(".card-nav-step:not([disabled])").first().click();
   await expect(dialog.locator(".card-title")).not.toHaveText(before);
@@ -1273,6 +1271,105 @@ test("сбоку страница жива: щелчок по другой ка�
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await expect(marked).toHaveCount(0);
+
+  // Щелчок мимо карточки — по самой странице — закрывает её, как Esc и подложка у модальной,
+  // и обводка с доски уходит тоже.
+  await boardTitle("Гамма").click();
+  await expect(dialog.locator(".card-title")).toHaveText("Гамма дело режима");
+  await expect(marked).toHaveCount(1);
+  await page.locator("#board .page-heading h2").click({ position: { x: 20, y: 10 } });
+  await expect(dialog).toBeHidden();
+  await expect(marked).toHaveCount(0);
+});
+
+test("сбоку щелчок мимо карточки закрывает её и сохраняет набранное; правая кнопка и плавающее меню вне окна её не закрывают", async ({ page, request }) => {
+  await resetAll(request);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const deed = await makeDeed(request, "Дело для щелчка мимо");
+  await startInMode(page, "side");
+  await page.goto("/#board");
+  const dialog = page.locator("#review-dialog");
+  await page.locator("#board-columns .board-card").filter({ hasText: "Дело для щелчка мимо" }).locator(".board-title").click();
+  await expect(dialog.locator(".card-title")).toHaveText("Дело для щелчка мимо");
+  expect(await isModal(page)).toBe(false);
+  await dialog.locator(".card-markdown").click();
+  await dialog.locator("#card-body-editor").fill("набрано и оставлено щелчком мимо");
+
+  // Правая кнопка мимо окна карточку не закрывает.
+  await page.locator("#board .page-heading h2").click({ button: "right", position: { x: 20, y: 10 } });
+  await expect(dialog).toBeVisible();
+  // Меню разметки, ссылок и упоминаний, плашки календаря и колокольчика живут вне окна:
+  // нажатие по ним карточку не закрывает (здесь — такой же элемент, поставленный на страницу).
+  await page.evaluate(() => {
+    const menu = document.createElement("div");
+    menu.className = "link-menu";
+    menu.id = "probe-floating";
+    menu.textContent = "меню вне окна";
+    menu.style.cssText = "display:block;position:fixed;left:24px;top:420px;width:160px;height:40px;z-index:5;background:#fff;";
+    document.body.append(menu);
+  });
+  await page.locator("#probe-floating").click();
+  await expect(dialog).toBeVisible();
+  await page.evaluate(() => document.querySelector("#probe-floating")?.remove());
+  // Внутри окна — тоже нет: поле, заголовок, кнопка «Параметры».
+  await dialog.locator("#review-params-toggle").click();
+  await expect(dialog).toBeVisible();
+  await dialog.locator("#review-params-toggle").click();
+
+  // Мимо карточки — в пустое место страницы: закрывается, а набранное ушло на сервер.
+  await page.locator("#board .page-heading h2").click({ position: { x: 20, y: 10 } });
+  await expect(dialog).toBeHidden();
+  await expect.poll(async () => (await (await request.get(`/api/captures/${deed.id}`)).json()).entry.note?.body).toBe("набрано и оставлено щелчком мимо");
+
+  // Щелчок, закрывший меню режимов, карточку не закрывает: нужен второй.
+  await page.locator("#board-columns .board-card").filter({ hasText: "Дело для щелчка мимо" }).locator(".board-title").click();
+  await expect(dialog).toBeVisible();
+  await dialog.locator("#review-mode-toggle").click();
+  await expect(dialog.locator("#review-mode-menu")).toBeVisible();
+  await page.locator("#board .page-heading h2").click({ position: { x: 20, y: 10 } });
+  await expect(dialog.locator("#review-mode-menu")).toBeHidden();
+  await expect(dialog).toBeVisible();
+  await page.waitForTimeout(450);
+  await page.locator("#board .page-heading h2").click({ position: { x: 20, y: 10 } });
+  await expect(dialog).toBeHidden();
+  await resetAll(request);
+});
+
+test("сбоку щелчок по строке списка и по строке «Сегодня» переключает открытую карточку, а не закрывает", async ({ page, request }) => {
+  await resetAll(request);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await makeDeed(request, "Первое дело строк");
+  await makeDeed(request, "Второе дело строк");
+  await startInMode(page, "side");
+  await page.addInitScript(() => { localStorage.setItem("kizuna-board-view", "list"); localStorage.setItem("kizuna-board-filter", "[]"); });
+  await page.goto("/#board");
+  const dialog = page.locator("#review-dialog");
+  const row = (text) => page.locator("#board-flat .g-row").filter({ hasText: text }).locator(".board-title");
+  await row("Первое").click();
+  await expect(dialog.locator(".card-title")).toHaveText("Первое дело строк");
+  // Строка списка — та же запись на странице, а не «мимо»: карточка переключается.
+  await row("Второе").click();
+  await expect(dialog.locator(".card-title")).toHaveText("Второе дело строк");
+  await expect(dialog).toBeVisible();
+  expect(await page.evaluate(() => document.querySelectorAll("dialog[open]").length)).toBe(1);
+
+  // На «Сегодня» — так же: по строке дня карточка меняется, по пустому месту закрывается.
+  // Панель стоит справа поверх страницы, поэтому по строкам щёлкают у левого края.
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await page.goto("/#today");
+  await showTab(page, /^День/);
+  const today = (text) => page.locator("#todo .entry").filter({ hasText: text }).locator(".entry-title");
+  await today("Первое").click({ position: { x: 10, y: 8 } });
+  await expect(dialog.locator(".card-title")).toHaveText("Первое дело строк");
+  await today("Второе").click({ position: { x: 10, y: 8 } });
+  await expect(dialog.locator(".card-title")).toHaveText("Второе дело строк");
+  await expect(dialog).toBeVisible();
+  expect(await page.evaluate(() => document.querySelectorAll("dialog[open]").length)).toBe(1);
+  // Пустое поле страницы слева от ящиков — мимо: карточка закрывается.
+  await page.mouse.click(20, 500);
+  await expect(dialog).toBeHidden();
+  await resetAll(request);
 });
 
 test("сбоку набранное в карточке не пропадает, когда по доске открывают другую", async ({ page, request }) => {

@@ -172,20 +172,19 @@
         <div class="page-heading">
           <h2>Доска</h2>
         </div>
-        <!-- Над доской: вид (как рисовать — доска, список, таблица) и группировка
+        <!-- Над доской: вид (как рисовать — доска или список) и группировка
              (по каким полям раскладывать, уровней сколько угодно); справа
              «Фильтр», поиск и «+ Дело». Под панелью — строка фильтра (условия по
-             полям дела), она открывается кнопкой «Фильтр». «Сделано» — обычная
-             колонка доски (по умолчанию первая, тянется, как остальные) и
-             последний раздел списка и таблицы. Панель, строку фильтра и обе
-             ленты собирает public/app.js. -->
+             полям дела и «Подзадачи: показывать / скрывать»), она открывается
+             кнопкой «Фильтр». «Закрыто» — обычная колонка доски (по умолчанию
+             первая, тянется, как остальные) и последний раздел списка. Панель,
+             строку фильтра и обе ленты собирает public/app.js. -->
         <div class="board-controls">
           <div class="board-bar">
             <span class="board-bar-label">Вид</span>
             <span class="board-seg" id="board-view" role="group" aria-label="Вид">
               <button type="button" data-view="board" aria-pressed="true">Доска</button>
               <button type="button" data-view="list" aria-pressed="false">Список</button>
-              <button type="button" data-view="table" aria-pressed="false">Таблица</button>
             </span>
             <span class="board-bar-label">Группировать</span>
             <span class="board-grp" id="board-grp" role="group" aria-label="Группировка"></span>

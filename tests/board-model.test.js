@@ -166,7 +166,7 @@ test('пустой фильтр пропускает всё', () => {
   assert.equal(matchesFilter([], facts({ day: 'later', status: 'done' })), true);
 });
 
-test('«Сделано» нужна, пока статус не исключает закрытое', () => {
+test('«Закрыто» нужна, пока статус не исключает закрытое', () => {
   assert.equal(statusAllowsDone([]), true);
   assert.equal(statusAllowsDone(defaultFilter()), true, 'умолчание про день, статуса не трогает');
   assert.equal(statusAllowsDone([eq('status', 'open')]), false);
@@ -196,16 +196,16 @@ test('порядок колонок: что-то не так в браузере
 
 test('порядок показа: сохранённые ключи как сохранено, новые — в естественном порядке после них', () => {
   const natural = [DONE_LANE, 'late', 'today', 'tomorrow', 'week', 'later', 'none'];
-  // Ничего не сохранено — естественный порядок, «Сделано» первая.
+  // Ничего не сохранено — естественный порядок, «Закрыто» первая.
   assert.deepEqual(orderKeys(undefined, natural), natural);
   assert.deepEqual(orderKeys([], natural), natural);
-  // «завтра» перед «сегодня», «Сделано» на втором месте; остальное — после известных.
+  // «завтра» перед «сегодня», «Закрыто» на втором месте; остальное — после известных.
   assert.deepEqual(orderKeys(['late', DONE_LANE, 'tomorrow', 'today'], natural), ['late', DONE_LANE, 'tomorrow', 'today', 'week', 'later', 'none']);
   // Ушедшего ключа в показе нет, новый (человек, колонка) встаёт после известных.
   assert.deepEqual(orderKeys(['Борис', 'Аня', DONE_LANE], [DONE_LANE, 'Аня', 'Борис', 'Вера', FILTER_NONE]), ['Борис', 'Аня', DONE_LANE, 'Вера', FILTER_NONE]);
   // Повторный ключ в сохранённом не удваивает колонку.
   assert.deepEqual(orderKeys(['today', 'today', DONE_LANE], [DONE_LANE, 'today']), ['today', DONE_LANE]);
-  // Пропала «Сделано» из сохранённого: она встаёт после известных, перед прочими новыми.
+  // Пропала «Закрыто» из сохранённого: она встаёт после известных, перед прочими новыми.
   assert.deepEqual(orderKeys(['b', 'a'], [DONE_LANE, 'a', 'b', 'c']), ['b', 'a', DONE_LANE, 'c']);
 });
 
@@ -223,7 +223,7 @@ test('бросок колонки: перед целью или после не�
 
 test('новая колонка встаёт в конец ряда: сразу за последней показанной, скрытые не сдвигаются', () => {
   const order = [DONE_LANE, 'late', 'today', 'tomorrow', 'week', 'later', 'none'];
-  // Показаны «Сделано», «сегодня», «завтра»; добавили «просрочено» — она последняя из показанных.
+  // Показаны «Закрыто», «сегодня», «завтра»; добавили «просрочено» — она последняя из показанных.
   assert.deepEqual(placeLast(order, 'late', [DONE_LANE, 'today', 'tomorrow']), [DONE_LANE, 'today', 'tomorrow', 'late', 'week', 'later', 'none']);
   // «На неделе» и так за «завтра» — остаётся на месте.
   assert.deepEqual(placeLast(order, 'week', [DONE_LANE, 'today', 'tomorrow']), order);

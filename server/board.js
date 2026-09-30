@@ -89,8 +89,10 @@ function deedCards(db, userId, timeZone, now = new Date(), borrowed = [], { with
   }
   closed.sort((left, right) => right.closedAt.localeCompare(left.closedAt));
   const shownClosed = closed.slice(0, CLOSED_LIMIT);
-  // «0/2» у родителя: считает сервер, а не доска по спрятанным карточкам.
-  if (withSubtasks) withSubtaskCounts(db, [...open, ...shownClosed], userId, { today: dateInZone(now, timeZone), key: 'captureId' });
+  // «0/2» у родителя: считает сервер, а не доска по спрятанным карточкам. Вместе
+  // с числом идут строки карты подзадач (items, до шести): доска рисует их под
+  // названием, и второго запроса за ними нет.
+  if (withSubtasks) withSubtaskCounts(db, [...open, ...shownClosed], userId, { today: dateInZone(now, timeZone), key: 'captureId', withItems: true });
   return { open, closed: shownClosed };
 }
 

@@ -10,6 +10,8 @@ async function deed(request, raw, extra = {}) {
 async function sub(request, parentId, title) {
   return (await (await request.post(`/api/captures/${parentId}/subtasks`, { data: { title } })).json()).entry;
 }
+// Дата «через N дней» по поясу приложения: срок не привязан к дню, когда писали тест.
+const inDays = (shift) => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Samara", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(Date.now() + shift * 86400000));
 async function openById(page, id) {
   await page.goto(`/#today?open=${id}`);
   await expect(page.locator("#review-dialog")).toBeVisible();
@@ -197,8 +199,9 @@ test("«Параметры» выезжают из той же карточки:
   expect(Math.abs(after.x + after.width / 2 - centre)).toBeLessThan(2);
   expect(after.x).toBeLessThan(before.x);
   // Поля панели живые: дата ставится, чип под названием меняется сразу.
-  await dialog.locator("#review-date").fill("2026-10-02");
-  await expect(dialog.locator(".card-chips .chip").first()).toContainText("02.10");
+  const later = inDays(10);
+  await dialog.locator("#review-date").fill(later);
+  await expect(dialog.locator(".card-chips .chip").first()).toContainText(`${later.slice(8, 10)}.${later.slice(5, 7)}`);
   // Esc закрывает панель, карточка остаётся; второй Esc закрывает карточку.
   await page.keyboard.press("Escape");
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
@@ -219,7 +222,7 @@ test("«Параметры» выезжают из той же карточки:
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   // Дата ушла уточнением при закрытии.
-  await expect.poll(async () => (await (await request.get(`/api/captures/${coffee.id}`)).json()).entry.interpretation.classification.entities.schedule?.date).toBe("2026-10-02");
+  await expect.poll(async () => (await (await request.get(`/api/captures/${coffee.id}`)).json()).entry.interpretation.classification.entities.schedule?.date).toBe(later);
 });
 
 test("панель открыта у родителя — открыта и у подзадачи, а её ширина не меняет колонку", async ({ page, request }) => {

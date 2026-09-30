@@ -223,6 +223,8 @@ test('a closed card remembers its own column, not the first one',async()=>{
 const step=async(api,parentId,title)=>(await api.post(`/api/captures/${parentId}/subtasks`).send({title}).expect(201)).body.entry;
 const closeDeed=async(api,entry)=>{for(const projection of entry.projections.filter(item=>item.type==='task'))await api.post(`/api/projections/${projection.id}/complete`).send({}).expect(200);};
 const reopenDeed=async(api,entry)=>{for(const projection of entry.projections.filter(item=>item.type==='task'))await api.post(`/api/projections/${projection.id}/undo-complete`).send({}).expect(200);};
+// Счёт «сделано/всего» без строк карты подзадач (items): они проверяются отдельно.
+const counts=card=>({done:card.subtasks.done,total:card.subtasks.total});
 
 test('subtasks are not cards: the parent carries {done,total}, the counters count parents only',async()=>{
   const api=authed(freshApp());
@@ -234,27 +236,27 @@ test('subtasks are not cards: the parent carries {done,total}, the counters coun
   // На доске две карточки — сами дела; подзадач среди них нет ни открытых, ни закрытых.
   assert.deepEqual(board.columns[0].cards.map(card=>card.captureId).sort(),[coffee.id,alone.id].sort());
   assert.equal(board.columns[0].cards.length,2);
-  assert.deepEqual(board.columns[0].cards.find(card=>card.captureId===coffee.id).subtasks,{done:0,total:2});
+  assert.deepEqual(counts(board.columns[0].cards.find(card=>card.captureId===coffee.id)),{done:0,total:2});
   assert.equal('subtasks' in board.columns[0].cards.find(card=>card.captureId===alone.id),false,'у дела без подзадач поля нет');
   // Закрытая подзадача не переезжает в «Сделано» отдельной карточкой, а прибавляет к «1/2».
   await closeDeed(api,jar);
   board=(await api.get('/api/board').expect(200)).body;
   assert.equal(board.closed.length,0);
   assert.equal(board.columns[0].cards.length,2);
-  assert.deepEqual(board.columns[0].cards.find(card=>card.captureId===coffee.id).subtasks,{done:1,total:2});
+  assert.deepEqual(counts(board.columns[0].cards.find(card=>card.captureId===coffee.id)),{done:1,total:2});
   // Все сделаны — «2/2»; родитель при этом сам не закрылся.
   await closeDeed(api,stock);
   board=(await api.get('/api/board').expect(200)).body;
-  assert.deepEqual(board.columns[0].cards.find(card=>card.captureId===coffee.id).subtasks,{done:2,total:2});
+  assert.deepEqual(counts(board.columns[0].cards.find(card=>card.captureId===coffee.id)),{done:2,total:2});
   // Родитель закрыт — он лежит в «Сделано» со своим счётом, подзадач рядом нет.
   await closeDeed(api,coffee);
   board=(await api.get('/api/board').expect(200)).body;
   assert.deepEqual(board.closed.map(card=>card.captureId),[coffee.id]);
-  assert.deepEqual(board.closed[0].subtasks,{done:2,total:2});
+  assert.deepEqual(counts(board.closed[0]),{done:2,total:2});
   // Вернули шаг в работу — счёт откатился.
   await reopenDeed(api,stock);
   board=(await api.get('/api/board').expect(200)).body;
-  assert.deepEqual(board.closed[0].subtasks,{done:1,total:2});
+  assert.deepEqual(counts(board.closed[0]),{done:1,total:2});
 });
 
 test('the subtask count is the same as the arc in the card: leaves on every level, branches are not units',async()=>{
@@ -268,8 +270,8 @@ test('the subtask count is the same as the arc in the card: leaves on every leve
   const board=(await api.get('/api/board').expect(200)).body;
   const card=board.columns[0].cards.find(item=>item.captureId===coffee.id);
   const tree=(await api.get(`/api/captures/${coffee.id}/subtasks`).expect(200)).body;
-  assert.deepEqual(card.subtasks,{done:1,total:3});
-  assert.deepEqual(card.subtasks,{done:tree.done,total:tree.total},'доска и карточка считают одинаково');
+  assert.deepEqual(counts(card),{done:1,total:3});
+  assert.deepEqual(counts(card),{done:tree.done,total:tree.total},'доска и карточка считают одинаково');
   assert.equal(board.columns[0].cards.length,1,'ни одна из четырёх подзадач не стала карточкой');
   // У подзадачи-ветки своей карточки нет — счёт виден только у корня.
   assert.equal(board.columns[0].cards.some(item=>item.captureId===stock.id),false);
@@ -301,7 +303,7 @@ test('a deed split off a batch is an ordinary card and never a subtask',async()=
   assert.equal(made.subtask,true);
   assert.equal(made.parentId,batch.parts[0].id);
   const again=(await api.get('/api/board').expect(200)).body;
-  assert.deepEqual(again.columns[0].cards.find(card=>card.captureId===batch.parts[0].id).subtasks,{done:0,total:1});
+  assert.deepEqual(counts(again.columns[0].cards.find(card=>card.captureId===batch.parts[0].id)),{done:0,total:1});
   assert.equal(again.columns[0].cards.some(card=>card.captureId===made.id),false);
   assert.equal(again.columns[0].cards.filter(card=>[...batch.parts,...report.parts].some(part=>part.id===card.captureId)).length,4,'соседи-отделённые дела на месте');
 });
@@ -317,7 +319,7 @@ test('a deleted parent takes its subtasks away from the board, a restored one br
   await api.post(`/api/captures/${coffee.id}/restore`).expect(200);
   board=(await api.get('/api/board').expect(200)).body;
   assert.deepEqual(board.columns[0].cards.map(card=>card.captureId),[coffee.id]);
-  assert.deepEqual(board.columns[0].cards[0].subtasks,{done:0,total:1});
+  assert.deepEqual(counts(board.columns[0].cards[0]),{done:0,total:1});
   // Подзадача, удалённая сама, выпадает из счёта.
   await api.delete(`/api/captures/${jar.id}`).expect(200);
   board=(await api.get('/api/board').expect(200)).body;
@@ -330,4 +332,104 @@ test('a card cannot be dragged if it is a subtask: the board does not know it',a
   const jar=await step(api,coffee.id,'Взять банку');
   const column=(await api.post('/api/board/columns').send({name:'В работе'}).expect(201)).body;
   await api.post('/api/board/move').send({captureId:jar.id,columnId:column.id,index:0}).expect(404);
+});
+
+// Карта подзадач на карточке: рядом с числом доска получает первые строки — прямых детей родителя в том порядке, в каком их показывает «Список» в карточке.
+test('the parent carries the rows of the subtask map: at most six direct subtasks, in the card list order, each with its own state',async()=>{
+  const api=authed(freshApp());
+  const trip=(await api.post('/api/captures').send({raw:'Организовать выезд команды'}).expect(201)).body.entry;
+  const titles=['Выбрать даты','Забронировать дом','Заказать трансфер','Собрать продукты','Раздать роли','Купить страховку','Подготовить плейлист','Проверить погоду'];
+  const steps=[];
+  for(const title of titles)steps.push(await step(api,trip.id,title));
+  // Закрыты вторая и седьмая: седьмая за пределом шести строк, но в число идёт.
+  await closeDeed(api,steps[1]);
+  await closeDeed(api,steps[6]);
+  let board=(await api.get('/api/board').expect(200)).body;
+  const card=board.columns[0].cards.find(item=>item.captureId===trip.id);
+  assert.equal(board.columns[0].cards.length,1,'подзадачи остались строками карты, а не карточками');
+  assert.equal(card.subtasks.total,8);
+  assert.equal(card.subtasks.done,2);
+  // Не больше шести: пять рисует доска, шестая говорит, что есть ещё.
+  assert.equal(card.subtasks.items.length,6);
+  const tree=(await api.get(`/api/captures/${trip.id}/subtasks`).expect(200)).body;
+  assert.deepEqual(card.subtasks.items.map(item=>item.id),tree.children.slice(0,6),'порядок тот же, что у списка в карточке');
+  assert.deepEqual(card.subtasks.items.map(item=>item.id),steps.slice(0,6).map(item=>item.id),'а он — порядок заведения');
+  assert.deepEqual(card.subtasks.items.map(item=>item.title),titles.slice(0,6));
+  assert.deepEqual(card.subtasks.items.map(item=>item.done),[false,true,false,false,false,false]);
+  // Обычная строка — только id, название и состояние: лишних ключей нет.
+  assert.deepEqual(card.subtasks.items[0],{id:steps[0].id,title:'Выбрать даты',done:false});
+  // Короткий список отдаётся весь, без «ещё».
+  await api.delete(`/api/captures/${steps[7].id}`).expect(200);
+  for(const gone of steps.slice(3,7))await api.delete(`/api/captures/${gone.id}`).expect(200);
+  board=(await api.get('/api/board').expect(200)).body;
+  const short=board.columns[0].cards.find(item=>item.captureId===trip.id).subtasks;
+  assert.equal(short.total,3);
+  assert.deepEqual(short.items.map(item=>item.title),['Выбрать даты','Забронировать дом','Заказать трансфер']);
+  assert.deepEqual(short.items.map(item=>item.done),[false,true,false]);
+});
+
+test('a row of the map reports its own state, a branch carries its leaf count, and the number stays the leaf count of the whole tree',async()=>{
+  const api=authed(freshApp());
+  const coffee=(await api.post('/api/captures').send({raw:'Купить кофе'}).expect(201)).body.entry;
+  const stock=await step(api,coffee.id,'Проверить запас');
+  const shelf=await step(api,stock.id,'Посмотреть на полке');
+  await step(api,stock.id,'Посмотреть в шкафу');
+  const jar=await step(api,coffee.id,'Взять банку');
+  await closeDeed(api,shelf);
+  const rowsOf=async()=>(await api.get('/api/board').expect(200)).body.columns[0].cards.find(item=>item.captureId===coffee.id).subtasks;
+  let subtasks=await rowsOf();
+  assert.deepEqual({done:subtasks.done,total:subtasks.total},{done:1,total:3});
+  // В строках — прямые дети: у ветки свой счёт листьев, у листа его нет; внуки отдельными строками не идут.
+  assert.deepEqual(subtasks.items,[
+    {id:stock.id,title:'Проверить запас',done:false,nested:{done:1,total:2}},
+    {id:jar.id,title:'Взять банку',done:false},
+  ]);
+  // Кружок ветки — её собственное дело: строка закрывается, а число листьев не двигается.
+  await closeDeed(api,stock);
+  subtasks=await rowsOf();
+  assert.deepEqual({done:subtasks.done,total:subtasks.total},{done:1,total:3});
+  assert.equal(subtasks.items[0].done,true);
+  assert.deepEqual(subtasks.items[0].nested,{done:1,total:2});
+  // Закрыли лист — число растёт, строка листа закрыта.
+  await closeDeed(api,jar);
+  subtasks=await rowsOf();
+  assert.deepEqual({done:subtasks.done,total:subtasks.total},{done:2,total:3});
+  assert.equal(subtasks.items[1].done,true);
+});
+
+test('the rows of the map come with a closed parent too, and a repeating subtask names the day its circle closes',async()=>{
+  const api=authed(freshApp());
+  const coffee=(await api.post('/api/captures').send({raw:'Купить кофе'}).expect(201)).body.entry;
+  const weekly=await step(api,coffee.id,'Полить цветы');
+  const once=await step(api,coffee.id,'Взять банку');
+  await api.post(`/api/captures/${weekly.id}/corrections`).send({at:Date.now(),patch:{schedule:{date:today(),time:null,repeat:{freq:'daily',interval:1}}}}).expect(200);
+  let card=(await api.get('/api/board').expect(200)).body.columns[0].cards.find(item=>item.captureId===coffee.id);
+  const repeating=card.subtasks.items.find(item=>item.id===weekly.id);
+  assert.equal(repeating.occurrence,today(),'кружок повтора закрывает сегодняшний день, а не серию');
+  assert.equal(repeating.done,false);
+  assert.equal('occurrence' in card.subtasks.items.find(item=>item.id===once.id),false,'у обычной строки дня нет');
+  await closeDeed(api,once);
+  await closeDeed(api,coffee);
+  const board=(await api.get('/api/board').expect(200)).body;
+  assert.deepEqual(board.closed.map(item=>item.captureId),[coffee.id]);
+  assert.deepEqual(board.closed[0].subtasks.items.map(item=>item.id),[weekly.id,once.id]);
+});
+
+test('a row of the map that the taker of the parent cannot complete says so with canComplete:false, and the author never gets the key',async()=>{
+  const app=freshApp();
+  const sasha=authed(app,{email:'sasha@kizuna.test',role:'admin'}),anya=authed(app,{email:'anya@kizuna.test',role:'user'});
+  await sasha.patch('/api/account').send({name:'Саша'}).expect(200);
+  await anya.patch('/api/account').send({name:'Аня'}).expect(200);
+  const circle=(await sasha.post('/api/circles').send({name:'Хаб'}).expect(201)).body.circle;
+  const invite=(await sasha.post(`/api/circles/${circle.id}/invite`).send({}).expect(201)).body;
+  await anya.post(`/api/circles/invite/${invite.token}/accept`).send({}).expect(200);
+  // Саша отдаёт Ане дело и шаг под ним; Аня берёт дело, а шаг нет — у неё он виден, но отметить его она не может.
+  const parent=(await sasha.post('/api/captures').send({raw:'Ане — прислать смету по Хабу'}).expect(201)).body.entry;
+  const piece=await step(sasha,parent.id,'Собрать цифры');
+  await sasha.post(`/api/captures/${piece.id}/assign`).send({assigneeId:anya.user.id,circleId:circle.id}).expect(200);
+  const take=async captureId=>{const row=(await anya.get('/api/inbox').expect(200)).body.rows.find(item=>item.captureId===captureId);await anya.post(`/api/assignments/${row.id}/respond`).send({take:true}).expect(200);};
+  await take(parent.id);
+  const rows=async api=>(await api.get('/api/board').expect(200)).body.columns.flatMap(column=>column.cards).find(card=>card.captureId===parent.id).subtasks.items;
+  assert.deepEqual(await rows(anya),[{id:piece.id,title:'Собрать цифры',done:false,canComplete:false}]);
+  assert.deepEqual(await rows(sasha),[{id:piece.id,title:'Собрать цифры',done:false}],'у автора ключа нет');
 });

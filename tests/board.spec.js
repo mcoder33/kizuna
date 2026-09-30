@@ -88,23 +88,23 @@ const openTitles = (page) => page.locator("#board-columns .board-column:not(.boa
 const doneTitles = (page) => page.locator("#board-columns .board-done-column .board-card .board-title").allTextContents();
 const idByRaw = async (request, raw) => (await (await request.get("/api/entries?limit=50")).json()).entries.find((entry) => entry.raw === raw)?.id;
 
-test("доска: «Сделано» — обычная колонка, своя колонка, быстрое дело, карточка и кружок", async ({ page, request }) => {
+test("доска: «Закрыто» — обычная колонка, своя колонка, быстрое дело, карточка и кружок", async ({ page, request }) => {
   await reset(request);
   await page.goto("/#board");
 
   // Свойств нет; над доской — вид, группировка и «Фильтр», по умолчанию «Доска» по
-  // колонкам. «Сделано» — обычная колонка и по умолчанию первая, за ней «Дела»
+  // колонкам. «Закрыто» — обычная колонка и по умолчанию первая, за ней «Дела»
   // (заводится сервером сама) и призрачная «+ Колонка».
   await expect(page.locator("#board-props-toggle")).toHaveCount(0);
   await expect(page.locator("#board-filter-toggle")).toHaveText("Фильтр");
-  await expect(page.locator("#board-view button")).toHaveText(["Доска", "Список", "Таблица"]);
+  await expect(page.locator("#board-view button")).toHaveText(["Доска", "Список"]);
   await expect(page.locator("#board-view button[aria-pressed=true]")).toHaveText("Доска");
   expect(await groupsOf(page)).toEqual(["col"]);
-  await expect(page.locator(".board-column:not(.ghost) .board-col-name")).toHaveText(["Сделано", "Дела"]);
+  await expect(page.locator(".board-column:not(.ghost) .board-col-name")).toHaveText(["Закрыто", "Дела"]);
   await expect(page.locator(".board-column.inbox")).toHaveCount(0);
   await expect(page.locator(".board-column.ghost")).toBeVisible();
   await expect(page.locator(".board-column.board-done-column .board-col-name")).toHaveAttribute("href", "#done");
-  // «Сделано» такая же колонка: заголовок тянется, а стоит она в потоке, а не прибита
+  // «Закрыто» такая же колонка: заголовок тянется, а стоит она в потоке, а не прибита
   // к краю. Меню у неё нет — переименовывать и удалять нечего.
   await expect(page.locator(".board-done-column .board-col-head")).toHaveAttribute("draggable", "true");
   await expect(page.locator(".board-done-column .board-menu")).toHaveCount(0);
@@ -148,7 +148,7 @@ test("доска: «Сделано» — обычная колонка, своя
   await expect(page.locator("#review-dialog")).toBeHidden();
   await expect(card.locator(".board-title")).toHaveText("Проверить доску целиком и карточку");
 
-  // Кружок отправляет дело в «Сделано»: оно там зачёркнуто, подпись — «сегодня 10:12».
+  // Кружок отправляет дело в «Закрыто»: оно там зачёркнуто, подпись — «сегодня 10:12».
   await card.locator(".board-done").click();
   await expect(column.locator(".board-card")).toHaveCount(0);
   const done = page.locator(".board-done-column");
@@ -161,7 +161,7 @@ test("доска: «Сделано» — обычная колонка, своя
   await expect(done.locator(".board-card")).toHaveCount(0);
   await expect(column.locator(".board-card").filter({ hasText: "Проверить доску" })).toBeVisible();
 
-  // Заголовок «Сделано» ведёт на страницу «Сделано».
+  // Заголовок «Закрыто» ведёт на страницу «Сделано».
   await done.locator(".board-col-name").click();
   await expect(page).toHaveURL(/#done$/);
   await expect(page.locator("#done h2")).toHaveText("Сделано");
@@ -169,7 +169,7 @@ test("доска: «Сделано» — обычная колонка, своя
   await reset(request);
 });
 
-test("доска: карточку бросают в «Сделано» и между колонками, колонку тянут за заголовок", async ({ page, request }) => {
+test("доска: карточку бросают в «Закрыто» и между колонками, колонку тянут за заголовок", async ({ page, request }) => {
   await reset(request);
   await request.post("/api/captures", { data: { raw: "Первое дело доски" } });
   await request.post("/api/captures", { data: { raw: "Второе дело доски" } });
@@ -177,7 +177,7 @@ test("доска: карточку бросают в «Сделано» и ме�
   await addColumn(page, "Позже");
   await addColumn(page, "Ожидание");
   const names = () => page.locator(".board-column:not(.ghost) .board-col-name").allTextContents();
-  await expect.poll(names).toEqual(["Сделано", "Дела", "Позже", "Ожидание"]);
+  await expect.poll(names).toEqual(["Закрыто", "Дела", "Позже", "Ожидание"]);
 
   // Карточка между колонками: «Второе» уезжает из «Дел» в «Позже».
   const first = columnByName(page, "Дела"), later = columnByName(page, "Позже");
@@ -189,14 +189,14 @@ test("доска: карточку бросают в «Сделано» и ме�
   await page.reload();
   await expect(columnByName(page, "Позже").locator(".board-card")).toContainText("Второе дело");
 
-  // Колонка тянется за заголовок: «Ожидание» встаёт перед «Дела» (правее «Сделано»,
+  // Колонка тянется за заголовок: «Ожидание» встаёт перед «Дела» (правее «Закрыто»,
   // которая пока стоит первой) и после перезагрузки остаётся там.
   await columnByName(page, "Ожидание").locator(".board-col-head").dragTo(columnByName(page, "Дела"), { targetPosition: { x: 10, y: 60 } });
-  await expect.poll(names).toEqual(["Сделано", "Ожидание", "Дела", "Позже"]);
+  await expect.poll(names).toEqual(["Закрыто", "Ожидание", "Дела", "Позже"]);
   await page.reload();
-  await expect.poll(names).toEqual(["Сделано", "Ожидание", "Дела", "Позже"]);
+  await expect.poll(names).toEqual(["Закрыто", "Ожидание", "Дела", "Позже"]);
 
-  // Бросили карточку на «Сделано» — она закрыта и лежит там. Карточка без места
+  // Бросили карточку на «Закрыто» — она закрыта и лежит там. Карточка без места
   // лежит в первой колонке, а первой теперь стала «Ожидание».
   const target = columnByName(page, "Ожидание").locator(".board-card").filter({ hasText: "Первое дело" });
   await target.locator(".board-title").dragTo(page.locator(".board-done-column"));
@@ -282,15 +282,15 @@ test("доска: название колонки правится щелчко�
   await page.locator("#board-search").fill("");
   await expect(cards).toHaveCount(2);
 
-  // «+ Дело» вверху открывает поле в первой своей колонке, а не в «Сделано».
+  // «+ Дело» вверху открывает поле в первой своей колонке, а не в «Закрыто».
   await page.locator("#board-new").click();
   await expect(columnByName(page, "Текущие").locator(".board-add input")).toBeVisible();
   await reset(request);
 });
 
 // На телефоне колонки по одной на экран: сверху сегмент подписей, открыта
-// первая своя колонка (а не «Сделано»), страница не шире экрана.
-test("на телефоне колонки по одной, сегмент показывает «Сделано» и свои", async ({ page, request }) => {
+// первая своя колонка (а не «Закрыто»), страница не шире экрана.
+test("на телефоне колонки по одной, сегмент показывает «Закрыто» и свои", async ({ page, request }) => {
   await reset(request);
   await request.post("/api/captures", { data: { raw: "Проверить доску на телефоне" } });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -301,12 +301,12 @@ test("на телефоне колонки по одной, сегмент по�
   // превращаться в высоту.
   await expect.poll(async () => (await card.boundingBox())?.height ?? Infinity).toBeLessThan(120);
   await expect(page.locator("#board-segments .board-segment").first()).toBeVisible();
-  await expect(page.locator("#board-segments .board-segment").first()).toContainText("Сделано");
+  await expect(page.locator("#board-segments .board-segment").first()).toContainText("Закрыто");
   await expect(page.locator("#board-columns .board-column.is-active")).toHaveCount(1);
   await expect(page.locator("#board-columns .board-column.is-active .board-col-name")).toHaveText("Дела");
-  // Сегмент «Сделано» показывает закрытые; страница не шире экрана.
+  // Сегмент «Закрыто» показывает закрытые; страница не шире экрана.
   await page.locator("#board-segments .board-segment").first().click();
-  await expect(page.locator("#board-columns .board-column.is-active .board-col-name")).toHaveText("Сделано");
+  await expect(page.locator("#board-columns .board-column.is-active .board-col-name")).toHaveText("Закрыто");
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await reset(request);
 });
@@ -365,7 +365,7 @@ test("вид и группировка помнятся после переза�
   await expect(page.locator(".board-lv-none")).toBeVisible();
   await page.reload();
   await expect(page.locator("#board-grp select")).toHaveCount(0);
-  await expect(page.locator("#board-flat .g-sec")).toHaveText(["Сделано · 0"]);
+  await expect(page.locator("#board-flat .g-sec")).toHaveText(["Закрыто · 0"]);
   await expect(page.locator("#board-flat .g-row")).toHaveCount(1);
 
   // Пять полей — предел: «+ ещё» пропадает. «Доска» возвращается тем же щелчком.
@@ -377,6 +377,13 @@ test("вид и группировка помнятся после переза�
   await expect(page.locator("#board-columns")).toBeVisible();
   await expect(page.locator("#board-flat")).toBeHidden();
   expect(await groupsOf(page)).toEqual(["col", "day", "who", "proj", "src"]);
+
+  // Вида «Таблица» больше нет: сохранённый прежде в браузере читается как «Список».
+  await page.evaluate(() => localStorage.setItem("kizuna-board-view", "table"));
+  await page.reload();
+  await expect(page.locator("#board-view button[aria-pressed=true]")).toHaveText("Список");
+  await expect(page.locator("#board-flat .g-list")).toBeVisible();
+  await expect(page.locator("#board-columns")).toBeHidden();
 
   // Испорченное значение в браузере не ломает доску: вид и группировка по умолчанию.
   await page.evaluate(() => { localStorage.setItem("kizuna-board-view", "cards"); localStorage.setItem("kizuna-board-groups", "{oops"); });
@@ -391,7 +398,7 @@ test("по дню: на доске только непустые группы и
   const first = await deed(request, "Дело на сегодня", { due: day(0) });
   const second = await deed(request, "Дело на завтра", { due: day(1) });
   await deed(request, "Дело со вчерашним сроком", { due: day(-1) });
-  // «Сделано» и шесть групп-колонок в ряд: окно широкое, чтобы все они были видны без прокрутки ленты.
+  // «Закрыто» и шесть групп-колонок в ряд: окно широкое, чтобы все они были видны без прокрутки ленты.
   await page.setViewportSize({ width: 3000, height: 900 });
   await page.goto("/#board");
   await arrange(page, "board", ["day"]);
@@ -402,13 +409,13 @@ test("по дню: на доске только непустые группы и
   for (const name of ["на неделе", "позже", "без срока"]) await addGroupColumn(page, name);
   await expect.poll(names).toEqual(["просрочено", "сегодня", "завтра", "на неделе", "позже", "без срока"]);
   // У колонок-групп есть меню («Убрать колонку»), заголовок тянется, как у колонок человека;
-  // «Сделано» по умолчанию слева, перед всеми. Все шесть дней на доске — добавлять больше нечего,
+  // «Закрыто» по умолчанию слева, перед всеми. Все шесть дней на доске — добавлять больше нечего,
   // и «+ Колонка» не показывается.
   await expect(page.locator(".board-column.group .board-menu")).toHaveCount(6);
   await expect(page.locator(".board-column.ghost.pick")).toHaveCount(0);
   await expect(page.locator(".board-column.group .board-col-head[draggable=true]")).toHaveCount(6);
   await expect(page.locator("#board-columns .board-column").first()).toHaveClass(/board-done-column/);
-  await expect(page.locator(".board-done-column .board-col-name")).toHaveText("Сделано");
+  await expect(page.locator(".board-done-column .board-col-name")).toHaveText("Закрыто");
   const group = (key) => page.locator(`.board-column.group[data-group="day:${key}"]`);
   await expect(group("today").locator(".board-card")).toHaveCount(1);
   await expect(group("today").locator(".board-card")).toContainText("Дело на сегодня");
@@ -510,7 +517,7 @@ test("по человеку: группы по алфавиту, «Без чел
   await reset(request);
 });
 
-test("список: разделы по колонкам, «Сделано» — последний раздел, кружок закрытого возвращает дело", async ({ page, request }) => {
+test("список: разделы по колонкам, «Закрыто» — последний раздел, кружок закрытого возвращает дело", async ({ page, request }) => {
   await reset(request);
   await deed(request, "Открытое дело списка");
   const finished = await deed(request, "Закрытое дело списка");
@@ -519,8 +526,8 @@ test("список: разделы по колонкам, «Сделано» —
   await page.goto("/#board");
   await arrange(page, "list", ["col"]);
   await expect(page.locator("#board-columns")).toBeHidden();
-  // Раздел колонки, за ним — «Сделано»: зелёный, последний, ведёт на страницу «Сделано».
-  await expect(page.locator("#board-flat .g-sec")).toHaveText(["Дела · 1", "Сделано · 1"]);
+  // Раздел колонки, за ним — «Закрыто»: зелёный, последний, ведёт на страницу «Сделано».
+  await expect(page.locator("#board-flat .g-sec")).toHaveText(["Дела · 1", "Закрыто · 1"]);
   await expect(page.locator("#board-flat .g-sec").last()).toHaveClass(/done/);
   await expect(page.locator("#board-flat .g-sec.done a")).toHaveAttribute("href", "#done");
   const closed = page.locator("#board-flat .g-row.closed");
@@ -534,56 +541,15 @@ test("список: разделы по колонкам, «Сделано» —
   await expect(open).not.toHaveAttribute("draggable", "true");
   // Кружок закрытого возвращает дело в работу, кружок открытого — закрывает.
   await closed.locator(".board-done").click();
-  await expect(page.locator("#board-flat .g-sec")).toHaveText(["Дела · 2", "Сделано · 0"]);
+  await expect(page.locator("#board-flat .g-sec")).toHaveText(["Дела · 2", "Закрыто · 0"]);
   await settled(page);
   await page.locator("#board-flat .g-row").filter({ hasText: "Открытое дело списка" }).locator(".board-done").click();
-  await expect(page.locator("#board-flat .g-sec")).toHaveText(["Дела · 1", "Сделано · 1"]);
+  await expect(page.locator("#board-flat .g-sec")).toHaveText(["Дела · 1", "Закрыто · 1"]);
   await expect(page.locator("#board-flat .g-row.closed")).toContainText("Открытое дело списка");
   await reset(request);
 });
 
-test("таблица: кружок рядом с названием, столбцы — только для полей, не занятых группировкой", async ({ page, request }) => {
-  await reset(request);
-  await deed(request, "Строка таблицы на сегодня", { due: day(0), people: ["Аня"] });
-  await deed(request, "Строка таблицы на завтра", { due: day(1) });
-  await page.goto("/#board");
-  await arrange(page, "table", ["src", "day"]);
-  await expect(page.locator("#board-columns")).toBeHidden();
-  await expect(page.locator("#board-flat .g-table thead th")).toHaveText(["Название", "Колонка", "Человек", "Проект"]);
-  // Заголовки групп — строки на всю ширину: «Откуда», в нём дни; «Сделано» — последний раздел.
-  await expect(page.locator("#board-flat tr.sec .g-sec")).toHaveText(["Поле · 2", "сегодня · 1", "завтра · 1", "Сделано · 0"]);
-  const headWidth = await page.locator("#board-flat tr.sec").first().evaluate((row) => row.firstElementChild.colSpan);
-  expect(headWidth).toBe(4);
-  // Кружок вплотную к названию, а не в своём столбце; уровень — отступом строки.
-  const row = page.locator("#board-flat tr.board-row").filter({ hasText: "Строка таблицы на сегодня" });
-  const circle = await row.locator(".board-done").boundingBox(), title = await row.locator(".board-title").boundingBox();
-  expect(title.x - (circle.x + circle.width)).toBeLessThan(16);
-  expect(Math.abs(title.y + title.height / 2 - (circle.y + circle.height / 2))).toBeLessThan(8);
-  const indent = (locator) => locator.locator(".board-done").evaluate((element) => element.getBoundingClientRect().x);
-  const group = (await page.locator("#board-flat tr.sec .g-sec").first().boundingBox()).x;
-  expect(await indent(row)).toBeGreaterThan(group + 16);
-  await expect(row.locator("td")).toHaveText(["Строка таблицы на сегодня", "Дела", "Аня", "Без проекта"]);
-
-  // Без группировки столбцов пять — «День» и «Откуда» тоже.
-  await page.locator('#board-grp [data-remove="0"]').click();
-  await page.locator('#board-grp [data-remove="0"]').click();
-  await expect(page.locator("#board-flat .g-table thead th")).toHaveText(["Название", "Колонка", "День", "Человек", "Проект", "Откуда"]);
-  const flat = page.locator("#board-flat tr.board-row").filter({ hasText: "Строка таблицы на завтра" });
-  await expect(flat.locator("td")).toHaveText(["Строка таблицы на завтра", "Дела", "завтра", "Без человека", "Без проекта", "Поле"]);
-  // Кружок закрывает дело — строка уходит в «Сделано», а он же его возвращает.
-  await flat.locator(".board-done").click();
-  await expect(page.locator("#board-flat tr.sec .g-sec").last()).toHaveText("Сделано · 1");
-  await settled(page);
-  const closed = page.locator("#board-flat tr.board-row.closed");
-  await expect(closed).toHaveCount(1);
-  await expect(closed.locator(".board-done")).toHaveClass(/is-done/);
-  await expect(closed.locator("td").nth(2)).toContainText(/^сегодня \d\d:\d\d$/);
-  await closed.locator(".board-done").click();
-  await expect(page.locator("#board-flat tr.board-row.closed")).toHaveCount(0);
-  await reset(request);
-});
-
-test("поиск работает во всех видах; название открывает карточку, стрелки листают дела в порядке показа", async ({ page, request }) => {
+test("поиск работает на доске и в списке; название открывает карточку, стрелки листают дела в порядке показа", async ({ page, request }) => {
   await reset(request);
   await deed(request, "Альфа дело", { due: day(0) });
   await deed(request, "Бета дело", { due: day(1) });
@@ -595,8 +561,6 @@ test("поиск работает во всех видах; название о�
   await expect.poll(titles).toEqual(["Альфа дело", "Гамма дело", "Бета дело"]);
   await page.locator("#board-search").fill("бета");
   await expect.poll(titles).toEqual(["Бета дело"]);
-  await page.locator('#board-view [data-view="table"]').click();
-  await expect(page.locator("#board-flat tr.board-row")).toHaveCount(1);
   await page.locator('#board-view [data-view="board"]').click();
   await expect(page.locator("#board-columns .board-card")).toHaveCount(1);
   await page.locator("#board-search").fill("");
@@ -615,35 +579,33 @@ test("поиск работает во всех видах; название о�
   await reset(request);
 });
 
-test("клавиши J, E и Enter работают в списке и в таблице так же, как на доске", async ({ page, request }) => {
+test("клавиши J, E и Enter работают в списке так же, как на доске", async ({ page, request }) => {
   await reset(request);
   await deed(request, "Первая строка для клавиш");
   await deed(request, "Вторая строка для клавиш");
   await page.goto("/#board");
-  for (const view of ["list", "table"]) {
-    await arrange(page, view, []);
-    const rows = page.locator(view === "list" ? "#board-flat .g-row:not(.closed)" : "#board-flat tr.board-row:not(.closed)");
-    await expect(rows).toHaveCount(2);
-    // J идёт вниз по строкам, E закрывает ту, до которой дошли.
-    await page.keyboard.press("j");
-    await expect(rows.nth(0)).toBeFocused();
-    await page.keyboard.press("j");
-    await expect(rows.nth(1)).toBeFocused();
-    await page.keyboard.press("e");
-    await expect(rows).toHaveCount(1);
-    await expect(page.locator("#board-flat .board-row.closed")).toHaveCount(1);
-    await settled(page);
-    await page.locator("#board-flat .board-row.closed .board-done").click();
-    await expect(rows).toHaveCount(2);
-    await settled(page);
-    // Enter на строке открывает карточку.
-    await page.keyboard.press("j");
-    await expect(rows.nth(0)).toBeFocused();
-    await page.keyboard.press("Enter");
-    await expect(page.locator("#review-dialog")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.locator("#review-dialog")).toBeHidden();
-  }
+  await arrange(page, "list", []);
+  const rows = page.locator("#board-flat .g-row:not(.closed)");
+  await expect(rows).toHaveCount(2);
+  // J идёт вниз по строкам, E закрывает ту, до которой дошли.
+  await page.keyboard.press("j");
+  await expect(rows.nth(0)).toBeFocused();
+  await page.keyboard.press("j");
+  await expect(rows.nth(1)).toBeFocused();
+  await page.keyboard.press("e");
+  await expect(rows).toHaveCount(1);
+  await expect(page.locator("#board-flat .board-row.closed")).toHaveCount(1);
+  await settled(page);
+  await page.locator("#board-flat .board-row.closed .board-done").click();
+  await expect(rows).toHaveCount(2);
+  await settled(page);
+  // Enter на строке открывает карточку.
+  await page.keyboard.press("j");
+  await expect(rows.nth(0)).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#review-dialog")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#review-dialog")).toBeHidden();
   await reset(request);
 });
 
@@ -666,17 +628,11 @@ test("«+ Дело» в списке открывает поле рядом с �
   await reset(request);
 });
 
-test("на телефоне у списка и таблицы нет сегментов колонок, а таблица прокручивается вбок внутри себя", async ({ page, request }) => {
+test("на телефоне у списка нет сегментов колонок и он не шире экрана", async ({ page, request }) => {
   await reset(request);
-  await deed(request, "Дело для телефона со длинным названием, чтобы таблица не поместилась", { due: day(1) });
+  await deed(request, "Дело для телефона со длинным названием, чтобы строка списка не поместилась в одну линию", { due: day(1) });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/#board");
-  await arrange(page, "table", ["col"]);
-  await expect(page.locator("#board-segments")).toBeHidden();
-  const wrap = page.locator("#board-flat .board-table-wrap");
-  await expect(wrap).toBeVisible();
-  expect(await wrap.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await arrange(page, "list", ["col", "day"]);
   await expect(page.locator("#board-segments")).toBeHidden();
   await expect(page.locator("#board-flat .g-row")).toBeVisible();
@@ -698,29 +654,29 @@ test("колонки тянутся при любой группировке: п
   await arrange(page, "board", ["day"]);
   const names = () => page.locator("#board-columns .board-column:not(.ghost) .board-col-name").allTextContents();
   const lane = (key) => page.locator(`.board-column.group[data-group="day:${key}"]`);
-  // Пока порядка нет — естественный, «Сделано» первая; пустые дни не показаны — их никто не заводил.
-  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра"]);
+  // Пока порядка нет — естественный, «Закрыто» первая; пустые дни не показаны — их никто не заводил.
+  await expect.poll(names).toEqual(["Закрыто", "сегодня", "завтра"]);
   expect(await stored(page, "kizuna-board-order")).toBeNull();
 
   // «завтра» — за заголовок — перед «сегодня». Колонка переехала, а срок дела остался.
   await lane("tomorrow").locator(".board-col-head").dragTo(lane("today"), { targetPosition: { x: 10, y: 60 } });
-  await expect.poll(names).toEqual(["Сделано", "завтра", "сегодня"]);
+  await expect.poll(names).toEqual(["Закрыто", "завтра", "сегодня"]);
   expect(await dueOf(request, tomorrow)).toBe(day(1));
   // В браузере лежит полный порядок — и скрытые «просрочено», «на неделе», … тоже, на своих местах.
   expect(JSON.parse(await stored(page, "kizuna-board-order"))).toEqual({ day: ["__done", "late", "tomorrow", "today", "week", "later", "none"] });
   await page.reload();
-  await expect.poll(names).toEqual(["Сделано", "завтра", "сегодня"]);
+  await expect.poll(names).toEqual(["Закрыто", "завтра", "сегодня"]);
   await expect(lane("tomorrow").locator(".board-card")).toContainText("Дело на завтра");
 
   // Порядок помнится по полю первого уровня: у другого поля он свой, естественный.
   await arrange(page, "board", ["src"]);
-  await expect.poll(names).toEqual(["Сделано", "Поле"]);
+  await expect.poll(names).toEqual(["Закрыто", "Поле"]);
   await arrange(page, "board", ["day"]);
-  await expect.poll(names).toEqual(["Сделано", "завтра", "сегодня"]);
+  await expect.poll(names).toEqual(["Закрыто", "завтра", "сегодня"]);
   await reset(request);
 });
 
-test("«Сделано» — такая же колонка: её тянут на второе место, и это помнится; новая группа встаёт после известных", async ({ page, request }) => {
+test("«Закрыто» — такая же колонка: её тянут на второе место, и это помнится; новая группа встаёт после известных", async ({ page, request }) => {
   await reset(request);
   await deed(request, "Дело на сегодня", { due: day(0) });
   await deed(request, "Просроченное дело", { due: day(-1) });
@@ -734,14 +690,14 @@ test("«Сделано» — такая же колонка: её тянут н�
   const names = () => page.locator("#board-columns .board-column:not(.ghost) .board-col-name").allTextContents();
   const done = page.locator(".board-done-column");
   const lane = (key) => page.locator(`.board-column.group[data-group="day:${key}"]`);
-  await expect.poll(names).toEqual(["Сделано", "просрочено", "сегодня"]);
+  await expect.poll(names).toEqual(["Закрыто", "просрочено", "сегодня"]);
 
-  // «Сделано» встала правее «просрочено»: вторая по счёту, а не прибитая к краю.
+  // «Закрыто» встала правее «просрочено»: вторая по счёту, а не прибитая к краю.
   await done.locator(".board-col-head").dragTo(lane("late"), { targetPosition: { x: 260, y: 60 } });
-  await expect.poll(names).toEqual(["просрочено", "Сделано", "сегодня"]);
+  await expect.poll(names).toEqual(["просрочено", "Закрыто", "сегодня"]);
   await expect(done.locator(".board-card.closed")).toContainText("Закрытое дело");
   await page.reload();
-  await expect.poll(names).toEqual(["просрочено", "Сделано", "сегодня"]);
+  await expect.poll(names).toEqual(["просрочено", "Закрыто", "сегодня"]);
   expect(JSON.parse(await stored(page, "kizuna-board-order")).day.slice(0, 3)).toEqual(["late", "__done", "today"]);
   // Она обычная и в остальном: закрывает брошенное на неё дело.
   await lane("today").locator(".board-card").filter({ hasText: "Дело на сегодня" }).locator(".board-title").dragTo(page.locator(".board-done-column"));
@@ -750,39 +706,39 @@ test("«Сделано» — такая же колонка: её тянут н�
   // Порядок из браузера знает не все группы: новый человек встаёт после известных, в естественном порядке.
   await page.evaluate(() => localStorage.setItem("kizuna-board-order", JSON.stringify({ who: ["Борис", "__done"] })));
   await arrange(page, "board", ["who"]);
-  await expect.poll(names).toEqual(["Борис", "Сделано", "Аня", "Без человека"]);
-  // Испорченный порядок не ломает доску: естественный, «Сделано» первая.
+  await expect.poll(names).toEqual(["Борис", "Закрыто", "Аня", "Без человека"]);
+  // Испорченный порядок не ломает доску: естественный, «Закрыто» первая.
   await page.evaluate(() => localStorage.setItem("kizuna-board-order", "{oops"));
   await page.reload();
-  await expect.poll(names).toEqual(["Сделано", "Аня", "Борис", "Без человека"]);
+  await expect.poll(names).toEqual(["Закрыто", "Аня", "Борис", "Без человека"]);
   await reset(request);
 });
 
-test("по «Колонке» колонка человека тянется и порядок уходит на сервер, а место «Сделано» — только в браузере", async ({ page, request }) => {
+test("по «Колонке» колонка человека тянется и порядок уходит на сервер, а место «Закрыто» — только в браузере", async ({ page, request }) => {
   await reset(request);
   await request.post("/api/board/columns", { data: { name: "Позже" } });
   await request.post("/api/board/columns", { data: { name: "Ожидание" } });
   await page.goto("/#board");
   const names = () => page.locator(".board-column:not(.ghost) .board-col-name").allTextContents();
   const server = async () => (await (await request.get("/api/board")).json()).columns.map((column) => column.name);
-  await expect.poll(names).toEqual(["Сделано", "Дела", "Позже", "Ожидание"]);
+  await expect.poll(names).toEqual(["Закрыто", "Дела", "Позже", "Ожидание"]);
 
   // «Ожидание» перед «Позже»: на экране, в браузере и на сервере.
   await columnByName(page, "Ожидание").locator(".board-col-head").dragTo(columnByName(page, "Позже"), { targetPosition: { x: 10, y: 60 } });
-  await expect.poll(names).toEqual(["Сделано", "Дела", "Ожидание", "Позже"]);
+  await expect.poll(names).toEqual(["Закрыто", "Дела", "Ожидание", "Позже"]);
   await expect.poll(server).toEqual(["Дела", "Ожидание", "Позже"]);
   expect(JSON.parse(await stored(page, "kizuna-board-order")).col).toHaveLength(4);
 
-  // «Сделано» на второе место — только на экране: свои колонки на сервере стоят, как стояли.
+  // «Закрыто» на второе место — только на экране: свои колонки на сервере стоят, как стояли.
   await page.locator(".board-done-column .board-col-head").dragTo(columnByName(page, "Дела"), { targetPosition: { x: 260, y: 60 } });
-  await expect.poll(names).toEqual(["Дела", "Сделано", "Ожидание", "Позже"]);
+  await expect.poll(names).toEqual(["Дела", "Закрыто", "Ожидание", "Позже"]);
   expect(await server()).toEqual(["Дела", "Ожидание", "Позже"]);
   await page.reload();
-  await expect.poll(names).toEqual(["Дела", "Сделано", "Ожидание", "Позже"]);
+  await expect.poll(names).toEqual(["Дела", "Закрыто", "Ожидание", "Позже"]);
 
-  // Колонка человека, брошенная за «Сделано», тоже уходит на сервер — среди своих колонок она первая.
+  // Колонка человека, брошенная за «Закрыто», тоже уходит на сервер — среди своих колонок она первая.
   await columnByName(page, "Позже").locator(".board-col-head").dragTo(columnByName(page, "Дела"), { targetPosition: { x: 10, y: 60 } });
-  await expect.poll(names).toEqual(["Позже", "Дела", "Сделано", "Ожидание"]);
+  await expect.poll(names).toEqual(["Позже", "Дела", "Закрыто", "Ожидание"]);
   await expect.poll(server).toEqual(["Позже", "Дела", "Ожидание"]);
   await reset(request);
 });
@@ -800,7 +756,7 @@ test("колонки-группы заводит человек: «+ Колон�
   const lane = (key) => page.locator(`.board-column.group[data-group="day:${key}"]`);
 
   // Пустых дней на доске нет: стоят только те, где есть дела; ничего заведённого в браузере нет.
-  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра"]);
+  await expect.poll(names).toEqual(["Закрыто", "сегодня", "завтра"]);
   expect(await stored(page, "kizuna-board-shown")).toBeNull();
   // «+ Колонка» — в конце ряда; дни на доске есть, поэтому подсказки про пустую доску нет.
   const ghost = groupGhost(page);
@@ -814,11 +770,11 @@ test("колонки-группы заводит человек: «+ Колон�
   await expect(ghost.locator(".board-pick-item")).toHaveText(["просрочено", "на неделе", "позже", "без срока"]);
   await page.keyboard.press("Escape");
   await expect(ghost.locator(".board-pick-list")).toBeHidden();
-  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра"]);
+  await expect.poll(names).toEqual(["Закрыто", "сегодня", "завтра"]);
   // Выбрали «на неделе» — колонка появилась пустой и последней в ряду, а «+ Колонка» встала за ней.
   await ghost.locator(".board-add-button").click();
   await ghost.locator(".board-pick-item", { hasText: /^на неделе$/ }).click();
-  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра", "на неделе"]);
+  await expect.poll(names).toEqual(["Закрыто", "сегодня", "завтра", "на неделе"]);
   await expect(lane("week").locator(".board-card")).toHaveCount(0);
   await expect(lane("week").locator(".board-col-count")).toHaveText("0");
   await expect(page.locator("#board-columns .board-column").last()).toHaveClass(/ghost/);
@@ -828,13 +784,13 @@ test("колонки-группы заводит человек: «+ Колон�
   await ghost.locator(".board-add-button").click();
   await expect(ghost.locator(".board-pick-item")).toHaveText(["просрочено", "позже", "без срока"]);
   await ghost.locator(".board-pick-item", { hasText: /^просрочено$/ }).click();
-  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра", "на неделе", "просрочено"]);
+  await expect.poll(names).toEqual(["Закрыто", "сегодня", "завтра", "на неделе", "просрочено"]);
   expect(JSON.parse(await stored(page, "kizuna-board-shown"))).toEqual({ day: ["week", "late"] });
   // Порядок лежит рядом, в своём ключе, прежнего формата — целиком, со скрытыми «позже» и «без срока» на местах.
   expect(JSON.parse(await stored(page, "kizuna-board-order"))).toEqual({ day: ["__done", "today", "tomorrow", "week", "late", "later", "none"] });
   // После перезагрузки колонки на месте: они заведены, хоть и пусты.
   await page.reload();
-  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра", "на неделе", "просрочено"]);
+  await expect.poll(names).toEqual(["Закрыто", "сегодня", "завтра", "на неделе", "просрочено"]);
 
   // «Убрать колонку» прячет пустую: она уходит и не возвращается после перезагрузки.
   await lane("week").hover();
@@ -843,13 +799,13 @@ test("колонки-группы заводит человек: «+ Колон�
   await expect(menu.locator(".board-menu-popover button")).toHaveText(["Убрать колонку"]);
   await expect(menu.locator(".board-menu-note")).toHaveText("Вернуть колонку можно через «+ Колонка».");
   await menu.getByRole("button", { name: "Убрать колонку" }).click();
-  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра", "просрочено"]);
+  await expect.poll(names).toEqual(["Закрыто", "сегодня", "завтра", "просрочено"]);
   expect(JSON.parse(await stored(page, "kizuna-board-shown"))).toEqual({ day: ["late"] });
   await page.reload();
-  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра", "просрочено"]);
+  await expect.poll(names).toEqual(["Закрыто", "сегодня", "завтра", "просрочено"]);
   // Убранную можно вернуть тем же «+ Колонка».
   await addGroupColumn(page, "на неделе");
-  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра", "просрочено", "на неделе"]);
+  await expect.poll(names).toEqual(["Закрыто", "сегодня", "завтра", "просрочено", "на неделе"]);
 
   // С делами колонка остаётся: «Убрать» её только не держит — она уйдёт, когда дела закончатся. Сказано в меню и в тосте.
   await lane("today").hover();
@@ -861,7 +817,7 @@ test("колонки-группы заводит человек: «+ Колон�
   await expect(lane("today").locator(".board-card")).toHaveCount(1);
   // Закрыли единственное дело — колонка ушла сама: непустая колонка держится на делах, а не на выборе.
   await lane("today").locator(".board-done").click();
-  await expect.poll(names).toEqual(["Сделано", "завтра", "просрочено", "на неделе"]);
+  await expect.poll(names).toEqual(["Закрыто", "завтра", "просрочено", "на неделе"]);
   await reset(request);
 });
 
@@ -888,7 +844,7 @@ test("пустая доска по группе говорит, что дела�
   await reset(request);
 });
 
-test("«+ Колонка» у человека, проекта и «Откуда» предлагает значения из карточек; заведённая колонка пуста и принимает «+ Дело для …»", async ({ page, request }) => {
+test("«+ Колонка» у человека, проекта и «Откуда» предлагает значения из карточек; заведённая колонка пуста и принимает «+ Дело — …»", async ({ page, request }) => {
   await reset(request);
   await deed(request, "Дело для Ани", { people: ["Аня"] });
   await deed(request, "Дело для Бориса", { people: ["Борис"] });
@@ -902,16 +858,16 @@ test("«+ Колонка» у человека, проекта и «Откуда
 
   // Человек: стоят те, у кого есть открытые дела, и «Без человека»; Игорь — только в закрытом, его колонку заводят сами.
   await arrange(page, "board", ["who"]);
-  await expect.poll(names).toEqual(["Сделано", "Аня", "Борис", "Без человека"]);
+  await expect.poll(names).toEqual(["Закрыто", "Аня", "Борис", "Без человека"]);
   const ghost = groupGhost(page);
   await ghost.locator(".board-add-button").click();
   await expect(ghost.locator(".board-pick-item")).toHaveText(["Игорь"]);
   await ghost.locator(".board-pick-item").click();
-  await expect.poll(names).toEqual(["Сделано", "Аня", "Борис", "Без человека", "Игорь"]);
+  await expect.poll(names).toEqual(["Закрыто", "Аня", "Борис", "Без человека", "Игорь"]);
   expect(JSON.parse(await stored(page, "kizuna-board-shown"))).toEqual({ who: ["Игорь"] });
   // Всё есть на доске — «+ Колонка» не нужна и не показывается.
   await expect(groupGhost(page)).toHaveCount(0);
-  // Заведённая колонка пуста, и в ней стоит «+ Дело для Игоря»: новое дело ложится в неё.
+  // Заведённая колонка пуста, и в ней стоит «+ Дело — Игорь»: новое дело ложится в неё.
   const igor = page.locator('.board-column.group[data-group="who:Игорь"]');
   await expect(igor.locator(".board-card")).toHaveCount(0);
   await igor.hover();
@@ -923,19 +879,19 @@ test("«+ Колонка» у человека, проекта и «Откуда
   await page.keyboard.press("Escape");
   // Колонка человека пережила перезагрузку и держится на делах: «Убрать» её не уберёт, пока дело в ней.
   await page.reload();
-  await expect.poll(names).toEqual(["Сделано", "Аня", "Борис", "Без человека", "Игорь"]);
+  await expect.poll(names).toEqual(["Закрыто", "Аня", "Борис", "Без человека", "Игорь"]);
 
   // Проект: «Hub» и «Без проекта» уже на доске, предлагать нечего.
   await arrange(page, "board", ["proj"]);
-  await expect.poll(names).toEqual(["Сделано", "Hub", "Без проекта"]);
+  await expect.poll(names).toEqual(["Закрыто", "Hub", "Без проекта"]);
   await expect(groupGhost(page)).toHaveCount(0);
   // «Откуда»: у всех дел «Поле»; Telegram и «Заметки» — выбор.
   await arrange(page, "board", ["src"]);
-  await expect.poll(names).toEqual(["Сделано", "Поле"]);
+  await expect.poll(names).toEqual(["Закрыто", "Поле"]);
   await groupGhost(page).locator(".board-add-button").click();
   await expect(groupGhost(page).locator(".board-pick-item")).toHaveText(["Telegram", "Заметки"]);
   await groupGhost(page).locator(".board-pick-item", { hasText: /^Telegram$/ }).click();
-  await expect.poll(names).toEqual(["Сделано", "Поле", "Telegram"]);
+  await expect.poll(names).toEqual(["Закрыто", "Поле", "Telegram"]);
   await expect(page.locator('.board-column.group[data-group="src:telegram"] .board-card')).toHaveCount(0);
   await reset(request);
 });
@@ -947,14 +903,14 @@ test("на телефоне «+ Колонка» у групп — сегмен�
   await page.goto("/#board");
   await arrange(page, "board", ["day"]);
   const segments = page.locator("#board-segments .board-segment");
-  await expect(segments).toContainText(["Сделано", "сегодня", "+ Колонка"]);
+  await expect(segments).toContainText(["Закрыто", "сегодня", "+ Колонка"]);
   await segments.last().click();
   await expect(page.locator("#board-columns .board-column.ghost.pick.is-active")).toBeVisible();
   await groupGhost(page).locator(".board-add-button").click();
   await groupGhost(page).locator(".board-pick-item", { hasText: /^завтра$/ }).click();
   // Новая колонка — та, что открыта; сегмент её называет; страница не шире экрана.
   await expect(page.locator("#board-columns .board-column.is-active .board-col-name")).toHaveText("завтра");
-  await expect(segments).toContainText(["Сделано", "сегодня", "завтра", "+ Колонка"]);
+  await expect(segments).toContainText(["Закрыто", "сегодня", "завтра", "+ Колонка"]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await reset(request);
 });
@@ -1023,7 +979,7 @@ test("первый заход: фильтр «сегодня» — одна пл
   await reset(request);
 });
 
-test("фильтр «Человек = Аня» оставляет её дела на доске, в списке и таблице, переживает перезагрузку, «Сбросить» возвращает всё", async ({ page, request }) => {
+test("фильтр «Человек = Аня» оставляет её дела на доске и в списке, переживает перезагрузку, «Сбросить» возвращает всё", async ({ page, request }) => {
   await reset(request);
   await deed(request, "Дело Ани для фильтра", { people: ["Аня"] });
   await deed(request, "Дело Бориса для фильтра", { people: ["Борис"] });
@@ -1040,7 +996,7 @@ test("фильтр «Человек = Аня» оставляет её дела 
   await addCondition(page, "who", "Аня");
   await expect(filterToggle(page)).toHaveText("Фильтр · 1");
   expect(await conditionsOf(page)).toEqual(["Человек = Аня"]);
-  // Доска: только её открытые дела (в том числе общее с Борисом) и её закрытое в «Сделано».
+  // Доска: только её открытые дела (в том числе общее с Борисом) и её закрытое в «Закрыто».
   await expect.poll(() => openTitles(page)).toEqual(["Дело Ани для фильтра", "Общее дело для фильтра"]);
   await expect.poll(() => doneTitles(page)).toEqual(["Закрытое дело Ани"]);
   await expect(page.locator(".board-done-column .board-col-count")).toHaveText("1");
@@ -1049,12 +1005,10 @@ test("фильтр «Человек = Аня» оставляет её дела 
   await expect.poll(() => openTitles(page)).toEqual(["Общее дело для фильтра"]);
   await page.locator("#board-search").fill("");
 
-  // Список и таблица: те же дела, «Сделано» — последний раздел с её закрытым.
+  // Список: те же дела, «Закрыто» — последний раздел с её закрытым.
   await page.locator('#board-view [data-view="list"]').click();
   await expect(page.locator("#board-flat .g-row .board-title")).toHaveText(["Дело Ани для фильтра", "Общее дело для фильтра", "Закрытое дело Ани"]);
-  await expect(page.locator("#board-flat .g-sec")).toHaveText(["Дела · 2", "Сделано · 1"]);
-  await page.locator('#board-view [data-view="table"]').click();
-  await expect(page.locator("#board-flat tr.board-row .board-title")).toHaveText(["Дело Ани для фильтра", "Общее дело для фильтра", "Закрытое дело Ани"]);
+  await expect(page.locator("#board-flat .g-sec")).toHaveText(["Дела · 2", "Закрыто · 1"]);
 
   // Выбор лежит в браузере и переживает перезагрузку — вместе с видом.
   expect(JSON.parse(await stored(page, "kizuna-board-filter"))).toEqual([{ field: "who", op: "=", values: ["Аня"] }]);
@@ -1062,7 +1016,7 @@ test("фильтр «Человек = Аня» оставляет её дела 
   await expect(filterToggle(page)).toHaveText("Фильтр · 1");
   await expect(page.locator("#board-filter")).toBeVisible();
   expect(await conditionsOf(page)).toEqual(["Человек = Аня"]);
-  await expect(page.locator("#board-flat tr.board-row .board-title")).toHaveText(["Дело Ани для фильтра", "Общее дело для фильтра", "Закрытое дело Ани"]);
+  await expect(page.locator("#board-flat .g-row .board-title")).toHaveText(["Дело Ани для фильтра", "Общее дело для фильтра", "Закрытое дело Ани"]);
   await page.locator('#board-view [data-view="board"]').click();
   await expect.poll(() => openTitles(page)).toEqual(["Дело Ани для фильтра", "Общее дело для фильтра"]);
 
@@ -1077,7 +1031,7 @@ test("фильтр «Человек = Аня» оставляет её дела 
   await reset(request);
 });
 
-test("«Статус = открыто» прячет «Сделано» — колонку, раздел списка и таблицы; «Статус = сделано» оставляет только закрытые", async ({ page, request }) => {
+test("«Статус = открыто» прячет «Закрыто» — колонку доски и раздел списка; «Статус = закрыто» оставляет только закрытые", async ({ page, request }) => {
   await reset(request);
   await deed(request, "Открытое дело статуса");
   await closeDeed(request, await deed(request, "Закрытое дело статуса"));
@@ -1087,31 +1041,28 @@ test("«Статус = открыто» прячет «Сделано» — ко
 
   await addCondition(page, "status", "open");
   expect(await conditionsOf(page)).toEqual(["Статус = открыто"]);
-  // Колонки «Сделано» нет вовсе, а не пустая; открытое дело на месте.
+  // Колонки «Закрыто» нет вовсе, а не пустая; открытое дело на месте.
   await expect(page.locator(".board-done-column")).toHaveCount(0);
   await expect.poll(() => openTitles(page)).toEqual(["Открытое дело статуса"]);
-  await expect(page.locator("#board-segments .board-segment").first()).not.toContainText("Сделано");
+  await expect(page.locator("#board-segments .board-segment").first()).not.toContainText("Закрыто");
   await page.locator('#board-view [data-view="list"]').click();
   await expect(page.locator("#board-flat .g-sec")).toHaveText(["Дела · 1"]);
   await expect(page.locator("#board-flat .g-sec.done, #board-flat .g-row.closed")).toHaveCount(0);
-  await page.locator('#board-view [data-view="table"]').click();
-  await expect(page.locator("#board-flat tr.sec .g-sec")).toHaveText(["Дела · 1"]);
-  await expect(page.locator("#board-flat tr.board-row.closed")).toHaveCount(0);
 
-  // «Статус = сделано»: остаются только закрытые; колонки человека при группировке по «Колонке» стоят пустые — в них бросают.
+  // «Статус = закрыто»: остаются только закрытые; колонки человека при группировке по «Колонке» стоят пустые — в них бросают.
   await condition(page, 0).locator(".board-vals-btn").click();
   await condition(page, 0).locator('.board-vals-pop input[value="done"]').check();
   await condition(page, 0).locator('.board-vals-pop input[value="open"]').uncheck();
   await page.keyboard.press("Escape");
-  expect(await conditionsOf(page)).toEqual(["Статус = сделано"]);
-  await expect(page.locator("#board-flat tr.board-row .board-title")).toHaveText(["Закрытое дело статуса"]);
-  await expect(page.locator("#board-flat tr.sec .g-sec")).toHaveText(["Дела · 0", "Сделано · 1"]);
+  expect(await conditionsOf(page)).toEqual(["Статус = закрыто"]);
+  await expect(page.locator("#board-flat .g-row .board-title")).toHaveText(["Закрытое дело статуса"]);
+  await expect(page.locator("#board-flat .g-sec")).toHaveText(["Дела · 0", "Закрыто · 1"]);
   await page.locator('#board-view [data-view="board"]').click();
   await expect(page.locator(".board-done-column .board-card.closed")).toHaveCount(1);
   await expect(columnByName(page, "Дела")).toBeVisible();
   await expect(columnByName(page, "Дела").locator(".board-card")).toHaveCount(0);
 
-  // «≠ сделано» — то же, что «= открыто»: «Сделано» пропала.
+  // «≠ закрыто» — то же, что «= открыто»: «Закрыто» пропала.
   await page.locator('#board-filter [data-part="op"]').selectOption("!=");
   await expect(page.locator(".board-done-column")).toHaveCount(0);
   await expect.poll(() => openTitles(page)).toEqual(["Открытое дело статуса"]);
@@ -1125,7 +1076,7 @@ test("условия: значения одной плашки — «или», �
   await deed(request, "Сегодняшнее дело Бориса", { due: day(0), people: ["Борис"] });
   await deed(request, "Просроченное дело Бориса", { due: day(-3), people: ["Борис"] });
   await deed(request, "Дело на потом", { due: day(20) });
-  // Закрыто сегодня, срок был завтра: под фильтром «сегодня» оно в «Сделано», ведь закрыто сегодня.
+  // Закрыто сегодня, срок был завтра: под фильтром «сегодня» оно в «Закрыто», ведь закрыто сегодня.
   await closeDeed(request, await deed(request, "Закрытое сегодня досрочно", { due: day(1) }));
   await page.goto("/#board");
   await arrange(page, "board", ["col"]);
@@ -1277,19 +1228,19 @@ test("пустые группы на доске не появляются сам
   await arrange(page, "board", ["day"]);
   const names = () => page.locator("#board-columns .board-column:not(.ghost) .board-col-name").allTextContents();
   // Без фильтра стоят только дни, где есть дела, — остальные человек заводит сам.
-  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра"]);
+  await expect.poll(names).toEqual(["Закрыто", "сегодня", "завтра"]);
   await addCondition(page, "day", "today");
-  await expect.poll(names).toEqual(["Сделано", "сегодня"]);
+  await expect.poll(names).toEqual(["Закрыто", "сегодня"]);
   // Заведённая колонка остаётся и под фильтром, хотя дел в ней сейчас нет: она своя, а не автоматическая.
   await addGroupColumn(page, "на неделе");
-  await expect.poll(names).toEqual(["Сделано", "сегодня", "на неделе"]);
+  await expect.poll(names).toEqual(["Закрыто", "сегодня", "на неделе"]);
   await expect(page.locator('.board-column.group[data-group="day:week"] .board-card')).toHaveCount(0);
   // Список по человеку с тем же фильтром: пустых групп нет, остались те, где есть дело.
   await arrange(page, "board", ["who"]);
-  await expect.poll(names).toEqual(["Сделано", "Без человека"]);
+  await expect.poll(names).toEqual(["Закрыто", "Без человека"]);
   // По «Колонке» пустая колонка человека остаётся, хоть в ней сейчас ничего не подходит.
   await arrange(page, "board", ["col"]);
-  await expect.poll(names).toEqual(["Сделано", "Дела", "Пустая"]);
+  await expect.poll(names).toEqual(["Закрыто", "Дела", "Пустая"]);
   await expect(columnByName(page, "Пустая").locator(".board-add-button")).toHaveCount(1);
   await reset(request);
 });
@@ -1330,7 +1281,7 @@ test("внизу колонки — приглашение «+ Дело в …»
   const invite = (lane) => lane.locator(".board-add-button");
   await expect(invite(home)).toHaveText("+ Дело в «Дела»");
   await expect(invite(later)).toHaveText("+ Дело в «Позже»");
-  // Приглашения нет ни у «Сделано», ни у призрачной «+ Колонки» (у неё свой, обычный).
+  // Приглашения нет ни у «Закрыто», ни у призрачной «+ Колонки» (у неё свой, обычный).
   await expect(page.locator(".board-done-column .board-add")).toHaveCount(0);
   // Без наведения его не видно, по наведению — видно; пунктирная коралловая карточка
   // (рамка 1.5px, но на обычном экране браузер округляет её до пикселя).
@@ -1401,7 +1352,7 @@ test("приглашение в группе: по дню — срок груп�
   // По человеку: «Аня» — она первая среди людей дела; «Без человека» — дело без людей.
   await arrange(page, "board", ["who"]);
   const whoLane = (name) => page.locator(`.board-column.group[data-group="who:${name}"]`);
-  await expect(whoLane("Аня").locator(".board-add-button")).toHaveText("+ Дело для Ани");
+  await expect(whoLane("Аня").locator(".board-add-button")).toHaveText("+ Дело — Аня");
   await expect(whoLane("").locator(".board-add-button")).toHaveText("+ Дело без человека");
   await create(whoLane("Аня"), "Сверить макет");
   const people = async (raw) => (await (await request.get(`/api/captures/${await idByRaw(request, raw)}`)).json()).entry.interpretation.classification.entities.people;
@@ -1412,7 +1363,7 @@ test("приглашение в группе: по дню — срок груп�
   // По проекту: проект дела — как у колонки; «Без проекта» — просто дело.
   await arrange(page, "board", ["proj"]);
   const projLane = (name) => page.locator(`.board-column.group[data-group="proj:${name}"]`);
-  await expect(projLane("Hub").locator(".board-add-button")).toHaveText("+ Дело в «Hub»");
+  await expect(projLane("Hub").locator(".board-add-button")).toHaveText("+ Дело — Hub");
   await expect(projLane("").locator(".board-add-button")).toHaveText("+ Дело без проекта");
   await create(projLane("Hub"), "Собрать релиз");
   const projects = async (raw) => (await (await request.get(`/api/captures/${await idByRaw(request, raw)}`)).json()).entry.interpretation.classification.entities.projects;
@@ -1424,8 +1375,8 @@ test("приглашение в группе: по дню — срок груп�
   await reset(request);
 });
 
-// Подзадачи: на доске, в списке и в таблице они отдельными карточками не стоят —
-// у дела метка «0/1» (сделано/всего), её число даёт сервер.
+// Подзадачи: на доске и в списке они отдельными карточками не стоят — у дела
+// полоска и метка «0/1» (сделано/всего), её число даёт сервер.
 const subOf = async (request, parentId, title) => (await (await request.post(`/api/captures/${parentId}/subtasks`, { data: { title } })).json()).entry;
 const closeTask = async (request, entry) => {
   for (const projection of entry.projections.filter((item) => item.type === "task")) await request.post(`/api/projections/${projection.id}/complete`, { data: {} });
@@ -1440,7 +1391,7 @@ const greenOf = (page) => page.evaluate(() => {
   return color;
 });
 
-test("подзадача на доске не карточка: у дела метка «0/1» — на доске, в списке и в таблице; счётчики считают дела; все сделаны — метка зелёная", async ({ page, request }) => {
+test("подзадача на доске не карточка: у дела метка «0/1» — на доске и в списке; счётчики считают дела; все сделаны — метка зелёная", async ({ page, request }) => {
   await reset(request);
   const parentId = await deed(request, "Предварительно взять блокнот");
   await deed(request, "Проверить логи Hub");
@@ -1452,28 +1403,26 @@ test("подзадача на доске не карточка: у дела ме
   const cards = page.locator("#board-columns .board-card");
   const badge = cards.filter({ hasText: "Предварительно взять блокнот" }).locator(".sub-badge");
   await expect(cards).toHaveCount(2);
-  await expect(cards.filter({ hasText: "Выбрать блокнот" })).toHaveCount(0);
+  // Подзадача — строка карты внутри карточки дела, а не своя карточка: названий карточек два.
+  await expect(cards.locator(".board-title")).toHaveText(["Предварительно взять блокнот", "Проверить логи Hub"]);
+  await expect(cards.filter({ hasText: "Выбрать блокнот" })).toHaveCount(1);
+  await expect(cards.filter({ hasText: "Предварительно взять блокнот" }).locator(".sub-name")).toHaveText("Выбрать блокнот в клетку");
   await expect(badge).toHaveText("0/1");
   await expect(badge).toHaveAccessibleName("Подзадачи: сделано 0 из 1. Открыть подзадачи");
   await expect(page.locator("#board-columns .sub-badge")).toHaveCount(1);
   await expect(columnByName(page, "Дела").locator(".board-col-count")).toHaveText("2");
 
-  // Список и таблица: те же две строки, у дела метка, счёт группы — «2».
+  // Список: те же две строки, у дела метка, счёт группы — «2».
   await arrange(page, "list", ["col"]);
   await expect(page.locator("#board-flat .g-row")).toHaveCount(2);
-  await expect(page.locator("#board-flat .g-row").filter({ hasText: "Выбрать блокнот" })).toHaveCount(0);
+  await expect(page.locator("#board-flat .g-row .board-title")).toHaveText(["Предварительно взять блокнот", "Проверить логи Hub"]);
   await expect(page.locator("#board-flat .g-row").filter({ hasText: "Предварительно взять блокнот" }).locator(".sub-badge")).toHaveText("0/1");
-  await expect(page.locator("#board-flat .g-sec").first()).toContainText("· 2");
-  await arrange(page, "table", ["col"]);
-  await expect(page.locator("#board-flat tr.board-row")).toHaveCount(2);
-  await expect(page.locator("#board-flat tr.board-row").filter({ hasText: "Выбрать блокнот" })).toHaveCount(0);
-  await expect(page.locator("#board-flat tr.board-row").filter({ hasText: "Предварительно взять блокнот" }).locator(".sub-badge")).toHaveText("0/1");
   await expect(page.locator("#board-flat .g-sec").first()).toContainText("· 2");
   // Группировка по дню считает те же два дела, а не три записи.
   await arrange(page, "list", ["day"]);
   await expect(page.locator("#board-flat .g-sec").filter({ hasText: "сегодня" })).toContainText("· 2");
 
-  // Закрыли подзадачу: «1/1» зелёным, а в «Сделано» отдельной карточкой она не появилась.
+  // Закрыли подзадачу: «1/1» зелёным, а в «Закрыто» отдельной карточкой она не появилась.
   await closeTask(request, child);
   await arrange(page, "board", ["col"]);
   await expect(badge).toHaveText("1/1");
@@ -1484,7 +1433,7 @@ test("подзадача на доске не карточка: у дела ме
   await arrange(page, "list", ["col"]);
   await expect(page.locator("#board-flat .g-row")).toHaveCount(2);
   await expect(page.locator("#board-flat .g-row.closed")).toHaveCount(0);
-  // Родитель закрыт — он лежит в «Сделано» со своей меткой, подзадачи рядом нет.
+  // Родитель закрыт — он лежит в «Закрыто» со своей меткой, подзадачи рядом нет.
   const parent = (await (await request.get(`/api/captures/${parentId}`)).json()).entry;
   await closeTask(request, parent);
   await arrange(page, "board", ["col"]);
@@ -1547,5 +1496,372 @@ test("метка «0/1» на доске открывает карточку д�
   await expect(section).not.toBeInViewport();
   expect(await scrolled()).toBe(0);
   await page.keyboard.press("Escape");
+  await reset(request);
+});
+
+// Карта подзадач у родителя: под названием полоска прогресса с той же меткой «1/2»
+// и сами подзадачи строками; кружок закрывает и возвращает подзадачу на месте,
+// «Подзадачи: скрывать» в строке фильтра оставляет одну полоску.
+const colorOf = (page, token) => page.evaluate((name) => {
+  const probe = document.createElement("i");
+  probe.style.color = `var(${name})`;
+  document.body.append(probe);
+  const color = getComputedStyle(probe).color;
+  probe.remove();
+  return color;
+}, token);
+// Закрыта ли подзадача на сервере: все её задачи отмечены.
+const closedOnServer = async (request, id) => {
+  const entry = (await (await request.get(`/api/captures/${id}`)).json()).entry;
+  const tasks = entry.projections.filter((item) => item.type === "task");
+  return tasks.length > 0 && tasks.every((item) => item.completion?.completed);
+};
+// Строки карты и сегменты переключателя «Подзадачи» в строке фильтра.
+const subsToggle = (page) => page.locator("#board-filter .board-subs");
+const chooseSubs = async (page, name) => {
+  await openFilter(page);
+  await subsToggle(page).getByRole("button", { name }).click();
+};
+
+test("карта подзадач на карточке: полоска 4px, «1/2» и две строки; кружок закрывает и возвращает подзадачу на месте, доска не перерисовывается", async ({ page, request }) => {
+  await reset(request);
+  const parentId = await deed(request, "Подготовить квартальный отчёт");
+  const first = await subOf(request, parentId, "Собрать цифры по продажам");
+  const second = await subOf(request, parentId, "Свести таблицы в один файл");
+  await closeTask(request, first);
+  await page.goto("/#board");
+  await arrange(page, "board", ["col"]);
+  const card = page.locator("#board-columns .board-card").filter({ hasText: "Подготовить квартальный отчёт" });
+  const bar = card.locator(".sub-bar");
+  const fill = card.locator(".sub-bar-fill");
+  const badge = card.locator(".sub-badge");
+  const rows = card.locator(".sub-row");
+  const green = await greenOf(page);
+
+  // Под названием — тонкая полоска: дорожка — линия, заполненная часть зелёная и на
+  // половину; рядом та же метка «1/2». Ниже — строки подзадач.
+  await expect(bar).toBeVisible();
+  await expect(bar).toHaveCSS("height", "4px");
+  await expect(bar).toHaveCSS("background-color", await colorOf(page, "--line"));
+  await expect(fill).toHaveCSS("background-color", green);
+  await expect(fill).toHaveAttribute("style", /width: 50%/);
+  await expect(badge).toHaveText("1/2");
+  await expect(badge).not.toHaveClass(/all-done/);
+  const box = async (locator) => (await locator.boundingBox());
+  const [title, barBox, firstRow] = [await box(card.locator(".board-title")), await box(bar), await box(rows.first())];
+  expect(barBox.y).toBeGreaterThan(title.y + title.height - 1);
+  expect(firstRow.y).toBeGreaterThan(barBox.y + barBox.height);
+  expect(barBox.x).toBeCloseTo(title.x, 0);
+
+  // Две строки в порядке карточки: сделанная зачёркнута и приглушена, открытая — обычная.
+  await expect(rows).toHaveCount(2);
+  await expect(card.locator(".sub-name")).toHaveText(["Собрать цифры по продажам", "Свести таблицы в один файл"]);
+  await expect(rows.nth(0)).toHaveClass(/done/);
+  await expect(rows.nth(0).locator(".sub-name")).toHaveCSS("text-decoration-line", "line-through");
+  await expect(rows.nth(0).locator(".sub-name")).not.toHaveCSS("color", await colorOf(page, "--ink"));
+  await expect(rows.nth(0).locator(".sub-check")).toHaveCSS("background-color", green);
+  await expect(rows.nth(1)).not.toHaveClass(/done/);
+  await expect(rows.nth(1).locator(".sub-name")).toHaveCSS("text-decoration-line", "none");
+  await expect(rows.nth(1).locator(".sub-name")).toHaveCSS("color", await colorOf(page, "--ink"));
+  await expect(card.getByRole("button", { name: "Готово: Свести таблицы в один файл" })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Вернуть в работу: Собрать цифры по продажам" })).toBeVisible();
+
+  // Кружок второй подзадачи закрывает её: «2/2» зелёным, полоска полная, строка зачёркнута.
+  // Карточка — тот же элемент: доска не перерисовывалась.
+  await card.evaluate((element) => { element.dataset.probe = "kept"; });
+  await rows.nth(1).locator(".sub-check").click();
+  await expect(badge).toHaveText("2/2");
+  await expect(badge).toHaveClass(/all-done/);
+  await expect(badge).toHaveCSS("color", green);
+  await expect(fill).toHaveAttribute("style", /width: 100%/);
+  await expect(rows.nth(1)).toHaveClass(/done/);
+  await expect(rows.nth(1).locator(".sub-name")).toHaveCSS("text-decoration-line", "line-through");
+  await expect(card.getByRole("button", { name: "Вернуть в работу: Свести таблицы в один файл" })).toBeVisible();
+  // Тем же вызовом, что кружок в карточке: на сервере подзадача закрыта, а родитель — нет.
+  await expect.poll(() => closedOnServer(request, second.id)).toBe(true);
+  expect(await closedOnServer(request, parentId)).toBe(false);
+  await settled(page);
+  await expect(card).toHaveAttribute("data-probe", "kept");
+  await expect(page.locator("#board-columns .board-card")).toHaveCount(1);
+  await expect(badge).toHaveText("2/2");
+
+  // Кружок закрытой возвращает её в работу: «1/2» и снова серым.
+  await rows.nth(0).locator(".sub-check").click();
+  await expect(rows.nth(0)).not.toHaveClass(/done/);
+  await expect(rows.nth(0).locator(".sub-name")).toHaveCSS("text-decoration-line", "none");
+  await expect(badge).toHaveText("1/2");
+  await expect(badge).not.toHaveClass(/all-done/);
+  await expect(fill).toHaveAttribute("style", /width: 50%/);
+  await expect.poll(() => closedOnServer(request, first.id)).toBe(false);
+  await settled(page);
+  await expect(card).toHaveAttribute("data-probe", "kept");
+
+  // Страница перечитана: карта по данным сервера — «1/2», закрыта вторая.
+  await page.reload();
+  await expect(card.locator(".sub-row")).toHaveCount(2);
+  await expect(badge).toHaveText("1/2");
+  await expect(card.locator(".sub-row.done .sub-name")).toHaveText("Свести таблицы в один файл");
+
+  // Клавиша E на подзадаче в фокусе отмечает её, а не дело: «готово» — там, где стоит фокус.
+  const check = card.locator(".sub-row").nth(1).locator(".sub-check");
+  await check.focus();
+  await page.keyboard.press("e");
+  await expect(card.locator(".sub-row").nth(1)).not.toHaveClass(/done/);
+  await expect(badge).toHaveText("0/2");
+  await expect(check).toBeFocused();
+  await expect.poll(() => closedOnServer(request, second.id)).toBe(false);
+  expect(await closedOnServer(request, parentId)).toBe(false);
+  await expect(columnByName(page, "Дела").locator(".board-card")).toHaveCount(1);
+  await reset(request);
+});
+
+test("«Подзадачи: скрывать» в строке фильтра оставляет полоску и число без строк, помнится после перезагрузки; в списке то же, на «Сегодня» — только метка", async ({ page, request }) => {
+  await reset(request);
+  const parentId = await deed(request, "Подготовить квартальный отчёт");
+  const first = await subOf(request, parentId, "Собрать цифры по продажам");
+  await subOf(request, parentId, "Свести таблицы в один файл");
+  await closeTask(request, first);
+  await page.goto("/#board");
+  await arrange(page, "board", ["col"]);
+  const card = page.locator("#board-columns .board-card").filter({ hasText: "Подготовить квартальный отчёт" });
+
+  // По умолчанию подзадачи показываются; переключатель — два сегмента справа в строке фильтра.
+  expect(await stored(page, "kizuna-board-subtasks")).toBeNull();
+  await expect(card.locator(".sub-row")).toHaveCount(2);
+  await openFilter(page);
+  await expect(subsToggle(page)).toBeVisible();
+  await expect(subsToggle(page).getByRole("button")).toHaveText(["Показывать", "Скрывать"]);
+  await expect(subsToggle(page).getByRole("button", { name: "Показывать" })).toHaveAttribute("aria-pressed", "true");
+  await expect(subsToggle(page).getByRole("button", { name: "Скрывать" })).toHaveAttribute("aria-pressed", "false");
+  // Справа, рядом с «Сегодня» и «Сбросить»: в одном хвосте строки, левее «Сегодня».
+  const tail = page.locator("#board-filter .board-filter-tail");
+  await expect(tail.locator(".board-subs")).toHaveCount(1);
+  const [subsBox, todayBox, rowBox] = [await subsToggle(page).boundingBox(), await page.locator("#board-filter .board-filter-today").boundingBox(), await page.locator("#board-filter").boundingBox()];
+  expect(subsBox.x).toBeLessThan(todayBox.x);
+  expect(subsBox.x).toBeGreaterThan(rowBox.x + rowBox.width / 2);
+
+  // «Скрывать»: строк нет, полоска и «1/2» на месте; выбор лежит в браузере.
+  await chooseSubs(page, "Скрывать");
+  await expect(subsToggle(page).getByRole("button", { name: "Скрывать" })).toHaveAttribute("aria-pressed", "true");
+  await expect(card.locator(".sub-row")).toHaveCount(0);
+  await expect(card.locator(".sub-bar")).toBeVisible();
+  await expect(card.locator(".sub-badge")).toHaveText("1/2");
+  expect(await stored(page, "kizuna-board-subtasks")).toBe("hide");
+  // Это не условие фильтра: «Сбросить» его не трогает, а фильтр не считает.
+  await addCondition(page, "day", ["today"]);
+  await expect(filterToggle(page)).toHaveText("Фильтр · 1");
+  await page.locator("#board-filter .board-filter-clear").click();
+  await expect(filterToggle(page)).toHaveText("Фильтр");
+  expect(await stored(page, "kizuna-board-subtasks")).toBe("hide");
+  await expect(card.locator(".sub-row")).toHaveCount(0);
+
+  // После перезагрузки — то же: строк нет, «Скрывать» нажато.
+  await page.reload();
+  await expect(card.locator(".sub-bar")).toBeVisible();
+  await expect(card.locator(".sub-row")).toHaveCount(0);
+  await openFilter(page);
+  await expect(subsToggle(page).getByRole("button", { name: "Скрывать" })).toHaveAttribute("aria-pressed", "true");
+
+  // Список действует так же: у строки дела полоска и число, строк нет.
+  await arrange(page, "list", ["col"]);
+  const row = page.locator("#board-flat .g-row").filter({ hasText: "Подготовить квартальный отчёт" });
+  await expect(row.locator(".sub-bar")).toBeVisible();
+  await expect(row.locator(".sub-badge")).toHaveText("1/2");
+  await expect(row.locator(".sub-row")).toHaveCount(0);
+  await expect(page.locator("#board-flat .g-row")).toHaveCount(1);
+  // «Показывать» возвращает строки — и в списке, и на доске, выбор снова «show».
+  await chooseSubs(page, "Показывать");
+  await expect(row.locator(".sub-row")).toHaveCount(2);
+  await expect(row.locator(".sub-name")).toHaveText(["Собрать цифры по продажам", "Свести таблицы в один файл"]);
+  await expect(page.locator("#board-flat .g-row")).toHaveCount(1);
+  expect(await stored(page, "kizuna-board-subtasks")).toBe("show");
+  await arrange(page, "board", ["col"]);
+  await expect(card.locator(".sub-row")).toHaveCount(2);
+
+  // «Сегодня» — только метка, строк нет и при «показывать».
+  await page.goto("/");
+  // Вкладка «День» открыта днём и закрыта вечером: повторный щелчок по открытой сворачивает ящик.
+  const dayTab = page.getByRole("tab", { name: /^День/ });
+  if ((await dayTab.getAttribute("aria-selected")) !== "true") await dayTab.click();
+  const today = page.locator("#todo .entry").filter({ hasText: "Подготовить квартальный отчёт" });
+  await expect(today.locator(".sub-badge")).toHaveText("1/2");
+  await expect(page.locator("#todo .sub-row, #todo .sub-map, #todo .sub-bar")).toHaveCount(0);
+  await page.evaluate(() => localStorage.removeItem("kizuna-board-subtasks"));
+  await reset(request);
+});
+
+test("переключатель «Подзадачи» — сегменты, как у «Вида»: активный залит тёмным со светлым текстом; клик меняет состояние и карточки без перезагрузки, выбор помнится", async ({ page, request }) => {
+  await reset(request);
+  const parentId = await deed(request, "Подготовить квартальный отчёт");
+  await subOf(request, parentId, "Собрать цифры по продажам");
+  await subOf(request, parentId, "Свести таблицы в один файл");
+  await page.goto("/#board");
+  await arrange(page, "board", ["col"]);
+  await openFilter(page);
+  const show = subsToggle(page).getByRole("button", { name: "Показывать" });
+  const hide = subsToggle(page).getByRole("button", { name: "Скрывать" });
+  const rows = page.locator("#board-columns .board-card .sub-row");
+  const view = page.locator('#board-view button[aria-pressed="true"]');
+  const paint = (locator) => locator.evaluate((element) => { const css = getComputedStyle(element); return [css.backgroundColor, css.color]; });
+  const transparent = "rgba(0, 0, 0, 0)";
+
+  // Активный сегмент выглядит, как активный вид: тёмная заливка и светлый текст; неактивный без заливки.
+  await expect(show).toHaveAttribute("aria-pressed", "true");
+  await expect(hide).toHaveAttribute("aria-pressed", "false");
+  expect(await paint(show)).toEqual(await paint(view));
+  expect(await paint(show)).toEqual([await colorOf(page, "--ink"), await colorOf(page, "--paper")]);
+  expect((await paint(hide))[0]).toBe(transparent);
+  await expect(rows).toHaveCount(2);
+
+  // Клик меняет состояние, карточки и память, а страница не перезагружается.
+  await page.evaluate(() => { window.__sameDocument = true; });
+  await hide.click();
+  await expect(hide).toHaveAttribute("aria-pressed", "true");
+  await expect(show).toHaveAttribute("aria-pressed", "false");
+  expect(await paint(hide)).toEqual(await paint(view));
+  expect((await paint(show))[0]).toBe(transparent);
+  await expect(rows).toHaveCount(0);
+  await expect(page.locator("#board-columns .board-card .sub-bar")).toBeVisible();
+  expect(await stored(page, "kizuna-board-subtasks")).toBe("hide");
+  await show.click();
+  await expect(show).toHaveAttribute("aria-pressed", "true");
+  await expect(rows).toHaveCount(2);
+  expect(await stored(page, "kizuna-board-subtasks")).toBe("show");
+  expect(await page.evaluate(() => window.__sameDocument)).toBe(true);
+  await reset(request);
+});
+
+test("сервер без строк подзадач в ответе доски (старше клиента): полоска и число на месте, переключатель меняет состояние и помнит выбор, ошибок в консоли нет", async ({ page, request }) => {
+  await reset(request);
+  const parentId = await deed(request, "Подготовить квартальный отчёт");
+  await subOf(request, parentId, "Собрать цифры по продажам");
+  await subOf(request, parentId, "Свести таблицы в один файл");
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
+  page.on("console", (message) => { if (message.type() === "error") errors.push(`console: ${message.text()}`); });
+  // Старый сервер отдаёт у подзадач только {done, total}, без items.
+  await page.route("**/api/board", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    for (const card of [...body.columns.flatMap((column) => column.cards), ...(body.closed || [])]) if (card.subtasks) delete card.subtasks.items;
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto("/#board");
+  await arrange(page, "board", ["col"]);
+  const card = page.locator("#board-columns .board-card").filter({ hasText: "Подготовить квартальный отчёт" });
+  await expect(card.locator(".sub-bar")).toBeVisible();
+  await expect(card.locator(".sub-badge")).toHaveText("0/2");
+  await expect(card.locator(".sub-row")).toHaveCount(0);
+  await expect(card.locator(".sub-more")).toHaveCount(0);
+
+  // Переключатель живой и без строк: состояние, память и полоска с числом.
+  await openFilter(page);
+  const show = subsToggle(page).getByRole("button", { name: "Показывать" });
+  const hide = subsToggle(page).getByRole("button", { name: "Скрывать" });
+  await hide.click();
+  await expect(hide).toHaveAttribute("aria-pressed", "true");
+  await expect(show).toHaveAttribute("aria-pressed", "false");
+  expect(await stored(page, "kizuna-board-subtasks")).toBe("hide");
+  await expect(card.locator(".sub-bar")).toBeVisible();
+  await expect(card.locator(".sub-badge")).toHaveText("0/2");
+  await show.click();
+  await expect(show).toHaveAttribute("aria-pressed", "true");
+  expect(await stored(page, "kizuna-board-subtasks")).toBe("show");
+  // Кружка у строк нет, а метка и полоска работают: метка открывает карточку на «Подзадачах».
+  await card.locator(".sub-badge").click();
+  await expect(page.locator("#review-dialog #card-subtasks")).toBeVisible();
+  await page.keyboard.press("Escape");
+  // То же в списке.
+  await arrange(page, "list", ["col"]);
+  const row = page.locator("#board-flat .g-row").filter({ hasText: "Подготовить квартальный отчёт" });
+  await expect(row.locator(".sub-bar")).toBeVisible();
+  await expect(row.locator(".sub-row")).toHaveCount(0);
+  await chooseSubs(page, "Скрывать");
+  await expect(subsToggle(page).getByRole("button", { name: "Скрывать" })).toHaveAttribute("aria-pressed", "true");
+  expect(errors).toEqual([]);
+  await page.evaluate(() => localStorage.removeItem("kizuna-board-subtasks"));
+  await reset(request);
+});
+
+test("больше пяти подзадач: первые пять строк и «ещё 2»; «ещё», название и метка открывают карточку родителя, кружок — нет; отметка в карточке видна на доске", async ({ page, request }) => {
+  await reset(request);
+  const parentId = await deed(request, "Организовать выезд команды");
+  for (let number = 1; number <= 7; number++) await subOf(request, parentId, `Шаг ${number}`);
+  await page.goto("/#board");
+  await arrange(page, "board", ["col"]);
+  const card = page.locator("#board-columns .board-card").filter({ hasText: "Организовать выезд команды" });
+  const rows = card.locator(".sub-row");
+  const dialog = page.locator("#review-dialog");
+
+  // Строк пять, за ними «ещё 2»; число — по всем семи.
+  await expect(rows).toHaveCount(5);
+  await expect(card.locator(".sub-name")).toHaveText(["Шаг 1", "Шаг 2", "Шаг 3", "Шаг 4", "Шаг 5"]);
+  await expect(card.locator(".sub-more")).toHaveText("ещё 2");
+  await expect(card.locator(".sub-badge")).toHaveText("0/7");
+  await expect(card.locator(".sub-bar-fill")).toHaveAttribute("style", /width: 0%/);
+
+  // «Ещё 2» открывает карточку родителя, а в ней — все семь.
+  await card.locator(".sub-more").click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator(".card-title")).toHaveText("Организовать выезд команды");
+  await expect(dialog.locator("#card-subtasks .subtask-count")).toHaveText("0 / 7");
+  await expect(dialog.locator("#card-subtask-list .subtask")).toHaveCount(7);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+
+  // Название подзадачи — то же: карточка родителя на «Подзадачах».
+  await rows.nth(2).locator(".sub-name").click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator(".card-title")).toHaveText("Организовать выезд команды");
+  await expect(dialog.locator("#card-subtasks")).toBeVisible();
+  // Отметка в карточке — и карта на доске за ней: «1/7», первая строка зачёркнута.
+  await dialog.locator("#card-subtask-list .subtask-check").first().check();
+  await expect(dialog.locator("#card-subtasks .subtask-count")).toHaveText("1 / 7");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(card.locator(".sub-badge")).toHaveText("1/7");
+  await expect(rows.first()).toHaveClass(/done/);
+  await expect(card.locator(".sub-bar-fill")).toHaveAttribute("style", /width: 14%/);
+
+  // Кружок подзадачи карточку не открывает: отмечает на месте.
+  await rows.nth(1).locator(".sub-check").click();
+  await expect(card.locator(".sub-badge")).toHaveText("2/7");
+  await expect(rows.nth(1)).toHaveClass(/done/);
+  await expect(dialog).toBeHidden();
+  await reset(request);
+});
+
+test("кружок подзадачи не тянет карточку: перетаскивание за кружок ничего не переносит, за название — переносит", async ({ page, request }) => {
+  await reset(request);
+  const parentId = await deed(request, "Подготовить квартальный отчёт");
+  await subOf(request, parentId, "Собрать цифры по продажам");
+  await page.goto("/#board");
+  await arrange(page, "board", ["col"]);
+  await addColumn(page, "Ожидание");
+  const home = columnByName(page, "Дела");
+  const wait = columnByName(page, "Ожидание");
+  const card = home.locator(".board-card").filter({ hasText: "Подготовить квартальный отчёт" });
+  await expect(card).toHaveJSProperty("draggable", true);
+
+  // За кружок карточка не тянется — пока он нажат, её перетаскивание выключено, а потом включается снова.
+  await card.locator(".sub-check").dragTo(wait.locator(".board-cards"));
+  await expect(home.locator(".board-card")).toHaveCount(1);
+  await expect(wait.locator(".board-card")).toHaveCount(0);
+  await expect(card).toHaveJSProperty("draggable", true);
+  await expect(card).not.toHaveClass(/dragging/);
+  await expect(card.locator(".sub-row.done")).toHaveCount(0);
+  // Нажатый кружок — карточка не draggable.
+  const circle = await card.locator(".sub-check").boundingBox();
+  await page.mouse.move(circle.x + circle.width / 2, circle.y + circle.height / 2);
+  await page.mouse.down();
+  await expect(card).toHaveJSProperty("draggable", false);
+  await page.mouse.up();
+  await expect(card).toHaveJSProperty("draggable", true);
+  await settled(page);
+
+  // За название — переносится, как раньше.
+  await columnByName(page, "Дела").locator(".board-card").filter({ hasText: "Подготовить квартальный отчёт" }).locator(".board-title").dragTo(wait.locator(".board-cards"));
+  await expect(wait.locator(".board-card")).toHaveCount(1);
+  await expect(wait.locator(".board-card .sub-map")).toHaveCount(1);
   await reset(request);
 });
