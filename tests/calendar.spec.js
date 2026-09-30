@@ -24,8 +24,9 @@ test("календарь: неделя, день, месяц, перенос м�
   const calendar = page.locator("#calendar-view");
   await expect(calendar).toBeVisible();
   // У страницы свой пункт в шапке, между «Доской» и «Заметками», и на открытой странице он подсвечен.
-  await expect(page.locator("nav a")).toHaveText(["Сделано", "Сегодня", "Доска", "Календарь", "Заметки"]);
-  await expect(page.locator("nav a.active")).toHaveText("Календарь");
+  // Читаем подписи плиток: число бейджа у «Сделано» и «Сегодня» лежит в той же ссылке.
+  await expect(page.locator("nav a .dock-label")).toHaveText(["Сделано", "Сегодня", "Доска", "Календарь", "Заметки"]);
+  await expect(page.locator("nav a.active .dock-label")).toHaveText("Календарь");
   await expect(page.locator("#calendar .page-heading h2")).toHaveText("Календарь");
   await expect(calendar.locator(".cal-title")).toContainText(String(new Date(`${monday}T12:00:00Z`).getUTCDate()));
   // Дело со временем — блок в сетке, дело без времени — чип в полосе «без

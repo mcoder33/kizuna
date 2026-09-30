@@ -24,8 +24,8 @@ test("закрытая в «Дне» туду видна в «Закрыто» �
   await showTab(page, /^Закрыто/);
   await expect(page.locator("#journal .entry").filter({ hasText: "Проверить страницу итогов" })).toBeVisible();
 
-  // «Сделано» — свой пункт в шапке, первый, перед «Сегодня».
-  await expect(page.locator('nav a[href="#done"]')).toHaveText("Сделано");
+  // «Сделано» — свой пункт в шапке, первый, перед «Сегодня»; число закрытого — бейдж в той же ссылке.
+  await expect(page.locator('nav a[href="#done"] .dock-label')).toHaveText("Сделано");
   await page.locator('nav a[href="#done"]').click();
   await expect(page).toHaveURL(/#done$/);
   const done = page.locator("#done");
