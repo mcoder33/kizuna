@@ -23,9 +23,9 @@ test("закрытая в «Дне» туду видна в «Что делал�
   await showTab(page, /Что делал/);
   await expect(page.locator("#journal .entry").filter({ hasText: "Проверить страницу итогов" })).toBeVisible();
 
-  // В шапке пункта «Сделано» нет: страница открывается с доски или по адресу.
-  await expect(page.locator('nav a[href="#done"]')).toHaveCount(0);
-  await page.goto("/#done");
+  // «Сделано» — свой пункт в шапке, рядом с «Доской».
+  await expect(page.locator('nav a[href="#done"]')).toHaveText("Сделано");
+  await page.locator('nav a[href="#done"]').click();
   await expect(page).toHaveURL(/#done$/);
   const done = page.locator("#done");
   await expect(done.locator("h2")).toHaveText("Сделано");

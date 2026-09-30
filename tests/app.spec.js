@@ -69,7 +69,7 @@ test("async capture shows a short success notification and adds the entry to the
 }) => {
   await page.goto("/");
   // В шапке три двери и шестерёнка: Круги, Календарь, «?» и меню модели ушли.
-  await expect(page.locator("header nav a")).toHaveText(["Сегодня", "Доска", "Заметки"]);
+  await expect(page.locator("header nav a")).toHaveText(["Сегодня", "Доска", "Сделано", "Заметки"]);
   await expect(page.locator(".settings-link")).toHaveAttribute("href", "#settings");
   await expect(page.locator(".ai-menu, .help-link")).toHaveCount(0);
   await capture(page, "Завтра в 11 созвон по Hub");

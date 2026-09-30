@@ -23,7 +23,7 @@ test("календарь: неделя, день, месяц, перенос м�
   const calendar = page.locator("#calendar-view");
   await expect(calendar).toBeVisible();
   // Страница открывается по адресу, а в шапке ей пункта нет: ни один не активен.
-  await expect(page.locator("nav a")).toHaveText(["Сегодня", "Доска", "Заметки"]);
+  await expect(page.locator("nav a")).toHaveText(["Сегодня", "Доска", "Сделано", "Заметки"]);
   await expect(page.locator("nav a.active")).toHaveCount(0);
   await expect(page.locator("#calendar .page-heading h2")).toHaveText("Календарь");
   await expect(calendar.locator(".cal-title")).toContainText(String(new Date(`${monday}T12:00:00Z`).getUTCDate()));
