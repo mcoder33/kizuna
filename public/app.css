@@ -5987,7 +5987,7 @@ main:has(> #board:not([hidden])) { max-width: none; padding-left: 0; padding-rig
 .g-bh .n, .g-sec .n { color: var(--muted); font-weight: 600; }
 
 /* Лента списка: колонка чтения, а не полотно во всю ширину окна. */
-.board-flat { min-width: 0; max-width: 1080px; padding: 6px 0 26px; }
+.board-flat { min-width: 0; max-width: 1080px; margin: 0 auto; padding: 6px 0 26px; }
 /* Список: разделы — заголовок и тело в одной рамке цвета поля. */
 .g-list { display: grid; gap: 0; }
 .g-sec {
