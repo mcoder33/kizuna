@@ -189,7 +189,8 @@ test("запись с намерениями дробится на дела, и 
   await source.locator(".entry-title").click();
   // Отделённые дела — в разделе «Подзадачи» записи: два шага, оба открыты.
   await expect(card.locator("#card-subtasks .subtask-count")).toHaveText("0 / 2");
-  await expect(card.locator("#card-subtasks .subtask-name")).toContainText(["Допинываем бот детектор", "Допинываем карусель"]);
+  await expect(card.locator("#card-subtasks .subtask-name").filter({ hasText: "Допинываем бот детектор" })).toHaveCount(1);
+  await expect(card.locator("#card-subtasks .subtask-name").filter({ hasText: "Допинываем карусель" })).toHaveCount(1);
 });
 // Пустой журнал не объясняет себя сам: человек видит поле и не знает, что в
 // него писать. Двое приглашённых так и ушли, не записав ничего.
@@ -466,6 +467,7 @@ test("ambiguous async meeting has a compact clarification action", async ({
   await card.locator(".entry-title").click();
   await expect(page.locator("#review")).toBeVisible();
   // Типа у записи нет: вместо выбора типа в карточке — день и колонка.
+  await page.locator("#review-params-toggle").click();
   await expect(page.locator("#review-date")).toBeVisible();
   await expect(page.locator("#review-primary-type")).toHaveCount(0);
   await expect(page.locator(".review-confidence")).toBeHidden();
@@ -959,6 +961,7 @@ test("correction from a today card after reload is single-flight", async ({
     .filter({ hasText: raw })
     .first();
   await card.locator(".entry-title").click();
+  await page.locator("#review-params-toggle").click();
   await page.locator("#review-people").fill("Свой человек");
   // Кнопки «сохранить» нет: свойства уходят при закрытии карточки. Второй
   // клик по крестику попадает в уже закрывающуюся карточку — уточнение одно.
@@ -987,6 +990,7 @@ test("correction from a plan card after reload is single-flight and creates one 
     .filter({ hasText: raw })
     .first();
   await card.locator(".entry-title").click();
+  await page.locator("#review-params-toggle").click();
   await page.locator("#review-people").fill("Attention человек");
   await page.locator("#review-close").evaluate((button) => {
     button.click();
@@ -1308,7 +1312,8 @@ test("«Сегодня» говорит, просрочено дело или н
 
   // В самой карточке видно, когда запись сделана.
   await card("купить кофе").locator(".entry-title").click();
-  await expect(page.locator("#review-dialog .side-quiet")).toContainText(/Поле записи · сегодня, \d{2}:\d{2}/);
+  await page.locator("#review-dialog .card-source summary").click();
+  await expect(page.locator("#review-dialog .card-source-body")).toContainText("Поле записи");
   // И ни одной подчёркнутой кнопки: подчёркивание читалось как ссылка.
   const underlined = await page.evaluate(() =>
     [...document.querySelectorAll("#review-dialog button, #review-dialog a")].filter((node) =>

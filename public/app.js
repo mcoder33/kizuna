@@ -2729,23 +2729,7 @@ function cardBody(entry) {
     save();
   });
   flushCardBody = save;
-  // Подзадача — строка «- [ ] …» в конце описания: разметка рисует её
-  // кружком-галочкой, который щёлкается на месте.
-  const addSub = node("button", undefined, "sub-add");
-  addSub.type = "button";
-  addSub.append(node("b", "+"), document.createTextNode("Подзадача"));
-  addSub.addEventListener("click", () => {
-    const current = field.getValue().replace(/\s+$/, "");
-    field.setValue(`${current}${current ? "\n" : ""}- [ ] `);
-    field.focus();
-    const range = document.createRange();
-    range.selectNodeContents(field.element);
-    range.collapse(false);
-    const selection = document.getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
-  });
-  wrap.append(label, field.element, hint, addSub);
+  wrap.append(label, field.element, hint);
   return wrap;
 }
 // Карточка открывается модальным окном, а не панелью внутри страницы: панель
@@ -3624,7 +3608,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   // отделённое дело: у дела он назван итогом, а сам итог помнит своё дело.
   const deedParts = (entry.parts || []).filter((part) => part.type !== "outcome_decision" || !["task", "meeting_event"].includes(c.primaryType));
   const outcomeOfDeed = entry.parent && (c.primaryType === "outcome_decision" || entry.origin === "outcome") && ["task", "meeting_event"].includes(entry.parent.type);
-  const stepOfDeed = entry.parent && ["task", "meeting_event"].includes(c.primaryType) && ["task", "meeting_event"].includes(entry.parent.type);
+  const stepOfDeed = entry.parent && !entry.parent.splitSource && ["task", "meeting_event"].includes(c.primaryType) && ["task", "meeting_event"].includes(entry.parent.type);
   if ((entry.parent && !cardStack.length) || (deedParts.length && !wantsSubtasks)) {
     const origin = node("p", undefined, "card-origin");
     const link = (id, text) => { const button = node("button", text, "text-button"); button.type = "button"; button.addEventListener("click", () => openCaptureById(id)); return button; };
@@ -3795,7 +3779,6 @@ function showReview(entry, review, undoGroupId, provenance) {
     assignWrap = entry.mine === false ? null : propertyRow("Исполнитель", assignRow(entry, { onChange: () => {} }), "people");
   props.append(
     columnRow,
-    propertyRow("Тип", type, "type"),
     scheduleWrap,
     propertyRow("Проект", project, "project", { clear: () => clearAndSave(() => { project.value = ""; }), filled: () => Boolean(project.value.trim()) }),
     ...(entry.circles?.length ? [circleWrap] : []),
@@ -3944,16 +3927,18 @@ function showReview(entry, review, undoGroupId, provenance) {
   source.append(sourceSummary);
   // Пока заметку не правили, её тело — копия исходной записи, и показывать
   // один и тот же текст дважды незачем: остаётся только строка версии.
+  const sourceText = entry.parent?.splitSource ? entry.parent.raw : entry.raw;
   const noteBody = entry.note?.body ?? (entry.raw || "");
-  const sameAsRaw = noteBody.trim() === (entry.raw || "").trim();
+  const sameAsRaw = noteBody.trim() === (sourceText || "").trim();
   const raw = node("div", undefined, "review-raw");
   if (sameAsRaw) raw.append(node("p", "Исходная запись совпадает с заметками.", "entry-meta"));
-  else raw.append(node("p", "Исходная запись:", "source-label"), markdownNode("div", entry.raw, undefined));
+  else raw.append(node("p", "Исходная запись:", "source-label"), markdownNode("div", sourceText, undefined));
   const provider = provenance?.usedProvider || entry.interpretation.provider;
   // Источник раскрывается листом над строкой подвала и не распирает её.
   const sourceBody = node("div", undefined, "card-source-body");
   sourceBody.append(
     raw,
+    node("p", cardFromWords(entry), "entry-meta"),
     node(
       "p",
       `Версия ${entry.interpretation.version} · ${providerNames[provider] || "исправлено вами"}${fallbackSuffix(provenance)}`,

@@ -94,7 +94,7 @@ test("доска: «Сделано» слева, своя колонка, быс
   await expect(propsBar).toHaveAttribute("aria-expanded", "false");
   await page.keyboard.press("Escape");
   await expect(page.locator("#review-dialog")).toBeHidden();
-  await expect(card.locator(".board-who")).toHaveAttribute("title", "Анна");
+  await expect(card.locator(".board-title")).toHaveText("Проверить доску целиком и карточку");
 
   // Кружок отправляет дело в «Сделано»: оно там зачёркнуто, подпись — «сегодня 10:12».
   await card.locator(".board-done").click();
@@ -540,7 +540,7 @@ test("поиск работает во всех видах; название о�
   await page.locator("#board-flat .g-row").filter({ hasText: "Гамма дело" }).locator(".board-title").click();
   await expect(page.locator("#review-dialog")).toBeVisible();
   await expect(page.locator("#review-dialog .card-title")).toHaveText("Гамма дело");
-  await expect(page.locator("#review-dialog .card-nav-rest")).toHaveText("Доска · 2 из 3");
+  await expect(page.locator("#review-dialog .card-nav-crumb")).toContainText("2 из 3");
   await page.locator('#review-dialog .card-nav-step[aria-label^="Следующее"]').click();
   await expect(page.locator("#review-dialog .card-title")).toHaveText("Бета дело");
   await page.keyboard.press("Escape");

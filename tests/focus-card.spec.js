@@ -232,7 +232,7 @@ for (const width of [390, 320]) {
     expect(Math.round((await dialog.locator(".card-main").boundingBox()).width)).toBe(width);
     const panel = await dialog.locator("#review-params").boundingBox();
     expect(panel.x).toBeGreaterThanOrEqual(-1);
-    await expect(dialog.locator("#review-primary-type")).toBeVisible();
+    await expect(dialog.locator("#review-column")).toBeVisible();
     await dialog.locator("#review-params-close").click();
     await expect.poll(async () => Math.round((await dialog.locator(".card-main").boundingBox()).x)).toBe(0);
     await expect(dialog.locator(".card-title")).toBeVisible();
