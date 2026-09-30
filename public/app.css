@@ -1187,7 +1187,7 @@ body.capture-large-open::before {
   background: var(--tint-wait);
 }
 #todo .entry.overdue {
-  background: var(--tint-late);
+  background: transparent;
 }
 #review-dialog:focus,
 #review-dialog:focus-visible {
@@ -6101,15 +6101,15 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
    зазоры между плашками съедали столько же места, сколько сами дела. */
 .day-rows > .entry.dense + .entry.dense,
 .day-late > .entry.dense + .entry.dense { border-top: 1px solid var(--n-94); }
+/* Просроченное не сидит в розовой коробке: строки такие же, как у остальных
+   полок, а «горит» только красное — название, кружок и метка «с 26 авг». */
 .day-late {
-  border: 1px solid var(--red-83);
-  background: var(--red-97);
-  border-radius: 12px;
-  padding: 2px 4px;
-  margin-top: 6px;
+  border: 0;
+  background: none;
+  border-radius: 0;
+  padding: 0;
+  margin-top: 0;
 }
-.day-late > .entry.dense + .entry.dense { border-top-color: var(--red-83); }
-#todo .day-late > .entry.dense:hover { background: var(--red-90); }
 /* Строка со временем несёт ту же плотную строку — часы не должны быть выше
    собственного содержимого. */
 .day-row .entry.dense { padding-left: 0; }
