@@ -2055,13 +2055,6 @@ dialog form > div {
   max-width: var(--capture-width, 800px);
   margin: 0 auto 56px;
 }
-.today-page {
-  /* Рабочий экран говорит одним спокойным цветом: действие, текущий день и
-     фокус продолжают зелёную метрику задач. Красный остаётся семантикой
-     просрочки и ошибок, а фирменный знак в шапке сохраняет свой цвет. */
-  --coral: var(--green);
-  --focus: var(--green);
-}
 .today-intro {
   margin: 0 0 40px;
   text-align: center;
