@@ -4197,7 +4197,9 @@ dialog form > div {
 #review-dialog .card-body-hint {
   font-size: 12px;
   color: var(--nt-tertiary);
+  visibility: hidden;
 }
+#review-dialog .card-body-hint.shown { visibility: visible; }
 /* Разметка в карточке — блоки Notion: заголовки, цитаты, код, выноски. */
 #review-dialog .md-field .md-heading {
   font-weight: 600;
@@ -8027,3 +8029,1052 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0; }
 #review-dialog.has-talk .review { padding-bottom: 0; }
 #review-dialog .card-nav-col:not(:empty) + .card-nav-rest:not(:empty)::before { content: " · "; }
 #review-dialog .card-nav-col { font-weight: 650; color: var(--nt-secondary); }
+
+/* ── карточка «Фокус» ────────────────────────────────────────────────────────
+   Одна карточка: тихая верхняя строка, кружок с дугой прогресса подзадач у
+   названия, чипы свойств, заметки, подзадачи (список или карта), подвал и
+   обсуждение. Панель «Параметры» выезжает справа из той же карточки: ширина
+   карточки растёт, колонка содержимого остаётся прежней, и всё вместе снова
+   встаёт по центру. Палитра — шалфей поверх токенов карточки, у тёмной темы
+   свои значения. */
+#review-dialog {
+  --params-w: 340px;
+  --card-accent: #517550;
+  --card-arc: #8ea773;
+  --card-arc-track: #e7eddf;
+  --card-ring: #acbaa4;
+  --card-chip-bg: #f2f5ed;
+  --card-chip-hover: #e9efdf;
+  --card-chip-edge: #e5ebde;
+  --card-chip-text: #63795a;
+  --card-row-hover: #f6f8f2;
+  --card-panel-bg: #fafcf6;
+  --card-top-line: #edf0e9;
+  --card-crumb-dot: #849dc5;
+  --card-field-bg: #ffffff;
+  --card-field-edge: rgba(55, 53, 47, 0.12);
+  --card-field-edge-hover: rgba(55, 53, 47, 0.24);
+  --card-field-ring: rgba(81, 117, 80, 0.16);
+  transition: width 0.28s cubic-bezier(0.2, 0.75, 0.25, 1);
+}
+:root[data-theme="dark"] #review-dialog {
+  --card-accent: #8fb07f;
+  --card-arc: #8fb07f;
+  --card-arc-track: rgba(255, 255, 255, 0.12);
+  --card-ring: rgba(255, 255, 255, 0.34);
+  --card-chip-bg: rgba(255, 255, 255, 0.06);
+  --card-chip-hover: rgba(255, 255, 255, 0.1);
+  --card-chip-edge: rgba(255, 255, 255, 0.09);
+  --card-chip-text: rgba(255, 255, 255, 0.66);
+  --card-row-hover: rgba(255, 255, 255, 0.05);
+  --card-panel-bg: #2b2b2b;
+  --card-top-line: rgba(255, 255, 255, 0.08);
+  --card-crumb-dot: #7f98c2;
+  --card-field-bg: rgba(255, 255, 255, 0.045);
+  --card-field-edge: rgba(255, 255, 255, 0.1);
+  --card-field-edge-hover: rgba(255, 255, 255, 0.2);
+  --card-field-ring: rgba(143, 176, 127, 0.22);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) #review-dialog {
+    --card-accent: #8fb07f;
+    --card-arc: #8fb07f;
+    --card-arc-track: rgba(255, 255, 255, 0.12);
+    --card-ring: rgba(255, 255, 255, 0.34);
+    --card-chip-bg: rgba(255, 255, 255, 0.06);
+    --card-chip-hover: rgba(255, 255, 255, 0.1);
+    --card-chip-edge: rgba(255, 255, 255, 0.09);
+    --card-chip-text: rgba(255, 255, 255, 0.66);
+    --card-row-hover: rgba(255, 255, 255, 0.05);
+    --card-panel-bg: #2b2b2b;
+    --card-top-line: rgba(255, 255, 255, 0.08);
+    --card-crumb-dot: #7f98c2;
+    --card-field-bg: rgba(255, 255, 255, 0.045);
+    --card-field-edge: rgba(255, 255, 255, 0.1);
+    --card-field-edge-hover: rgba(255, 255, 255, 0.2);
+    --card-field-ring: rgba(143, 176, 127, 0.22);
+  }
+}
+#review-dialog.params-instant,
+#review-dialog.resizing {
+  transition: none;
+}
+#review-dialog.params-open {
+  width: min(calc(var(--card-w) + var(--params-w)), calc(100vw - 48px));
+}
+/* Дорожка: колонка и панель рядом; когда обе не помещаются, дорожка
+   прокручивается к панели, а страница под карточкой не растёт. */
+#review-dialog .card-shell {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+#review-dialog .card-shell::-webkit-scrollbar {
+  display: none;
+}
+#review-dialog .card-main {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: min(var(--card-w), calc(100vw - 48px));
+  min-width: 0;
+  height: 100%;
+}
+#review-dialog .card-params {
+  position: relative;
+  flex: none;
+  width: 0;
+  overflow: hidden;
+  visibility: hidden;
+  border-left: 1px solid var(--card-top-line);
+  background: var(--card-panel-bg);
+  color: var(--nt-text);
+  transition: width 0.28s cubic-bezier(0.2, 0.75, 0.25, 1), visibility 0s linear 0.28s;
+}
+#review-dialog.params-open .card-params {
+  width: var(--params-w);
+  visibility: visible;
+  transition: width 0.28s cubic-bezier(0.2, 0.75, 0.25, 1), visibility 0s;
+}
+#review-dialog.params-instant .card-params {
+  transition: none;
+}
+#review-dialog .card-params-inner {
+  display: flex;
+  flex-direction: column;
+  width: var(--params-w);
+  height: 100%;
+}
+#review-dialog .card-params-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex: none;
+  min-height: 56px;
+  padding: 0 14px 0 22px;
+  border-bottom: 1px solid var(--card-top-line);
+}
+#review-dialog .card-params-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.1px;
+  color: var(--nt-text);
+}
+#review-dialog .card-params-close {
+  flex: none;
+  width: 29px;
+  height: 29px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--nt-tertiary);
+  font-size: 0;
+  cursor: pointer;
+}
+#review-dialog .card-params-close::before {
+  content: "×";
+  font-size: 22px;
+  line-height: 1;
+}
+#review-dialog .card-params-close:hover {
+  background: var(--nt-hover);
+  color: var(--nt-secondary);
+}
+#review-dialog .card-params-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 22px 24px;
+}
+#review-dialog .card-params .review-form {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+/* Инспектор: имя свойства над полем, поля во всю ширину панели по одной
+   сетке. Значок — лёгкий, крестик сброса — справа в строке имени. */
+#review-dialog .card-params .props {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+#review-dialog .card-params .prop,
+#review-dialog .card-params .prop.has-clear {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "label clear" "control control";
+  gap: 6px 8px;
+  align-items: center;
+  min-height: 0;
+  border-radius: 0;
+}
+#review-dialog .card-params .prop:hover {
+  background: none;
+}
+#review-dialog .card-params .prop[hidden] {
+  display: none;
+}
+#review-dialog .card-params .prop > .prop-label {
+  grid-area: label;
+  gap: 6px;
+  min-height: 0;
+  padding: 0;
+  font-size: 12px;
+  color: var(--nt-secondary);
+}
+#review-dialog .card-params .prop > .prop-label:hover {
+  background: none;
+}
+#review-dialog .card-params .prop > .prop-label .prop-icon {
+  opacity: 0.55;
+}
+#review-dialog .card-params .prop > .prop-label .prop-icon svg {
+  width: 14px;
+  height: 14px;
+}
+#review-dialog .card-params .prop > :not(.prop-label):not(.prop-clear) {
+  grid-area: control;
+  min-width: 0;
+}
+#review-dialog .card-params .prop > .prop-clear {
+  grid-area: clear;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  border-radius: 5px;
+  font-size: 15px;
+  line-height: 1;
+}
+#review-dialog .card-params .prop > .completion-button {
+  justify-self: start;
+  margin: 0;
+}
+#review-dialog .card-params .props select,
+#review-dialog .card-params .props input {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--card-field-edge);
+  border-radius: 8px;
+  background: var(--card-field-bg);
+  color: var(--nt-text);
+  font-size: 13px;
+  box-sizing: border-box;
+}
+#review-dialog .card-params .props select:hover,
+#review-dialog .card-params .props input:hover {
+  border: 1px solid var(--card-field-edge-hover);
+  background: var(--card-field-bg);
+}
+#review-dialog .card-params .props select:focus,
+#review-dialog .card-params .props input:focus {
+  border: 1px solid var(--card-accent);
+  background: var(--card-field-bg);
+  box-shadow: 0 0 0 3px var(--card-field-ring);
+}
+#review-dialog .card-params .props input::placeholder {
+  color: var(--nt-tertiary);
+}
+/* Срок: дата — строка, начало и конец — две равные колонки с подписями,
+   напоминание и повтор — свои строки той же ширины. */
+#review-dialog .card-params .review-schedule {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: end;
+}
+#review-dialog .card-params .review-schedule > input[type="date"],
+#review-dialog .card-params .review-schedule > .review-remind-row,
+#review-dialog .card-params .review-schedule > .review-repeat-row {
+  grid-column: 1 / -1;
+}
+#review-dialog .card-params .review-remind-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+#review-dialog .card-params .review-start,
+#review-dialog .card-params .review-end {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+}
+#review-dialog .card-params .review-end:has(input[hidden]) {
+  display: none;
+}
+#review-dialog .card-params .review-schedule:has(.review-end input[hidden]) .review-start {
+  grid-column: 1 / -1;
+}
+#review-dialog .card-params .review-end-label {
+  font-size: 11px;
+  color: var(--nt-tertiary);
+}
+#review-dialog .card-params .review-repeat-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+#review-dialog .card-params .review-until {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  margin-top: 6px;
+}
+#review-dialog .card-params .review-until[hidden] {
+  display: none;
+}
+#review-dialog .card-params .card-foreign {
+  margin: 0 0 14px;
+}
+
+/* Верхняя строка: откуда открыли, «← родитель» у подзадачи, соседние дела,
+   «Параметры» и крестик. */
+#review-dialog .card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex: none;
+  min-height: 56px;
+  padding: 12px 22px 12px 28px;
+  border-bottom: 1px solid var(--card-top-line);
+  font-size: 12.5px;
+  color: var(--nt-tertiary);
+}
+#review-dialog .card-top-crumb {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1;
+  min-width: 0;
+}
+#review-dialog .card-crumb-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--card-crumb-dot);
+}
+#review-dialog .card-crumb-word {
+  color: var(--nt-secondary);
+}
+#review-dialog .card-nav {
+  position: static;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  height: auto;
+  min-width: 0;
+  pointer-events: auto;
+}
+#review-dialog .card-nav-crumb {
+  margin: 0;
+  font-size: 12.5px;
+}
+#review-dialog .card-return {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  max-width: 320px;
+  padding: 5px 6px 5px 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--nt-secondary);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+#review-dialog .card-return:hover {
+  color: var(--nt-text);
+}
+#review-dialog .card-return-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#review-dialog .card-depth {
+  flex: none;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--nt-tertiary);
+}
+#review-dialog .card-top-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+#review-dialog .card-top-nav {
+  display: inline-flex;
+  gap: 2px;
+}
+#review-dialog .card-top-nav:empty {
+  display: none;
+}
+#review-dialog #review-params-toggle {
+  height: 29px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--nt-secondary);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+#review-dialog #review-params-toggle:hover {
+  background: var(--nt-hover);
+}
+#review-dialog #review-params-toggle.open {
+  background: var(--card-chip-bg);
+  color: var(--card-accent);
+}
+#review-dialog .dialog-close {
+  position: static;
+  top: auto;
+  right: auto;
+  width: 29px;
+  height: 29px;
+  border-radius: 7px;
+  z-index: auto;
+}
+
+/* Колонка содержимого: прокрутка — в ней, верхняя строка стоит. */
+#review-dialog .review {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  padding: 26px max(32px, calc((100% - 788px) / 2)) 28px;
+}
+#review-dialog .card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+#review-dialog .card-head.with-tick,
+#review-dialog .card-head.with-tick.hang {
+  padding-left: 0;
+}
+#review-dialog .completion-halo {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 54px;
+  height: 54px;
+  margin: 0 -3px 0 -13px;
+}
+#review-dialog .halo-meter {
+  position: absolute;
+  inset: 0;
+  display: none;
+  pointer-events: none;
+}
+#review-dialog .completion-halo.has-progress .halo-meter {
+  display: block;
+}
+#review-dialog .halo-meter svg {
+  display: block;
+  width: 54px;
+  height: 54px;
+  transform: rotate(-90deg);
+}
+#review-dialog .halo-meter circle {
+  fill: none;
+  stroke-width: 2.8;
+}
+#review-dialog .halo-track {
+  stroke: var(--card-arc-track);
+}
+#review-dialog .halo-fill {
+  stroke: var(--card-arc);
+  stroke-linecap: round;
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  transition: stroke-dashoffset 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+#review-dialog .card-tick,
+#review-dialog .card-head.hang .card-tick {
+  position: relative;
+  top: auto;
+  left: auto;
+  border-color: var(--card-ring);
+  background: var(--nt-bg);
+}
+#review-dialog .card-tick:hover,
+#review-dialog .card-tick:focus-visible {
+  border-color: var(--card-accent);
+  color: var(--card-accent);
+}
+#review-dialog .card-tick.is-done {
+  border-color: var(--card-accent);
+  background: var(--card-accent);
+  color: #fff;
+}
+#review-dialog .card-tick.is-done:hover {
+  background: var(--nt-bg);
+  color: var(--card-accent);
+}
+#review-dialog .card-title-copy {
+  flex: 1;
+  min-width: 0;
+}
+#review-dialog .review h2.card-title {
+  margin: 7px 0 0;
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.6px;
+  overflow-wrap: anywhere;
+}
+#review-dialog .card-title-edit {
+  margin: 7px 0 0;
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.6px;
+}
+#review-dialog .progress-caption {
+  display: inline-block;
+  margin: 0;
+  padding: 6px 0 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--nt-tertiary);
+  text-align: left;
+  cursor: pointer;
+}
+#review-dialog .progress-caption:hover {
+  color: var(--card-accent);
+  text-decoration: underline;
+}
+#review-dialog .card-head.with-tick ~ .card-chips,
+#review-dialog .card-head.with-tick ~ .card-done {
+  margin-left: 52px;
+}
+#review-dialog .card-done {
+  margin-top: 10px;
+}
+/* Чипы свойств под названием. */
+#review-dialog .card-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 4px;
+}
+#review-dialog .card-chips[hidden] {
+  display: none;
+}
+#review-dialog .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--card-chip-edge);
+  border-radius: 7px;
+  background: var(--card-chip-bg);
+  color: var(--card-chip-text);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.3;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+#review-dialog .chip:hover {
+  background: var(--card-chip-hover);
+}
+#review-dialog .chip.quiet {
+  background: transparent;
+  border-style: dashed;
+  color: var(--nt-tertiary);
+}
+#review-dialog .chip .prop-icon {
+  color: inherit;
+}
+#review-dialog .chip .prop-icon svg {
+  width: 14px;
+  height: 14px;
+}
+#review-dialog .card-origin {
+  margin: 10px 0 0;
+}
+#review-dialog .card-foreign {
+  margin: 12px 0 0;
+}
+#review-dialog .prop-section {
+  margin: 24px 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  color: var(--nt-tertiary);
+}
+#review-dialog .card-body {
+  margin-top: 0;
+}
+/* Правило старой карточки (#review-dialog #card-body-editor) сильнее класса:
+   перекрываем тем же селектором, позже по порядку. */
+#review-dialog #card-body-editor {
+  min-height: 120px;
+}
+
+/* Путь к подзадаче на глубине: корень › … › родитель. */
+#review-dialog .card-path {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -6px 0 14px;
+  font-size: 11px;
+  color: var(--nt-tertiary);
+}
+#review-dialog .card-path-step {
+  max-width: 210px;
+  padding: 3px 0;
+  border: 0;
+  background: none;
+  color: var(--nt-secondary);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+#review-dialog .card-path-step:hover {
+  color: var(--card-accent);
+  text-decoration: underline;
+}
+#review-dialog .card-path-menu {
+  position: relative;
+}
+#review-dialog .card-path-menu summary {
+  list-style: none;
+  padding: 0 4px;
+  font-size: 16px;
+  cursor: pointer;
+}
+#review-dialog .card-path-menu summary::-webkit-details-marker {
+  display: none;
+}
+#review-dialog .card-path-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 190px;
+  max-width: 260px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 10px 14px;
+  border: 1px solid var(--nt-divider);
+  border-radius: 9px;
+  background: var(--nt-bg);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.12);
+}
+
+/* Подзадачи: список или карта на одних данных. */
+#review-dialog .card-subtasks {
+  margin-top: 10px;
+  padding-top: 18px;
+  border-top: 1px solid var(--nt-divider);
+}
+#review-dialog .card-subtasks[hidden] {
+  display: none;
+}
+#review-dialog .subhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+}
+#review-dialog .subhead-lead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+#review-dialog .subhead-lead b {
+  font-weight: 600;
+}
+#review-dialog .subtask-count {
+  font-size: 11.5px;
+  color: var(--nt-tertiary);
+}
+#review-dialog .subtask-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+#review-dialog .steps-view {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--card-chip-edge);
+  border-radius: 7px;
+  background: var(--card-chip-bg);
+}
+#review-dialog .steps-view[hidden] {
+  display: none;
+}
+#review-dialog .steps-view-button {
+  padding: 4px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--nt-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+#review-dialog .steps-view-button.active {
+  background: var(--nt-bg);
+  color: var(--nt-text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+#review-dialog .subtask-add {
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--card-accent);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+#review-dialog .subtask-add:hover {
+  background: var(--card-chip-bg);
+}
+#review-dialog .subtasks,
+#review-dialog .metric-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 0 6px;
+}
+#review-dialog .subtasks[hidden],
+#review-dialog .metric-tree[hidden] {
+  display: none;
+}
+#review-dialog .subtask,
+#review-dialog .tree-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin: 0 -8px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-size: 14.5px;
+  line-height: 1.45;
+}
+#review-dialog .tree-row {
+  gap: 8px;
+  padding-left: calc(8px + var(--indent, 0px));
+}
+#review-dialog .subtask:hover,
+#review-dialog .tree-row:hover {
+  background: var(--card-row-hover);
+}
+#review-dialog .subtask-check,
+#review-dialog .tree-check {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  display: grid;
+  place-content: center;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  border: 1.5px solid var(--card-ring);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+#review-dialog .subtask-check:checked,
+#review-dialog .tree-check:checked {
+  border-color: var(--card-accent);
+  background: var(--card-accent);
+}
+#review-dialog .subtask-check:checked::after,
+#review-dialog .tree-check:checked::after {
+  content: "";
+  width: 8px;
+  height: 4px;
+  border-left: 1.8px solid #fff;
+  border-bottom: 1.8px solid #fff;
+  transform: translateY(-1px) rotate(-45deg);
+}
+#review-dialog .subtask-check:disabled,
+#review-dialog .tree-check:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+#review-dialog .subtask-open,
+#review-dialog .tree-open {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 9px 0;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+#review-dialog .tree-open {
+  gap: 10px;
+  padding: 8px 0;
+}
+#review-dialog .subtask-name,
+#review-dialog .tree-title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+#review-dialog .subtask-name.done,
+#review-dialog .tree-title.done {
+  text-decoration: line-through;
+  color: var(--nt-tertiary);
+}
+#review-dialog .subtask-meta,
+#review-dialog .tree-open small {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--card-chip-bg);
+  color: var(--nt-secondary);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+#review-dialog .subtask-arrow {
+  flex: none;
+  color: var(--nt-tertiary);
+  font-size: 18px;
+}
+#review-dialog .subtask-empty {
+  margin: 8px 0;
+  font-size: 12.5px;
+  color: var(--nt-tertiary);
+}
+#review-dialog .tree-fold {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--nt-tertiary);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+#review-dialog .tree-fold:hover {
+  background: var(--card-chip-bg);
+}
+#review-dialog .tree-fold.empty {
+  visibility: hidden;
+}
+#review-dialog .branch-dial {
+  position: relative;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: conic-gradient(var(--card-arc) var(--branch-progress, 0%), var(--card-arc-track) 0);
+}
+#review-dialog .branch-dial::after {
+  content: "";
+  position: absolute;
+  inset: 3.5px;
+  border-radius: 50%;
+  background: var(--nt-bg);
+}
+#review-dialog .subtask-composer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--card-chip-edge);
+  border-radius: 8px;
+  background: var(--card-chip-bg);
+}
+#review-dialog .subtask-composer[hidden] {
+  display: none;
+}
+#review-dialog .subtask-composer input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--nt-text);
+  font: inherit;
+  font-size: 13.5px;
+}
+#review-dialog .subtask-composer input:focus {
+  outline: none;
+}
+#review-dialog .subtask-submit {
+  padding: 5px;
+  border: 0;
+  background: none;
+  color: var(--card-accent);
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+#review-dialog .subtask-cancel {
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--nt-tertiary);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+#review-dialog .task-next {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 6px 0 4px;
+  font-size: 12.5px;
+  color: var(--nt-tertiary);
+}
+#review-dialog .task-next[hidden] {
+  display: none;
+}
+#review-dialog .next-step-link {
+  min-width: 0;
+  padding: 3px 0;
+  border: 0;
+  background: none;
+  color: var(--card-accent);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+#review-dialog .next-step-link:hover {
+  text-decoration: underline;
+}
+#review-dialog .next-step-link[hidden] {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  #review-dialog {
+    --params-w: min(340px, calc(100vw - 30px));
+  }
+  #review-dialog.params-open {
+    width: 100vw;
+  }
+  #review-dialog .card-main {
+    width: 100vw;
+  }
+  /* Ширина панели на телефоне не анимируется (правило перекрывает и открытое
+     состояние): к панели плавно едет сама дорожка, одним движением. */
+  #review-dialog .card-params,
+  #review-dialog.params-open .card-params {
+    transition: none;
+  }
+  #review-dialog .card-top {
+    min-height: 50px;
+    padding: 8px 12px 8px 16px;
+    gap: 8px;
+  }
+  #review-dialog .card-return {
+    max-width: 44vw;
+  }
+  #review-dialog .card-depth {
+    display: none;
+  }
+  #review-dialog .review {
+    padding: 22px 20px 24px;
+  }
+  #review-dialog .completion-halo {
+    width: 48px;
+    height: 48px;
+    margin: 0 -2px 0 -9px;
+  }
+  #review-dialog .halo-meter svg {
+    width: 48px;
+    height: 48px;
+  }
+  #review-dialog .review h2.card-title,
+  #review-dialog .card-title-edit {
+    margin-top: 5px;
+    font-size: 27px;
+  }
+  #review-dialog .card-head.with-tick ~ .card-chips,
+  #review-dialog .card-head.with-tick ~ .card-done {
+    margin-left: 0;
+  }
+  #review-dialog .card-chips {
+    gap: 6px;
+  }
+  #review-dialog .chip {
+    font-size: 12px;
+  }
+  #review-dialog .subhead {
+    gap: 8px;
+  }
+  #review-dialog .card-params-head {
+    min-height: 50px;
+    padding: 0 10px 0 18px;
+  }
+  #review-dialog .card-params-body {
+    padding: 16px 18px 20px;
+  }
+}
+@media (max-width: 360px) {
+  #review-dialog .card-top-tools {
+    gap: 0;
+  }
+  #review-dialog #review-params-toggle {
+    padding: 0 7px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #review-dialog,
+  #review-dialog .card-params,
+  #review-dialog .halo-fill,
+  #review-dialog .subtask-check,
+  #review-dialog .tree-check {
+    transition: none;
+  }
+}

@@ -86,8 +86,12 @@ test("доска: «Сделано» слева, своя колонка, быс
   await page.locator(".card-title-edit").fill("Проверить доску целиком и карточку");
   await page.keyboard.press("Enter");
   await expect(card.locator(".board-title")).toHaveText("Проверить доску целиком и карточку");
-  // Люди из карточки появляются на доске кружком с первой буквой.
-  await page.locator("#review-people").fill("Анна");
+  const propsBar = page.locator(".props-bar");
+  if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
+  await page.locator("#review-project").fill("Доска-проект");
+  // Первый Esc закрывает панель «Параметры», второй — карточку.
+  await page.keyboard.press("Escape");
+  await expect(propsBar).toHaveAttribute("aria-expanded", "false");
   await page.keyboard.press("Escape");
   await expect(page.locator("#review-dialog")).toBeHidden();
   await expect(card.locator(".board-who")).toHaveAttribute("title", "Анна");

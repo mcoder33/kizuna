@@ -17,6 +17,8 @@ import { doneView } from './done.js';
 import { boardView, createColumn, renameColumn, colorColumn, moveColumn, deleteColumn, moveCard } from './board.js';
 import { createCalendarService, CalendarSyncWorker } from './calendar.js';
 import * as circles from './circles.js';
+import { subtaskTree, ancestorsOf, todayIn, validDay, SUBTASK_TITLE_LIMIT } from './subtasks.js';
+import { createSubtask } from './db.js';
 import { AVATAR_IMAGE_LIMIT } from './avatars.js';
 import * as chat from './chat.js';
 import { registerNotesRoutes, afterCapture } from './notes-tree.js';
@@ -586,7 +588,24 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     } catch (error) { next(error); }
   });
   // Одна запись целиком: карточка открывается по ссылке из уведомления.
-  app.get('/api/captures/:id',(req,res)=>{ if(!seesCapture(req,res,req.params.id))return; const row=getAggregate(db,req.params.id); if(!row)return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}}); circles.markMentionsSeen(db,req.params.id,req.user.id); const unreadComments=circles.unreadComments(db,req.params.id,req.user.id); circles.markCommentsRead(db,req.params.id,req.user.id); res.json({ entry: { ...fullEntry(db,row), ...sharedEntry(req.params.id,req.user.id), unreadComments } }); });
+  app.get('/api/captures/:id',(req,res)=>{ if(!seesCapture(req,res,req.params.id))return; const row=getAggregate(db,req.params.id); if(!row)return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}}); circles.markMentionsSeen(db,req.params.id,req.user.id); const unreadComments=circles.unreadComments(db,req.params.id,req.user.id); circles.markCommentsRead(db,req.params.id,req.user.id); res.json({ entry: { ...fullEntry(db,row), ...sharedEntry(req.params.id,req.user.id), unreadComments, ancestors: ancestorsOf(db,req.params.id,req.user.id) } }); });
+  // Подзадачи карточки: всё дерево дочерних дел с прогрессом по конечным
+  // шагам. Читает тот, кто видит запись; каждая ветка проверяется отдельно.
+  // День для повторов — тот, что открыт у человека («День» листают по датам),
+  // иначе сегодняшний в часовом поясе приложения. Удалённый корень — «не найдено».
+  const subtaskDay=req=>validDay(req.query?.day)?req.query.day:todayIn(configuredTimeZone,now());
+  app.get('/api/captures/:id/subtasks',(req,res,next)=>{try{ if(!seesCapture(req,res,req.params.id))return; const root=getAggregate(db,req.params.id); if(!root||root.deleted_at)return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}}); res.json(subtaskTree(db,req.params.id,req.user.id,{today:subtaskDay(req)})); }catch(error){next(error);}});
+  // Новая подзадача — настоящая запись-дело под родителем, заводится сразу,
+  // без модели. Родителя правит только автор.
+  app.post('/api/captures/:id/subtasks',(req,res,next)=>{try{
+    if(!ownsCapture(req,res,req.params.id))return;
+    const title=typeof req.body?.title==='string'?req.body.title.trim():'';
+    if(!title||title.length>SUBTASK_TITLE_LIMIT)return res.status(400).json({error:{code:'invalid_subtask',message:`Подзадача — от 1 до ${SUBTASK_TITLE_LIMIT} символов.`}});
+    const created=createSubtask(db,{parentId:req.params.id,title,userId:req.user.id,timeZone:configuredTimeZone});
+    if(created.notFound)return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}});
+    notifyJournal('subtask');
+    res.status(201).json({entry:fullEntry(db,getAggregate(db,created.captureId)),tree:subtaskTree(db,req.params.id,req.user.id,{today:subtaskDay(req)})});
+  }catch(error){next(error);}});
   // ── настройки ──
   app.get('/api/settings',(req,res)=>{
     res.json({ settings: publicSettings(stored, process.env, req.user), editable: editableSettings(req.user), timeZone: configuredTimeZone, spend: spendState(req.user) });
@@ -641,7 +660,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     const requested=requestedProvider(req.body?.provider);
     if(requested===null)return res.status(400).json({error:{code:'invalid_provider',message:'Некорректный провайдер.'}});
     const provider=await snapshotProvider(ai,(await spendGate(req.user,requested)).provider);
-    const queued=enqueueCaptureJob(db,{userId:req.user.id,raw:text,occurredAt:undefined,selectedProvider:provider,overrides:{completed:true}});
+    const queued=enqueueCaptureJob(db,{userId:req.user.id,raw:text,occurredAt:undefined,selectedProvider:provider,overrides:{completed:true},origin:'outcome'});
     db.prepare('UPDATE captures SET parent_capture_id=? WHERE id=?').run(req.params.id,queued.captureId);
     captureJobWorker.wake();notifyJournal('queued');
     res.status(201).json({captureId:queued.captureId,jobId:queued.jobId,statusUrl:jobStatusUrl(queued.jobId)});

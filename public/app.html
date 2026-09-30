@@ -785,8 +785,40 @@
       </section>
     </main>
     <dialog id="review-dialog" tabindex="-1" aria-label="Карточка записи">
-      <button id="review-close" class="dialog-close" type="button" aria-label="Закрыть карточку"></button>
-      <section id="review" class="review" aria-live="polite"></section>
+      <!-- Карточка «Фокус»: основная колонка и панель «Параметры», которая
+           выезжает справа из той же карточки. Верхняя строка — тихая навигация:
+           откуда открыли, «← родитель» у подзадачи, соседние дела, параметры
+           и крестик. -->
+      <div class="card-shell">
+        <div class="card-main">
+          <div class="card-top" id="review-top">
+            <div class="card-top-crumb" id="review-crumb"></div>
+            <div class="card-top-tools">
+              <span class="card-top-nav" id="review-nav"></span>
+              <button id="review-params-toggle" class="props-bar" type="button" aria-expanded="false" aria-controls="review-params">Параметры</button>
+              <button id="review-close" class="dialog-close" type="button" aria-label="Закрыть карточку"></button>
+            </div>
+          </div>
+          <section id="review" class="review" aria-live="polite"></section>
+        </div>
+        <aside id="review-params" class="card-params" aria-label="Параметры записи" inert>
+          <div class="card-params-inner">
+            <div class="card-params-head">
+              <h3>Параметры</h3>
+              <button id="review-params-close" class="card-params-close" type="button" aria-label="Закрыть параметры"></button>
+            </div>
+            <div class="card-params-body" id="review-params-body"></div>
+          </div>
+        </aside>
+      </div>
+      <div class="card-resize" data-dir="n" aria-hidden="true"></div>
+      <div class="card-resize" data-dir="s" aria-hidden="true"></div>
+      <div class="card-resize" data-dir="e" aria-hidden="true"></div>
+      <div class="card-resize" data-dir="w" aria-hidden="true"></div>
+      <div class="card-resize" data-dir="ne" aria-hidden="true"></div>
+      <div class="card-resize" data-dir="nw" aria-hidden="true"></div>
+      <div class="card-resize" data-dir="se" aria-hidden="true"></div>
+      <div class="card-resize" data-dir="sw" aria-hidden="true"></div>
     </dialog>
     <dialog id="preview-dialog" aria-label="Просмотр вложения">
       <div class="preview-head">

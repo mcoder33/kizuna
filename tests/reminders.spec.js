@@ -36,7 +36,10 @@ test("настройки напоминаний личные, push предла�
   await expect(remind).toHaveValue("");
   const saved = page.waitForResponse((response) => response.url().includes("/corrections") && response.request().method() === "POST");
   await remind.selectOption("15");
+  // Первый Esc закрывает панель «Параметры», второй — карточку, и правка уходит.
   await remind.press("Escape");
+  await expect(propsBar).toHaveAttribute("aria-expanded", "false");
+  await page.keyboard.press("Escape");
   expect((await saved).status()).toBe(200);
   await expect.poll(async () => {
     const entry = (await (await request.get(`/api/captures/${created.entry.id}`)).json()).entry;

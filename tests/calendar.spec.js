@@ -82,6 +82,9 @@ test("календарь: неделя, день, месяц, перенос м�
   await expect(dialog).toBeVisible();
   await expect(page.locator("#review-end")).toBeVisible();
   await page.locator("#review-end").fill("13:30");
+  // Первый Esc закрывает панель «Параметры», второй — карточку.
+  await page.keyboard.press("Escape");
+  await expect(propsBar).toHaveAttribute("aria-expanded", "false");
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await expect(page.locator("#toast")).toContainText("Уточнение сохранено");
@@ -330,6 +333,8 @@ test("своя серия: повторы в сетке, «только этот
   await expect(repeat).toHaveValue("daily:1");
   await expect(page.locator("#review-repeat-until")).toBeVisible();
   await repeat.selectOption("");
+  await page.keyboard.press("Escape");
+  await expect(propsBar).toHaveAttribute("aria-expanded", "false");
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await expect(page.locator("#toast")).toContainText("Уточнение сохранено");

@@ -970,6 +970,26 @@ function splitOffActions(db, { parentId, classification, provider, model = null,
   }
   return parts;
 }
+// Подзадача из карточки: настоящая запись-дело под родителем, на любой
+// глубине. Родитель отдаёт свои проекты, срок и людей подзадача не наследует.
+export function createSubtask(db, { parentId, title, userId, timeZone = 'Europe/Samara' }) {
+  const parent = db.prepare("SELECT c.id, c.user_id, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.id=? AND c.deleted_at IS NULL").get(parentId);
+  if (!parent) return { notFound: true };
+  const at = now();
+  const childId = db.transaction(() => {
+    const childId = id(), interpretationId = id(), undoGroupId = id();
+    const childClassification = actionClassification(title, JSON.parse(parent.classification_json), new Date(at), timeZone);
+    db.prepare('INSERT INTO captures(id,raw,modality,occurred_at,created_at,privacy_scope,deleted_at,user_id,parent_capture_id) VALUES(?,?,?,?,?,?,NULL,?,?)')
+      .run(childId, title, 'text', at, at, 'private', userId, parentId);
+    db.prepare('INSERT INTO interpretations VALUES(?,?,?,?,?,?,?,?,?,NULL)')
+      .run(interpretationId, childId, 1, 'active', 'manual', null, JSON.stringify(childClassification), JSON.stringify(childClassification.confidence || {}), at);
+    insertProjections(db, interpretationId, makeProjections(childId, childClassification, undoGroupId), at);
+    saveDetails(db, childId, childClassification, at);
+    db.prepare('INSERT INTO activity_events VALUES(?,?,?,?)').run(id(), 'subtask_created', JSON.stringify({ captureId: childId, parentId }), at);
+    return childId;
+  })();
+  return { captureId: childId };
+}
 // День сделанного, названный в самой записи («поставь это на пятницу как
 // результат»), — это и есть момент записи для журнала: «Что делал» раскладывает
 // записи по occurred_at, и результат ложится в свой день, а не в день набора.
@@ -1283,8 +1303,8 @@ export function serializeEntry(row) { return { id: row.id, raw: row.raw, occurre
 // («из этой записи завели два дела»), и уведомлению о новой записи, где их
 // можно сразу отменить.
 export function splitPartsOf(db, captureId) {
-  return db.prepare("SELECT c.id, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.parent_capture_id=? AND c.deleted_at IS NULL ORDER BY c.created_at")
-    .all(captureId).map(part => { const classification = JSON.parse(part.classification_json); return { id: part.id, title: classification.summary, type: classification.primaryType }; });
+  return db.prepare("SELECT c.id, i.classification_json, (SELECT origin FROM capture_jobs j WHERE j.capture_id=c.id ORDER BY j.created_at LIMIT 1) AS origin FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.parent_capture_id=? AND c.deleted_at IS NULL ORDER BY c.created_at")
+    .all(captureId).map(part => { const classification = JSON.parse(part.classification_json); return { id: part.id, title: classification.summary, type: part.origin === 'outcome' ? 'outcome_decision' : classification.primaryType }; });
 }
 export function fullEntry(db, row) { const entry = serializeEntry(row); entry.note = activeNote(db, row.id); entry.attachments = attachmentsFor(db, row.id); entry.projections = db.prepare("SELECT * FROM projections WHERE capture_id=? AND status='active' ORDER BY created_at").all(row.id).map(p => ({ id:p.id,type:p.projection_type,payload:JSON.parse(p.payload_json),undoGroupId:p.undo_group_id,completion:completionState(db,p.id),occurrences:p.projection_type==='task'?occurrencesOf(db,row.id):[],completionCandidate:null }));
   // Что отделилось от этой записи и откуда отделилась она сама: карточка

@@ -186,8 +186,9 @@ test("запись с намерениями дробится на дела, и 
   const source = page.locator("#journal .entry").filter({ hasText: "Созвонились по ВойсОпс" });
   await expect(source).toBeVisible();
   await source.locator(".entry-title").click();
-  await expect(card.locator(".card-origin")).toContainText("Из этой записи 2 дела");
-  await expect(card.locator(".card-origin")).toContainText("Допинываем карусель");
+  // Отделённые дела — в разделе «Подзадачи» записи: два шага, оба открыты.
+  await expect(card.locator("#card-subtasks .subtask-count")).toHaveText("0 / 2");
+  await expect(card.locator("#card-subtasks .subtask-name")).toContainText(["Допинываем бот детектор", "Допинываем карусель"]);
 });
 // Пустой журнал не объясняет себя сам: человек видит поле и не знает, что в
 // него писать. Двое приглашённых так и ушли, не записав ничего.
