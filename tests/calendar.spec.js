@@ -80,8 +80,6 @@ test("календарь: неделя, день, месяц, перенос м�
   await timed.click();
   const dialog = page.locator("#review-dialog");
   await expect(dialog).toBeVisible();
-  const propsBar = page.locator(".props-bar");
-  if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
   await expect(page.locator("#review-end")).toBeVisible();
   await page.locator("#review-end").fill("13:30");
   await page.keyboard.press("Escape");
@@ -308,12 +306,13 @@ test("своя серия: повторы в сетке, «только этот
   const blocks = calendar.locator(".cal-ev.task", { hasText: "Стендап" });
   await expect(blocks).toHaveCount(7);
   await expect(blocks.first().locator(".cal-ev-repeat")).toHaveAttribute("title", "каждый день");
-  // Из карточки, открытой на среду, «Удалить запись» предлагает выбор; «только
+  // Из карточки, открытой на среду, «Удалить» в меню «⋯» предлагает выбор; «только
   // этот повтор» убирает среду, остальные дни остаются.
   const wednesday = shift(monday, 2);
   await calendar.locator(`.cal-col[data-date="${wednesday}"] .cal-ev.task`, { hasText: "Стендап" }).click();
   const dialog = page.locator("#review-dialog");
   await expect(dialog).toBeVisible();
+  await page.locator("#review-dialog .card-more > summary").click();
   await page.locator("#review-dialog .card-delete").click();
   const ask = page.locator(".card-delete-ask");
   await expect(ask).toBeVisible();
@@ -327,8 +326,6 @@ test("своя серия: повторы в сетке, «только этот
   // В карточке правило видно и меняется: «не повторять» оставляет один блок.
   await calendar.locator(`.cal-col[data-date="${shift(monday, 3)}"] .cal-ev.task`, { hasText: "Стендап" }).click();
   await expect(dialog).toBeVisible();
-  const propsBar = page.locator(".props-bar");
-  if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
   const repeat = page.locator("#review-repeat");
   await expect(repeat).toHaveValue("daily:1");
   await expect(page.locator("#review-repeat-until")).toBeVisible();

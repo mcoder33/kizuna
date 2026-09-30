@@ -137,39 +137,12 @@
       </datalist>
       <section id="board" class="app-page board-page" hidden>
         <div class="page-heading">
-          <p class="eyebrow">ДЕЛА · ДОСКА</p>
-          <h2>Дела</h2>
+          <h2>Доска</h2>
         </div>
-        <!-- Панель над доской как строка над базой в Notion: слева виды,
-             справа свойства карточки, фильтр, поиск и новое дело. -->
+        <!-- Над доской только поиск и «+ Дело»: видов, свойств и фильтра нет.
+             Слева прибита колонка «Сделано», дальше колонки человека. -->
         <div class="board-controls">
-          <div class="board-views" role="group" aria-label="Вид доски">
-            <button type="button" data-board-view="columns" title="По колонкам" aria-label="По колонкам" aria-pressed="true"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2" width="3.5" height="12" rx="1"/><rect x="6.5" y="2" width="3.5" height="8" rx="1"/><rect x="11.5" y="2" width="3.5" height="10" rx="1"/></svg><span>По колонкам</span></button>
-            <button type="button" data-board-view="dates" title="По датам" aria-label="По датам" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 7h12M5.5 1.5v3M10.5 1.5v3"/></svg><span>По датам</span></button>
-            <button type="button" data-board-view="projects" title="По проектам" aria-label="По проектам" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v6.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 12.5z"/></svg><span>По проектам</span></button>
-            <button type="button" data-board-view="tags" title="По тегам" aria-label="По тегам" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2.5h5.2L14 9.3 9.3 14 2.5 7.2z"/><circle cx="5.5" cy="5.5" r="1"/></svg><span>По тегам</span></button>
-            <button type="button" data-board-view="circles" title="По кругам" aria-label="По кругам" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6" cy="8" r="4"/><circle cx="11" cy="8" r="4"/></svg><span>По кругам</span></button>
-            <button type="button" data-board-view="list" title="Список" aria-label="Список" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12"/></svg><span>Список</span></button>
-            <button type="button" data-board-view="waiting" title="Я жду" aria-label="Я жду" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/></svg><span>Я жду</span></button>
-          </div>
           <div class="board-tools">
-            <button type="button" id="board-props-toggle" aria-pressed="false" aria-controls="board-props">Свойства</button>
-            <details class="board-filter" id="board-filter">
-              <summary id="board-filter-summary">Фильтр</summary>
-              <div class="board-filter-popover">
-                <p class="board-filter-label">Тип</p>
-                <div class="board-filter-row" id="board-filter-type" role="group" aria-label="Тип дела">
-                  <button type="button" data-board-type="all" aria-pressed="true">Все</button>
-                  <button type="button" data-board-type="task" aria-pressed="false">Задачи</button>
-                  <button type="button" data-board-type="meeting_event" aria-pressed="false">Встречи</button>
-                </div>
-                <p class="board-filter-label">Проект</p>
-                <div class="board-filter-row" id="board-filter-projects" role="group" aria-label="Проект"></div>
-                <p class="board-filter-label" id="board-filter-circles-label" hidden>Круг</p>
-                <div class="board-filter-row" id="board-filter-circles" role="group" aria-label="Круг" hidden></div>
-                <button type="button" class="board-filter-reset" id="board-filter-reset">Сбросить</button>
-              </div>
-            </details>
             <label class="board-search">
               <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>
               <input id="board-search" type="search" placeholder="Поиск" aria-label="Поиск по делам" autocomplete="off" />
@@ -177,20 +150,13 @@
             <button type="button" class="board-new" id="board-new">+ Дело</button>
           </div>
         </div>
-        <div class="board-props" id="board-props" hidden>
-          <span>На карточке:</span>
-          <label><input type="checkbox" data-board-prop="people" checked />Люди</label>
-          <label><input type="checkbox" data-board-prop="type" checked />Теги</label>
-          <label><input type="checkbox" data-board-prop="due" checked />Срок</label>
-          <label><input type="checkbox" data-board-prop="project" checked />Проект</label>
-          <label><input type="checkbox" data-board-prop="priority" checked />Важность</label>
-          <label><input type="checkbox" data-board-prop="files" checked />Вложения</label>
-          <span class="board-props-sep"></span>
-          <label><input type="checkbox" data-board-prop="compact" />Компактно</label>
-        </div>
         <div class="board-segments" id="board-segments" role="tablist" aria-label="Колонки"></div>
         <div id="board-columns" class="board-columns" aria-label="Колонки доски"></div>
       </section>
+
+      <!-- «Сделано»: три числа, неделя столбиками, по колонкам и список по дням.
+           Страницу собирает public/app.js (loadDone). -->
+      <section id="done" class="app-page done-page" hidden aria-label="Сделано"></section>
 
       <!-- Круги: разговоры как в Телеграме — папки, список, разговор и
            «Информация» с людьми и границей. Ни ленты, ни своей доски. Страницу
@@ -775,14 +741,6 @@
     <dialog id="review-dialog" tabindex="-1" aria-label="Карточка записи">
       <button id="review-close" class="dialog-close" type="button" aria-label="Закрыть карточку"></button>
       <section id="review" class="review" aria-live="polite"></section>
-      <div class="card-resize" data-dir="n" aria-hidden="true"></div>
-      <div class="card-resize" data-dir="s" aria-hidden="true"></div>
-      <div class="card-resize" data-dir="e" aria-hidden="true"></div>
-      <div class="card-resize" data-dir="w" aria-hidden="true"></div>
-      <div class="card-resize" data-dir="ne" aria-hidden="true"></div>
-      <div class="card-resize" data-dir="nw" aria-hidden="true"></div>
-      <div class="card-resize" data-dir="se" aria-hidden="true"></div>
-      <div class="card-resize" data-dir="sw" aria-hidden="true"></div>
     </dialog>
     <dialog id="preview-dialog" aria-label="Просмотр вложения">
       <div class="preview-head">

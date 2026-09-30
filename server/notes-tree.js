@@ -536,7 +536,7 @@ function deedState(db, userId, row) {
     state: done ? 'done' : onBoard ? 'open' : 'other',
     type: classification.primaryType,
     projectionIds: projections,
-    column: onBoard ? column?.name || 'Входящие' : null,
+    column: onBoard ? column?.name || db.prepare('SELECT name FROM board_columns WHERE user_id IS ? ORDER BY position, created_at LIMIT 1').get(userId)?.name || 'Дела' : null,
     due: classification.entities?.schedule?.display || null,
   };
 }

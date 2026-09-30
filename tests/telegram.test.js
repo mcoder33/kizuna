@@ -122,6 +122,8 @@ test('a message is recorded and parsed exactly like the main page input', async 
     assert.equal(viaTelegram.user_id, ctx.api.user.id);
     assert.equal(viaTelegram.origin, 'telegram');
     assert.equal(viaTelegram.overrides_json, null, 'тип выбирает модель, как на главной');
+    // Карточка показывает «Откуда»: полная запись знает, что она из Telegram, а с главной — ни откуда.
+    assert.equal((await ctx.api.get(`/api/captures/${viaTelegram.id}`).expect(200)).body.entry.origin, 'telegram');
 
     // Та же запись с главной — для сравнения: разбор должен совпасть.
     const main = (await ctx.api.post('/api/captures').set('Prefer', 'respond-async').send({ raw: text }).expect(202)).body;
@@ -129,6 +131,7 @@ test('a message is recorded and parsed exactly like the main page input', async 
     await eventually(() => assert.ok(ctx.fake.said().some(line => line.method === 'editMessageText')));
     const classification = id => JSON.parse(ctx.db.prepare("SELECT classification_json FROM interpretations WHERE capture_id=? AND status='active'").get(id).classification_json);
     const mine = classification(viaTelegram.id), theirs = classification(main.captureId);
+    assert.equal((await ctx.api.get(`/api/captures/${main.captureId}`).expect(200)).body.entry.origin, null);
     assert.equal(mine.primaryType, 'task');
     assert.equal(mine.primaryType, theirs.primaryType);
     assert.equal(mine.summary, theirs.summary);

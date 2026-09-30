@@ -398,7 +398,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   registerNotesRoutes(app, { db, notifyJournal, queueCapture: async (user, raw, overrides) => {
     const gate = await spendGate(user, undefined);
     const selectedProvider = await snapshotProvider(ai, gate.provider);
-    const queued = enqueueCaptureJob(db, { userId: user.id, raw, selectedProvider, selectedModel: null, overrides });
+    const queued = enqueueCaptureJob(db, { userId: user.id, raw, selectedProvider, selectedModel: null, overrides, origin: 'notes' });
     captureJobWorker.wake();
     return queued;
   } });

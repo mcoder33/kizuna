@@ -297,7 +297,9 @@ test("ambiguous async meeting has a compact clarification action", async ({
   await expect(page.locator("#review")).toBeHidden();
   await card.locator(".entry-title").click();
   await expect(page.locator("#review")).toBeVisible();
-  await expect(page.locator("#review-primary-type")).toBeVisible();
+  // Типа у записи нет: вместо выбора типа в карточке — день и колонка.
+  await expect(page.locator("#review-date")).toBeVisible();
+  await expect(page.locator("#review-primary-type")).toHaveCount(0);
   await expect(page.locator(".review-confidence")).toBeHidden();
 });
 test("user completion survives reload, is single-flight, and undo returns a todo to work", async ({
@@ -785,16 +787,14 @@ test("correction from a today card after reload is single-flight", async ({
     .filter({ hasText: raw })
     .first();
   await card.locator(".entry-title").click();
-  const propsBar = page.locator(".props-bar");
-  if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
-  await page.locator("#review-project").fill("Свой проект");
+  await page.locator("#review-people").fill("Свой человек");
   // Кнопки «сохранить» нет: свойства уходят при закрытии карточки. Второй
   // клик по крестику попадает в уже закрывающуюся карточку — уточнение одно.
   await page.locator("#review-close").evaluate((button) => {
     button.click();
     button.click();
   });
-  await expect.poll(async () => (await entryByRaw(page, raw)).interpretation.classification.entities.projects).toContain("Свой проект");
+  await expect.poll(async () => (await entryByRaw(page, raw)).interpretation.classification.entities.people).toContain("Свой человек");
   expect(corrections).toBe(1);
 });
 test("correction from a plan card after reload is single-flight and creates one version", async ({
@@ -815,16 +815,14 @@ test("correction from a plan card after reload is single-flight and creates one 
     .filter({ hasText: raw })
     .first();
   await card.locator(".entry-title").click();
-  const propsBar = page.locator(".props-bar");
-  if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
-  await page.locator("#review-project").fill("Attention проект");
+  await page.locator("#review-people").fill("Attention человек");
   await page.locator("#review-close").evaluate((button) => {
     button.click();
     button.click();
   });
   await expect.poll(async () => (await entryByRaw(page, raw)).interpretation.version).toBe(2);
   const entry = await entryByRaw(page, raw);
-  expect(entry.interpretation.classification.entities.projects).toContain("Attention проект");
+  expect(entry.interpretation.classification.entities.people).toContain("Attention человек");
   expect(corrections).toBe(1);
 });
 test("memory disables controls while pending and restores them after the response", async ({
@@ -1137,7 +1135,7 @@ test("«Сегодня» говорит, просрочено дело или н
 
   // В самой карточке видно, когда запись сделана.
   await card("купить кофе").locator(".entry-title").click();
-  await expect(page.locator(".card-written")).toContainText(/Записано: сегодня, \d{2}:\d{2}/);
+  await expect(page.locator("#review-dialog .side-quiet")).toContainText(/Поле записи · сегодня, \d{2}:\d{2}/);
   // И ни одной подчёркнутой кнопки: подчёркивание читалось как ссылка.
   const underlined = await page.evaluate(() =>
     [...document.querySelectorAll("#review-dialog button, #review-dialog a")].filter((node) =>

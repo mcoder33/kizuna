@@ -1475,11 +1475,7 @@ button.primary:hover {
 #review-dialog .review::-webkit-scrollbar {
   display: none;
 }
-.card-written {
-  margin: -6px 0 0;
-  font-size: 12px;
-  color: var(--muted);
-}
+
 #review-dialog .review h2 {
   margin: 0 0 12px;
   font-size: 20px;
@@ -1492,26 +1488,7 @@ button.primary:hover {
   gap: 14px;
   margin-top: 18px;
 }
-/* Тихая кнопка, а не ссылка: подчёркивание в карточке читалось как гиперссылка
-   и спорило с текстом заметки. */
-#review-dialog .review-form > button {
-  justify-self: end;
-  margin-top: 2px;
-  padding: 6px 12px;
-  border: 1px solid var(--line);
-  border-radius: 99px;
-  background: var(--n-100);
-  color: var(--muted);
-  font-size: 12px;
-  text-decoration: none;
-}
-#review-dialog .review-form > button:hover {
-  border-color: var(--n-85);
-  background: var(--wash);
-}
-#review-dialog .review-form > button:hover {
-  color: var(--ink);
-}
+
 .dialog-close {
   position: absolute;
   top: 14px;
@@ -1624,14 +1601,7 @@ button.primary:hover {
 .review-form button {
   justify-self: start;
 }
-.review-raw {
-  font-size: 13px;
-  background: var(--n-100);
-  border: 1px solid var(--red-90);
-  border-radius: 9px;
-  padding: 9px;
-  margin: 12px 0 0;
-}
+
 .review-question {
   margin: 0;
   color: var(--red-49-3);
@@ -1788,25 +1758,6 @@ dialog form > div {
   color: var(--tint-auto);
 }
 
-/* Удаление записи — внизу карточки, тихое, но не спрятанное. */
-.card-delete {
-  display: block;
-  margin: 18px 0 0;
-  padding: 7px 0;
-  font: inherit;
-  font-size: 12.5px;
-  color: var(--muted);
-  background: none;
-  border: 0;
-  cursor: pointer;
-}
-.card-delete:hover {
-  color: var(--coral);
-}
-.card-delete:disabled {
-  cursor: wait;
-  opacity: 0.6;
-}
 .sr-only {
   position: absolute;
   width: 1px;
@@ -2153,7 +2104,7 @@ dialog form > div {
   background: var(--n-100);
   box-shadow: 0 0 0 2px var(--violet-54-a16);
 }
-.review-raw .md-block,
+
 .answer .md-block,
 .source .md-block {
   padding: 0;
@@ -2487,19 +2438,6 @@ dialog form > div {
   margin: 7px 0 0;
   color: var(--muted);
   font-size: 11px;
-}
-.card-source {
-  margin-top: 18px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-}
-.card-source summary {
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 12px;
-}
-.card-source .review-raw {
-  margin-top: 10px;
 }
 
 .props .completion-button {
@@ -3579,7 +3517,6 @@ dialog form > div {
   font-size: 13px;
 }
 
-
 /* ── меню разметки по «/» ────────────────────────────────────────────────────
    Живёт в body, а не внутри поля: поле прокручивается и обрезает содержимое,
    и список выпадал бы наполовину. Позицию считает slash-menu.js по каретке. */
@@ -3736,60 +3673,13 @@ dialog form > div {
     margin: 0;
     border-radius: 0;
   }
-  /* На телефоне карточка во весь экран — тянуть нечего. */
-  #review-dialog .card-resize {
-    display: none;
-  }
+  
+
 }
 #review-dialog::backdrop {
   background: rgba(15, 15, 15, 0.6);
 }
-/* Ручки изменения размера: невидимые полосы вдоль краёв и квадраты в углах.
-   Лежат внутри карточки (overflow: hidden срезал бы всё снаружи), поверх
-   содержимого, но не перекрывают крестик — тот выше по z-index. */
-#review-dialog .card-resize {
-  position: absolute;
-  z-index: 1;
-  touch-action: none;
-  user-select: none;
-}
-#review-dialog .card-resize[data-dir="n"],
-#review-dialog .card-resize[data-dir="s"] {
-  left: 10px;
-  right: 10px;
-  height: 6px;
-  cursor: ns-resize;
-}
-#review-dialog .card-resize[data-dir="e"],
-#review-dialog .card-resize[data-dir="w"] {
-  top: 10px;
-  bottom: 10px;
-  width: 6px;
-  cursor: ew-resize;
-}
-#review-dialog .card-resize[data-dir="n"] { top: 0; }
-#review-dialog .card-resize[data-dir="s"] { bottom: 0; }
-#review-dialog .card-resize[data-dir="e"] { right: 0; }
-#review-dialog .card-resize[data-dir="w"] { left: 0; }
-#review-dialog .card-resize[data-dir="ne"],
-#review-dialog .card-resize[data-dir="nw"],
-#review-dialog .card-resize[data-dir="se"],
-#review-dialog .card-resize[data-dir="sw"] {
-  width: 12px;
-  height: 12px;
-}
-#review-dialog .card-resize[data-dir="ne"] { top: 0; right: 0; cursor: nesw-resize; }
-#review-dialog .card-resize[data-dir="sw"] { bottom: 0; left: 0; cursor: nesw-resize; }
-#review-dialog .card-resize[data-dir="nw"] { top: 0; left: 0; cursor: nwse-resize; }
-#review-dialog .card-resize[data-dir="se"] { bottom: 0; right: 0; cursor: nwse-resize; }
-/* Пока тянут — текст под курсором не выделяется, а курсор не меняется. */
-#review-dialog.resizing,
-#review-dialog.resizing * {
-  user-select: none;
-}
-#review-dialog.resizing .review {
-  pointer-events: none;
-}
+
 /* Колонка страницы: 708px по центру, снизу — воздух, как на пустой странице. */
 #review-dialog .review {
   height: 100%;
@@ -3977,39 +3867,7 @@ dialog form > div {
   background: var(--nt-hover);
   color: var(--nt-text);
 }
-#review-dialog .card-outcome {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 560px;
-  height: 40px;
-  margin-top: 8px;
-  padding: 0 8px 0 12px;
-  border-radius: 10px;
-  box-shadow: inset 0 0 0 1px var(--nt-divider);
-}
-#review-dialog .card-outcome:focus-within {
-  box-shadow: inset 0 0 0 1px var(--green);
-}
-#review-dialog .card-outcome input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--nt-text);
-  font: inherit;
-  font-size: 14.5px;
-}
-#review-dialog .card-outcome kbd {
-  font-size: 11px;
-  color: var(--nt-tertiary);
-}
-#review-dialog .card-outcome-saved {
-  margin: 6px 0 0;
-  font-size: 14px;
-  color: var(--nt-secondary);
-}
+
 /* Шапка списка, из которого открыли карточку: откуда и который по счёту, и
    стрелки к соседним делам — слева от крестика. */
 #review-dialog .card-nav {
@@ -4144,16 +4002,7 @@ dialog form > div {
     top: 4px;
   }
 }
-/* «Записано» — первая строка свойств, с часами. */
-#review-dialog .card-written {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 34px;
-  margin: 8px 0 0;
-  font-size: 14px;
-  color: var(--nt-secondary);
-}
+
 #review-dialog .review-question {
   font-size: 14px;
   color: var(--nt-red);
@@ -4170,53 +4019,7 @@ dialog form > div {
 #review-dialog .props {
   gap: 2px;
 }
-/* Селектор перекрывает общее оформление кнопок формы (#review-dialog
-   .review-form > button): строка свойств — тихий текст без рамки, содержимое
-   стоит по левому краю заголовка (отрицательное поле съедает свой отступ). */
-#review-dialog .review-form > button.props-bar {
-  display: flex;
-  align-items: center;
-  justify-self: stretch;
-  gap: 9px;
-  width: calc(100% + 6px);
-  margin: 2px 0 4px -6px;
-  padding: 5px 6px;
-  border: 0;
-  border-radius: 6px;
-  background: none;
-  font: inherit;
-  font-size: 14px;
-  text-align: left;
-  cursor: pointer;
-  color: var(--nt-secondary);
-}
-#review-dialog .review-form > button.props-bar:hover {
-  border: 0;
-  background: var(--nt-hover);
-}
-#review-dialog .props-chevron {
-  flex: none;
-  width: 0;
-  height: 0;
-  border-left: 5px solid var(--nt-tertiary);
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  transition: transform 0.15s ease;
-}
-#review-dialog .props-bar.open .props-chevron {
-  transform: rotate(90deg);
-}
-#review-dialog .props-summary {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--nt-text);
-}
-#review-dialog .props-summary.is-label {
-  color: var(--nt-secondary);
-}
+
 #review-dialog .prop {
   grid-template-columns: 160px minmax(0, 1fr);
   gap: 8px;
@@ -4480,48 +4283,18 @@ dialog form > div {
 #review-dialog .file-tile {
   border-radius: 4px;
 }
-#review-dialog .card-source {
-  margin-top: 20px;
-  padding-top: 6px;
-  border-top: 1px solid var(--nt-divider);
-}
-#review-dialog .card-source summary {
-  padding: 4px 6px;
-  border-radius: 4px;
-  font-size: 14px;
-  color: var(--nt-secondary);
-}
-#review-dialog .card-source summary:hover {
-  background: var(--nt-hover);
-}
-#review-dialog .review-raw {
-  margin-top: 8px;
-  border: 1px solid var(--nt-divider);
-  border-radius: 4px;
-  background: none;
-  font-size: 14px;
-}
+
 #review-dialog .entry-meta {
   color: var(--nt-tertiary);
 }
-#review-dialog .card-delete {
-  margin-top: 14px;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 14px;
-  color: var(--nt-red);
-}
-#review-dialog .card-delete:hover {
-  background: rgba(235, 87, 87, 0.1);
-  color: var(--nt-red);
-}
+
 /* Тело — прямо на листе: рамка и подложка остались от textarea-эпохи. */
 #review-dialog #card-body-editor {
-  min-height: 220px;
+  min-height: 72px;
   padding: 6px 0;
   border: 0;
   border-radius: 0;
-  font-size: 16px;
+  font-size: 15px;
 }
 #review-dialog .card-body {
   margin-top: 10px;
@@ -5063,28 +4836,6 @@ dialog form > div {
   --st-ontime: var(--blue-61);
   --st-none: var(--n-62);
 }
-.entry-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13.5px;
-  font-weight: 600;
-  line-height: 1;
-  white-space: nowrap;
-}
-.entry-status .status-icon { display: inline-flex; }
-.entry-status .status-icon svg { display: block; }
-.entry-status.st-done { color: var(--st-done); }
-.entry-status.st-late { color: var(--st-late); }
-.entry-status.st-today { color: var(--st-today); }
-.entry-status.st-ontime { color: var(--st-ontime); }
-.entry-status.st-none { color: var(--st-none); }
-/* чип в свёрнутой строке свойств — чуть мельче, по базовой линии текста */
-#review-dialog .props-summary .entry-status {
-  font-size: 12.5px;
-  position: relative;
-  top: 1.5px;
-}
 
 /* ── доска: дела как база в Notion ──────────────────────────────────────────
    Колонки без фона, подпись колонки — цветная пилюля со счётчиком; карточка —
@@ -5147,7 +4898,7 @@ body {
   border: 1.5px dashed var(--line);
 }
 .board-column.ghost .board-add-button { margin: 0; }
-/* Шапка: пилюля, счётчик и по наведению «⋯» и «+». */
+/* Шапка: название, счётчик и по наведению «⋯» и «+». */
 .board-col-head {
   display: flex;
   align-items: center;
@@ -5156,7 +4907,7 @@ body {
   padding: 2px 5px 9px;
   cursor: grab;
 }
-.board-column.inbox .board-col-head { cursor: default; }
+
 .board-pill {
   display: inline-flex;
   align-items: center;
@@ -5171,16 +4922,10 @@ body {
 }
 /* В шапке пилюля без заливки: имя чернилами, цвет — точкой перед ним. */
 .board-col-head .board-pill,
-.board-hidden-toggle .board-pill,
-.board-segment .board-pill { background: none; padding: 0; color: var(--ink); }
-.board-pill::before {
-  content: "";
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--tone);
-  flex: none;
-}
+.board-segment .board-pill { background: none; padding: 0; color: var(--ink); min-width: 0; }
+.board-col-name { cursor: text; }
+.board-col-head a.board-col-name { color: inherit; text-decoration: none; cursor: pointer; }
+.board-col-head a.board-col-name:hover { text-decoration: underline; text-underline-offset: 3px; }
 .board-col-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5253,26 +4998,6 @@ body {
   cursor: pointer;
 }
 .board-menu-popover > button:hover { background: var(--hairline); }
-.board-menu-label {
-  margin: 6px 0 2px;
-  padding: 0 9px;
-  font-size: 10.5px;
-  font-weight: 800;
-  letter-spacing: 0.8px;
-  text-transform: uppercase;
-  color: var(--n-72);
-}
-.board-colors { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 7px 6px; }
-.board-swatch {
-  width: 20px;
-  height: 20px;
-  border: 0;
-  border-radius: 5px;
-  cursor: pointer;
-  padding: 0;
-  box-shadow: inset 0 0 0 1px var(--n-25-a8);
-}
-.board-swatch.is-current { box-shadow: inset 0 0 0 2px var(--ink); }
 
 /* Цвета: пилюли колонок, чипы проектов и типов, аватары. */
 .c-gray { --tone: var(--fmt-gray); --tone-bg: var(--fmt-bg-gray); }
@@ -5285,21 +5010,12 @@ body {
 .c-pink { --tone: var(--fmt-pink); --tone-bg: var(--fmt-bg-pink); }
 .c-red { --tone: var(--fmt-red); --tone-bg: var(--fmt-bg-red); }
 [class*="c-"] { background: var(--tone-bg); color: var(--tone); }
-.board-swatch.c-gray { background: var(--fmt-gray); }
-.board-swatch.c-brown { background: var(--fmt-brown); }
-.board-swatch.c-orange { background: var(--fmt-orange); }
-.board-swatch.c-yellow { background: var(--fmt-yellow); }
-.board-swatch.c-green { background: var(--fmt-green); }
-.board-swatch.c-blue { background: var(--fmt-blue); }
-.board-swatch.c-purple { background: var(--fmt-purple); }
-.board-swatch.c-pink { background: var(--fmt-pink); }
-.board-swatch.c-red { background: var(--fmt-red); }
 
 .board-cards {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-height: 10px;
+  min-height: 44px;
 }
 /* Карточка — та же плашка, что запись в колонке «Сегодня»: скругление 12px,
    без рамки и тени, фон по состоянию (песочный — ожидает, розовый —
@@ -5397,23 +5113,7 @@ body {
 .btag.project::before { content: none; }
 .btag.urgent.c-red { background: var(--red-97-2); color: var(--orange-54); font-weight: 400; }
 .btag.c-gray { background: var(--n-97); color: var(--blue-54-2); }
-.board-meta.people { gap: 4px 10px; font-size: 12px; color: var(--ink); }
-/* Состояние — пилюлей, как «просрочено» и «в срок» на «Сегодня». */
-.board-meta .entry-status {
-  font-size: 10px;
-  gap: 4px;
-  padding: 2px 7px;
-  border-radius: 99px;
-  line-height: 1.4;
-  background: var(--hairline);
-}
-.board-meta .entry-status svg { width: 11px; height: 11px; }
-.board-meta .entry-status.st-late { background: var(--tint-late); color: var(--red-50); font-weight: 600; }
-.board-meta .entry-status.st-today { background: var(--tint-wait); color: var(--yellow-51); }
-.board-meta .entry-status.st-ontime { background: var(--n-97-2); color: var(--teal-54); }
-.board-meta .entry-status.st-none { background: var(--hairline); color: var(--n-62); }
-.board-meta .entry-status.st-done { background: var(--n-97-2); color: var(--green); font-weight: 600; }
-.board-card.overdue .board-meta .entry-status.st-late { background: var(--n-100-2); }
+
 .board-who { display: inline-flex; align-items: center; gap: 6px; }
 .board-ava {
   width: 18px;
@@ -5427,7 +5127,7 @@ body {
   letter-spacing: 0.2px;
   flex: none;
 }
-.board-meta.compact .board-who + .board-who .board-ava { margin-left: -6px; }
+
 /* Чип свойства: мягкая заливка и текст того же тона. Без класса цвета — как
    раньше, серым текстом без фона (срок, «сделано»). */
 .btag { color: var(--n-62); white-space: nowrap; }
@@ -5469,36 +5169,6 @@ body {
   color: var(--ink);
 }
 
-/* Скрытые группы справа от доски. */
-.board-hidden {
-  flex: 0 0 200px;
-  padding-top: 3px;
-}
-.board-hidden h6 {
-  margin: 0 0 6px;
-  padding: 2px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--n-72);
-}
-.board-hidden-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  border: 0;
-  background: none;
-  border-radius: 6px;
-  padding: 5px 6px;
-  color: var(--n-62);
-  cursor: pointer;
-  font: inherit;
-}
-.board-hidden-toggle:hover { background: var(--n-25-a8); color: var(--ink); }
-.board-hidden-toggle .board-col-count { margin-left: auto; }
-.board-column.closed .board-card { cursor: default; opacity: 0.75; }
-.board-column.closed .board-title { text-decoration: line-through; text-decoration-color: var(--n-79); }
-
 /* заголовок карточки правится на месте: поле выглядит тем же заголовком */
 #review-dialog .review h2.card-title {
   cursor: text;
@@ -5534,18 +5204,7 @@ body {
 main:has(> #board:not([hidden])) { max-width: none; padding-left: 0; padding-right: 0; }
 .board-page { padding: 0 var(--header-gutter); }
 .board-page .page-heading { margin-bottom: 8px; }
-.board-page .board-controls,
-.board-page .board-props { margin-right: 0; }
-/* Список читается колонкой по центру — и шапка доски встаёт в ту же колонку:
-   заголовок, виды и инструменты по краям списка, а не верхней строки. Чтобы ряд
-   уместился в колонку, у невыбранных видов остаются значки, а подпись — у
-   выбранного и во всплывающей подсказке. */
-.board-page:has(> .board-columns.list) :is(.page-heading, .board-controls, .board-props) {
-  max-width: 820px;
-  margin-left: auto;
-  margin-right: auto;
-}
-.board-page:has(> .board-columns.list) .board-views button:not([aria-pressed="true"]) svg + span { display: none; }
+.board-page .board-controls{ margin-right: 0; }
 
 /* Панель над доской: виды слева с подчёркиванием активного, инструменты
    справа — как строка над базой в Notion. */
@@ -5558,10 +5217,8 @@ main:has(> #board:not([hidden])) { max-width: none; padding-left: 0; padding-rig
   padding-bottom: 6px;
   border-bottom: 1px solid var(--line);
 }
-.board-views { display: flex; gap: 2px; }
-.board-views button,
-.board-tools > button,
-.board-filter summary {
+
+.board-tools > button{
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -5576,19 +5233,11 @@ main:has(> #board:not([hidden])) { max-width: none; padding-left: 0; padding-rig
   line-height: 1;
   white-space: nowrap;
 }
-.board-views button:hover,
-.board-tools > button:hover,
-.board-filter summary:hover { background: var(--n-25-a8); color: var(--ink); }
-.board-views button[aria-pressed="true"] {
-  color: var(--ink);
-  font-weight: 600;
-  box-shadow: inset 0 -2px 0 var(--ink);
-  border-radius: 6px 6px 0 0;
-}
-.board-views svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+.board-tools > button:hover{ background: var(--n-25-a8); color: var(--ink); }
+
 .board-tools { display: flex; align-items: center; gap: 2px; }
-.board-tools #board-props-toggle[aria-pressed="true"],
-.board-filter.is-active summary { color: var(--fmt-blue); }
+
 .board-new {
   background: var(--fmt-blue);
   color: var(--n-100);
@@ -5597,55 +5246,7 @@ main:has(> #board:not([hidden])) { max-width: none; padding-left: 0; padding-rig
   margin-left: 6px;
 }
 .board-tools > .board-new:hover { background: var(--fmt-blue); color: var(--n-100); filter: brightness(1.08); }
-.board-filter { position: relative; }
-.board-filter summary { list-style: none; }
-.board-filter summary::-webkit-details-marker { display: none; }
-.board-filter-popover {
-  position: absolute;
-  right: 0;
-  top: 32px;
-  z-index: 6;
-  width: 260px;
-  padding: 10px;
-  background: var(--paper);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: 0 12px 30px var(--n-23-a22);
-}
-.board-filter-label {
-  margin: 4px 0 6px;
-  font-size: 10.5px;
-  font-weight: 800;
-  letter-spacing: 0.8px;
-  text-transform: uppercase;
-  color: var(--n-72);
-}
-.board-filter-row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
-.board-filter-row > button {
-  font: inherit;
-  font-size: 12.5px;
-  border: 1px solid var(--line);
-  background: none;
-  color: var(--n-52);
-  border-radius: 5px;
-  padding: 3px 8px;
-  cursor: pointer;
-}
-.board-filter-row > button[aria-pressed="true"] { border-color: var(--ink); color: var(--ink); font-weight: 600; }
-.board-filter-row > .btag { border: 1px solid transparent; }
-.board-filter-row > .btag[aria-pressed="true"] { border-color: currentColor; font-weight: 600; }
-.board-filter-empty { font-size: 12.5px; color: var(--n-72); }
-.board-filter-reset {
-  font: inherit;
-  font-size: 12.5px;
-  border: 0;
-  background: none;
-  color: var(--n-62);
-  cursor: pointer;
-  padding: 4px 6px;
-  border-radius: 5px;
-}
-.board-filter-reset:hover { background: var(--n-25-a8); color: var(--ink); }
+
 .board-search {
   display: inline-flex;
   align-items: center;
@@ -5669,88 +5270,27 @@ main:has(> #board:not([hidden])) { max-width: none; padding-left: 0; padding-rig
 }
 .board-search input:focus, .board-search input:not(:placeholder-shown) { width: 160px; }
 .board-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
-/* Панель свойств карточки. */
-.board-props {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  margin: -6px 24px 14px 0;
-  padding: 7px 10px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--n-98-4);
-  font-size: 12.5px;
-}
-.board-props > span { color: var(--n-72); margin-right: 6px; }
-.board-props-sep { width: 1px; height: 16px; background: var(--line); margin: 0 4px; }
-.board-props label {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-.board-props label:hover { background: var(--n-25-a8); }
-.board-props input { margin: 0; accent-color: var(--fmt-blue); }
-.board-group-label {
-  font-size: 10.5px;
-  font-weight: 800;
-  letter-spacing: 0.8px;
-  text-transform: uppercase;
-  color: var(--n-72);
-  padding: 5px 2px 1px;
-}
+
 .board-column.drop-over {
   box-shadow: inset 0 0 0 2px var(--focus);
   border-radius: 10px;
 }
 
-/* Вид «Список»: те же группы по срокам, но столбиком в колонке страницы —
-   дела читаются сверху вниз, без прокрутки вбок. Каждое дело — строка:
-   название и свойства в одну линию, на узком экране — в две. */
-.board-columns.list {
-  flex-direction: column;
-  gap: 26px;
-  max-width: 820px;
-  margin: 0 auto;
-  overflow-x: visible;
-  padding-left: 0;
-  padding-right: 0;
-  cursor: default;
+/* «Сделано» прибита слева и не двигается: при прокрутке ленты остальные колонки
+   уходят под неё. Шапка не тянется, меню нет; карточки зачёркнуты, кружок
+   залит и возвращает дело в работу. */
+.board-done-column {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: var(--paper);
+  box-shadow: 8px 0 14px -8px var(--n-23-a22);
 }
-.board-columns.list .board-column {
-  flex: none;
-  width: 100%;
-  min-height: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-}
-.board-columns.list .board-col-head {
-  margin: 0 0 8px;
-  padding: 0 2px 8px;
-  border-bottom: 1px solid var(--line);
-}
-.board-columns.list .board-pill { font-size: 15px; }
-.board-columns.list .board-group-label { padding-top: 8px; }
-.board-columns.list .board-card {
-  align-items: center;
-  padding: 10px 14px 10px 12px;
-  border-radius: 10px;
-}
-.board-columns.list .board-body {
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 14px;
-}
-.board-columns.list .board-title-row { flex: 1 1 260px; }
-.board-columns.list .board-title { font-size: 14px; }
-.board-columns.list .board-meta.people .board-who > i + * { display: none; }
-.board-columns.list .board-meta.people { gap: 4px; }
-.board-columns.list .board-meta.people .board-who + .board-who .board-ava { margin-left: -6px; }
+.board-done-column .board-col-head { cursor: default; }
+.board-done-column.done-drop { box-shadow: inset 0 0 0 2px var(--green); }
+.board-done-empty { margin: 4px 6px 8px; font-size: 12.5px; color: var(--muted); }
+.board-card.closed { cursor: default; background: transparent; }
+.board-card.closed .board-title { text-decoration: line-through; text-decoration-color: var(--n-79); color: var(--muted); }
 
 /* Телефон: одна колонка на экран, сверху сегмент подписей колонок. */
 .board-segments { display: none; }
@@ -5760,11 +5300,7 @@ main:has(> #board:not([hidden])) { max-width: none; padding-left: 0; padding-rig
      разговора — оказывается уже экрана. Подписи неактивных видов спрятаны,
      сам ряд при нужде едет вбок внутри себя. */
   .board-controls { flex-wrap: wrap; min-width: 0; }
-  .board-views { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
-  .board-views::-webkit-scrollbar { display: none; }
-  .board-views button { padding: 5px 6px; font-size: 13px; }
-  .board-views button svg + span { display: none; }
-  .board-views button[aria-pressed="true"] svg + span { display: inline; }
+
   .board-tools { flex-wrap: wrap; max-width: 100%; }
   .board-segments {
     display: flex;
@@ -5791,25 +5327,12 @@ main:has(> #board:not([hidden])) { max-width: none; padding-left: 0; padding-rig
   .board-segment[aria-selected="true"] { opacity: 1; }
   .board-segment[aria-selected="true"] .board-pill { box-shadow: inset 0 0 0 1.5px currentColor; }
   /* Одна колонка на экран — в поле страницы, как шапка, без ленты вбок. */
-  .board-columns:not(.list) { display: block; margin: 0; padding-left: 0; padding-right: 0; cursor: default; }
-  .board-columns:not(.list) .board-column { display: none; width: 100%; }
-  .board-columns:not(.list) .board-column.is-active { display: block; }
-  .board-columns:not(.list) .board-hidden { display: none; }
-  .board-columns:not(.list) .board-col-tools { opacity: 1; }
-  /* Список на телефоне: строка заголовка не растягивается — её flex-basis
-     в 260px задуман для ширины, а в столбике он превращался в высоту, и
-     карточка вырастала на весь экран. */
-  .board-columns.list .board-body { flex-direction: column; align-items: stretch; gap: 5px; }
-  .board-columns.list .board-title-row { flex: none; }
-  .board-columns.list .board-card { align-items: flex-start; }
-}
+  .board-columns { display: block; margin: 0; padding-left: 0; padding-right: 0; cursor: default; }
+  .board-columns .board-column { display: none; width: 100%; }
+  .board-columns .board-column.is-active { display: block; }
 
-/* «Записано» — компактная строка футера карточки, перед источником и версией */
-#review-dialog .card-written.card-footer-line {
-  min-height: 0;
-  margin: 14px 0 2px;
-  font-size: 12.5px;
-  color: var(--nt-tertiary);
+  .board-columns .board-col-tools { opacity: 1; }
+
 }
 
 /* ── футер карточки: прижат к низу, служебное одной строкой ────────────────── */
@@ -5817,10 +5340,7 @@ main:has(> #board:not([hidden])) { max-width: none; padding-left: 0; padding-rig
   display: flex;
   flex-direction: column;
 }
-#review-dialog .card-footer {
-  margin-top: auto;
-  padding-top: 16px;
-}
+
 #review-dialog .card-files-head {
   display: flex;
   align-items: baseline;
@@ -5834,130 +5354,6 @@ main:has(> #board:not([hidden])) { max-width: none; padding-left: 0; padding-rig
 }
 #review-dialog .card-files-head .secondary {
   margin-left: auto;
-}
-/* Служебный подвал — одной ровной строкой: у всех пунктов один шрифт и одна
-   высота, нажимаемое подсвечивается подложкой, значки — как у свойств. Строка
-   выступает на поле подложки влево и вправо, чтобы текст первого пункта стоял
-   по краю карточки, а черта над ней — по тем же краям. Источник раскрывается
-   листом над строкой, а не распирает её. */
-#review-dialog .card-footer-row {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 6px 10px;
-  flex-wrap: wrap;
-  margin: 18px -10px 0;
-  padding-top: 14px;
-  font-size: 13px;
-  line-height: 20px;
-}
-#review-dialog .card-footer-row::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 10px;
-  right: 10px;
-  border-top: 1px solid var(--nt-divider);
-}
-#review-dialog .card-footer-row > * {
-  margin: 0;
-}
-#review-dialog .card-footer-row :is(.card-calendar-menu > summary, .card-source > summary, .card-delete, .card-written.card-footer-line, .card-calendar-link) {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 32px;
-  margin-block: 0;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 8px;
-  background: none;
-  font: inherit;
-  font-size: 13px;
-  line-height: 20px;
-  white-space: nowrap;
-}
-#review-dialog .card-footer-row :is(.card-calendar-menu > summary, .card-source > summary) {
-  list-style: none;
-  cursor: pointer;
-  color: var(--nt-secondary);
-}
-#review-dialog .card-footer-row :is(.card-calendar-menu > summary, .card-source > summary)::-webkit-details-marker {
-  display: none;
-}
-#review-dialog .card-footer-row :is(.card-calendar-menu > summary, .card-source > summary):hover,
-#review-dialog .card-footer-row .card-source[open] > summary {
-  background: var(--nt-hover);
-  color: var(--nt-text);
-}
-#review-dialog .card-footer-row .card-calendar-menu > summary {
-  color: var(--fmt-blue);
-}
-#review-dialog .card-footer-row .card-calendar-menu > summary .prop-icon {
-  color: inherit;
-}
-#review-dialog .card-footer-row .card-written.card-footer-line {
-  color: var(--nt-tertiary);
-}
-#review-dialog .card-footer-row .card-calendar {
-  gap: 0;
-  font-size: 13px;
-}
-#review-dialog .card-footer-row .card-calendar-link {
-  color: var(--nt-tertiary);
-}
-#review-dialog .card-footer-row .card-source .prop-icon:last-child {
-  transition: transform 0.15s ease;
-}
-#review-dialog .card-footer-row .card-source[open] .prop-icon:last-child {
-  transform: rotate(180deg);
-}
-#review-dialog .card-footer-row .card-source {
-  position: relative;
-  border-top: 0;
-  padding-top: 0;
-}
-#review-dialog .card-source-body {
-  position: absolute;
-  left: 0;
-  bottom: calc(100% + 8px);
-  z-index: 6;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: min(460px, 78vw);
-  max-height: 320px;
-  overflow-y: auto;
-  padding: 12px 14px;
-  border: 1px solid var(--nt-divider);
-  border-radius: 12px;
-  background: var(--nt-bg, var(--paper));
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.18);
-  font-size: 13px;
-  line-height: 1.45;
-  white-space: normal;
-}
-#review-dialog .card-source-body .review-raw {
-  margin: 0;
-}
-#review-dialog .card-source-body .entry-meta {
-  margin: 0;
-}
-#review-dialog .card-footer-row > .card-delete {
-  margin-left: auto;
-  color: var(--nt-red);
-  cursor: pointer;
-}
-#review-dialog .card-footer-row .card-delete .prop-icon {
-  color: inherit;
-}
-#review-dialog .card-footer-row .card-delete:hover {
-  background: rgba(235, 87, 87, 0.1);
-  color: var(--nt-red);
-}
-#review-dialog .card-footer-row .card-delete-ask {
-  margin: 0 0 0 auto;
-  padding: 0 10px;
 }
 
 /* ── панель оформления выделенного текста ──────────────────────────────────
@@ -6233,8 +5629,8 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
   content: ""; position: absolute; left: 50%; top: -2px; width: 36px; height: 4px; margin-left: -18px;
   border-radius: 2px; background: var(--n-72); opacity: 0; transition: opacity 0.15s; pointer-events: none;
 }
-.cal-resize:hover::after, .board-calendar.resizing .cal-resize::after { opacity: 1; }
-.board-calendar.resizing { cursor: ns-resize; }
+.cal-resize:hover::after{ opacity: 1; }
+
 .cal-grid { display: grid; grid-template-columns: 52px repeat(var(--days, 7), minmax(0, 1fr)); position: relative; }
 .cal-hours { position: relative; border-right: 1px solid var(--line); }
 .cal-hours div { height: var(--h); font-size: 10.5px; color: var(--n-72); text-align: right; padding-right: 6px; transform: translateY(-7px); }
@@ -6456,25 +5852,6 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 .review-end-label { font-size: 12px; color: var(--muted); }
 .review-end input[hidden] { display: none; }
 .review-end:has(input[hidden]) .review-end-label { display: none; }
-.card-calendar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); }
-.card-calendar-link { display: inline-flex; gap: 8px; align-items: center; }
-.card-calendar-link a { color: var(--fmt-blue); }
-.card-calendar-remove { font: inherit; font-size: 12px; border: 0; background: none; color: var(--n-72); cursor: pointer; padding: 0; text-decoration: underline; text-underline-offset: 2px; }
-.card-calendar-menu { position: relative; }
-.card-calendar-menu summary { list-style: none; cursor: pointer; color: var(--fmt-blue); font-size: 12.5px; padding: 3px 0; }
-.card-calendar-menu summary::-webkit-details-marker { display: none; }
-.card-calendar-list {
-  position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 5; min-width: 220px;
-  background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 6px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.14); display: flex; flex-direction: column; gap: 2px;
-}
-.card-calendar-target {
-  display: flex; align-items: center; gap: 8px; text-align: left;
-  font: inherit; font-size: 12.5px; border: 0; background: none; color: var(--ink);
-  border-radius: 6px; padding: 6px 8px; cursor: pointer;
-}
-.card-calendar-target:hover { background: var(--n-25-a8); }
-.card-calendar-target:disabled { opacity: 0.5; }
 
 /* Настройки: подключённые календари */
 .calendar-accounts { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
@@ -6789,27 +6166,6 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 .assign-declined { color: var(--red-50); }
 .card-foreign { font-size: 12.5px; color: var(--muted); background: var(--n-98-4); border-radius: 10px; padding: 8px 11px; margin: 0 0 10px; }
 
-/* «я жду»: что я отдал и что с этим стало */
-.board-waiting { padding: 4px 2px 20px; max-width: 860px; width: 100%; }
-.board-waiting-head { margin: 0 0 12px; font-size: 14px; color: var(--muted); }
-.board-waiting-head b { color: var(--ink); }
-.board-waiting-head .late { color: var(--red-50); }
-.board-waiting-hint { margin: 14px 0 0; font-size: 12px; color: var(--n-66); max-width: 68ch; }
-.wait-rows { display: flex; flex-direction: column; gap: 2px; }
-.wait-row { display: grid; grid-template-columns: 150px 1fr auto; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 10px; }
-.wait-row:hover { background: var(--n-98-4); }
-.wait-who { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
-.wait-main { min-width: 0; }
-.wait-title { background: none; border: 0; padding: 0; font: inherit; font-size: 14px; color: var(--ink); cursor: pointer; text-align: left; }
-.wait-title:hover { text-decoration: underline; }
-.wait-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 3px; font-size: 11.5px; color: var(--n-66); }
-.wait-meta .late { color: var(--red-50); }
-.wait-reason { font-style: italic; }
-.wait-state { font-size: 12.5px; color: var(--muted); text-align: right; white-space: nowrap; }
-.wait-state.pending { color: var(--type-todo); }
-.wait-state.done { color: var(--green); }
-.wait-state.declined { color: var(--n-66); }
-
 /* карточка приглашения в круг по ссылке: «зовёт вас в круг» и «Войти в круг» */
 .circle-card { border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; background: var(--paper); }
 .circle-name { margin: 0; font-size: 16px; display: flex; align-items: center; gap: 8px; flex: 1; }
@@ -6819,8 +6175,7 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 .invite-hint { font-size: 11.5px; color: var(--n-66); }
 
 @media (max-width: 640px) {
-  .wait-row { grid-template-columns: 1fr; gap: 4px; }
-  .wait-state { text-align: left; }
+
   .inbox-row { flex-wrap: wrap; }
   .inbox-acts { width: 100%; justify-content: flex-end; }
 }
@@ -8089,3 +7444,269 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0; }
 .entry-people { display: inline-flex; margin-left: 2px; }
 .entry-people .ava.mini { margin-left: -4px; box-shadow: 0 0 0 2px var(--paper); }
 .entry-people .ava.mini:first-child { margin-left: 0; }
+
+/* ── карточка туду: две панели ───────────────────────────────────────────────
+   Слева суть — кружок, название, описание, исходный текст, вложения, а внизу
+   обсуждение; справа серая панель свойств в 224px: «ключ» над «значением». Окно
+   фиксированное, на телефоне — во весь экран, панель свойств под сутью. */
+#review-dialog {
+  --card-w: 880px;
+  --card-h: 720px;
+}
+#review-dialog .review {
+  display: block;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+}
+#review-dialog .card-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 224px;
+  height: 100%;
+}
+#review-dialog .card-main {
+  min-width: 0;
+  overflow-y: auto;
+  padding: 52px 30px 28px;
+  scrollbar-width: none;
+}
+#review-dialog .card-main::-webkit-scrollbar { display: none; }
+#review-dialog.has-talk .card-main { padding-bottom: calc(40px + var(--talk-base, 60px)); }
+#review-dialog .card-side {
+  min-width: 0;
+  overflow-y: auto;
+  padding: 50px 16px 20px;
+  background: var(--nt-callout-gray);
+  border-left: 1px solid var(--nt-divider);
+  scrollbar-width: none;
+}
+#review-dialog .card-side::-webkit-scrollbar { display: none; }
+#review-dialog .talk-dock {
+  right: 224px;
+  padding: 54px 20px calc(16px + env(safe-area-inset-bottom, 0px));
+}
+#review-dialog .review h2.card-title,
+#review-dialog .card-title-edit {
+  font-size: 24px;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  margin: 0 0 12px;
+}
+#review-dialog .card-head.with-tick { padding-left: 38px; }
+#review-dialog .card-tick { top: 2px; width: 26px; height: 26px; }
+#review-dialog .card-main .card-body { margin-top: 6px; }
+#review-dialog .card-main .prop-section {
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--nt-tertiary);
+}
+#review-dialog .card-main .card-markdown { font-size: 15px; }
+#review-dialog .sub-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 0 -4px;
+  padding: 5px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--nt-text);
+  cursor: pointer;
+}
+#review-dialog .sub-add b { font-size: 18px; font-weight: 400; line-height: 1; }
+#review-dialog .sub-add:hover { background: var(--nt-hover); }
+#review-dialog .card-source { margin: 14px 0 0; font-size: 12.5px; color: var(--nt-tertiary); }
+#review-dialog .card-source summary { cursor: pointer; width: fit-content; }
+#review-dialog .card-source summary:hover { color: var(--nt-secondary); }
+#review-dialog .card-source-body {
+  margin-top: 6px;
+  padding: 2px 10px;
+  border-left: 2px solid var(--nt-divider);
+  color: var(--nt-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+#review-dialog .card-main .card-files { margin-top: 18px; }
+/* Панель свойств. */
+#review-dialog .side-prop {
+  display: grid;
+  gap: 6px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--nt-divider);
+}
+#review-dialog .side-prop:last-child { border-bottom: 0; }
+#review-dialog .side-prop[hidden] { display: none; }
+#review-dialog .side-k { font-size: 13px; font-weight: 600; color: var(--nt-secondary); }
+#review-dialog .side-v { position: relative; display: grid; gap: 6px; min-width: 0; font-size: 14px; }
+#review-dialog .side-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+#review-dialog .side-schedule { display: grid; gap: 6px; }
+#review-dialog .side-quiet { color: var(--nt-tertiary); font-size: 13px; }
+#review-dialog .side-v :is(select, input) {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--nt-divider);
+  border-radius: 8px;
+  background: var(--nt-bg);
+  color: var(--nt-text);
+  font: inherit;
+  font-size: 13.5px;
+  appearance: none;
+}
+#review-dialog .side-v select { background-image: none; padding-right: 8px; }
+#review-dialog .side-v input[type="time"] { width: auto; flex: 1 1 70px; }
+#review-dialog .side-v :is(select, input):hover { border-color: var(--nt-hr); }
+#review-dialog .side-v :is(select, input):focus { border-color: var(--nt-blue); outline: 0; }
+#review-dialog .side-v .review-end-label { font-size: 12.5px; color: var(--nt-tertiary); }
+#review-dialog .side-v .review-until { display: flex; align-items: center; gap: 6px; }
+#review-dialog .side-clear {
+  position: absolute;
+  top: -26px;
+  right: -2px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--nt-tertiary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+#review-dialog .side-clear:hover { background: var(--nt-hover); color: var(--nt-text); }
+#review-dialog .side-clear[hidden] { display: none; }
+#review-dialog .side-v .assign-row { display: grid; gap: 4px; }
+#review-dialog .review-form { display: block; margin: 0; padding: 0; border: 0; }
+/* Верхняя полоса: колонка, положение в списке, стрелки, «⋯». */
+#review-dialog .card-nav { right: 48px; }
+#review-dialog .card-nav-col::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--nt-blue);
+}
+#review-dialog .card-nav-col:empty::before { content: none; }
+#review-dialog .card-more { position: relative; }
+#review-dialog .card-more > summary {
+  list-style: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  color: var(--nt-tertiary);
+  cursor: pointer;
+}
+#review-dialog .card-more > summary::-webkit-details-marker { display: none; }
+#review-dialog .card-more > summary:hover,
+#review-dialog .card-more[open] > summary { background: var(--nt-hover); color: var(--nt-secondary); }
+#review-dialog .card-more-pop {
+  position: absolute;
+  right: 0;
+  top: 32px;
+  z-index: 6;
+  min-width: 200px;
+  padding: 5px;
+  border-radius: 10px;
+  background: var(--nt-bg);
+  box-shadow: 0 0 0 1px var(--nt-divider), 0 12px 30px rgba(15, 15, 15, 0.18);
+}
+#review-dialog .card-delete {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--nt-red);
+  cursor: pointer;
+  text-align: left;
+}
+#review-dialog .card-delete:hover { background: var(--nt-hover); }
+#review-dialog .card-delete:disabled { opacity: 0.5; cursor: default; }
+#review-dialog .card-more-pop .card-delete-ask { margin: 4px; }
+@media (max-width: 760px) {
+  #review-dialog .card-layout {
+    display: block;
+    height: 100%;
+    overflow-y: auto;
+  }
+  #review-dialog .card-main { overflow: visible; padding: 52px 18px 20px; }
+  #review-dialog.has-talk .card-main { padding-bottom: 20px; }
+  #review-dialog .card-side {
+    overflow: visible;
+    padding: 6px 18px calc(24px + var(--talk-base, 60px));
+    border-left: 0;
+    border-top: 1px solid var(--nt-divider);
+  }
+  #review-dialog .talk-dock { right: 0; padding: 44px 10px calc(10px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* ── «Сделано» ───────────────────────────────────────────────────────────────
+   Три числа, неделя столбиками одной краской (--green), полоски по колонкам,
+   ниже — список по дням теми же строками, что «Что делал». */
+.done-page { max-width: 820px; margin-inline: auto; }
+.done-nums { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 6px 0 22px; }
+.done-num { display: grid; gap: 2px; padding: 14px 16px; border-radius: 14px; background: var(--wash); }
+.done-num b { font-size: 30px; line-height: 1.1; font-weight: 700; font-variant-numeric: tabular-nums; }
+.done-num span { font-size: 13px; color: var(--muted); }
+.done-num.green { background: color-mix(in srgb, var(--green) 10%, var(--paper)); }
+.done-num.green b { color: var(--green); }
+.done-cap { margin: 0 0 8px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.done-week, .done-cols { margin-bottom: 22px; }
+.done-bars { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; align-items: end; height: 120px; }
+.done-bar { height: 100%; display: flex; align-items: flex-end; justify-content: center; }
+.done-bar-fill {
+  position: relative;
+  display: block;
+  width: 100%;
+  max-width: 44px;
+  border-radius: 8px 8px 3px 3px;
+  background: color-mix(in srgb, var(--green) 45%, var(--paper));
+  min-height: 2px;
+}
+.done-bar.today .done-bar-fill { background: var(--green); }
+.done-bar-n {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -20px;
+  text-align: center;
+  font-size: 12.5px;
+  font-weight: 700;
+  font-style: normal;
+  color: var(--ink);
+}
+.done-bars-x { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; margin-top: 6px; text-align: center; font-size: 12px; color: var(--muted); }
+.done-bars-x .today { color: var(--ink); font-weight: 700; }
+.done-col { display: grid; grid-template-columns: 110px minmax(0, 1fr) 28px; align-items: center; gap: 10px; padding: 3px 0; font-size: 13.5px; }
+.done-col-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.done-col-track { display: block; height: 10px; border-radius: 99px; background: var(--wash); overflow: hidden; }
+.done-col-track i { display: block; height: 100%; border-radius: 99px; background: var(--green); }
+.done-col.meetings .done-col-track i { background: var(--fmt-blue); }
+.done-col b { text-align: right; font-variant-numeric: tabular-nums; }
+.done-empty { margin: 0; font-size: 13px; color: var(--muted); }
+.done-days .shelf-head { margin-top: 20px; }
+.done-days .shelf-head.today { color: var(--green); }
+.done-where { color: var(--muted); background: var(--hairline); }
+@media (max-width: 760px) {
+  .done-nums { gap: 8px; }
+  .done-num { padding: 12px; }
+  .done-num b { font-size: 24px; }
+  .done-col { grid-template-columns: 84px minmax(0, 1fr) 24px; }
+}
+#review-dialog.has-talk .review { padding-bottom: 0; }
+#review-dialog .card-nav-col:not(:empty) + .card-nav-rest:not(:empty)::before { content: " · "; }
+#review-dialog .card-nav-col { font-weight: 650; color: var(--nt-secondary); }

@@ -25,13 +25,11 @@ test("настройки напоминаний личные, push предла�
   at.setDate(at.getDate() + 2);
   const day = at.toISOString().slice(0, 10);
   const created = await (await request.post("/api/captures", { data: { raw: "встретить курьера у подъезда", primaryType: "todo", due: { date: day, time: "14:00" } } })).json();
-  await page.goto("/#board?view=list");
+  await page.goto("/#board");
   const card = page.locator("#board .entry, #board .board-card").filter({ hasText: "встретить курьера" }).first();
   await expect(card).toBeVisible();
   await card.getByText("встретить курьера у подъезда").first().click();
   await expect(page.locator("#review-dialog")).toBeVisible();
-  const propsBar = page.locator(".props-bar");
-  if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
   const remind = page.locator("#review-remind");
   await expect(remind).toBeVisible();
   await expect(remind.locator("option").first()).toHaveText("как в настройках (за час)");

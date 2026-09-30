@@ -59,25 +59,27 @@ test("новая страница: название, текст со ссылк�
   await expect(page.locator(".notes-children")).toContainText("Планы на осень");
 });
 
-test("заметка с «Сегодня» ждёт во «Входящих» и раскладывается по подсказке", async ({ page, request }) => {
+// Записи из поля больше не становятся страницами (любая запись — туду), поэтому
+// во «Входящих» лежит страница, заведённая без места, а не запись с «Сегодня».
+test("страница без места ждёт во «Входящих» и раскладывается по подсказке", async ({ page, request }) => {
   await reset(request);
   const release = await makePage(request, "Релиз 1.4");
-  const { entry } = await (await request.post("/api/captures", { data: { raw: "Про релиз 1.4: changelog и круги" } })).json();
+  // Страница из раздела встаёт в корень; «по правилу» возвращает её во «Входящие».
+  const stray = await makePage(request, "Про релиз 1.4: changelog и круги");
+  await request.put(`/api/pages/${stray.id}/place`, { data: { parent: "auto" } });
   await page.goto("/#notes?view=inbox");
   const row = page.locator(".notes-inbox-row", { hasText: "Про релиз 1.4" });
   await expect(row).toBeVisible();
   await expect(page.locator(".notes-row", { hasText: "Входящие" }).locator(".notes-count")).toHaveText("1");
   await row.getByRole("button", { name: "В «Релиз 1.4»" }).click();
   await expect(page.locator(".notes-inbox")).toContainText("Пусто — всё разложено.");
+  const pages = (await (await request.get("/api/pages")).json()).pages;
+  expect(pages.find((item) => item.id === stray.id).parentKey).toBe(release.id);
 
-  // Та же запись в карточке ведёт на свою страницу.
-  await page.goto(`/#today?open=${entry.id}`);
-  await expect(page.locator("#review-dialog")).toBeVisible();
-  await page.locator("#review-dialog .card-page-link").click();
-  await expect(page.locator("#review-dialog")).toBeHidden();
-  await expect(page.locator(".notes-crumbs")).toContainText("Релиз 1.4");
-  await expect(page).toHaveURL(new RegExp(`page=${entry.id}`));
-  expect(release.id).toBeTruthy();
+  // Запись из поля — туду: страницей она не становится и во «Входящие» не попадает.
+  await request.post("/api/captures", { data: { raw: "Про релиз 1.4: ещё одно дело" } });
+  await page.goto("/#notes?view=inbox");
+  await expect(page.locator(".notes-inbox")).toContainText("Пусто — всё разложено.");
 });
 
 test("строка заметки уходит делом на «Доску» и отмечается, когда дело закрыли", async ({ page, request }) => {
@@ -88,7 +90,7 @@ test("строка заметки уходит делом на «Доску» и
   const line = page.locator(".notes-markdown .md-line", { hasText: "Позвонить в банк" });
   await line.hover();
   await page.locator(".notes-deed-button").click();
-  await expect(line).toHaveAttribute("data-deed", /дело · Доска · Входящие/, { timeout: 10000 });
+  await expect(line).toHaveAttribute("data-deed", /дело · Доска · Дела/, { timeout: 10000 });
   // Вторая строка осталась простым чекбоксом.
   await expect(page.locator(".notes-markdown .md-line", { hasText: "Просто пункт" })).not.toHaveClass(/is-deed/);
 
@@ -232,7 +234,7 @@ test("в карточке записи «[[» подсказывает стра�
 test("значок страницы и проекта — эмодзи: по типу, свой выбирается нажатием и сохраняется", async ({ page, request }) => {
   await reset(request);
   const plan = await makePage(request, "План на спринт");
-  await request.post("/api/captures", { data: { raw: "Архитектура Hub на листке" } });
+  await makePage(request, "Архитектура Hub на листке", "project:Hub");
   await page.goto(`/#notes?page=${plan.id}`);
   const head = page.locator(".notes-head .notes-head-emo");
   const row = page.locator(".notes-side .notes-row", { hasText: "План на спринт" });

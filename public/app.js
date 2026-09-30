@@ -9,13 +9,6 @@ import { mountGuide } from "./guide.js";
 import { phaseOf, coverFor, plural, hm, duration, minutesOf, longDate, shortDate, isWeekend, MEETINGS, DEALS, PHASE_NAMES } from "./today-cover.js";
 
 const $ = (selector) => document.querySelector(selector);
-const typeNames = {
-  meeting_event: "встреча",
-  task: "задача",
-  note: "заметка",
-  outcome_decision: "результат",
-  idea_question: "идея",
-};
 const providerNames = {
   fallback: "Без разбора",
   openai: "OpenAI",
@@ -229,7 +222,8 @@ function updatePageFromHash() {
   }
   if (activePage === "admin") loadAdmin();
   if (activePage === "circles") loadCircles();
-  if (activePage === "board") loadBoard(params.get("view"));
+  if (activePage === "board") loadBoard();
+  if (activePage === "done") loadDone();
   // Календарь перечитывается при каждом открытии: сроки правятся из карточек
   // и с доски, а чужие события приходят синхронизацией в фоне. Первый разбор
   // адреса случается до того, как модуль дошёл до состояния календаря, —
@@ -522,6 +516,7 @@ document.addEventListener("keydown", async (event) => {
 function refreshOtherViews() {
   if (!$("#calendar")?.hidden) loadCalendar();
   if (!$("#board")?.hidden) loadBoard();
+  if (!$("#done")?.hidden) loadDone();
 }
 // Смахнуть строку на телефоне, как в Тудуисте: вправо — готово, влево — на
 // сегодня (у дела из запаса). Мышью строка не тянется: там кружок и клавиши.
@@ -1201,8 +1196,8 @@ function paintCircleTail(container) {
     link.type = "button";
     link.append(node("span", `На других ${open.length} ${pluralRu(open.length, "дело", "дела", "дел")}`, "strong"));
     if (late) link.append(node("span", ` · ${late} ${pluralRu(late, "ждёт", "ждут", "ждут")} ответа второй день`));
-    link.append(node("span", " — «Я жду» →"));
-    link.addEventListener("click", () => { location.hash = "#board?view=waiting"; });
+    link.append(node("span", " — в «Кругах» →"));
+    link.addEventListener("click", () => { location.hash = "#circles"; });
     container.append(link);
   }
   for (const circle of todayState.mutedCircles || []) {
@@ -1470,28 +1465,6 @@ function propIcon(name) {
   glyph.innerHTML = `<svg viewBox="0 0 16 16" width="16" height="16">${PROP_ICONS[name]}</svg>`;
   return glyph;
 }
-// Крестик справа — быстрый сброс свойства: «без даты», «без проекта». Показан
-// только у заполненного свойства и только по наведению, чтобы не шуметь.
-function propertyRow(label, control, icon, { clear = null, filled = null } = {}) {
-  const row = node("div", undefined, "prop");
-  const name = node("span", label, "prop-label");
-  if (icon) name.prepend(propIcon(icon));
-  row.append(name, control);
-  if (clear) {
-    const reset = node("button", "×", "prop-clear");
-    reset.type = "button";
-    reset.title = `Сбросить: ${label.toLowerCase()}`;
-    reset.setAttribute("aria-label", reset.title);
-    reset.addEventListener("click", (event) => { event.preventDefault(); clear(); paint(); });
-    const paint = () => { reset.hidden = filled ? !filled() : false; };
-    control.addEventListener("input", paint);
-    control.addEventListener("change", paint);
-    row.append(reset);
-    row.classList.add("has-clear");
-    paint();
-  }
-  return row;
-}
 // ── вложения записи ──────────────────────────────────────────────────────────
 // Файл живёт рядом с записью, а не внутри текста: заметку правят словами, а
 // снимок доски или счёт прикладывают как есть.
@@ -1688,17 +1661,6 @@ function assignRow(entry, { onChange }) {
     } catch (error) { toast(error.message || "Не получилось"); }
   });
   wrap.append(select, state);
-  return wrap;
-}
-function circleRow(entry) {
-  const wrap = node("div", undefined, "circle-value");
-  const paint = () => {
-    clear(wrap);
-    const circles = entry.circles || [];
-    if (!circles.length) { wrap.append(node("span", "только у вас", "prop-ghost")); return; }
-    for (const circle of circles) wrap.append(circleChip(circle));
-  };
-  paint();
   return wrap;
 }
 // Позвать можно любого из ваших кругов, но не в пустоту: тому, кто записи или
@@ -2241,26 +2203,19 @@ function cardDiscussion(entry) {
 function cardBody(entry) {
   const wrap = node("section", undefined, "card-body"),
     hint = node("p", "Markdown оформляется прямо в тексте · ⌘/Ctrl + Enter — сохранить · закроете карточку — сохранится само", "card-body-hint"),
-    label = node("p", "Заметки", "prop-section"),
-    origin = node("span", " · из исходной записи", "prop-origin");
-  // Пока своей заметки нет, тело начинается с текста записи: дописывать проще,
-  // чем набирать заново. Это копия в заметку — сам raw остаётся неизменным и
-  // по-прежнему виден в блоке «Источник и версия».
+    label = node("p", "Описание", "prop-section");
+  // Описание пишет разбор из текста записи и кладёт первой версией заметки. Пока
+  // заметки нет (записи не с чем было разобраться), тело начинается с текста
+  // записи: дописывать проще, чем набирать заново. Сам raw остаётся неизменным
+  // и виден под описанием как «Исходный текст».
   let body = entry.note?.body ?? (entry.raw || "");
-  const paintLabel = () => {
-    origin.textContent = entry.note
-      ? ` · версия ${entry.note.version}`
-      : " · из исходной записи";
-  };
-  paintLabel();
-  label.append(origin);
   // Тело — то же живое поле, что и в карточке ввода: разметка оформляется
   // прямо в тексте, поэтому отдельный режим просмотра и предпросмотр больше
   // не нужны — читать и править можно в одном месте.
   const field = createMarkdownField({
     id: "card-body-editor",
-    ariaLabel: "Заметки к записи",
-    placeholder: "Введите «/» для команд разметки…",
+    ariaLabel: "Описание",
+    placeholder: "Описание",
     onSubmit: () => save(),
   });
   field.element.classList.add("card-markdown");
@@ -2292,7 +2247,6 @@ function cardBody(entry) {
       body = result.entry.note?.body || "";
       entry.note = result.entry.note;
       field.setValue(body);
-      paintLabel();
       toast("Заметка сохранена");
       await load();
     } catch (error) {
@@ -2320,41 +2274,24 @@ function cardBody(entry) {
     save();
   });
   flushCardBody = save;
-  wrap.append(label, field.element, hint);
+  // Подзадача — строка «- [ ] …» в конце описания: разметка рисует её
+  // кружком-галочкой, который щёлкается на месте.
+  const addSub = node("button", undefined, "sub-add");
+  addSub.type = "button";
+  addSub.append(node("b", "+"), document.createTextNode("Подзадача"));
+  addSub.addEventListener("click", () => {
+    const current = field.getValue().replace(/\s+$/, "");
+    field.setValue(`${current}${current ? "\n" : ""}- [ ] `);
+    field.focus();
+    const range = document.createRange();
+    range.selectNodeContents(field.element);
+    range.collapse(false);
+    const selection = document.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
+  wrap.append(label, field.element, hint, addSub);
   return wrap;
-}
-// ── статус записи ────────────────────────────────────────────────────────────
-// Выводится, а не вводится: из типа, срока и «сделано». Стиль — «значок и
-// слово», по-нотионовски строкой свойства; цвет помогает, смысл назван словом.
-const STATUS_ICONS = {
-  done: '<path d="M3.5 8.5l3 3 6-6.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
-  late: '<path d="M8 2.6 14.4 13H1.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6.4v3.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11.6" r="0.6" fill="currentColor"/>',
-  clock: '<circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.7V8l2.3 1.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
-  none: '<path d="M4 8h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
-};
-function entryStatus(entry, today = currentDayDate) {
-  const c = entry.interpretation.classification;
-  if (isReportedWork(entry) || isClosed(entry))
-    return { key: "done", label: "Сделано", icon: "done" };
-  // Статус есть только у дел: заметки, идеи и незакрытые результаты живут без него.
-  if (
-    !completableProjections(entry).length &&
-    !["task", "meeting_event"].includes(c.primaryType)
-  )
-    return null;
-  const date = c.entities.schedule?.date || null;
-  if (!date) return { key: "none", label: "Без срока", icon: "none" };
-  if (today && date < today) return { key: "late", label: "Просрочено", icon: "late" };
-  if (today && date === today) return { key: "today", label: "Сегодня", icon: "clock" };
-  return { key: "ontime", label: "В срок", icon: "clock" };
-}
-function statusBadge(status) {
-  const badge = node("span", undefined, `entry-status st-${status.key}`),
-    icon = node("span", undefined, "status-icon");
-  icon.setAttribute("aria-hidden", "true");
-  icon.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14">${STATUS_ICONS[status.icon]}</svg>`;
-  badge.append(icon, document.createTextNode(status.label));
-  return badge;
 }
 // Карточка открывается модальным окном, а не панелью внутри страницы: панель
 // жила в разделе «Сегодня» и на страницах журнала строилась на скрытой
@@ -2369,7 +2306,6 @@ let cardList = null;
 let pendingCardList = null;
 let cardAdvance = null;
 let cardArmedUntil = 0;
-let cardAskOutcome = null;
 let cardSnackTimer = null;
 const cardKeys = { toggle: null };
 const CARD_LIST_DONE = { "Сегодня": "На «Сегодня» всё отмечено", "Что делал": "В «Что делал» всё отмечено", "День": "В «Дне» всё отмечено", "Доска": "На «Доске» всё отмечено", "Календарь": "В календаре всё отмечено" };
@@ -2394,25 +2330,43 @@ function adoptCardList(entry, fresh) {
     else cardList = null;
   }
 }
+// Верхняя полоса карточки: колонка доски, где лежит дело, положение в списке
+// и стрелки к соседним делам, «⋯» с удалением. Крестик — рядом, в углу.
+const CARD_MORE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18" fill="currentColor"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>';
 function paintCardNav({ finished = false } = {}) {
   const dialog = $("#review-dialog");
   dialog.querySelector(".card-nav")?.remove();
-  if (!cardList) return;
   const nav = node("div", undefined, "card-nav");
   const crumb = node("span", undefined, "card-nav-crumb");
-  crumb.append(node("b", cardList.label), document.createTextNode(finished ? " · всё отмечено" : ` · ${cardList.index + 1} из ${cardList.items.length}`));
-  const step = (direction, label, icon) => {
-    const button = node("button", undefined, "card-nav-step");
-    button.type = "button";
-    button.title = label;
-    button.setAttribute("aria-label", label);
-    button.innerHTML = icon;
-    const target = cardList.index + direction;
-    button.disabled = finished ? direction > 0 : target < 0 || target >= cardList.items.length;
-    button.addEventListener("click", () => stepCard(direction));
-    return button;
-  };
-  nav.append(crumb, step(-1, "Предыдущее · K", TALK_ICONS.up), step(1, "Следующее · J", TALK_ICONS.down));
+  crumb.append(node("b", finished ? "" : cardMenu.columnName, "card-nav-col"));
+  if (cardList) crumb.append(node("span", finished ? "Всё отмечено" : `${cardList.label} · ${cardList.index + 1} из ${cardList.items.length}`, "card-nav-rest"));
+  nav.append(crumb);
+  if (cardList) {
+    const step = (direction, label, icon) => {
+      const button = node("button", undefined, "card-nav-step");
+      button.type = "button";
+      button.title = label;
+      button.setAttribute("aria-label", label);
+      button.innerHTML = icon;
+      const target = cardList.index + direction;
+      button.disabled = finished ? direction > 0 : target < 0 || target >= cardList.items.length;
+      button.addEventListener("click", () => stepCard(direction));
+      return button;
+    };
+    nav.append(step(-1, "Предыдущее · K", TALK_ICONS.up), step(1, "Следующее · J", TALK_ICONS.down));
+  }
+  if (!finished && cardMenu.remove && !cardMenu.remove.hidden) {
+    const more = node("details", undefined, "card-more");
+    const summary = node("summary");
+    summary.title = "Ещё";
+    summary.setAttribute("aria-label", "Ещё");
+    summary.innerHTML = CARD_MORE_ICON;
+    const pop = node("div", undefined, "card-more-pop");
+    pop.setAttribute("role", "menu");
+    pop.append(cardMenu.remove);
+    more.append(summary, pop);
+    nav.append(more);
+  }
   dialog.append(nav);
 }
 function cardSnack(text, actions = []) {
@@ -2441,7 +2395,6 @@ function dropCardFlow() {
   clearTimeout(cardSnackTimer);
   cardList = null;
   pendingCardList = null;
-  cardAskOutcome = null;
   cardArmedUntil = 0;
   cardKeys.toggle = null;
   const dialog = $("#review-dialog");
@@ -2625,47 +2578,7 @@ async function toggleCardDone(entry, state, saveFirst = null) {
     refreshOtherViews();
     if (cardList) await openCardFromList(from);
   } }];
-  if (state.own) actions.push({ label: "+ итог", run: async () => {
-    cardAskOutcome = entry.id;
-    if (cardList) await openCardFromList(from);
-  } });
   cardAdvance = setTimeout(() => advanceCardFrom(from, { text: `Готово: «${shortTitle(titleOf(entry), 34)}»`, actions }), 700);
-}
-function cardOutcomeField(entry) {
-  const wrap = node("label", undefined, "card-outcome");
-  const input = node("input");
-  input.type = "text";
-  input.id = "card-outcome";
-  input.placeholder = "Чем кончилось — ляжет в «Что делал»";
-  input.autocomplete = "off";
-  input.maxLength = 2000;
-  input.addEventListener("keydown", async (event) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      cardAskOutcome = null;
-      wrap.remove();
-      return;
-    }
-    if (event.key !== "Enter" || !input.value.trim()) return;
-    event.preventDefault();
-    const text = input.value.trim();
-    input.disabled = true;
-    try {
-      await request(`/api/captures/${entry.id}/outcome`, { method: "POST", body: JSON.stringify({ text }) });
-      cardAskOutcome = null;
-      wrap.replaceWith(node("p", `Итог: «${text}» · в «Что делал»`, "card-outcome-saved"));
-      load().catch(() => {});
-      // Итог дописан посреди разбора — дальше к следующему открытому делу.
-      if (cardList) { const from = cardList.index; cardAdvance = setTimeout(() => advanceCardFrom(from), 700); }
-    } catch (error) {
-      input.disabled = false;
-      cardSnack(error.message || "Итог не сохранился");
-    }
-  });
-  wrap.append(input, node("kbd", "Enter"));
-  requestAnimationFrame(() => input.focus({ preventScroll: true }));
-  return wrap;
 }
 function cardDoneBlock(entry, state) {
   const block = node("div", undefined, "card-done");
@@ -2698,19 +2611,7 @@ function cardDoneBlock(entry, state) {
         cardSnack("Серия закрыта целиком");
       } catch (error) { cardSnack(error.message || "Не получилось"); }
     }));
-  const outcomes = (entry.parts || []).filter((part) => part.type === "outcome_decision");
-  for (const outcome of outcomes) line.append(dot(), link(`Итог: «${shortTitle(outcome.title, 60)}»`, () => openCaptureById(outcome.id)));
-  if (state.own && !outcomes.length && cardAskOutcome !== entry.id)
-    line.append(dot(), link("+ чем кончилось", (event) => {
-      clearTimeout(cardAdvance);
-      cardAdvance = null;
-      cardAskOutcome = entry.id;
-      event.currentTarget.previousElementSibling?.remove();
-      event.currentTarget.remove();
-      block.append(cardOutcomeField(entry));
-    }));
   block.append(line);
-  if (state.own && !outcomes.length && cardAskOutcome === entry.id) block.append(cardOutcomeField(entry));
   return block;
 }
 function cardTickButton(entry, state) {
@@ -2733,15 +2634,6 @@ function cardTickButton(entry, state) {
   button.addEventListener("click", () => cardKeys.toggle?.());
   return button;
 }
-// Кружок висит слева от названия, когда у колонки есть поле; в узкой карточке
-// он встаёт в строку, а название сдвигается.
-const cardHeadObserver = typeof ResizeObserver === "function" ? new ResizeObserver(() => hangCardTick()) : null;
-function hangCardTick() {
-  const area = $("#review"), head = area?.querySelector(".card-head.with-tick");
-  if (!head) return;
-  head.classList.toggle("hang", parseFloat(getComputedStyle(area).paddingLeft) >= 62);
-}
-if ($("#review")) cardHeadObserver?.observe($("#review"));
 $("#review-dialog")?.addEventListener("keydown", (event) => {
   if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
   if (event.target.closest?.("input, textarea, select, [contenteditable='true'], .talk-dock, .card-title-edit")) return;
@@ -2816,27 +2708,32 @@ function showReview(entry, review, undoGroupId, provenance) {
   cardTitle.addEventListener("keydown", (event) => {
     if (event.key === "Enter") { event.preventDefault(); startTitleEdit(); }
   });
+  // Две панели: слева суть — кружок, название, описание, исходный текст,
+  // вложения, внизу обсуждение; справа серая панель свойств, по одной строке
+  // «ключ — значение». На телефоне панель встаёт под сутью.
+  const layout = node("div", undefined, "card-layout");
+  const main = node("div", undefined, "card-main");
+  const side = node("aside", undefined, "card-side");
+  side.setAttribute("aria-label", "Свойства");
+  layout.append(main, side);
+  area.append(layout);
   const head = node("div", undefined, `card-head${hasTick ? " with-tick" : ""}`);
   if (hasTick) {
     cardTitle.classList.toggle("is-done", doneState.done);
     head.append(cardTickButton(entry, doneState));
   }
   head.append(cardTitle);
-  area.append(head);
-  if (hasTick && doneState.done) area.append(cardDoneBlock(entry, doneState));
-  requestAnimationFrame(hangCardTick);
+  main.append(head);
+  if (hasTick && doneState.done) main.append(cardDoneBlock(entry, doneState));
   // Происхождение: дело, отделённое от записи, помнит, из чего оно вышло, а
   // исходная запись — что из неё вышло. Без этого «Допинать бот-детектор»
-  // висело бы ничьим делом, а у отчёта о встрече не было бы следа, что дела
-  // из него уже заведены.
-  // Итог дела («+ чем кончилось») — тоже запись с родителем, но это не
-  // отделённое дело: у дела он назван итогом, а сам итог помнит своё дело.
-  const deedParts = (entry.parts || []).filter((part) => part.type !== "outcome_decision" || !["task", "meeting_event"].includes(c.primaryType));
-  const outcomeOfDeed = entry.parent && c.primaryType === "outcome_decision" && ["task", "meeting_event"].includes(entry.parent.type);
+  // висело бы ничьим делом, а у пачки из бота не было бы следа, что дела из
+  // неё уже заведены.
+  const deedParts = entry.parts || [];
   if (entry.parent || deedParts.length) {
     const origin = node("p", undefined, "card-origin");
     const link = (id, text) => { const button = node("button", text, "text-button"); button.type = "button"; button.addEventListener("click", () => openCaptureById(id)); return button; };
-    if (entry.parent) origin.append(document.createTextNode(outcomeOfDeed ? "Итог дела " : "Отделено от записи "), link(entry.parent.id, `«${entry.parent.title}»`));
+    if (entry.parent) origin.append(document.createTextNode("Отделено от записи "), link(entry.parent.id, `«${entry.parent.title}»`));
     else {
       origin.append(document.createTextNode(`Из этой записи ${plural(deedParts.length, DEALS)}: `));
       deedParts.forEach((part, index) => {
@@ -2844,39 +2741,16 @@ function showReview(entry, review, undoGroupId, provenance) {
         origin.append(link(part.id, part.title));
       });
     }
-    area.append(origin);
+    main.append(origin);
   }
-  // Заметка и идея — это ещё и страница в разделе «Заметки»: там у неё место
-  // в дереве, ссылки и страницы внутри.
-  if (entry.mine !== false && ["note", "idea_question"].includes(entry.interpretation.classification.primaryType)) {
-    const asPage = node("a", "Открыть как страницу", "card-page-link");
-    asPage.href = `#notes?page=${encodeURIComponent(entry.id)}`;
-    asPage.addEventListener("click", () => closeCard());
-    area.append(asPage);
-  }
-  // «Когда это было» — справочная мета: живёт футером внизу карточки одной
-  // строкой, а не блоком в шапке. Шапка — заголовок, статус и заметки.
-  const written = entryClock(entry);
   if (review.question)
-    area.append(node("p", review.question, "review-question"));
+    main.append(node("p", review.question, "review-question"));
 
   const form = node("form", undefined, "review-form"),
-    type = document.createElement("select"),
     date = document.createElement("input"),
     time = document.createElement("input"),
     end = document.createElement("input"),
-    project = document.createElement("input"),
-    people = document.createElement("input"),
-    followUp = document.createElement("input"),
-    doneToggle = node("button", undefined, "completion-button");
-  type.id = "review-primary-type";
-  type.setAttribute("aria-label", "Тип записи");
-  for (const [value, label] of Object.entries(typeNames)) {
-    const option = node("option", label);
-    option.value = value;
-    option.selected = value === c.primaryType;
-    type.append(option);
-  }
+    people = document.createElement("input");
   date.type = "date";
   date.id = "review-date";
   date.value = c.entities.schedule?.date || "";
@@ -2890,7 +2764,8 @@ function showReview(entry, review, undoGroupId, provenance) {
   end.value = c.entities.schedule?.end || "";
   end.title = "Окончание";
   end.setAttribute("aria-label", "Окончание");
-  const paintEnd = () => { end.hidden = !time.value; if (!time.value) end.value = ""; };
+  let endLabel = null;
+  const paintEnd = () => { end.hidden = !time.value; if (endLabel) endLabel.hidden = !time.value; if (!time.value) end.value = ""; };
   time.addEventListener("input", paintEnd);
   paintEnd();
   // Напоминание — свойство срока: за сколько до начала у дела со временем,
@@ -2931,169 +2806,91 @@ function showReview(entry, review, undoGroupId, provenance) {
   repeat.addEventListener("change", paintRepeat);
   date.addEventListener("input", paintRepeat);
   paintRepeat();
-  const repeatRow = node("span", undefined, "review-repeat-row");
-  repeatRow.append(repeat, untilWrap);
-  project.id = "review-project";
-  project.setAttribute("list", "known-projects");
-  project.value = c.entities.projects[0] || "";
-  project.placeholder = "Например, Hub";
   people.id = "review-people";
   people.value = (c.entities.people || []).join(", ");
   people.placeholder = "Например, Анна, BE";
-  followUp.id = "review-follow-up";
-  followUp.value = c.entities.followUp || "";
-  followUp.placeholder = "Следующее действие";
-  // Признак «уже сделано» ставила только модель, и исправить её решение было
-  // нечем: заметка, принятая за отчёт, навсегда оставалась в «Что делал».
-  let done = Boolean(c.completed);
-  doneToggle.id = "review-completed";
-  doneToggle.type = "button";
-  const paintDone = () => {
-    doneToggle.setAttribute("aria-pressed", String(done));
-    doneToggle.title = done ? "Отметить как незавершённое" : "Отметить как сделанное";
-    doneToggle.setAttribute("aria-label", doneToggle.title);
-    doneToggle.classList.toggle("is-done", done);
-  };
-  // Сделанное — результат: у встречи или дела с отметкой «сделано» в «Что
-  // делал» остался бы кружок, который нечего отмечать, а заметка или идея
-  // «сделанными» не бывают. Сервер держит то же правило, а карточка показывает
-  // его сразу — и в обратную сторону: запись, названная не результатом, снова
-  // не сделана.
-  const notResult = () => type.value !== "outcome_decision";
-  doneToggle.addEventListener("click", () => {
-    done = !done;
-    if (done && notResult()) {
-      type.value = "outcome_decision";
-      type.dispatchEvent(new Event("change"));
-    }
-    paintDone();
-  });
-  paintDone();
+  people.setAttribute("aria-label", "Люди");
 
-  const scheduleRow = node("div", undefined, "review-schedule");
-  const endWrap = node("span", undefined, "review-end");
-  endWrap.append(node("span", "до", "review-end-label"), end);
-  scheduleRow.append(date, time, endWrap, remind, repeatRow);
-  // Сброс уходит на сервер сразу: «без даты» — это решение, а не правка на
-  // полпути, и ждать закрытия карточки ему незачем.
+  // Сброс срока уходит на сервер сразу: «без даты» — это решение, а не правка
+  // на полпути, и ждать закрытия карточки ему незачем.
   let saveProps = () => {};
-  const clearAndSave = (apply) => { apply(); saveProps(); };
-  const scheduleWrap = propertyRow("Срок", scheduleRow, "schedule", { clear: () => clearAndSave(() => { date.value = ""; time.value = ""; end.value = ""; remindChoice = ""; repeat.value = ""; until.value = ""; paintEnd(); paintRemind(); paintRepeat(); }), filled: () => Boolean(date.value || time.value) }),
-    peopleWrap = propertyRow("Участники", people, "people", { clear: () => clearAndSave(() => { people.value = ""; }), filled: () => Boolean(people.value.trim()) }),
-    followUpWrap = propertyRow("Далее", followUp, "next", { clear: () => clearAndSave(() => { followUp.value = ""; }), filled: () => Boolean(followUp.value.trim()) });
-  const props = node("div", undefined, "props");
+  const resetDate = node("button", "×", "side-clear");
+  resetDate.type = "button";
+  resetDate.title = "Сбросить: срок";
+  resetDate.setAttribute("aria-label", "Сбросить: срок");
+  const paintReset = () => { resetDate.hidden = !(date.value || time.value); };
+  resetDate.addEventListener("click", () => {
+    date.value = ""; time.value = ""; end.value = ""; remindChoice = ""; repeat.value = ""; until.value = "";
+    paintEnd(); paintRemind(); paintRepeat(); paintReset();
+    saveProps();
+  });
+  date.addEventListener("input", paintReset);
+  time.addEventListener("input", paintReset);
+  paintReset();
+  const sideRow = (label, ...controls) => {
+    const row = node("div", undefined, "side-prop");
+    const value = node("div", undefined, "side-v");
+    value.append(...controls);
+    row.append(node("span", label, "side-k"), value);
+    return row;
+  };
+  const columnSelect = node("select", undefined, "side-column");
+  columnSelect.id = "review-column";
+  columnSelect.setAttribute("aria-label", "Колонка");
+  const columnRow = sideRow("Колонка", columnSelect);
+  columnRow.hidden = true;
+  const scheduleBox = node("div", undefined, "side-schedule");
+  const timeLine = node("div", undefined, "side-line");
+  endLabel = node("span", "до", "review-end-label");
+  timeLine.append(time, endLabel, end);
+  paintEnd();
+  scheduleBox.append(date, timeLine);
+  const untilLine = node("div", undefined, "side-line");
+  untilLine.append(untilWrap);
   // Круг и исполнитель — свойства записи, а не отдельная форма: дело уходит
   // человеку фразой, а здесь его правят, когда разбор не угадал.
   const hasCircles = (entry.myCircles || []).some((circle) => (circle.members || []).length > 1);
-  const circleWrap = propertyRow("Круг", circleRow(entry), "project"),
-    assignWrap = entry.mine === false ? null : propertyRow("Исполнитель", assignRow(entry, { onChange: () => {} }), "people");
-  props.append(
-    propertyRow("Тип", type, "type"),
-    scheduleWrap,
-    propertyRow("Проект", project, "project", { clear: () => clearAndSave(() => { project.value = ""; }), filled: () => Boolean(project.value.trim()) }),
-    ...(entry.circles?.length ? [circleWrap] : []),
-    ...(assignWrap && (hasCircles || entry.assignment) ? [assignWrap] : []),
-    peopleWrap,
-    followUpWrap,
-    // У дела и встречи «сделано» — кружок у названия; строка остаётся у заметки,
-    // идеи и результата, где она делает запись итогом.
-    ...(["task", "meeting_event"].includes(c.primaryType) ? [] : [propertyRow("Сделано", doneToggle, "done")]),
-  );
+  const assignBox = entry.mine === false || !(hasCircles || entry.assignment) ? null : assignRow(entry, { onChange: () => {} });
+  const props = node("div", undefined, "props");
   props.id = "review-props";
-  const updateVisibility = () => {
-    const scheduled =
-      ["meeting_event", "task"].includes(type.value) || review.field === "schedule";
-    scheduleWrap.hidden = !scheduled;
-    peopleWrap.hidden = type.value === "note" || type.value === "idea_question";
-    followUpWrap.hidden =
-      type.value === "note" || type.value === "idea_question";
-  };
-  // Свойства свёрнуты в строку-сводку: карточку открывают ради заметок, а не
-  // ради формы. Кнопка-строка разворачивает полный список; когда карточка
-  // открыта под уточнение (есть вопрос модели) — свойства сразу развёрнуты.
-  const propsBar = node("button", undefined, "props-bar");
-  propsBar.type = "button";
-  propsBar.setAttribute("aria-controls", "review-props");
-  const propsChevron = node("span", undefined, "props-chevron");
-  propsChevron.setAttribute("aria-hidden", "true");
-  const propsSummary = node("span", undefined, "props-summary");
-  propsBar.append(propsChevron, propsSummary);
-  let propsOpen = Boolean(review.question || review.field);
-  const summaryText = () => {
-    const parts = [typeNames[type.value] || type.value];
-    if (project.value.trim()) parts.push(project.value.trim());
-    const due = scheduleLabel({ state: "ok", date: date.value || null, time: time.value || null });
-    if (!scheduleWrap.hidden && due) parts.push(`срок: ${due}${time.value && end.value ? `–${end.value}` : ""}`);
-    if (!scheduleWrap.hidden && due && remind.value) parts.push(remind.value === "off" ? "без напоминания" : `напомнить ${remind.selectedOptions[0]?.textContent || ""}`);
-    if (!scheduleWrap.hidden && due && repeat.value) parts.push(`${repeat.selectedOptions[0]?.textContent || "повтор"}${until.value ? ` до ${until.value.slice(8, 10)}.${until.value.slice(5, 7)}` : ""}`);
-    if (!peopleWrap.hidden && people.value.trim()) parts.push(people.value.trim());
-    if (!followUpWrap.hidden && followUp.value.trim()) parts.push(`далее: ${followUp.value.trim()}`);
-    return parts.join("   ·   ");
-  };
-  const paintProps = () => {
-    props.hidden = !propsOpen;
-    propsBar.setAttribute("aria-expanded", String(propsOpen));
-    propsBar.classList.toggle("open", propsOpen);
-    clear(propsSummary);
-    if (propsOpen) propsSummary.append(document.createTextNode("Свойства"));
-    else {
-      // Чип статуса ведёт строку: состояние видно, не разворачивая свойства.
-      // Берётся из сохранённой записи — правки живут в развёрнутой форме.
-      const state = entryStatus(entry);
-      if (state) propsSummary.append(statusBadge(state), document.createTextNode("   ·   "));
-      propsSummary.append(document.createTextNode(summaryText()));
-    }
-    propsSummary.classList.toggle("is-label", propsOpen);
-  };
-  type.addEventListener("change", () => {
-    // «Результат» — это уже сделанное: у дела строки «Сделано» нет, и выбор
-    // типа сам ставит отметку, как её ставит сервер.
-    if (!notResult() && !done) { done = true; paintDone(); }
-    if (done && notResult()) { done = false; paintDone(); }
-    updateVisibility();
-  });
-  updateVisibility();
-  propsBar.addEventListener("click", () => { propsOpen = !propsOpen; paintProps(); });
-  paintProps();
-  form.append(propsBar, props);
+  props.append(
+    columnRow,
+    sideRow("День", scheduleBox, resetDate),
+    sideRow("Люди", people, ...(assignBox ? [assignBox] : [])),
+    sideRow("Напомнить", remind),
+    sideRow("Повторять", repeat, untilLine),
+    sideRow("Откуда", node("span", cardFromWords(entry), "side-quiet")),
+  );
+  form.append(props);
+  side.append(form);
   // Кнопки «сохранить» нет: свойства уходят на сервер сами, когда карточка
-  // закрывается — крестиком, подложкой или Esc, — как и заметка. Снимок при
+  // закрывается — крестиком, подложкой или Esc, — как и описание. Снимок при
   // открытии нужен, чтобы не слать уточнение, если ничего не трогали.
+  const scheduleNow = () => ({ date: date.value || null, time: time.value || null, ...(time.value && end.value && end.value > time.value ? { end: end.value } : {}), remind: remind.value === "" ? null : remind.value === "off" ? "off" : Number(remind.value), repeat: repeat.value && date.value ? { freq: repeat.value.split(":")[0], interval: Number(repeat.value.split(":")[1]) || 1, until: until.value && until.value >= date.value ? until.value : null } : null });
+  const peopleNow = () => people.value.split(",").map((value) => value.trim()).filter(Boolean);
+  const untouched = { schedule: JSON.stringify(scheduleNow()), people: JSON.stringify(peopleNow()) };
+  // В уточнение попадает только то, что человек тронул: неизменённый срок,
+  // пересобранный из полей формы, потерял бы то, чего в форме нет.
   const propsPatch = () => {
-    const patch = {
-      primaryType: type.value,
-      project: project.value.trim() || null,
-      people: people.value
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean),
-      followUp: followUp.value.trim() || null,
-      completed: done,
-    };
-    if (!scheduleWrap.hidden)
-      patch.schedule = { date: date.value || null, time: time.value || null, ...(time.value && end.value && end.value > time.value ? { end: end.value } : {}), remind: remind.value === "" ? null : remind.value === "off" ? "off" : Number(remind.value), repeat: repeat.value && date.value ? { freq: repeat.value.split(":")[0], interval: Number(repeat.value.split(":")[1]) || 1, until: until.value && until.value >= date.value ? until.value : null } : null };
+    const patch = {};
+    if (JSON.stringify(peopleNow()) !== untouched.people) patch.people = peopleNow();
+    if (JSON.stringify(scheduleNow()) !== untouched.schedule) patch.schedule = scheduleNow();
     return patch;
   };
-  const untouched = JSON.stringify(propsPatch());
-  pendingProps = () =>
-    JSON.stringify(propsPatch()) === untouched ? null : propsPatch();
+  pendingProps = () => (Object.keys(propsPatch()).length ? propsPatch() : null);
   let propsSaving = false;
   saveProps = async () => {
     const patch = pendingProps();
     if (!patch || propsSaving) return;
     propsSaving = true;
     try {
-      const result = await request(`/api/captures/${entry.id}/corrections`, {
+      await request(`/api/captures/${entry.id}/corrections`, {
         method: "POST",
         body: JSON.stringify({
           patch: { ...patch, note: "Пользователь исправил классификацию" },
         }),
       });
-      toast(
-        result.review.level === "high" || result.review.safeNote
-          ? "Уточнение сохранено"
-          : "Нужно ещё одно уточнение",
-      );
+      toast("Уточнение сохранено");
       await load();
     } catch (error) {
       toast(error.message);
@@ -3104,56 +2901,24 @@ function showReview(entry, review, undoGroupId, provenance) {
   flushCardProps = saveProps;
   // Enter в поле свойства раньше отправлял форму; отправлять больше нечего.
   form.addEventListener("submit", (event) => event.preventDefault());
-  area.append(form, cardBody(entry));
-  cardDiscussion(entry);
-  // Футер прижат к низу листа и собран в строку: вложения, «когда записано»,
-  // источник и удаление — служебный подвал, а не столбик в теле карточки.
-  const footer = node("div", undefined, "card-footer");
-  footer.append(attachmentsBlock(entry));
-  const footerRow = node("div", undefined, "card-footer-row");
-  if (written) {
-    // Запись, положенная в другой день («поставь это на пятницу как
-    // результат», пересланное из Telegram), честно говорит оба времени:
-    // когда это было и когда набрано.
-    const typedDay = entry.createdAt ? entryDate({ createdAt: entry.createdAt }) : null;
-    const moved = typedDay && entry.occurredAt && typedDay !== entryDate(entry);
-    const stamp = node("p", moved ? `Было: ${written} · записано ${entryClock({ createdAt: entry.createdAt })}` : `Записано: ${written}`, "card-written card-footer-line");
-    stamp.prepend(propIcon("written"));
-    footerRow.append(stamp);
-  }
-  footer.append(footerRow);
-  area.append(footer);
-
-  const source = node("details", undefined, "card-source");
-  const sourceSummary = node("summary", "Источник и версия");
-  sourceSummary.prepend(propIcon("source"));
-  sourceSummary.append(propIcon("chevron"));
-  source.append(sourceSummary);
-  // Пока заметку не правили, её тело — копия исходной записи, и показывать
-  // один и тот же текст дважды незачем: остаётся только строка версии.
+  main.append(cardBody(entry));
+  // Исходный текст — под описанием, свёрнутый: показывается, когда описание
+  // не копия записи (разбор его переписал или человек поправил).
   const noteBody = entry.note?.body ?? (entry.raw || "");
-  const sameAsRaw = noteBody.trim() === (entry.raw || "").trim();
-  const raw = node("div", undefined, "review-raw");
-  if (sameAsRaw) raw.append(node("p", "Исходная запись совпадает с заметками.", "entry-meta"));
-  else raw.append(node("p", "Исходная запись:", "source-label"), markdownNode("div", entry.raw, undefined));
-  const provider = provenance?.usedProvider || entry.interpretation.provider;
-  // Источник раскрывается листом над строкой подвала и не распирает её.
-  const sourceBody = node("div", undefined, "card-source-body");
-  sourceBody.append(
-    raw,
-    node(
-      "p",
-      `Версия ${entry.interpretation.version} · ${providerNames[provider] || "исправлено вами"}${fallbackSuffix(provenance)}`,
-      "entry-meta",
-    ),
-  );
-  source.append(sourceBody);
-  footerRow.append(source);
+  if ((entry.raw || "").trim() && noteBody.trim() !== (entry.raw || "").trim()) {
+    const source = node("details", undefined, "card-source");
+    source.append(node("summary", "Исходный текст"));
+    source.append(markdownNode("div", entry.raw, "card-source-body"));
+    main.append(source);
+  }
+  main.append(attachmentsBlock(entry));
+  cardDiscussion(entry);
 
-  // Удаление живёт внизу карточки, отдельно от правок: это не «ещё одно
-  // уточнение», а выход из журнала.
-  const remove = node("button", "Удалить запись", "card-delete");
+  // Удаление живёт в меню «⋯» вверху карточки, отдельно от правок: это не
+  // «ещё одно уточнение», а выход из журнала.
+  const remove = node("button", "Удалить", "card-delete");
   remove.type = "button";
+  remove.setAttribute("role", "menuitem");
   remove.prepend(propIcon("trash"));
   const deleteRecord = async () => {
     // Записи больше не будет: сохранять в неё заметку и свойства незачем.
@@ -3164,12 +2929,14 @@ function showReview(entry, review, undoGroupId, provenance) {
       await request(`/api/captures/${entry.id}`, { method: "DELETE" });
       closeCard();
       await load();
+      refreshOtherViews();
       toast("Запись удалена", {
         label: "Вернуть",
         run: async () => {
           try {
             await request(`/api/captures/${entry.id}/restore`, { method: "POST" });
             await load();
+            refreshOtherViews();
             toast("Запись возвращена");
           } catch (error) {
             toast(error.message);
@@ -3201,25 +2968,24 @@ function showReview(entry, review, undoGroupId, provenance) {
     ask.append(only, all, cancel);
     remove.replaceWith(ask);
   });
-  footerRow.append(remove);
   // Чужая запись открыта только на чтение: правит её автор, а исполнитель
   // просит словами — в обсуждении, которое тут же ниже. Молча подсовывать
   // поля, которые сервер всё равно не примет, — обман.
   if (entry.mine === false) {
-    for (const control of props.querySelectorAll("input, select, textarea, button")) control.disabled = true;
+    for (const control of side.querySelectorAll("input, select, textarea, button")) control.disabled = true;
     remove.hidden = true;
     const author = entry.author?.name || entry.assignment?.assigner?.name;
     const called = !entry.assignment && (entry.participants || []).some((person) => person.id === currentUser?.id);
     const line = node("p", `${author ? `Автор записи — ${author}. ` : ""}${called ? "Вас позвали в обсуждение: запись видна вам, правит её автор." : "Правит её автор: что нужно поменять — скажите в обсуждении."}`, "card-foreign");
-    props.before(line);
+    head.after(line);
   }
-  // Отправить встречу во внешний календарь можно только отсюда, кнопкой:
-  // по контракту памяти действие наружу всегда ждёт отдельного подтверждения.
-  if (["task", "meeting_event"].includes(c.primaryType) && c.entities.schedule?.date) footerRow.prepend(calendarExportEl(entry));
   // E — кружок, K / J — соседние дела списка. Свойства, набранные до отметки,
   // уходят раньше неё: поправка после отметки пересобрала бы дело заново.
   cardKeys.toggle = hasTick ? () => toggleCardDone(entry, doneState, () => saveProps()) : null;
+  cardMenu.remove = remove;
+  cardMenu.entryId = entry.id;
   paintCardNav();
+  fillCardColumn(entry, { columnRow, columnSelect });
   if (!dialog.open) {
     // Прерванное закрытие могло оставить незавершённую анимацию: снимаем её,
     // иначе карточка откроется прозрачной.
@@ -3229,10 +2995,76 @@ function showReview(entry, review, undoGroupId, provenance) {
     // Только при открытии: после сохранения уточнения карточка
     // перерисовывается на месте, и проявлять её заново незачем.
     appear(dialog);
-    // Фокус на самой карточке: иначе он уходит на крестик или на селектор
-    // типа, хотя карточку открывают ради заметок.
+    // Фокус на самой карточке: иначе он уходит на крестик или в поле, хотя
+    // карточку открывают ради заметок.
     dialog.focus();
   }
+}
+// Откуда пришла запись: «Telegram · сегодня, 09:14», «Поле записи · …».
+function cardFromWords(entry) {
+  const from = { telegram: "Telegram", telegram_forward: "Telegram, пересланное", notes: "Заметки" }[entry.origin] || "Поле записи";
+  const when = entryClock(entry);
+  return when ? `${from} · ${when}` : from;
+}
+// Колонка доски, в которой лежит дело: строка «Колонка» справа и крошка
+// вверху. Доска читается заново при каждом открытии; у записи вне доски (не
+// дело, чужая) строки нет.
+const cardMenu = { remove: null, entryId: null, columnName: "" };
+async function cardBoardInfo(entryId) {
+  const find = (data) => {
+    if (!data) return null;
+    for (const column of data.columns || []) if (column.cards.some((card) => card.captureId === entryId)) return { columns: data.columns, column };
+    if ((data.closed || []).some((card) => card.captureId === entryId)) return { columns: data.columns, column: null };
+    return null;
+  };
+  // Всегда свежая доска: дело могли закрыть или переложить с тех пор, как доску
+  // читали в последний раз, и колонка в карточке не должна врать.
+  try {
+    const data = await request("/api/board");
+    boardState.data = data;
+    currentDayDate ||= data.today;
+    return find(data);
+  } catch { return null; }
+}
+async function fillCardColumn(entry, { columnRow, columnSelect }) {
+  cardMenu.columnName = "";
+  paintCardCrumb();
+  const info = await cardBoardInfo(entry.id);
+  // Пока шёл запрос, карточку могли закрыть или сменить.
+  if (!info || !columnSelect.isConnected || cardMenu.entryId !== entry.id) return;
+  clear(columnSelect);
+  if (!info.column) {
+    columnSelect.append(new Option("Сделано", ""));
+    columnSelect.disabled = true;
+    cardMenu.columnName = "Сделано";
+  } else {
+    for (const column of info.columns) {
+      const option = new Option(column.name, column.id);
+      option.selected = column.id === info.column.id;
+      columnSelect.append(option);
+    }
+    cardMenu.columnName = info.column.name;
+    columnSelect.disabled = entry.mine === false;
+    columnSelect.addEventListener("change", async () => {
+      const target = info.columns.find((column) => column.id === columnSelect.value);
+      try {
+        await request("/api/board/move", { method: "POST", body: JSON.stringify({ captureId: entry.id, columnId: columnSelect.value, index: 100000 }) });
+        cardMenu.columnName = target?.name || "";
+        paintCardCrumb();
+        toast(`Дело в колонке «${target?.name || ""}»`);
+        if (boardState.data) request("/api/board").then((data) => { boardState.data = data; if (!$("#board")?.hidden) renderBoard(data); }).catch(() => {});
+      } catch (error) {
+        columnSelect.value = info.column.id;
+        toast(error.message);
+      }
+    });
+  }
+  columnRow.hidden = false;
+  paintCardCrumb();
+}
+function paintCardCrumb() {
+  const crumb = $("#review-dialog .card-nav-col");
+  if (crumb) crumb.textContent = cardMenu.columnName;
 }
 function showCorrection(
   entry,
@@ -4075,80 +3907,6 @@ CARD_PHONE.addEventListener("change", syncCardViewport);
 $("#review-dialog").addEventListener("click", (event) => {
   if (event.target === $("#review-dialog")) closeCard();
 });
-// Карточку можно растянуть или сжать мышкой за край или угол. Тянется
-// симметрично — она остаётся по центру, как и была, а край идёт за курсором.
-// Размер запоминается и возвращается при следующем открытии; двойной клик по
-// краю возвращает исходный.
-const cardSizeStorageKey = "pagent.card-size";
-const CARD_MIN_WIDTH = 480;
-const CARD_MIN_HEIGHT = 360;
-function applyCardSize(size) {
-  const dialog = $("#review-dialog");
-  if (!size) {
-    dialog.style.removeProperty("--card-w");
-    dialog.style.removeProperty("--card-h");
-    return;
-  }
-  dialog.style.setProperty("--card-w", `${Math.round(size.width)}px`);
-  dialog.style.setProperty("--card-h", `${Math.round(size.height)}px`);
-}
-function restoreCardSize() {
-  try {
-    const stored = JSON.parse(localStorage.getItem(cardSizeStorageKey));
-    if (stored && Number.isFinite(stored.width) && Number.isFinite(stored.height)) applyCardSize(stored);
-  } catch {
-    localStorage.removeItem(cardSizeStorageKey);
-  }
-}
-restoreCardSize();
-for (const handle of document.querySelectorAll("#review-dialog .card-resize")) {
-  const dir = handle.dataset.dir;
-  handle.addEventListener("dblclick", () => {
-    applyCardSize(null);
-    localStorage.removeItem(cardSizeStorageKey);
-  });
-  handle.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0) return;
-    const dialog = $("#review-dialog");
-    const start = dialog.getBoundingClientRect();
-    const startX = event.clientX,
-      startY = event.clientY;
-    // Знак: правый и нижний края растут вслед за курсором, левый и верхний —
-    // навстречу. Карточка центрирована, поэтому сдвиг края удваивается.
-    const sx = dir.includes("e") ? 2 : dir.includes("w") ? -2 : 0;
-    const sy = dir.includes("s") ? 2 : dir.includes("n") ? -2 : 0;
-    let size = { width: start.width, height: start.height };
-    handle.setPointerCapture(event.pointerId);
-    dialog.classList.add("resizing");
-    event.preventDefault();
-    const move = (e) => {
-      size = {
-        width: Math.min(
-          window.innerWidth - 24,
-          Math.max(CARD_MIN_WIDTH, start.width + sx * (e.clientX - startX)),
-        ),
-        height: Math.min(
-          window.innerHeight - 24,
-          Math.max(CARD_MIN_HEIGHT, start.height + sy * (e.clientY - startY)),
-        ),
-      };
-      applyCardSize(size);
-    };
-    const stop = () => {
-      handle.removeEventListener("pointermove", move);
-      handle.removeEventListener("pointerup", stop);
-      handle.removeEventListener("pointercancel", stop);
-      dialog.classList.remove("resizing");
-      localStorage.setItem(
-        cardSizeStorageKey,
-        JSON.stringify({ width: Math.round(size.width), height: Math.round(size.height) }),
-      );
-    };
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", stop);
-    handle.addEventListener("pointercancel", stop);
-  });
-}
 window.addEventListener("pagehide", () => {
   for (const record of activeCaptures.values())
     if (record.timer) clearTimeout(record.timer);
@@ -5163,89 +4921,17 @@ async function uploadPendingShots(captureId) {
 // (колонки, даты, проекты, список), панель свойств, фильтр и поиск. Клик по
 // названию открывает карточку записи, кружок закрывает дело, перенос между
 // колонками сохраняется на сервере.
-const BOARD_VIEWS = ["columns", "dates", "projects", "tags", "circles", "list", "waiting"];
-const BOARD_COLORS = ["gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"];
-const BOARD_COLOR_NAMES = { gray: "Серый", brown: "Коричневый", orange: "Оранжевый", yellow: "Жёлтый", green: "Зелёный", blue: "Синий", purple: "Фиолетовый", pink: "Розовый", red: "Красный" };
-const BOARD_PROPS_DEFAULT = { people: true, type: true, due: true, project: true, priority: true, files: true, compact: false };
 const boardState = {
-  data: null, drag: null, openAdder: null, view: "columns",
-  props: { ...BOARD_PROPS_DEFAULT },
-  filter: { type: "all", projects: [], circles: [] },
+  data: null, drag: null, openAdder: null,
   search: "",
-  // Закрытые дела: в списке они всегда хвостом, на доске — по желанию.
-  showClosed: false,
-  mobileColumn: 0,
+  // На телефоне открывается первая своя колонка, а не «Сделано».
+  mobileColumn: 1,
 };
-try {
-  const storedView = localStorage.getItem("kizuna-board-view");
-  if (BOARD_VIEWS.includes(storedView)) boardState.view = storedView;
-  const storedProps = JSON.parse(localStorage.getItem("kizuna-board-props") || "null");
-  if (storedProps && typeof storedProps === "object") boardState.props = { ...BOARD_PROPS_DEFAULT, ...storedProps };
-  boardState.showClosed = localStorage.getItem("kizuna-board-closed") === "1";
-} catch {}
 const boardDropHint = (() => { const hint = document.createElement("div"); hint.className = "board-drop"; return hint; })();
 
-// ── круги на доске ──
-// Круг здесь — ещё одна группировка рядом с проектами и тегами и ещё одна
-// строка в том же «Фильтре». Второго способа прятать лишнее человек не учит.
+// Круг на доске больше не группа: карточка круга, который человек выключил,
+// просто не показывается.
 const boardCircleOf = (card) => boardState.data?.circleMarks?.[card.captureId] || null;
-function boardCircleGroups(data) {
-  const groups = new Map();
-  for (const card of data.columns.flatMap((column) => column.cards)) {
-    const circle = boardCircleOf(card);
-    const key = circle?.id || null;
-    if (!groups.has(key)) groups.set(key, { circle, cards: [] });
-    groups.get(key).cards.push(card);
-  }
-  const named = [...groups.values()].filter((group) => group.circle).sort((left, right) => left.circle.name.localeCompare(right.circle.name, "ru"));
-  const result = named.map((group) => ({ key: `circle:${group.circle.id}`, name: group.circle.name, color: "purple", drop: null, adderWithoutDue: true, cards: group.cards }));
-  if (groups.has(null)) result.unshift({ key: "circle:none", name: "Личное", color: "gray", drop: null, adderWithoutDue: true, cards: groups.get(null).cards });
-  return result;
-}
-// «Я жду» — что я отдал и что с этим стало. Четыре состояния и ни одного
-// лишнего: колонок «в работе» и процентов готовности здесь не будет.
-const WAIT_WORDS = ASSIGNMENT_WORDS;
-function boardWaitingEl(waiting) {
-  const wrap = node("section", undefined, "board-waiting");
-  const open = waiting.filter((item) => ["pending", "accepted"].includes(item.state));
-  const closed = waiting.filter((item) => ["done", "declined"].includes(item.state));
-  const late = open.filter((item) => item.state === "pending" && daysBetween(item.createdAt) >= 2);
-  const head = node("p", undefined, "board-waiting-head");
-  head.append(node("b", `На других ${open.length} ${pluralRu(open.length, "дело", "дела", "дел")}`));
-  if (late.length) head.append(node("span", ` · ${late.length} ${pluralRu(late.length, "ждёт", "ждут", "ждут")} ответа второй день`, "late"));
-  wrap.append(head);
-  if (!waiting.length) {
-    wrap.append(node("p", "Вы пока ничего никому не отдали. Дело уходит человеку обычной записью: «Ане — прислать смету до пятницы».", "empty"));
-    return wrap;
-  }
-  const rowsWrap = node("div", undefined, "wait-rows");
-  const today = boardState.data?.today || currentDayDate;
-  for (const item of [...open, ...closed]) {
-    const row = node("div", undefined, "wait-row");
-    const who = node("div", undefined, "wait-who");
-    who.append(avatarEl(item.assignee), node("span", item.assignee?.name || "—"));
-    const main = node("div", undefined, "wait-main");
-    const title = node("button", item.title || "Дело", "wait-title");
-    title.type = "button";
-    title.addEventListener("click", () => openSharedCard(item.captureId));
-    const meta = node("div", undefined, "wait-meta");
-    if (item.due) meta.append(node("span", `срок: ${scheduleLabel({ state: "ok", date: item.due.date, time: item.due.time }) || item.due.date}`, item.due.date < today && item.state !== "done" ? "late" : ""));
-    else meta.append(node("span", "без срока"));
-    if (item.circle) meta.append(circleChip(item.circle, { small: true }));
-    if (item.state === "declined" && item.reason) meta.append(node("span", `«${item.reason}»`, "wait-reason"));
-    main.append(title, meta);
-    const state = node("div", undefined, `wait-state ${item.state}`);
-    const days = item.state === "pending" ? daysBetween(item.createdAt) : null;
-    state.textContent = item.state === "pending" && days >= 1
-      ? `ждёт ответа ${days === 1 ? "второй день" : `${days} ${pluralRu(days, "день", "дня", "дней")}`}`
-      : `${WAIT_WORDS[item.state]}${(item.doneAt || item.respondedAt) && item.state !== "pending" ? ` ${agoWords(item.doneAt || item.respondedAt) || ""}` : ""}`;
-    row.append(who, main, state);
-    rowsWrap.append(row);
-  }
-  wrap.append(rowsWrap);
-  wrap.append(node("p", "Напоминать за вас приложение не будет: это факт в вашем списке, а не письмо человеку в спину.", "board-waiting-hint"));
-  return wrap;
-}
 // ── разговоры кругов: «За столом» ──
 // Страница стоит по краям верхней строки и без своей рамки. Под шапкой —
 // вкладки кругов, под вкладкой — люди круга за столом: у каждого ближайшее дело
@@ -6763,18 +6449,14 @@ function kcInviteCard() {
   card.append(acts);
   return node("div", undefined, "kc-joining").appendChild(card).parentNode;
 }
-function boardCardStatus(card) {
-  const today = boardState.data?.today || currentDayDate;
-  const date = card.due?.date || null;
-  if (!date) return { key: "none", label: "Без срока", icon: "none" };
-  if (today && date < today) return { key: "late", label: "Просрочено", icon: "late" };
-  if (today && date === today) return { key: "today", label: "Сегодня", icon: "clock" };
-  return { key: "ontime", label: "В срок", icon: "clock" };
-}
 async function completeBoardCard(card, element, button) {
   // Повтор: «готово» убирает ближайший экземпляр, серия остаётся на доске.
-  if (card.due?.repeat) { button.disabled = true; try { await skipOccurrence({ id: card.captureId }, card.due.date); } finally { button.disabled = false; } return; }
-  button.disabled = true;
+  if (card.due?.repeat) {
+    if (button) button.disabled = true;
+    try { await skipOccurrence({ id: card.captureId }, card.due.date); } finally { if (button) button.disabled = false; }
+    return;
+  }
+  if (button) button.disabled = true;
   try {
     for (const projectionId of card.projectionIds)
       await request(`/api/projections/${projectionId}/complete`, { method: "POST", body: "{}" });
@@ -6786,12 +6468,12 @@ async function completeBoardCard(card, element, button) {
         load().catch(() => {});
       } catch (error) { toast(error.message); }
     } });
-    element.remove();
+    element?.remove();
     loadBoard();
     load().catch(() => {});
   } catch (error) {
     toast(error.message);
-    button.disabled = false;
+    if (button) button.disabled = false;
   }
 }
 // Закрытое дело возвращается в работу тем же кружком: с доски оно ушло, но в
@@ -6833,8 +6515,17 @@ function boardPersonEl(name, { avatarOnly = false } = {}) {
 // Значок типа — сам кружок «готово»: у задачи пустой, у встречи с часовыми
 // стрелками. Один знак перед названием, а не три.
 const BOARD_CLOCK = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 4.5V8l2.4 1.6"/></svg>';
+// Когда закрыто: «сегодня 10:12», «вчера 18:20» или дата.
+function boardClosedWhen(card) {
+  if (!card.closedAt) return "";
+  const today = boardState.data?.today || currentDayDate;
+  const day = notifyDay(card.closedAt);
+  const word = day === today ? "сегодня" : day === shiftDate(today, -1) ? "вчера" : `${day.slice(8, 10)}.${day.slice(5, 7)}`;
+  return `${word} ${notifyClock(card.closedAt)}`;
+}
+// Карточка на доске: кружок, название и мелкая строка под ним — час, срок
+// (если он не сегодня) и люди. Закрытая лежит в «Сделано» и не тянется.
 function boardCardEl(card, column, { closed = false } = {}) {
-  const props = boardState.props;
   const element = node("div", undefined, `board-card${closed ? " closed" : ""}`);
   element.draggable = !closed;
   element.dataset.captureId = card.captureId;
@@ -6879,54 +6570,21 @@ function boardCardEl(card, column, { closed = false } = {}) {
     });
     titleRow.append(remove);
   }
-  const status = boardCardStatus(card);
-  // Как на «Сегодня»: просроченное — розовая плашка и красный заголовок,
-  // открытое — песочная.
-  if (!closed) element.classList.add(status.key === "late" ? "overdue" : "waiting");
-  const due = card.due ? [scheduleLabel({ state: "ok", date: card.due.date, time: card.due.time }), card.due.repeat].filter(Boolean).join(", ") : null;
-  // Срок — обычным текстом, как дата в Notion; цвет подсказывает состояние.
-  const dueChip = () =>
-    node("span", due, `btag due${status.key === "late" ? " late" : status.key === "today" ? " soon" : ""}`);
-  const projectChip = (project) => node("span", project, `btag project c-${boardProjectColor(project)}`);
-  // Строки свойств, как в Notion; в компактном виде — всё в одну строку.
-  const rows = [];
-  const row = (cls) => { const line = node("div", undefined, `board-meta ${cls}`); rows.push(line); return line; };
-  if (props.people && card.people?.length) {
-    const line = row("people");
-    for (const person of card.people) line.append(boardPersonEl(person, { avatarOnly: props.compact }));
-  }
-  const typeLine = row("type");
-  if (props.type) typeLine.append(node("span", card.type === "meeting_event" ? "встреча" : "задача", `btag kind ${card.type === "meeting_event" ? "meeting" : "task"}`));
-  if (props.priority && card.priority === "high") typeLine.append(node("span", "важно", "btag urgent c-red"));
-  if (props.priority && card.priority === "low") typeLine.append(node("span", "не срочно", "btag c-gray"));
-  if (props.type) for (const tag of card.tags) typeLine.append(node("span", `#${tag}`, "btag tag c-gray"));
-  const dueLine = row("when");
-  if (closed) {
-    dueLine.append(node("span", `закрыто ${scheduleLabel({ state: "ok", date: card.closedDate, time: null })}`, "btag due"));
-  } else if (props.due) {
-    if (boardState.view !== "columns") {
-      // колонка или группа уже говорит статус — на карточке остаётся конкретный срок
-      if (due) dueLine.append(dueChip());
-    } else {
-      dueLine.append(statusBadge(status));
-      if (due && card.due.date > (boardState.data?.today || "")) dueLine.append(node("span", due, "btag due"));
-    }
-  }
-  const projectLine = row("where");
-  if (props.project) for (const project of card.projects) projectLine.append(projectChip(project));
-  // Метка круга — рядом с проектом: и то и другое отвечает на «к чему это».
-  const cardCircle = boardCircleOf(card);
-  if (cardCircle) projectLine.append(circleChip(cardCircle, { small: true }));
-  // Скрепка с числом — как в списках: видно, что к делу что-то приложено.
-  if (props.files && card.attachments) projectLine.append(node("span", `📎 ${card.attachments}`, "btag files c-gray"));
   body.append(titleRow);
-  if (props.compact) {
-    const line = node("div", undefined, "board-meta compact");
-    for (const filled of rows) while (filled.firstChild) line.append(filled.firstChild);
-    if (line.childNodes.length) body.append(line);
+  const meta = node("div", undefined, "board-meta");
+  if (closed) {
+    meta.append(node("span", boardClosedWhen(card), "btag due"));
   } else {
-    for (const filled of rows) if (filled.childNodes.length) body.append(filled);
+    const today = boardState.data?.today || currentDayDate;
+    const date = card.due?.date || null;
+    if (date && date < today) meta.append(node("span", "со вчера", "btag due late"));
+    else if (date && date > today) meta.append(node("span", scheduleLabel({ state: "ok", date, time: card.due.time }), "btag due"));
+    else if (card.due?.time) meta.append(node("span", card.due.time, "btag due soon"));
+    if (card.due?.repeat) meta.append(node("span", card.due.repeat, "btag due"));
+    for (const person of card.people || []) meta.append(boardPersonEl(person, { avatarOnly: true }));
+    if (card.attachments) meta.append(node("span", `📎 ${card.attachments}`, "btag files c-gray"));
   }
+  if (meta.childNodes.length) body.append(meta);
   element.append(done, body);
   if (closed) return element;
   element.addEventListener("dragstart", (event) => {
@@ -6939,6 +6597,7 @@ function boardCardEl(card, column, { closed = false } = {}) {
     element.classList.remove("dragging");
     boardDropHint.remove();
     boardState.drag = null;
+    for (const done of document.querySelectorAll(".board-column.done-drop")) done.classList.remove("done-drop");
   });
   return element;
 }
@@ -6959,10 +6618,10 @@ async function boardMove(body) {
   }
   loadBoard();
 }
-// Шапка колонки: цветная пилюля с названием, счётчик, по наведению — меню и «+».
-function boardHeadEl(name, color, count) {
+// Шапка колонки: название, число карточек, по наведению — меню и «+».
+function boardHeadEl(name, count) {
   const head = node("div", undefined, "board-col-head");
-  const pill = node("span", undefined, `board-pill c-${color || "gray"}`);
+  const pill = node("span", undefined, "board-pill");
   pill.append(node("span", name, "board-col-name"));
   head.append(pill, node("span", String(count), "board-col-count"));
   return head;
@@ -6978,85 +6637,104 @@ function boardHeadTools(element, { menu = null } = {}) {
   tools.append(plus);
   return tools;
 }
+// «Сделано» — прибитая слева колонка: закрытые дела (последние 50), кружок
+// возвращает дело в его колонку, а карточка, брошенная на колонку, закрывается.
+// Колонка не тянется, меню у неё нет; заголовок ведёт на страницу «Сделано».
+function boardDoneColumnEl(closed) {
+  const element = node("section", undefined, "board-column board-done-column");
+  element.dataset.columnId = "done";
+  const head = node("div", undefined, "board-col-head");
+  const pill = node("span", undefined, "board-pill");
+  const link = node("a", "Сделано", "board-col-name");
+  link.href = "#done";
+  pill.append(link);
+  head.append(pill, node("span", String(closed.length), "board-col-count"));
+  const list = node("div", undefined, "board-cards");
+  for (const card of closed) list.append(boardCardEl(card, { id: null }, { closed: true }));
+  if (!closed.length) list.append(node("p", "Закрытое появится здесь", "board-done-empty"));
+  element.addEventListener("dragover", (event) => {
+    if (boardState.drag?.type !== "card") return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    element.classList.add("done-drop");
+  });
+  element.addEventListener("dragleave", (event) => {
+    if (event.relatedTarget instanceof Element && element.contains(event.relatedTarget)) return;
+    element.classList.remove("done-drop");
+  });
+  element.addEventListener("drop", (event) => {
+    if (boardState.drag?.type !== "card") return;
+    event.preventDefault();
+    element.classList.remove("done-drop");
+    const captureId = boardState.drag.captureId;
+    const card = boardState.data?.columns.flatMap((column) => column.cards).find((item) => item.captureId === captureId);
+    if (card) completeBoardCard(card, document.querySelector(`.board-card[data-capture-id="${captureId}"]`), null);
+  });
+  element.append(head, list);
+  return element;
+}
 function boardColumnEl(column) {
-  const element = node("section", undefined, `board-column${column.id === null ? " inbox" : ""}`);
-  element.dataset.columnId = column.id ?? "";
-  const head = boardHeadEl(column.name, column.id === null ? "gray" : column.color, column.cards.length);
-  const name = head.querySelector(".board-col-name");
-  let menu = null;
-  if (column.id !== null) {
-    head.draggable = true;
-    head.addEventListener("dragstart", (event) => {
-      boardState.drag = { type: "column", columnId: column.id };
-      event.dataTransfer.setData("text/plain", column.id);
-      event.dataTransfer.effectAllowed = "move";
-      element.classList.add("dragging-column");
-      event.stopPropagation();
-    });
-    head.addEventListener("dragend", () => {
-      element.classList.remove("dragging-column");
-      boardState.drag = null;
-      for (const other of document.querySelectorAll(".board-column")) other.classList.remove("col-drop-left", "col-drop-right");
-    });
-    // Меню колонки: переименовать, покрасить или удалить (дела вернутся во «Входящие»).
-    menu = node("details", undefined, "board-menu");
-    const summary = node("summary", "⋯");
-    summary.setAttribute("aria-label", `Меню колонки ${column.name}`);
-    const popover = node("div", undefined, "board-menu-popover");
-    const rename = node("button", "Переименовать");
-    rename.type = "button";
-    rename.addEventListener("click", () => {
-      menu.removeAttribute("open");
-      const input = document.createElement("input");
-      input.value = column.name;
-      input.className = "board-col-input";
-      input.maxLength = 40;
-      head.querySelector(".board-pill").replaceWith(input);
-      input.focus();
-      input.select();
-      const cancel = () => loadBoard();
-      input.addEventListener("keydown", async (event) => {
-        if (event.key === "Escape") return cancel();
-        if (event.key !== "Enter") return;
-        const value = input.value.trim();
-        if (!value || value === column.name) return cancel();
-        try {
-          await request(`/api/board/columns/${column.id}`, { method: "PATCH", body: JSON.stringify({ name: value }) });
-        } catch (error) { toast(error.message); }
-        loadBoard();
-      });
-      input.addEventListener("blur", cancel);
-    });
-    const colors = node("div", undefined, "board-colors");
-    colors.setAttribute("role", "group");
-    colors.setAttribute("aria-label", "Цвет колонки");
-    for (const color of BOARD_COLORS) {
-      const swatch = node("button", undefined, `board-swatch c-${color}${(column.color || "gray") === color ? " is-current" : ""}`);
-      swatch.type = "button";
-      swatch.title = BOARD_COLOR_NAMES[color];
-      swatch.setAttribute("aria-label", `Цвет: ${BOARD_COLOR_NAMES[color]}`);
-      swatch.addEventListener("click", async () => {
-        menu.removeAttribute("open");
-        try {
-          await request(`/api/board/columns/${column.id}`, { method: "PATCH", body: JSON.stringify({ color }) });
-        } catch (error) { toast(error.message); }
-        loadBoard();
-      });
-      colors.append(swatch);
-    }
-    const removeColumn = node("button", "Удалить колонку");
-    removeColumn.type = "button";
-    removeColumn.addEventListener("click", async () => {
-      menu.removeAttribute("open");
+  const element = node("section", undefined, "board-column");
+  element.dataset.columnId = column.id;
+  const head = boardHeadEl(column.name, column.cards.length);
+  head.draggable = true;
+  head.addEventListener("dragstart", (event) => {
+    boardState.drag = { type: "column", columnId: column.id };
+    event.dataTransfer.setData("text/plain", column.id);
+    event.dataTransfer.effectAllowed = "move";
+    element.classList.add("dragging-column");
+    event.stopPropagation();
+  });
+  head.addEventListener("dragend", () => {
+    element.classList.remove("dragging-column");
+    boardState.drag = null;
+    for (const other of document.querySelectorAll(".board-column")) other.classList.remove("col-drop-left", "col-drop-right");
+  });
+  // Название правится на месте: щелчком по нему или через меню.
+  const rename = () => {
+    const input = document.createElement("input");
+    input.value = column.name;
+    input.className = "board-col-input";
+    input.maxLength = 40;
+    input.setAttribute("aria-label", "Название колонки");
+    head.querySelector(".board-pill").replaceWith(input);
+    head.draggable = false;
+    input.focus();
+    input.select();
+    const cancel = () => loadBoard();
+    input.addEventListener("keydown", async (event) => {
+      if (event.key === "Escape") return cancel();
+      if (event.key !== "Enter") return;
+      const value = input.value.trim();
+      if (!value || value === column.name) return cancel();
       try {
-        const result = await request(`/api/board/columns/${column.id}`, { method: "DELETE" });
-        toast(result.movedToInbox ? `Колонка удалена, дел во «Входящих»: +${result.movedToInbox}` : "Колонка удалена");
+        await request(`/api/board/columns/${column.id}`, { method: "PATCH", body: JSON.stringify({ name: value }) });
       } catch (error) { toast(error.message); }
       loadBoard();
     });
-    popover.append(rename, node("p", "Цвет", "board-menu-label"), colors, removeColumn);
-    menu.append(summary, popover);
-  }
+    input.addEventListener("blur", cancel);
+  };
+  head.querySelector(".board-col-name").addEventListener("click", rename);
+  // Меню колонки: переименовать или удалить (дела уедут в первую колонку).
+  const menu = node("details", undefined, "board-menu");
+  const summary = node("summary", "⋯");
+  summary.setAttribute("aria-label", `Меню колонки ${column.name}`);
+  const popover = node("div", undefined, "board-menu-popover");
+  const renameButton = node("button", "Переименовать");
+  renameButton.type = "button";
+  renameButton.addEventListener("click", () => { menu.removeAttribute("open"); rename(); });
+  const removeColumn = node("button", "Удалить колонку");
+  removeColumn.type = "button";
+  removeColumn.addEventListener("click", async () => {
+    menu.removeAttribute("open");
+    try {
+      const result = await request(`/api/board/columns/${column.id}`, { method: "DELETE" });
+      toast(result.moved ? `Колонка удалена, дел перенесено: ${result.moved}` : "Колонка удалена");
+    } catch (error) { toast(error.message); }
+    loadBoard();
+  });
+  popover.append(renameButton, removeColumn);
+  menu.append(summary, popover);
   head.append(boardHeadTools(element, { menu }));
   const list = node("div", undefined, "board-cards");
   for (const card of column.cards) list.append(boardCardEl(card, column));
@@ -7096,9 +6774,9 @@ function boardColumnEl(column) {
     event.preventDefault();
     const rect = element.getBoundingClientRect();
     const left = event.clientX < rect.left + rect.width / 2;
-    const real = boardState.data.columns.filter((item) => item.id !== null).map((item) => item.id);
-    const from = real.indexOf(boardState.drag.columnId);
-    let index = column.id === null ? 0 : real.indexOf(column.id) + (left ? 0 : 1);
+    const ids = boardState.data.columns.map((item) => item.id);
+    const from = ids.indexOf(boardState.drag.columnId);
+    let index = ids.indexOf(column.id) + (left ? 0 : 1);
     if (from >= 0 && from < index) index -= 1;
     element.classList.remove("col-drop-left", "col-drop-right");
     try {
@@ -7107,7 +6785,6 @@ function boardColumnEl(column) {
     loadBoard();
   });
   element.append(head, list, boardAdderEl(column));
-  void name;
   return element;
 }
 // Быстрое добавление дела прямо в колонку: Enter сохраняет и оставляет поле
@@ -7120,7 +6797,7 @@ function boardAdderEl(column) {
   input.type = "text";
   input.placeholder = "Что сделать?";
   input.hidden = true;
-  const adderKey = `column:${column.id ?? "inbox"}`;
+  const adderKey = `column:${column.id}`;
   const open = ({ focus = true } = {}) => {
     button.hidden = true;
     input.hidden = false;
@@ -7184,192 +6861,13 @@ function boardGhostColumnEl() {
   element.append(button, input);
   return element;
 }
-// Группировка по датам: колонки считаются из сроков, внутри — группы по видам
-// (встречи, потом задачи). Перенос карточки в колонку даты меняет срок дела,
-// как в Todoist; «Просрочено» и «Без срока» переносом не назначить.
-function boardDateBuckets(data) {
-  const today = data.today, tomorrow = shiftDate(today, 1), weekEnd = shiftDate(today, 7);
-  const buckets = [
-    { key: "late", name: "Просрочено", drop: null, cards: [] },
-    { key: "today", name: "Сегодня", drop: today, cards: [] },
-    { key: "tomorrow", name: "Завтра", drop: tomorrow, cards: [] },
-    { key: "week", name: "Неделя", drop: weekEnd, cards: [] },
-    { key: "later", name: "Позже", drop: shiftDate(today, 14), cards: [] },
-    { key: "none", name: "Без срока", drop: null, adderWithoutDue: true, cards: [] },
-  ];
-  const bucketOf = (card) => {
-    const date = card.due?.date || null;
-    if (!date) return "none";
-    if (date < today) return "late";
-    if (date === today) return "today";
-    if (date === tomorrow) return "tomorrow";
-    if (date <= weekEnd) return "week";
-    return "later";
-  };
-  for (const card of data.columns.flatMap((column) => column.cards))
-    buckets.find((bucket) => bucket.key === bucketOf(card)).cards.push(card);
-  const order = (left, right) =>
-    (left.due?.date || "9999").localeCompare(right.due?.date || "9999") ||
-    (left.due?.time || "99").localeCompare(right.due?.time || "99") ||
-    (left.priority === "high" ? -1 : 0) - (right.priority === "high" ? -1 : 0) ||
-    left.createdAt.localeCompare(right.createdAt);
-  for (const bucket of buckets) bucket.cards.sort(order);
-  return buckets;
-}
-// Группировка по тегам: дело с несколькими тегами лежит в каждой группе,
-// без тегов — в «Без тегов». Переносом тег не меняется.
-function boardTagGroups(data) {
-  const groups = new Map();
-  for (const card of data.columns.flatMap((column) => column.cards)) {
-    const keys = card.tags.length ? card.tags : [null];
-    for (const key of keys) {
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(card);
-    }
-  }
-  const named = [...groups.keys()].filter(Boolean).sort((left, right) => left.localeCompare(right, "ru"));
-  const result = named.map((name) => ({ key: `tag:${name}`, name: `#${name}`, color: boardProjectColor(name), drop: null, cards: groups.get(name) }));
-  if (groups.has(null)) result.push({ key: "tag:none", name: "Без тегов", color: "gray", drop: null, adderWithoutDue: true, cards: groups.get(null) });
-  return result;
-}
-async function boardChangeDue(captureId, bucket) {
-  const card = boardState.data.columns.flatMap((column) => column.cards).find((item) => item.captureId === captureId);
-  try {
-    await request(`/api/captures/${captureId}/corrections`, {
-      method: "POST",
-      // метка времени в теле обходит клиентский кэш уточнений: перенос туда и
-      // обратно — два разных действия, а не повтор одного
-      body: JSON.stringify({ at: Date.now(), patch: { schedule: { date: bucket.drop, time: card?.due?.time || null } } }),
-    });
-    toast(`Срок: ${scheduleLabel({ state: "ok", date: bucket.drop, time: null })}`);
-  } catch (error) {
-    toast(error.message);
-  }
-  loadBoard();
-}
-const BOARD_BUCKET_COLORS = { late: "red", today: "orange", tomorrow: "yellow", week: "green", later: "blue", none: "gray" };
-// Группировка по проектам: дело с несколькими проектами лежит в первом,
-// без проекта — в «Без проекта». Переносом проект не меняется.
-function boardProjectGroups(data) {
-  const groups = new Map();
-  for (const card of data.columns.flatMap((column) => column.cards)) {
-    const key = card.projects[0] || null;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(card);
-  }
-  const named = [...groups.keys()].filter(Boolean).sort((left, right) => left.localeCompare(right, "ru"));
-  const result = named.map((name) => ({ key: `project:${name}`, name, color: boardProjectColor(name), drop: null, cards: groups.get(name) }));
-  if (groups.has(null)) result.push({ key: "project:none", name: "Без проекта", color: "gray", drop: null, adderWithoutDue: true, cards: groups.get(null) });
-  return result;
-}
-function boardDateColumnEl(bucket) {
-  const element = node("section", undefined, "board-column dated");
-  const head = boardHeadEl(bucket.name, bucket.color || BOARD_BUCKET_COLORS[bucket.key] || "gray", bucket.cards.length);
-  head.style.cursor = "default";
-  if (bucket.drop || bucket.adderWithoutDue) head.append(boardHeadTools(element));
-  const list = node("div", undefined, "board-cards");
-  const groups = [
-    ["Встречи", bucket.cards.filter((card) => card.type === "meeting_event")],
-    ["Задачи", bucket.cards.filter((card) => card.type !== "meeting_event")],
-  ];
-  for (const [label, cards] of groups) {
-    if (!cards.length) continue;
-    list.append(node("p", label, "board-group-label"));
-    for (const card of cards) list.append(boardCardEl(card, { id: null }));
-  }
-  element.addEventListener("dragover", (event) => {
-    if (boardState.drag?.type !== "card" || !bucket.drop) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
-    element.classList.add("drop-over");
-  });
-  element.addEventListener("dragleave", (event) => {
-    if (event.relatedTarget instanceof Element && element.contains(event.relatedTarget)) return;
-    element.classList.remove("drop-over");
-  });
-  element.addEventListener("drop", (event) => {
-    if (boardState.drag?.type !== "card" || !bucket.drop) return;
-    event.preventDefault();
-    element.classList.remove("drop-over");
-    boardChangeDue(boardState.drag.captureId, bucket);
-  });
-  element.append(head, list);
-  if (bucket.drop || bucket.adderWithoutDue) element.append(boardDateAdderEl(bucket));
-  return element;
-}
-// Быстрое дело в колонке даты: срок ставится сразу по колонке.
-function boardDateAdderEl(bucket) {
-  const wrap = node("div", undefined, "board-add");
-  const button = node("button", "+ Дело", "board-add-button");
-  button.type = "button";
-  const input = document.createElement("input");
-  input.type = "text";
-  input.placeholder = bucket.drop ? `Что сделать — ${bucket.name.toLowerCase()}?` : "Что сделать?";
-  input.hidden = true;
-  const openAdderKey = `date:${bucket.key}`;
-  const open = () => { button.hidden = true; input.hidden = false; input.focus(); boardState.openAdder = openAdderKey; };
-  const close = () => { input.hidden = true; input.value = ""; button.hidden = false; if (boardState.openAdder === openAdderKey) boardState.openAdder = null; };
-  button.addEventListener("click", open);
-  input.addEventListener("keydown", async (event) => {
-    if (event.key === "Escape") return close();
-    if (event.key !== "Enter") return;
-    const raw = input.value.trim();
-    if (!raw) return close();
-    input.disabled = true;
-    try {
-      const body = { raw, primaryType: "todo", ...(bucket.drop ? { due: { date: bucket.drop } } : {}) };
-      await request("/api/captures", { method: "POST", body: JSON.stringify(withProvider(body)) });
-    } catch (error) { toast(error.message); }
-    await loadBoard();
-  });
-  input.addEventListener("blur", () => { if (!input.value.trim() && !input.disabled) close(); });
-  wrap.append(button, input);
-  if (boardState.openAdder === openAdderKey) requestAnimationFrame(open);
-  return wrap;
-}
-// Группа закрытых дел, свежие сверху. В списке — всегда хвостом; на доске —
-// колонкой по кнопке из «Скрытых групп».
-function boardClosedGroupEl(cards) {
-  const element = node("section", undefined, "board-column dated closed");
-  const head = boardHeadEl("Закрытые", "green", cards.length);
-  head.style.cursor = "default";
-  const list = node("div", undefined, "board-cards");
-  for (const card of cards) list.append(boardCardEl(card, { id: null }, { closed: true }));
-  element.append(head, list);
-  return element;
-}
-// «Скрытые группы» справа от доски, как в Notion: закрытые дела не мозолят
-// глаза, но в одном щелчке.
-function boardHiddenEl(data) {
-  const aside = node("aside", undefined, "board-hidden");
-  aside.append(node("h6", boardState.showClosed ? "Показано" : "Скрытые группы"));
-  const toggle = node("button", undefined, "board-hidden-toggle");
-  toggle.type = "button";
-  toggle.setAttribute("aria-pressed", String(boardState.showClosed));
-  toggle.append(node("span", "Закрытые", "board-pill c-green"), node("span", String(data.closed?.length || 0), "board-col-count"));
-  toggle.title = boardState.showClosed ? "Скрыть закрытые" : "Показать колонкой";
-  toggle.addEventListener("click", () => {
-    boardState.showClosed = !boardState.showClosed;
-    try { localStorage.setItem("kizuna-board-closed", boardState.showClosed ? "1" : "0"); } catch {}
-    renderBoard(boardState.data);
-  });
-  aside.append(toggle);
-  return aside;
-}
-// Фильтр и поиск действуют на любой вид: сравниваются проект, тип и текст
-// названия. Доска не перезапрашивается — всё уже загружено.
+// Поиск действует на названия: доска не перезапрашивается — всё уже загружено.
+// Карточки круга, который человек выключил, не показываются.
 function boardCardVisible(card) {
-  const { type, projects } = boardState.filter;
-  if (type === "task" && card.type === "meeting_event") return false;
-  if (type === "meeting_event" && card.type !== "meeting_event") return false;
-  if (projects.length && !card.projects.some((project) => projects.includes(project))) return false;
-  const { circles: wanted } = boardState.filter;
   const circle = boardCircleOf(card);
-  if (wanted.length) {
-    if (!wanted.includes(circle?.id || "none")) return false;
-  } else if (circle && (boardState.data?.circles || []).some((item) => item.id === circle.id && item.muted)) return false;
+  if (circle && (boardState.data?.circles || []).some((item) => item.id === circle.id && item.muted)) return false;
   const query = boardState.search.trim().toLowerCase();
-  if (query && !card.title.toLowerCase().includes(query) && !card.tags.some((tag) => tag.toLowerCase().includes(query))) return false;
+  if (query && !card.title.toLowerCase().includes(query)) return false;
   return true;
 }
 function boardFilteredData(data) {
@@ -7379,53 +6877,6 @@ function boardFilteredData(data) {
     closed: (data.closed || []).filter(boardCardVisible),
   };
 }
-function paintBoardFilter(data) {
-  const active = (boardState.filter.type !== "all" ? 1 : 0) + boardState.filter.projects.length + boardState.filter.circles.length;
-  $("#board-filter-summary").textContent = active ? `Фильтр · ${active}` : "Фильтр";
-  $("#board-filter").classList.toggle("is-active", active > 0);
-  for (const button of document.querySelectorAll("[data-board-type]"))
-    button.setAttribute("aria-pressed", String(button.dataset.boardType === boardState.filter.type));
-  const wrap = $("#board-filter-projects");
-  clear(wrap);
-  const names = [...new Set((data.columns.flatMap((column) => column.cards).concat(data.closed || [])).flatMap((card) => card.projects))]
-    .sort((left, right) => left.localeCompare(right, "ru"));
-  if (!names.length) wrap.append(node("span", "Проектов пока нет", "board-filter-empty"));
-  for (const name of names) {
-    const chip = node("button", name, `btag project c-${boardProjectColor(name)}`);
-    chip.type = "button";
-    chip.setAttribute("aria-pressed", String(boardState.filter.projects.includes(name)));
-    chip.addEventListener("click", () => {
-      const set = new Set(boardState.filter.projects);
-      if (set.has(name)) set.delete(name); else set.add(name);
-      boardState.filter.projects = [...set];
-      renderBoard(boardState.data);
-    });
-    wrap.append(chip);
-  }
-  // Круг — третья строка фильтра, после «Тип» и «Проект». Пока кругов нет,
-  // строки нет: пустая строка в фильтре обещает то, чего у человека ещё нет.
-  const circleWrap = $("#board-filter-circles"), circleLabel = $("#board-filter-circles-label");
-  const myCircles = data.circles || [];
-  clear(circleWrap);
-  circleWrap.hidden = circleLabel.hidden = !myCircles.length;
-  if (myCircles.length) {
-    const options = [...myCircles.map((circle) => ({ id: circle.id, name: circle.name, color: circle.color })), { id: "none", name: "Личное", color: null }];
-    for (const option of options) {
-      const chip = node("button", undefined, "btag circle-chip");
-      chip.type = "button";
-      if (option.color) chip.append(node("i", undefined, `circle-dot ${CIRCLE_TONES[option.color] || "violet"}`));
-      chip.append(node("span", option.name));
-      chip.setAttribute("aria-pressed", String(boardState.filter.circles.includes(option.id)));
-      chip.addEventListener("click", () => {
-        const set = new Set(boardState.filter.circles);
-        if (set.has(option.id)) set.delete(option.id); else set.add(option.id);
-        boardState.filter.circles = [...set];
-        renderBoard(boardState.data);
-      });
-      circleWrap.append(chip);
-    }
-  }
-}
 // На телефоне колонки — по одной на экран: сверху сегмент подписей, точка
 // показывает, где вы. На широком экране сегмент спрятан стилями.
 function paintBoardSegments(columns) {
@@ -7433,12 +6884,12 @@ function paintBoardSegments(columns) {
   clear(wrap);
   if (boardState.mobileColumn >= columns.length) boardState.mobileColumn = 0;
   columns.forEach((column, index) => {
-    const pill = column.querySelector(".board-pill");
+    const name = column.querySelector(".board-col-name");
     const button = node("button", undefined, "board-segment");
     button.type = "button";
     button.setAttribute("role", "tab");
     button.setAttribute("aria-selected", String(index === boardState.mobileColumn));
-    button.append(pill ? pill.cloneNode(true) : node("span", column.classList.contains("ghost") ? "+ Колонка" : "…", "board-pill c-gray"));
+    button.append(node("span", name ? name.textContent : column.classList.contains("ghost") ? "+ Колонка" : "…", "board-pill"));
     const count = column.querySelector(".board-col-count");
     if (count) button.append(node("span", count.textContent, "board-col-count"));
     button.addEventListener("click", () => {
@@ -7465,93 +6916,21 @@ function renderBoard(source) {
   }
   clear(wrap);
   boardState.openAdder = openAdder;
-  paintBoardFilter(source);
   const data = boardFilteredData(source);
-  wrap.classList.toggle("list", boardState.view === "list");
-  wrap.classList.toggle("compact", Boolean(boardState.props.compact));
-  if (boardState.view === "waiting") {
-    wrap.classList.remove("list");
-    wrap.append(boardWaitingEl(source.waiting || []));
-    $("#board-segments").hidden = true;
-    return;
-  }
-  if (boardState.view === "dates") {
-    for (const bucket of boardDateBuckets(data)) wrap.append(boardDateColumnEl(bucket));
-  } else if (boardState.view === "circles") {
-    const groups = boardCircleGroups(data);
-    for (const group of groups) wrap.append(boardDateColumnEl(group));
-    if (!wrap.childNodes.length) wrap.append(node("p", "Открытых дел нет.", "empty"));
-  } else if (boardState.view === "projects" || boardState.view === "tags") {
-    const groups = boardState.view === "projects" ? boardProjectGroups(data) : boardTagGroups(data);
-    for (const group of groups) wrap.append(boardDateColumnEl(group));
-    if (!wrap.childNodes.length) wrap.append(node("p", "Открытых дел нет.", "empty"));
-  } else if (boardState.view === "list") {
-    // Список — те же группы по срокам, столбиком. Пустые группы не занимают
-    // место, кроме «Сегодня» и «Без срока»: туда чаще всего добавляют, и
-    // «+ Дело» должно быть под рукой даже на пустой доске.
-    for (const bucket of boardDateBuckets(data))
-      if (bucket.cards.length || bucket.key === "today" || bucket.key === "none")
-        wrap.append(boardDateColumnEl(bucket));
-    if (data.closed?.length) wrap.append(boardClosedGroupEl(data.closed));
-  } else {
-    for (const column of data.columns) wrap.append(boardColumnEl(column));
-    wrap.append(boardGhostColumnEl());
-  }
-  if (boardState.view !== "list") {
-    if (boardState.showClosed && data.closed?.length) wrap.append(boardClosedGroupEl(data.closed));
-    wrap.append(boardHiddenEl(data));
-  }
-  // Сегмент колонок нужен, когда на телефоне показана одна колонка; список
-  // и так столбиком целиком.
-  $("#board-segments").hidden = boardState.view === "list";
+  wrap.append(boardDoneColumnEl(data.closed || []));
+  for (const column of data.columns) wrap.append(boardColumnEl(column));
+  wrap.append(boardGhostColumnEl());
+  // Сегмент колонок нужен, когда на телефоне показана одна колонка.
   paintBoardSegments([...wrap.querySelectorAll(".board-column")]);
 }
-function setBoardView(view) {
-  boardState.view = view;
-  try { localStorage.setItem("kizuna-board-view", view); } catch {}
-  for (const button of document.querySelectorAll("[data-board-view]"))
-    button.setAttribute("aria-pressed", String(button.dataset.boardView === view));
-}
-for (const button of document.querySelectorAll("[data-board-view]"))
-  button.addEventListener("click", () => {
-    setBoardView(button.dataset.boardView);
-    loadBoard();
-  });
-setBoardView(boardState.view);
-// Панель свойств: что показывать на карточке и компактно ли. Запоминается в
-// браузере вместе с видом.
+// Поиск по названиям и «+ Дело» в первую колонку: поле открывается прямо в ней.
 {
-  const toggle = $("#board-props-toggle"), panel = $("#board-props");
-  toggle.addEventListener("click", () => {
-    panel.hidden = !panel.hidden;
-    toggle.setAttribute("aria-pressed", String(!panel.hidden));
-  });
-  for (const box of document.querySelectorAll("[data-board-prop]")) {
-    box.checked = Boolean(boardState.props[box.dataset.boardProp]);
-    box.addEventListener("change", () => {
-      boardState.props[box.dataset.boardProp] = box.checked;
-      try { localStorage.setItem("kizuna-board-props", JSON.stringify(boardState.props)); } catch {}
-      if (boardState.data) renderBoard(boardState.data);
-    });
-  }
-  for (const button of document.querySelectorAll("[data-board-type]"))
-    button.addEventListener("click", () => {
-      boardState.filter.type = button.dataset.boardType;
-      if (boardState.data) renderBoard(boardState.data);
-    });
-  $("#board-filter-reset").addEventListener("click", () => {
-    boardState.filter = { type: "all", projects: [], circles: [] };
-    $("#board-filter").removeAttribute("open");
-    if (boardState.data) renderBoard(boardState.data);
-  });
   $("#board-search").addEventListener("input", (event) => {
     boardState.search = event.target.value;
     if (boardState.data) renderBoard(boardState.data);
   });
-  // «+ Дело» в панели — в первую колонку с полем: во «Входящие» на доске,
-  // в «Сегодня» в списке и по датам.
   $("#board-new").addEventListener("click", () => {
-    const button = $("#board-columns").querySelector(".board-column:not(.ghost) .board-add-button");
+    const button = $("#board-columns").querySelector(".board-column:not(.ghost):not(.board-done-column) .board-add-button");
     if (button) { button.click(); button.closest(".board-column")?.scrollIntoView({ block: "nearest", inline: "nearest" }); }
   });
 }
@@ -7559,8 +6938,6 @@ setBoardView(boardState.view);
 // шапки колонок и кнопки не задеты — у них свои жесты, рука берёт только фон.
 const boardPan = { active: false, pointerId: null, startX: 0, startLeft: 0 };
 function boardPanTarget(target) {
-  // Список стоит столбиком и вбок не едет — тянуть нечего.
-  if ($("#board-columns").classList.contains("list")) return false;
   return target instanceof Element && (
     target.id === "board-columns" ||
     target.classList.contains("board-column") ||
@@ -7591,18 +6968,13 @@ function boardPanTarget(target) {
   wrap.addEventListener("pointerup", endPan);
   wrap.addEventListener("pointercancel", endPan);
 }
-// view — из адреса («#board?view=list»): ссылка с «Сегодня» ведёт сразу в
-// нужный вид. Применяется после ответа сервера: первый переход по хэшу
-// случается до того, как модуль дошёл до состояния доски.
-// view — из адреса («#board?view=list»): ссылка с «Сегодня» ведёт сразу в
-// нужный вид. Применяется после ответа сервера: первый переход по хэшу
-// случается до того, как модуль дошёл до состояния доски.
-async function loadBoard(view) {
+// Первый переход по хэшу случается до того, как модуль дошёл до состояния
+// доски, поэтому оно читается только после ответа сервера.
+async function loadBoard() {
   const wrap = $("#board-columns");
   if (!wrap.childNodes.length) wrap.append(node("p", "Собираем доску…", "empty"));
   try {
     const data = await request("/api/board");
-    if (BOARD_VIEWS.includes(view) && view !== boardState.view) setBoardView(view);
     boardState.data = data;
     // «Сегодня» могли ещё не открывать: без даты дня сроки на доске выходили
     // бы ISO-строкой вместо «завтра» и «05.09».
@@ -7611,6 +6983,145 @@ async function loadBoard(view) {
   } catch (error) {
     clear(wrap);
     wrap.append(node("p", error.message, "empty"));
+  }
+}
+
+// ── «Сделано» ────────────────────────────────────────────────────────────────
+// Один экран: три числа, неделя столбиками, куда ушла неделя по колонкам и
+// список по дням — тот же «Что делал», только за семь дней. Всё считает сервер
+// (GET /api/done); страница ничего не хранит. Открывается из заголовка «Что
+// делал» на «Сегодня» и из заголовка колонки «Сделано» на доске.
+const DONE_WEEKDAYS = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
+function doneDayWord(date, today) {
+  if (date === today) return "Сегодня";
+  if (date === shiftDate(today, -1)) return "Вчера";
+  return DONE_WEEKDAYS[new Date(`${date}T12:00:00Z`).getUTCDay()];
+}
+function doneRangeWords(from, to) {
+  const a = new Date(`${from}T12:00:00Z`), b = new Date(`${to}T12:00:00Z`);
+  const month = (d) => CAL_MONTHS_G[d.getUTCMonth()];
+  if (a.getUTCMonth() === b.getUTCMonth()) return `${a.getUTCDate()}–${b.getUTCDate()} ${month(b)}`;
+  return `${a.getUTCDate()} ${month(a)} – ${b.getUTCDate()} ${month(b)}`;
+}
+// Вернуть закрытое туду в работу: у старой записи-отчёта дела внутри нет.
+async function reopenDoneItem(item, button) {
+  button.disabled = true;
+  try {
+    const { entry } = await request(`/api/captures/${encodeURIComponent(item.id)}`);
+    const closed = completableProjections(entry).filter((projection) => projection.completion?.completed);
+    if (!closed.length) throw new Error("Это старая запись о сделанном: возвращать в работу нечего");
+    for (const projection of closed) await request(`/api/projections/${projection.id}/undo-complete`, { method: "POST", body: "{}" });
+    toast("Возвращено в работу");
+    load().catch(() => {});
+    await loadDone();
+  } catch (error) {
+    toast(error.message);
+    button.disabled = false;
+  }
+}
+function doneRowEl(item) {
+  const row = node("div", undefined, `entry dense completed${item.auto ? " auto-done" : ""}`);
+  const old = !item.auto && item.column === "Без колонки";
+  if (!item.auto) row.dataset.captureId = item.id;
+  const mark = node(item.auto || old ? "span" : "button", undefined, `completion-button${item.auto ? " auto" : old ? " static" : ""}`);
+  mark.setAttribute("aria-pressed", "true");
+  if (item.auto) mark.title = "Прошла по календарю";
+  else if (!old) {
+    mark.type = "button";
+    mark.title = "Вернуть в работу";
+    mark.setAttribute("aria-label", `Вернуть в работу: ${item.title}`);
+    mark.addEventListener("click", () => reopenDoneItem(item, mark));
+  }
+  row.append(mark);
+  if (item.auto) row.append(node("span", item.title, "entry-title"));
+  else {
+    const title = node("button", item.title, "entry-title");
+    title.type = "button";
+    title.addEventListener("click", () => {
+      const list = row.closest(".done-days");
+      pendingCardList = list ? { label: "Сделано", items: rowsAsList([...list.querySelectorAll(".entry[data-capture-id]")]), id: item.id, occurrence: null } : null;
+      openReportEntry(item.id);
+    });
+    row.append(title);
+  }
+  const meta = node("div", undefined, "entry-meta");
+  if (item.auto) meta.append(node("span", "прошла по календарю", "tag auto"));
+  else if (item.column && !old) meta.append(node("span", item.column, "tag done-where"));
+  meta.append(node("span", item.time, "tag time"));
+  row.append(meta);
+  return row;
+}
+function paintDone(data) {
+  const page = $("#done");
+  clear(page);
+  const heading = node("div", undefined, "page-heading");
+  heading.append(node("h2", "Сделано"));
+  page.append(heading);
+  const nums = node("div", undefined, "done-nums");
+  for (const [value, label, tone] of [[data.counts.today, "сегодня", " green"], [data.counts.period, "за неделю", ""], [data.counts.meetings, "встреч прошло", ""]]) {
+    const cell = node("div", undefined, `done-num${tone}`);
+    cell.append(node("b", String(value)), node("span", label));
+    nums.append(cell);
+  }
+  page.append(nums);
+  // Неделя столбиками одной краской: число подписано у сегодня и у лучшего
+  // дня, остальные — по наведению.
+  const byDay = new Map((data.byDay || []).map((item) => [item.date, item.n]));
+  const days = [];
+  for (let date = data.from; date <= data.to; date = shiftDate(date, 1)) days.push({ date, n: byDay.get(date) || 0 });
+  const peak = Math.max(0, ...days.map((day) => day.n));
+  const week = node("section", undefined, "done-week");
+  week.append(node("p", `По дням · ${doneRangeWords(data.from, data.to)}`, "done-cap"));
+  const bars = node("div", undefined, "done-bars"), names = node("div", undefined, "done-bars-x");
+  for (const day of days) {
+    const bar = node("div", undefined, `done-bar${day.date === data.today ? " today" : ""}`);
+    const label = new Date(`${day.date}T12:00:00Z`);
+    bar.title = `${label.getUTCDate()} ${CAL_MONTHS_G[label.getUTCMonth()]} · ${day.n}`;
+    const fill = node("i", undefined, "done-bar-fill");
+    fill.style.height = day.n && peak ? `${Math.max(6, Math.round((day.n / peak) * 100))}%` : "2px";
+    if (day.n && (day.date === data.today || day.n === peak)) fill.append(node("span", String(day.n), "done-bar-n"));
+    bar.append(fill);
+    bars.append(bar);
+    names.append(node("span", ["вс", "пн", "вт", "ср", "чт", "пт", "сб"][label.getUTCDay()], day.date === data.today ? "today" : ""));
+  }
+  week.append(bars, names);
+  page.append(week);
+  const columns = node("section", undefined, "done-cols");
+  columns.append(node("p", "По колонкам за неделю", "done-cap"));
+  const widest = Math.max(1, ...(data.byColumn || []).map((item) => item.n));
+  if (!(data.byColumn || []).length) columns.append(node("p", "За неделю ничего не закрыто.", "done-empty"));
+  for (const item of data.byColumn || []) {
+    const line = node("div", undefined, `done-col${item.name === "Встречи" ? " meetings" : ""}`);
+    const track = node("span", undefined, "done-col-track");
+    const fill = node("i");
+    fill.style.width = `${Math.max(4, Math.round((item.n / widest) * 100))}%`;
+    track.append(fill);
+    line.append(node("span", item.name, "done-col-name"), track, node("b", String(item.n)));
+    columns.append(line);
+  }
+  page.append(columns);
+  const list = node("div", undefined, "done-days drawer");
+  for (const day of data.days) {
+    if (!day.items.length) continue;
+    const shelf = node("h3", undefined, `shelf-head done-day${day.date === data.today ? " today" : ""}`);
+    shelf.append(document.createTextNode(doneDayWord(day.date, data.today)), document.createTextNode(" "), node("span", `· ${day.items.length}`, "shelf-n"));
+    const rows = node("div", undefined, "day-rows");
+    for (const item of day.items) rows.append(doneRowEl(item));
+    list.append(shelf, rows);
+  }
+  if (!list.childNodes.length) list.append(node("p", "Пока ничего. Первый кружок — сюда.", "empty"));
+  page.append(list);
+}
+async function loadDone() {
+  const page = $("#done");
+  if (!page.childNodes.length) page.append(node("p", "Считаем сделанное…", "empty"));
+  try {
+    const data = await request("/api/done");
+    currentDayDate ||= data.today;
+    paintDone(data);
+  } catch (error) {
+    clear(page);
+    page.append(node("p", error.message, "empty"));
   }
 }
 
@@ -8773,66 +8284,6 @@ async function patchCalendarAccount(id, patch) {
     });
     $("#calendar-google")?.addEventListener("click", (event) => { if (!calendarAccountsState.googleReady) { event.preventDefault(); toast("Сначала укажите ID и секрет клиента Google в «Ключах»"); } });
   }
-}
-
-// «В календарь» в карточке: список календарей, куда можно писать, и что уже
-// отправлено. Собирается после открытия карточки — двумя короткими запросами,
-// чтобы карточка не ждала календарь.
-function calendarExportEl(entry) {
-  const wrap = node("div", undefined, "card-calendar");
-  const c = entry.interpretation.classification;
-  const date = c.entities.schedule?.date;
-  (async () => {
-    try {
-      const [{ accounts }, view] = await Promise.all([request("/api/calendar/accounts"), request(`/api/calendar?from=${date}&to=${date}`)]);
-      const writable = accounts.filter((account) => !account.disabled).flatMap((account) => account.calendars.filter((calendar) => calendar.selected && calendar.writable).map((calendar) => ({ account, calendar })));
-      const item = view.items.find((candidate) => candidate.id === entry.id);
-      const exports = item?.exports || [];
-      clear(wrap);
-      if (!accounts.length) return;
-      for (const link of exports) {
-        const account = accounts.find((candidate) => candidate.id === link.accountId);
-        const row = node("span", undefined, "card-calendar-link");
-        row.append(node("span", `В календаре: ${account?.label || "внешний"}${link.auto ? " · автоматически" : ""}`));
-        if (link.href && link.href.startsWith("http")) { const open = node("a", "открыть"); open.href = link.href; open.target = "_blank"; open.rel = "noopener"; row.append(open); }
-        // Автоматическую отправку «убрать» нельзя: следующий проход вернул бы
-        // событие. Выключается в настройках календаря.
-        if (link.auto && (account?.autoExport || "off") !== "off") { wrap.append(row); continue; }
-        const remove = node("button", "убрать", "card-calendar-remove");
-        remove.type = "button";
-        remove.addEventListener("click", async () => {
-          remove.disabled = true;
-          try { await request("/api/calendar/export/remove", { method: "POST", body: JSON.stringify({ captureId: entry.id, accountId: link.accountId }) }); toast("Событие убрано из календаря"); wrap.replaceWith(calendarExportEl(entry)); }
-          catch (error) { toast(error.message); remove.disabled = false; }
-        });
-        row.append(remove);
-        wrap.append(row);
-      }
-      const targets = writable.filter(({ account }) => !exports.some((link) => link.accountId === account.id));
-      if (!targets.length) return;
-      const menu = node("details", undefined, "card-calendar-menu");
-      const summary = node("summary", "В календарь");
-      summary.prepend(propIcon("schedule"));
-      menu.append(summary);
-      const list = node("div", undefined, "card-calendar-list");
-      for (const { account, calendar } of targets) {
-        const button = node("button", `${account.label} · ${calendar.name}`, "card-calendar-target");
-        button.type = "button";
-        const dot = node("i", undefined, "cal-dot");
-        dot.style.background = calendar.color || account.color || "var(--n-72)";
-        button.prepend(dot);
-        button.addEventListener("click", async () => {
-          button.disabled = true;
-          try { await request("/api/calendar/export", { method: "POST", body: JSON.stringify({ captureId: entry.id, accountId: account.id, calendarId: calendar.id }) }); toast(`Отправлено в ${account.label}`); wrap.replaceWith(calendarExportEl(entry)); }
-          catch (error) { toast(error.message); button.disabled = false; }
-        });
-        list.append(button);
-      }
-      menu.append(list);
-      wrap.append(menu);
-    } catch { clear(wrap); }
-  })();
-  return wrap;
 }
 
 // ── напоминания и push ───────────────────────────────────────────────────

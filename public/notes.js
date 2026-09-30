@@ -945,7 +945,7 @@ async function makeDeed(index) {
     current.saved = result.page.body;
     current.field.setValue(result.page.body);
     decorateDeeds();
-    deps.toast("Дело на «Доске» — во «Входящих»", { label: "Открыть доску", run: () => { location.hash = "#board"; } });
+    deps.toast("Дело легло на «Доску»", { label: "Открыть доску", run: () => { location.hash = "#board"; } });
   } catch (error) {
     deps.toast(error.message);
   }

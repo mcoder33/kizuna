@@ -168,7 +168,7 @@ test('a note line becomes a deed on the board and the line follows its state', a
       const detail = (await api.get(`/api/pages/${note.id}`).expect(200)).body;
       return detail.deeds[0]?.state === 'open' ? detail.deeds[0] : null;
     });
-    assert.equal(open.column, 'Входящие');
+    assert.equal(open.column, 'Дела');
     assert.ok(open.due, 'срок разобран из строки');
     const entry = (await api.get(`/api/captures/${captureId}`).expect(200)).body.entry;
     assert.equal(entry.parentId, note.id);

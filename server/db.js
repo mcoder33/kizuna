@@ -1235,6 +1235,8 @@ export function fullEntry(db, row) { const entry = serializeEntry(row); entry.no
   // показывает происхождение, иначе дело «допинать бот-детектор» висело бы
   // ничьим, а у отчёта о встрече не было бы следа, что дела из него завели.
   entry.parts = splitPartsOf(db, row.id);
+  // Откуда запись пришла (поле, Telegram, заметки): в карточке это строка «Откуда».
+  entry.origin = db.prepare('SELECT origin FROM capture_jobs WHERE capture_id=? ORDER BY created_at LIMIT 1').get(row.id)?.origin || null;
   if (entry.parentId) { const parent = db.prepare("SELECT c.id, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.id=? AND c.deleted_at IS NULL").get(entry.parentId); entry.parent = parent ? { id: parent.id, title: JSON.parse(parent.classification_json).summary, type: JSON.parse(parent.classification_json).primaryType } : null; }
   return entry; }
 export function day(db, userId) { const rows = db.prepare(`SELECT c.*, i.id interpretation_id, i.version, i.provider, i.model, i.classification_json, i.field_confidence_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND c.user_id IS ? ORDER BY c.created_at DESC LIMIT 100`).all(userId); return rows.map(row=>fullEntry(db,row)); }

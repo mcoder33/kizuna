@@ -1,21 +1,40 @@
 import { test, expect } from "@playwright/test";
 
-test("доска: колонка, быстрое дело, статус, карточка и завершение", async ({ page, request }) => {
-  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+const reset = (request) => request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+const columnByName = (page, name) =>
+  page.locator(".board-column:not(.ghost)").filter({ has: page.locator(".board-col-name", { hasText: new RegExp(`^${name}$`) }) });
+const addColumn = async (page, name) => {
+  await page.locator(".board-column.ghost .board-add-button").click();
+  await page.locator(".board-column.ghost input").fill(name);
+  await page.keyboard.press("Enter");
+  await expect(columnByName(page, name)).toBeVisible();
+};
+
+test("доска: «Сделано» слева, своя колонка, быстрое дело, карточка и кружок", async ({ page, request }) => {
+  await reset(request);
   await page.goto("/#board");
 
-  // Пустая доска: «Входящие» и призрачная колонка добавления.
-  await expect(page.locator(".board-column.inbox .board-col-name")).toHaveText("Входящие");
+  // Видов, свойств и фильтра нет; слева прибита «Сделано», за ней первая
+  // колонка «Дела» (заводится сервером сама) и призрачная «+ Колонка».
+  await expect(page.locator(".board-views, #board-props-toggle, #board-filter")).toHaveCount(0);
+  await expect(page.locator(".board-column:not(.ghost) .board-col-name")).toHaveText(["Сделано", "Дела"]);
+  await expect(page.locator(".board-column.inbox")).toHaveCount(0);
   await expect(page.locator(".board-column.ghost")).toBeVisible();
+  await expect(page.locator(".board-column.board-done-column .board-col-name")).toHaveAttribute("href", "#done");
+  // «Сделано» не тянется и без меню.
+  await expect(page.locator(".board-done-column .board-col-head")).not.toHaveAttribute("draggable", "true");
+  await expect(page.locator(".board-done-column .board-menu")).toHaveCount(0);
+  // У обычной колонки заголовок тянется, а меню — только «Переименовать» и «Удалить колонку».
+  const first = columnByName(page, "Дела");
+  await expect(first.locator(".board-col-head")).toHaveAttribute("draggable", "true");
+  await first.locator(".board-menu summary").click();
+  await expect(first.locator(".board-menu-popover button")).toHaveText(["Переименовать", "Удалить колонку"]);
+  await expect(page.locator(".board-swatch")).toHaveCount(0);
+  await first.locator(".board-menu summary").click();
 
   // Новая колонка заводится на месте.
-  await page.locator(".board-column.ghost .board-add-button").click();
-  await page.locator(".board-column.ghost input").fill("В работе");
-  await page.keyboard.press("Enter");
-  const column = page
-    .locator(".board-column")
-    .filter({ has: page.locator(".board-col-name", { hasText: "В работе" }) });
-  await expect(column).toBeVisible();
+  await addColumn(page, "В работе");
+  const column = columnByName(page, "В работе");
 
   // Быстрое дело прямо в колонке: Enter сохраняет, поле остаётся для следующего.
   await column.locator(".board-add-button").click();
@@ -23,202 +42,144 @@ test("доска: колонка, быстрое дело, статус, кар�
   await page.keyboard.press("Enter");
   const card = column.locator(".board-card").filter({ hasText: "Проверить доску" });
   await expect(card).toBeVisible();
-  await expect(card.locator(".entry-status")).toHaveText("Без срока");
   await expect(column.locator(".board-add input")).toBeFocused();
+  // Ни статуса, ни типа, ни проекта: кружок, название, мелкая строка под ним.
+  await expect(card.locator(".entry-status, .btag.kind, .btag.project")).toHaveCount(0);
 
-  // Название открывает обычную карточку записи.
+  // Название открывает карточку; правка заголовка видна на доске сразу.
   await card.locator(".board-title").click();
   await expect(page.locator("#review-dialog")).toBeVisible();
-  // Правка в раскрытой карточке видна на маленькой сразу, без ухода со страницы:
-  // заголовок — после Enter, свойства — после закрытия.
   await page.locator("#review-dialog .card-title").click();
   await page.locator(".card-title-edit").fill("Проверить доску целиком и карточку");
   await page.keyboard.press("Enter");
   await expect(card.locator(".board-title")).toHaveText("Проверить доску целиком и карточку");
-  const propsBar = page.locator(".props-bar");
-  if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
-  await page.locator("#review-project").fill("Доска-проект");
+  // Люди из карточки появляются на доске кружком с первой буквой.
+  await page.locator("#review-people").fill("Анна");
   await page.keyboard.press("Escape");
   await expect(page.locator("#review-dialog")).toBeHidden();
-  await expect(card.locator(".btag", { hasText: "Доска-проект" })).toBeVisible();
+  await expect(card.locator(".board-who")).toHaveAttribute("title", "Анна");
 
-  // Группировка по датам: колонки считаются из сроков, внутри — группы видов.
-  await page.locator('[data-board-view="dates"]').click();
-  await expect(page.locator(".board-column.dated .board-col-name")).toHaveText([
-    "Просрочено", "Сегодня", "Завтра", "Неделя", "Позже", "Без срока",
-  ]);
-  const noDue = page.locator(".board-column.dated").filter({ has: page.locator(".board-col-name", { hasText: "Без срока" }) });
-  await expect(noDue.locator(".board-group-label")).toHaveText("Задачи");
-  const datedCard = noDue.locator(".board-card").filter({ hasText: "Проверить доску" });
-  await expect(datedCard).toBeVisible();
-
-  // Список: те же группы по срокам столбиком. Пустые группы спрятаны, кроме
-  // «Сегодня» и «Без срока» — там «+ Дело» ставит срок сразу по группе.
-  await page.locator('[data-board-view="list"]').click();
-  await expect(page.locator("#board-columns")).toHaveClass(/list/);
-  await expect(page.locator(".board-column.dated .board-col-name")).toHaveText(["Сегодня", "Без срока"]);
-  await expect(page.locator(".board-column.dated .board-card").filter({ hasText: "Проверить доску" })).toBeVisible();
-  const todayGroup = page.locator(".board-column.dated").filter({ has: page.locator(".board-col-name", { hasText: "Сегодня" }) });
-  await todayGroup.locator(".board-add-button").click();
-  await todayGroup.locator(".board-add input").fill("Дело на сегодня из списка");
-  await page.keyboard.press("Enter");
-  const listed = todayGroup.locator(".board-card").filter({ hasText: "Дело на сегодня из списка" });
-  await expect(listed).toBeVisible();
-  await expect(listed.locator(".btag.due")).toContainText("сегодня");
-  // Список стоит по центру окна вместе с заголовком группы, и шапка доски
-  // ужимается до него: заголовок страницы и панель видов — по краям списка.
-  const listBox = await page.locator("#board-columns").boundingBox();
-  const viewport = page.viewportSize();
-  expect(Math.abs(listBox.x + listBox.width / 2 - viewport.width / 2)).toBeLessThan(24);
-  const groupBox = await page.locator("#board-columns .board-column").first().boundingBox();
-  expect(Math.abs(groupBox.x + groupBox.width / 2 - viewport.width / 2)).toBeLessThan(24);
-  const headBox = await page.locator(".board-page .page-heading").boundingBox();
-  const controlsBox = await page.locator(".board-page .board-controls").boundingBox();
-  expect(Math.abs(headBox.x - listBox.x)).toBeLessThan(2);
-  expect(Math.abs(controlsBox.x - listBox.x)).toBeLessThan(2);
-  expect(Math.abs(controlsBox.x + controlsBox.width - (listBox.x + listBox.width))).toBeLessThan(2);
-  // Ряд умещается в колонку одной строкой: у невыбранных видов — значки, подпись
-  // остаётся у выбранного и в подсказке.
-  expect(controlsBox.height).toBeLessThan(48);
-  await expect(page.locator('[data-board-view="dates"] span')).toBeHidden();
-  await expect(page.locator('[data-board-view="dates"]')).toHaveAttribute("title", "По датам");
-  await expect(page.locator('[data-board-view="list"] span')).toBeVisible();
-  const brandBox = await page.locator("header .brand").boundingBox();
-  // Вид запоминается: после перезагрузки доска снова списком.
-  await page.reload();
-  await expect(page.locator("#board-columns")).toHaveClass(/list/);
-  await expect(page.locator('[data-board-view="list"]')).toHaveAttribute("aria-pressed", "true");
-  // Адрес с видом открывает доску сразу в нём.
-  await page.goto("/#board?view=dates");
-  await expect(page.locator('[data-board-view="dates"]')).toHaveAttribute("aria-pressed", "true");
-  await expect(page.locator(".board-column.dated .board-col-name")).toHaveCount(6);
-  await listed.locator(".board-done").click();
-  await expect(listed).toHaveCount(0);
-
-  // Обратно к своим колонкам — дело на месте, и кружок закрывает его. Шапка
-  // доски не сдвинулась, и первая колонка стоит по тому же краю.
-  await page.locator('[data-board-view="columns"]').click();
-  await expect(card).toBeVisible();
-  expect(Math.abs((await page.locator(".board-page .page-heading").boundingBox()).x - brandBox.x)).toBeLessThan(2);
-  expect(Math.abs((await page.locator("#board-columns .board-column").first().boundingBox()).x - brandBox.x)).toBeLessThan(2);
+  // Кружок отправляет дело в «Сделано»: оно там зачёркнуто, подпись — «сегодня 10:12».
   await card.locator(".board-done").click();
   await expect(column.locator(".board-card")).toHaveCount(0);
+  const done = page.locator(".board-done-column");
+  const closed = done.locator(".board-card.closed").filter({ hasText: "Проверить доску" });
+  await expect(closed).toBeVisible();
+  await expect(closed.locator(".btag.due")).toContainText(/^сегодня \d\d:\d\d$/);
+  await expect(done.locator(".board-col-count")).toHaveText("1");
+  // Кружок закрытой возвращает дело в его колонку.
+  await closed.locator(".board-done").click();
+  await expect(done.locator(".board-card")).toHaveCount(0);
+  await expect(column.locator(".board-card").filter({ hasText: "Проверить доску" })).toBeVisible();
 
-  // Доска убирает за собой: следующие по алфавиту тесты карточек рассчитывают
-  // на журнал без чужих закрытых дел.
-  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  // Заголовок «Сделано» ведёт на страницу «Сделано».
+  await done.locator(".board-col-name").click();
+  await expect(page).toHaveURL(/#done$/);
+  await expect(page.locator("#done h2")).toHaveText("Сделано");
+
+  await reset(request);
 });
 
-// Лицо как в Notion: цветная подпись колонки из меню, свойства строками,
-// компактный вид, фильтр по проекту и типу, поиск, вид по проектам и скрытая
-// группа закрытых на доске.
-test("доска как в Notion: цвет колонки, свойства, фильтр, поиск, проекты и скрытые группы", async ({ page, request }) => {
-  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
-  await request.post("/api/captures", { data: { raw: "Согласовать смету по CP с Антоном Гришиным", primaryType: "todo" } });
-  await request.post("/api/captures", { data: { raw: "Разобрать отчёт по Hub", primaryType: "todo" } });
+test("доска: карточку бросают в «Сделано» и между колонками, колонку тянут за заголовок", async ({ page, request }) => {
+  await reset(request);
+  await request.post("/api/captures", { data: { raw: "Первое дело доски" } });
+  await request.post("/api/captures", { data: { raw: "Второе дело доски" } });
+  await page.goto("/#board");
+  await addColumn(page, "Позже");
+  await addColumn(page, "Ожидание");
+  const names = () => page.locator(".board-column:not(.ghost) .board-col-name").allTextContents();
+  await expect.poll(names).toEqual(["Сделано", "Дела", "Позже", "Ожидание"]);
+
+  // Карточка между колонками: «Второе» уезжает из «Дел» в «Позже».
+  const first = columnByName(page, "Дела"), later = columnByName(page, "Позже");
+  const second = first.locator(".board-card").filter({ hasText: "Второе дело" });
+  await expect(second).toBeVisible();
+  await second.locator(".board-title").dragTo(later.locator(".board-cards"));
+  await expect(later.locator(".board-card").filter({ hasText: "Второе дело" })).toBeVisible();
+  await expect(first.locator(".board-card")).toHaveCount(1);
+  await page.reload();
+  await expect(columnByName(page, "Позже").locator(".board-card")).toContainText("Второе дело");
+
+  // Колонка тянется за заголовок: «Ожидание» встаёт перед «Дела» — но не левее «Сделано».
+  await columnByName(page, "Ожидание").locator(".board-col-head").dragTo(columnByName(page, "Дела"), { targetPosition: { x: 10, y: 60 } });
+  await expect.poll(names).toEqual(["Сделано", "Ожидание", "Дела", "Позже"]);
+  await page.reload();
+  await expect.poll(names).toEqual(["Сделано", "Ожидание", "Дела", "Позже"]);
+
+  // Бросили карточку на «Сделано» — она закрыта и лежит там. Карточка без места
+  // лежит в первой колонке, а первой теперь стала «Ожидание».
+  const target = columnByName(page, "Ожидание").locator(".board-card").filter({ hasText: "Первое дело" });
+  await target.locator(".board-title").dragTo(page.locator(".board-done-column"));
+  const closed = page.locator(".board-done-column .board-card.closed");
+  await expect(closed).toHaveCount(1);
+  await expect(closed).toContainText("Первое дело");
+  await expect(columnByName(page, "Ожидание").locator(".board-card")).toHaveCount(0);
+
+  // Удаление колонки переносит её дела в первую оставшуюся колонку.
+  const later2 = columnByName(page, "Позже");
+  await later2.hover();
+  await later2.locator(".board-menu summary").click();
+  await later2.getByRole("button", { name: "Удалить колонку" }).click();
+  await expect(columnByName(page, "Позже")).toHaveCount(0);
+  await expect(columnByName(page, "Ожидание").locator(".board-card").filter({ hasText: "Второе дело" })).toBeVisible();
+  await reset(request);
+});
+
+test("доска: название колонки правится щелчком, поиск прячет лишнее", async ({ page, request }) => {
+  await reset(request);
+  await request.post("/api/captures", { data: { raw: "Согласовать смету по CP с Антоном Гришиным" } });
+  await request.post("/api/captures", { data: { raw: "Разобрать отчёт по Hub" } });
   await page.goto("/#board");
 
-  // Колонка: пилюля серая, из меню красится в фиолетовый.
-  await page.locator(".board-column.ghost .board-add-button").click();
-  await page.locator(".board-column.ghost input").fill("Ожидание");
-  await page.keyboard.press("Enter");
-  const column = page.locator(".board-column").filter({ has: page.locator(".board-col-name", { hasText: "Ожидание" }) });
-  await expect(column.locator(".board-pill")).toHaveClass(/c-gray/);
-  // Новая запись дозревает в фоне и перерисовывает доску: меню открываем на
-  // спокойной странице, после перезагрузки.
+  // Щелчок по названию превращает его в поле; Enter сохраняет.
+  await columnByName(page, "Дела").locator(".board-col-name").click();
+  const input = page.locator(".board-col-input");
+  await input.fill("Текущие");
+  await input.press("Enter");
+  await expect(columnByName(page, "Текущие")).toBeVisible();
   await page.reload();
-  await column.locator(".board-menu summary").click();
-  await column.locator('.board-swatch[aria-label="Цвет: Фиолетовый"]').click();
-  await expect(column.locator(".board-pill")).toHaveClass(/c-purple/);
-  await page.reload();
-  await expect(column.locator(".board-pill")).toHaveClass(/c-purple/);
-
-  // Карточка: статус чипом, проект чипом с цветом; кружок — без часов, это задача.
-  const inbox = page.locator(".board-column.inbox");
-  await expect(inbox.locator(".board-card")).toHaveCount(2);
-  const smeta = inbox.locator(".board-card").filter({ hasText: "смету" });
-  await expect(smeta.locator(".entry-status")).toHaveText("Без срока");
-  await expect(smeta.locator(".board-done")).not.toHaveClass(/meeting/);
-  await expect(smeta.locator(".btag.project", { hasText: "CP" })).toHaveClass(/c-/);
-
-  // Панель свойств: без проекта — чипа нет; компактно — одна строка.
-  await page.locator("#board-props-toggle").click();
-  await page.locator('[data-board-prop="project"]').uncheck();
-  await expect(smeta.locator(".btag.project")).toHaveCount(0);
-  await page.locator('[data-board-prop="project"]').check();
-  await page.locator('[data-board-prop="compact"]').check();
-  await expect(page.locator("#board-columns")).toHaveClass(/compact/);
-  await expect(smeta.locator(".board-meta")).toHaveCount(1);
-  await page.reload();
-  await expect(page.locator("#board-columns")).toHaveClass(/compact/);
-  await page.locator("#board-props-toggle").click();
-  await page.locator('[data-board-prop="compact"]').uncheck();
-
-  // Фильтр по проекту прячет чужие карточки и считает себя в кнопке.
-  await page.locator("#board-filter summary").click();
-  await page.locator('#board-filter-projects button', { hasText: "Hub" }).click();
-  await expect(page.locator("#board-filter-summary")).toHaveText("Фильтр · 1");
-  await expect(inbox.locator(".board-card")).toHaveCount(1);
-  await expect(inbox.locator(".board-card")).toContainText("Hub");
-  await page.locator("#board-filter-reset").click();
-  await expect(inbox.locator(".board-card")).toHaveCount(2);
+  await expect(columnByName(page, "Текущие").locator(".board-card")).toHaveCount(2);
 
   // Поиск — по названию, на лету.
+  const cards = columnByName(page, "Текущие").locator(".board-card");
   await page.locator("#board-search").fill("смету");
-  await expect(inbox.locator(".board-card")).toHaveCount(1);
+  await expect(cards).toHaveCount(1);
   await page.locator("#board-search").fill("");
-  await expect(inbox.locator(".board-card")).toHaveCount(2);
+  await expect(cards).toHaveCount(2);
 
-  // По проектам: группа на проект, «Без проекта» — хвостом при необходимости.
-  await page.locator('[data-board-view="projects"]').click();
-  await expect(page.locator(".board-column.dated .board-col-name")).toHaveText(["CP", "Hub"]);
-  // По тегам: у этих дел тегов нет — одна группа «Без тегов» с обоими.
-  await page.locator('[data-board-view="tags"]').click();
-  await expect(page.locator(".board-column.dated .board-col-name")).toHaveText(["Без тегов"]);
-  await expect(page.locator(".board-column.dated .board-card")).toHaveCount(2);
-
-  // Закрытое дело — в скрытой группе; кнопка разворачивает её колонкой.
-  await page.locator('[data-board-view="columns"]').click();
-  await smeta.locator(".board-done").click();
-  const hidden = page.locator(".board-hidden-toggle");
-  await expect(hidden).toContainText("1");
-  await expect(page.locator(".board-column.closed")).toHaveCount(0);
-  await hidden.click();
-  await expect(page.locator(".board-column.closed .board-card")).toContainText("смету");
-  await page.locator(".board-column.closed .board-done").click();
-  await expect(inbox.locator(".board-card")).toHaveCount(2);
-  await hidden.click();
-  await expect(page.locator(".board-column.closed")).toHaveCount(0);
+  // «+ Дело» вверху открывает поле в первой своей колонке, а не в «Сделано».
+  await page.locator("#board-new").click();
+  await expect(columnByName(page, "Текущие").locator(".board-add input")).toBeVisible();
+  await reset(request);
 });
 
-// На телефоне список — столбиком целиком, без сегмента колонок, и карточка
-// не выше своего содержимого: flex-basis строки заголовка не должен
-// превращаться в высоту.
-test("на телефоне список не растягивает карточки и не показывает сегмент колонок", async ({ page, request }) => {
-  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
-  await request.post("/api/captures", { data: { raw: "Проверить список на телефоне", primaryType: "todo" } });
+// На телефоне колонки по одной на экран: сверху сегмент подписей, открыта
+// первая своя колонка (а не «Сделано»), страница не шире экрана.
+test("на телефоне колонки по одной, сегмент показывает «Сделано» и свои", async ({ page, request }) => {
+  await reset(request);
+  await request.post("/api/captures", { data: { raw: "Проверить доску на телефоне" } });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/#board?view=list");
+  await page.goto("/#board");
   const card = page.locator("#board-columns .board-card").filter({ hasText: "на телефоне" });
   await expect(card).toBeVisible();
-  // Доска перерисовывается по «поток жив» сразу после загрузки: карточка
-  // могла смениться между проверкой и замером — ждём устойчивого размера.
+  // Карточка не выше своего содержимого: flex-basis строки заголовка не должен
+  // превращаться в высоту.
   await expect.poll(async () => (await card.boundingBox())?.height ?? Infinity).toBeLessThan(120);
-  await expect(page.locator("#board-segments")).toBeHidden();
-  // Страница не шире экрана: иначе Safari на телефоне расширяет окно, и
-  // карточка записи с экраном разговора оказываются уже экрана.
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-  // На доске сегмент есть, и показана одна колонка.
-  await page.locator('[data-board-view="columns"]').click();
   await expect(page.locator("#board-segments .board-segment").first()).toBeVisible();
+  await expect(page.locator("#board-segments .board-segment").first()).toContainText("Сделано");
   await expect(page.locator("#board-columns .board-column.is-active")).toHaveCount(1);
+  await expect(page.locator("#board-columns .board-column.is-active .board-col-name")).toHaveText("Дела");
+  // Сегмент «Сделано» показывает закрытые; страница не шире экрана.
+  await page.locator("#board-segments .board-segment").first().click();
+  await expect(page.locator("#board-columns .board-column.is-active .board-col-name")).toHaveText("Сделано");
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await reset(request);
 });
 
 test("крестик на карточке доски удаляет дело мягко, «Вернуть» возвращает его", async ({ page, request }) => {
-  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
-  await request.post("/api/captures", { data: { raw: "Дело под удаление с доски", primaryType: "todo" } });
-  await page.goto("/#board?view=list");
+  await reset(request);
+  await request.post("/api/captures", { data: { raw: "Дело под удаление с доски" } });
+  await page.goto("/#board");
   const card = page.locator(".board-card").filter({ hasText: "Дело под удаление с доски" });
   await expect(card).toBeVisible();
   await card.hover();

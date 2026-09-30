@@ -127,11 +127,13 @@ test("круг: приглашение, просьба, «беру» и разг
   await expect(page.locator(".bell-row").filter({ hasText: "Аня зовёт вас в обсуждении" })).toHaveCount(0);
   await page.locator("#bell-summary").click();
 
-  // ── «Я жду»: четыре состояния и ни одного лишнего ──
-  await page.goto("/#board?view=waiting");
-  const waiting = page.locator(".wait-row").filter({ hasText: "смету" });
-  await expect(waiting.locator(".wait-who")).toContainText("Аня");
-  await expect(waiting.locator(".wait-state")).toContainText("взято");
+  // ── «Я жду»: строка на «Сегодня» ведёт в «Круги» ──
+  // «Я жду» с доски ушло: что отдано другим, говорит строка на «Сегодня», а
+  // состояние каждого дела — «Круги».
+  await page.goto("/#today");
+  await expect(page.locator(".day-more").filter({ hasText: "На других" })).toContainText("На других 1 дело");
+  await page.locator(".day-more").filter({ hasText: "На других" }).click();
+  await expect(page).toHaveURL(/#circles$/);
 
   // ── в «Общем» круга дело стоит карточкой, и видно, что его взяли ──
   await page.goto("/#circles");
