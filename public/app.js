@@ -508,9 +508,6 @@ document.addEventListener("keydown", async (event) => {
   if (index < 0) return;
   const row = rows[index];
   if (key === "e" || key === "у") {
-    // Фокус на подзадаче в карте дела — «готово» относится к ней, а не к делу.
-    const sub = document.activeElement?.closest?.(".sub-row")?.querySelector(".sub-check:not(:disabled)");
-    if (sub) { event.preventDefault(); sub.click(); return; }
     const box = row.querySelector(":scope > .completion-button, :scope > .board-done");
     if (!box) return;
     event.preventDefault();
@@ -601,13 +598,13 @@ function sinceLabel(date) {
   if (currentDayDate && date === shiftDate(currentDayDate, -1)) return "со вчера";
   return `с ${Number(date.slice(8, 10))} ${SHORT_MONTHS[Number(date.slice(5, 7)) - 1] || ""}`.trim();
 }
-// «0/2» у родителя, как в Todoist: подзадачи отдельными строками не стоят ни на
-// доске, ни в списках «Сегодня» и «Сделано» — у дела лишь тихая метка с числом
-// сделанных из всех. Число приходит с сервера (subtasks {done, total}); все
+// «0/2» у родителя, как в Todoist: подзадачи отдельными строками не стоят ни в
+// списках «Сегодня» и «Сделано», ни на доске при «Подзадачи: Скрывать» — у дела
+// лишь тихая метка с числом сделанных из всех. Число приходит с сервера (subtasks {done, total}); все
 // сделаны — метка зелёная. Нажатие открывает карточку дела на «Подзадачах».
 const SUBTASK_GLYPH = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2" width="8" height="3.6" rx="1.2"/><rect x="6.2" y="9.8" width="8" height="3.6" rx="1.2"/><path d="M3.8 5.6v4.2a1.8 1.8 0 0 0 1.8 1.8h.6"/></svg>';
-// Число, цвет и подпись метки — из одного места: карта подзадач на доске
-// обновляет метку на месте, когда человек отмечает подзадачу кружком.
+// Число, цвет и подпись метки — из одного места: доска обновляет метку на месте,
+// когда подзадачу отметили (в карточке дела или кружком её карточки).
 function paintSubtaskBadge(badge, subtasks) {
   badge.classList.toggle("all-done", subtasks.done >= subtasks.total);
   badge.querySelector(".sub-badge-count").textContent = `${subtasks.done}/${subtasks.total}`;
@@ -4330,7 +4327,7 @@ async function cardBoardInfo(entryId) {
   // Всегда свежая доска: дело могли закрыть или переложить с тех пор, как доску
   // читали в последний раз, и колонка в карточке не должна врать.
   try {
-    const data = await request("/api/board");
+    const data = await request(boardUrl());
     boardState.data = data;
     currentDayDate ||= data.today;
     return find(data);
@@ -4358,11 +4355,11 @@ async function fillCardColumn(entry, { columnRow, columnSelect }) {
     columnSelect.addEventListener("change", async () => {
       const target = info.columns.find((column) => column.id === columnSelect.value);
       try {
-        await request("/api/board/move", { method: "POST", body: JSON.stringify({ captureId: entry.id, columnId: columnSelect.value, index: 100000 }) });
+        await boardMoveRequest({ captureId: entry.id, columnId: columnSelect.value, index: 100000 });
         cardMenu.columnName = target?.name || "";
         paintCardCrumb();
         toast(`Дело в колонке «${target?.name || ""}»`);
-        if (boardState.data) request("/api/board").then((data) => { boardState.data = data; if (!$("#board")?.hidden) { boardState.stamp = JSON.stringify(data); renderBoard(data); } }).catch(() => {});
+        if (boardState.data) request(boardUrl()).then((data) => { boardState.data = data; if (!$("#board")?.hidden) { boardState.stamp = JSON.stringify(data); renderBoard(data); } }).catch(() => {});
       } catch (error) {
         columnSelect.value = info.column.id;
         toast(error.message);
@@ -6768,9 +6765,9 @@ const BOARD_GROUPS_KEY = "kizuna-board-groups";
 const BOARD_FILTER_KEY = "kizuna-board-filter";
 const BOARD_ORDER_KEY = "kizuna-board-order";
 const BOARD_SHOWN_KEY = "kizuna-board-shown";
-// Подзадачи на карточках доски и в строках списка: show — строки под полоской
-// прогресса (умолчание), hide — только полоска и число. Это не условие фильтра,
-// поэтому «Сбросить» его не трогает.
+// Подзадачи на доске и в списке: show (умолчание) — подзадачи стоят отдельными
+// карточками, как дела, с подписью «↳ родитель»; hide — их нет, у родителя лишь
+// полоска и число. Это не условие фильтра, поэтому «Сбросить» его не трогает.
 const BOARD_SUBS_KEY = "kizuna-board-subtasks";
 // Порядок групп фиксированный: у дня и источника — свой, у человека и
 // проекта — по алфавиту, «без …» всегда последним.
@@ -6822,10 +6819,18 @@ const boardState = {
   shown: boardStoredShown(),
   // На телефоне открывается первая своя колонка, а не «Закрыто»; null — ещё не выбирали.
   mobileColumn: null,
-  // Строки подзадач под полоской прогресса: "show" или "hide".
+  // Подзадачи отдельными карточками: "show" или "hide"; от него зависит запрос доски (boardUrl).
   subs: boardStoredSubs(),
 };
 boardState.filterOpen = activeConditions(boardState.filter).length > 0;
+// «Подзадачи: Показывать» просит у сервера доску с подзадачами карточками; перенос
+// карточки сообщает то же, чтобы порядок колонки считался по списку на экране.
+function boardUrl() {
+  return boardState.subs === "show" ? "/api/board?subtasks=1" : "/api/board";
+}
+function boardMoveRequest(body) {
+  return request("/api/board/move", { method: "POST", body: JSON.stringify({ ...body, ...(boardState.subs === "show" ? { subtasks: true } : {}) }) });
+}
 function boardRemember() {
   try {
     localStorage.setItem(BOARD_VIEW_KEY, boardState.view);
@@ -8463,7 +8468,10 @@ const boardOpenRows = () => [...$("#board").querySelectorAll(".board-card[data-c
 // Карточка записи: по названию — с начала, по метке «0/2» — на «Подзадачах».
 function openBoardCard(card, element, { subtasks = false } = {}) {
   pendingCardList = { label: "Доска", items: rowsAsList(boardOpenRows()), id: card.captureId, occurrence: element.dataset.occurrence || null };
-  openReportEntry(card.captureId, { subtasks });
+  // Подзадач нет среди последних ста записей журнала, где ищет openReportEntry:
+  // карточка подзадачи читается по номеру.
+  if (card.subtask) { cardOccurrence = null; openCaptureById(card.captureId, { subtasks }); }
+  else openReportEntry(card.captureId, { subtasks });
 }
 // Название — кнопка: открывает карточку записи.
 function boardTitleButton(card, element) {
@@ -8472,47 +8480,20 @@ function boardTitleButton(card, element) {
   title.addEventListener("click", () => openBoardCard(card, element));
   return title;
 }
-// «0/2» у дела: подзадач на доске отдельными карточками нет, их число — метка
-// у полоски прогресса (и в карточке доски, и в строке списка).
+// «0/2» у дела: метка у полоски прогресса — и в карточке доски, и в строке
+// списка. Нажатие открывает карточку дела на «Подзадачах».
 const boardSubtaskBadge = (card, element) => subtaskBadge(card.subtasks, () => openBoardCard(card, element, { subtasks: true }));
-// Отметка подзадачи кружком на доске — ровно то, что сделал бы кружок в разделе
-// «Подзадачи» карточки родителя и в карточке самой подзадачи: дело закрывается
-// или возвращается, повторяющееся — на показанный день (occurrence из ответа).
-async function setSubtaskDone(item, done) {
-  const { entry } = await request(`/api/captures/${encodeURIComponent(item.id)}`);
-  const state = cardDoneState(entry, item.occurrence || null);
-  if (state.done !== done) await setCardDone(entry, state, done);
-}
-// Карта подзадач на карточке доски и в строке списка: под названием тонкая
-// полоска прогресса (заполненная часть зелёная, дорожка — линия) с той же меткой
-// «1/2», ниже — сами подзадачи компактными строками: кружок и название, сделанные
-// зачёркнуты и приглушены. Строк не больше пяти, остальное — «ещё N». Кружок
-// закрывает и возвращает подзадачу тем же вызовом, что кружок в карточке, а
-// полоска, число и строки меняются на месте, без перерисовки доски. Название и
-// «ещё N» открывают карточку родителя на «Подзадачах». «Подзадачи: скрывать» в
-// строке фильтра оставляет одну полоску с числом; у закрытого дела строк тоже
-// нет. Данные — subtasks {done, total, items} из /api/board; на «Сегодня» у дела
-// только метка.
-const BOARD_SUB_ROWS = 5;
-// .sub-map → её перерисовка: ответ доски с другими числами обновляет карту на
-// месте (boardPatchSubtasks).
+// Полоска прогресса у дела с подзадачами: под названием тонкая полоска
+// (заполненная часть зелёная, дорожка — линия) и та же метка «1/2». Сами
+// подзадачи строками внутри карточки не стоят: «Подзадачи: Показывать» выносит
+// их на доску отдельными карточками (см. boardParentLabel), «Скрывать» оставляет
+// одну полоску с числом — и на доске, и в списке. Данные — subtasks {done, total}
+// из /api/board; на «Сегодня» у дела только метка.
+// .sub-map → её перерисовка: ответ доски с другими числами обновляет полоску и
+// число на месте (boardPatchSubtasks).
 const boardSubMaps = new WeakMap();
-// Подзадачи, отметка которых ещё идёт: второй щелчок по тому же кружку ждёт первого.
-const boardSubPending = new Set();
-// Кружок нажимают, а не тянут: пока кнопка зажата, карточка не тянется, иначе лёгкий
-// сдвиг мыши начал бы перетаскивание карточки вместо отметки.
-function suspendBoardDrag(element) {
-  if (!element.draggable) return;
-  element.draggable = false;
-  const restore = () => {
-    element.draggable = true;
-    for (const type of ["pointerup", "pointercancel"]) window.removeEventListener(type, restore, true);
-  };
-  for (const type of ["pointerup", "pointercancel"]) window.addEventListener(type, restore, true);
-}
-function boardSubtaskMap(card, element, { rows = true } = {}) {
+function boardSubtaskMap(card, element) {
   if (!card.subtasks?.total) return null;
-  const open = () => openBoardCard(card, element, { subtasks: true });
   const map = node("div", undefined, "sub-map");
   const head = node("div", undefined, "sub-progress");
   const track = node("span", undefined, "sub-bar");
@@ -8522,96 +8503,24 @@ function boardSubtaskMap(card, element, { rows = true } = {}) {
   const badge = boardSubtaskBadge(card, element);
   head.append(track, badge);
   map.append(head);
-  const list = rows ? node("div", undefined, "sub-rows") : null;
-  if (list) map.append(list);
-  // Отметка: кружок, зачёркивание, полоска и число меняются сразу — отклик должен
-  // быть под пальцем, — а ответ сервера их лишь подтверждает. Не получилось —
-  // всё возвращается назад. В число входят листья: кружок у ветки (у неё свои
-  // подзадачи) число не двигает.
-  const toggle = async (item) => {
-    if (boardSubPending.has(item.id)) return;
-    boardSubPending.add(item.id);
-    const done = !item.done;
-    const flip = (value) => {
-      item.done = value;
-      if (!item.nested) card.subtasks.done += value ? 1 : -1;
-      paint();
-    };
-    flip(done);
-    try {
-      await setSubtaskDone(item, done);
-    } catch (error) {
-      flip(!done);
-      toast(error.message || "Подзадача не отметилась");
-      boardSubPending.delete(item.id);
-      return;
-    }
-    boardSubPending.delete(item.id);
-    loadBoard();
-    load().catch(() => {});
-  };
-  const rowEl = (item) => {
-    const title = item.title.split("\n")[0];
-    const line = node("div", undefined, `sub-row${item.done ? " done" : ""}`);
-    line.dataset.subId = item.id;
-    const check = node("button", undefined, "sub-check");
-    check.type = "button";
-    check.dataset.focusKey = `${item.id}:check`;
-    const action = item.done ? "Вернуть в работу" : "Готово";
-    check.title = item.canComplete === false ? "Отметить может автор или тот, кто взял дело" : action;
-    check.setAttribute("aria-label", `${action}: ${title}`);
-    check.disabled = item.canComplete === false;
-    check.addEventListener("pointerdown", () => suspendBoardDrag(element));
-    check.addEventListener("click", (event) => { event.stopPropagation(); toggle(item); });
-    const name = node("button", title, "sub-name");
-    name.type = "button";
-    name.title = title;
-    name.dataset.focusKey = `${item.id}:name`;
-    name.addEventListener("click", (event) => { event.stopPropagation(); open(); });
-    line.append(check, name);
-    if (item.nested) {
-      const nested = node("span", `${item.nested.done}/${item.nested.total}`, "sub-nested");
-      nested.title = `Внутри сделано ${item.nested.done} из ${item.nested.total}`;
-      line.append(nested);
-    }
-    return line;
-  };
-  const paintRows = () => {
-    // Фокус переживает пересборку строк: отметка с клавиатуры его не теряет.
-    const focusKey = list.contains(document.activeElement) ? document.activeElement.dataset.focusKey : null;
-    clear(list);
-    const items = card.subtasks.items || [];
-    const shown = items.slice(0, BOARD_SUB_ROWS);
-    list.append(...shown.map(rowEl));
-    // Шестая строка в ответе — знак, что есть ещё; сколько — считается шагами,
-    // как и число у полоски: ветка весит столько, сколько в ней листьев.
-    const hidden = card.subtasks.total - shown.reduce((sum, item) => sum + (item.nested?.total || 1), 0);
-    if (items.length > BOARD_SUB_ROWS && hidden > 0) {
-      const more = node("button", `ещё ${hidden}`, "sub-more");
-      more.type = "button";
-      more.dataset.focusKey = "more";
-      more.title = "Открыть карточку: все подзадачи";
-      more.addEventListener("click", (event) => { event.stopPropagation(); open(); });
-      list.append(more);
-    }
-    list.hidden = !list.childNodes.length;
-    if (focusKey) list.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
-  };
-  // next — свежие данные с сервера: карта берёт их себе, а если они совпали с тем,
-  // что нарисовано (отметка уже показана сразу), не трогает ничего.
+  // next — свежие данные с сервера: полоска и число берут их себе.
   const paint = (next = null) => {
-    if (next) {
-      if (JSON.stringify(next) === JSON.stringify(card.subtasks)) return;
-      card.subtasks = next;
-    }
+    if (next) card.subtasks = next;
     const { done, total } = card.subtasks;
     fill.style.width = `${Math.min(100, Math.round((done / total) * 100))}%`;
     paintSubtaskBadge(badge, card.subtasks);
-    if (list) paintRows();
   };
   boardSubMaps.set(map, paint);
   paint();
   return map;
+}
+// «↳ Родитель» у подзадачи, вставшей на доску своей карточкой: мелкая метка под
+// названием, как остальные метки дела, — чьей частью она является.
+function boardParentLabel(card) {
+  const title = (card.parentTitle || "").split("\n")[0] || "Без названия";
+  const label = node("span", `↳ ${title}`, "btag parent");
+  label.title = `Подзадача: ${title}`;
+  return label;
 }
 // Срок одной меткой: «со вчера» у просроченного, дата — если не сегодня, час —
 // если он есть.
@@ -8633,8 +8542,8 @@ function boardMetaTags(card) {
   if (card.attachments) tags.push(node("span", `📎 ${card.attachments}`, "btag files c-gray"));
   return tags;
 }
-// Карточка на доске: кружок, название, карта подзадач (если они есть) и мелкая
-// строка — час, срок (если он не сегодня) и люди. Закрытая лежит в «Закрыто» и не тянется; не
+// Карточка на доске: кружок, название, родитель (у подзадачи), полоска подзадач
+// (если они есть) и мелкая строка — час, срок (если он не сегодня) и люди. Закрытая лежит в «Закрыто» и не тянется; не
 // тянутся и карточки, когда доска разложена по человеку, проекту или
 // источнику: перенос там ничего осмысленного не менял бы.
 function boardCardEl(card, { closed = false, draggable = !closed } = {}) {
@@ -8667,9 +8576,10 @@ function boardCardEl(card, { closed = false, draggable = !closed } = {}) {
     titleRow.append(remove);
   }
   body.append(titleRow);
-  // Подзадачи: полоска прогресса с числом и — у открытого дела, пока их не
-  // скрыли в фильтре, — сами строки. Метка «1/2» теперь стоит у полоски.
-  const map = boardSubtaskMap(card, element, { rows: !closed && boardState.subs === "show" });
+  // Подзадача, вставшая на доску своей карточкой, подписана родителем; у дела с
+  // подзадачами — полоска прогресса с числом, при любом переключателе.
+  if (card.subtask) body.append(boardParentLabel(card));
+  const map = boardSubtaskMap(card, element);
   if (map) body.append(map);
   const meta = node("div", undefined, "board-meta");
   if (closed) meta.append(node("span", boardClosedWhen(card), "btag due"));
@@ -8691,8 +8601,8 @@ function boardCardEl(card, { closed = false, draggable = !closed } = {}) {
   });
   return element;
 }
-// Строка списка: кружок, название, справа — срок, люди и проект; у дела с
-// подзадачами под названием — их карта. Не тянется.
+// Строка списка: кружок, название, справа — срок, люди и проект; под названием —
+// родитель (у подзадачи) и полоска подзадач (у дела с ними). Не тянется.
 function boardRowEl(card, { closed = false } = {}) {
   const row = node("div", undefined, `g-row board-row${closed ? " closed" : ""}`);
   row.dataset.captureId = card.captureId;
@@ -8701,8 +8611,9 @@ function boardRowEl(card, { closed = false } = {}) {
   if (closed) right.append(node("span", boardClosedWhen(card), "btag due"));
   else right.append(...boardMetaTags(card), ...(card.projects || []).map((name) => node("span", name, "btag project")));
   row.append(boardDoneButton(card, row, closed), boardTitleButton(card, row), right);
-  // Вторая строка сетки под названием: полоска с числом и строки подзадач.
-  const map = boardSubtaskMap(card, row, { rows: !closed && boardState.subs === "show" });
+  // Следующие строки сетки под названием: родитель подзадачи, полоска с числом.
+  if (card.subtask) row.append(boardParentLabel(card));
+  const map = boardSubtaskMap(card, row);
   if (map) row.append(map);
   return row;
 }
@@ -8719,7 +8630,7 @@ function boardDropIndex(list, clientY, columnId) {
 }
 async function boardMove(body) {
   try {
-    await request("/api/board/move", { method: "POST", body: JSON.stringify(body) });
+    await boardMoveRequest(body);
   } catch (error) {
     toast(error.message);
   }
@@ -8956,7 +8867,7 @@ function boardInviteFor(field, group, data) {
     const { column } = group;
     return { key, label: `+ Дело в «${column.name}»`, create: async (raw) => {
       const created = await boardCreateDeed(raw);
-      await request("/api/board/move", { method: "POST", body: JSON.stringify({ captureId: created.entry.id, columnId: column.id, index: 100000 }) });
+      await boardMoveRequest({ captureId: created.entry.id, columnId: column.id, index: 100000 });
     } };
   }
   if (field === "day") {
@@ -9468,12 +9379,12 @@ function paintBoardFilter() {
   clearAll.dataset.clear = "1";
   clearAll.title = "Снять все условия";
   clearAll.hidden = !boardState.filter.length;
-  // Подзадачи на карточках и в строках списка: показывать под полоской прогресса
-  // или оставить одну полоску с числом. Помнится в браузере, «Сбросить» его не трогает.
+  // Подзадачи на доске и в списке: показывать отдельными карточками или оставить
+  // у родителя одну полоску с числом. Помнится в браузере, «Сбросить» его не трогает.
   // Сегменты — те же, что у «Вида»: нажатый залит тёмным, светлый текст.
   const subs = node("span", undefined, "board-subs");
   subs.setAttribute("role", "group");
-  subs.setAttribute("aria-label", "Подзадачи на карточках");
+  subs.setAttribute("aria-label", "Подзадачи на доске");
   const segments = node("span", undefined, "board-seg");
   for (const [mode, label] of [["show", "Показывать"], ["hide", "Скрывать"]]) {
     const button = node("button", label, "board-subs-btn");
@@ -9768,8 +9679,9 @@ function renderBoard(source) {
       if (mode === boardState.subs) return;
       boardState.subs = mode;
       boardRememberSubs();
-      if (boardState.data) renderBoard(boardState.data);
-      else paintBoardBar();
+      // Подзадачи приходят карточками (или не приходят) уже с сервера: доска перечитывается.
+      paintBoardFilter();
+      loadBoard();
     } else if (event.target.closest("[data-today]")) {
       boardSetVals(null);
       boardState.filter = defaultFilter();
@@ -9872,12 +9784,13 @@ function boardPanTarget(target) {
 // Первый переход по хэшу случается до того, как модуль дошёл до состояния
 // доски, поэтому оно читается только после ответа сервера.
 // Ответ доски без того, что меняет отметка подзадачи: у дела остаётся лишь
-// «подзадачи есть или нет», числа и строки не в счёт.
+// «подзадачи есть или нет», числа не в счёт.
 const boardShape = (raw) => JSON.stringify(raw, (key, value) => (key === "subtasks" ? Boolean(value) : value));
 const boardCardsOf = (raw) => [...raw.columns.flatMap((column) => column.cards), ...(raw.closed || [])];
-// Отличаются только числа и строки подзадач — те же дела, в тех же колонках, в
-// том же порядке: карты подзадач обновляются на месте, а доска не перерисовывается
-// (отметка кружком подзадачи не должна сбивать ни фокус, ни прокрутку колонок).
+// Отличаются только числа подзадач — те же дела, в тех же колонках, в том же
+// порядке (при «Скрывать» так бывает, когда шаг отметили в карточке родителя):
+// полоски и числа обновляются на месте, а доска не перерисовывается и не сбивает
+// ни фокус, ни прокрутку колонок.
 // Сравнивается то, по чему доска нарисована (stamp), а не boardState.data: карточка
 // при открытии подменяет данные свежими, не перерисовывая доску. Возвращает false,
 // если менялось что-то ещё, — тогда рисуется заново.
@@ -9908,8 +9821,13 @@ function boardPatchSubtasks(data, stamp) {
 async function loadBoard({ force = false } = {}) {
   const wrap = $("#board-columns");
   if (!wrap.childNodes.length) wrap.append(node("p", "Собираем доску…", "empty"));
+  // Первый разбор адреса зовёт доску раньше, чем модуль дошёл до boardState: читаем его уже после микрозадачи.
+  await null;
+  const subs = boardState.subs;
   try {
-    const data = await request("/api/board");
+    const data = await request(boardUrl());
+    // Переключатель «Подзадачи» нажали, пока шёл ответ: он устарел, доску перечитает само нажатие.
+    if (subs !== boardState.subs) return;
     // «Сегодня» могли ещё не открывать: без даты дня сроки на доске выходили
     // бы ISO-строкой вместо «завтра» и «05.09».
     currentDayDate ||= data.today;

@@ -40,10 +40,19 @@ export const CLOSED_LIMIT = 50;
 // Подзадачи своей карточки не имеют: они сидят у родителя счётчиком «0/2» и
 // открываются в его карточке. Исключение — подзадача, отданная другому человеку
 // и им взятая: у него родителя нет, и она для него обычное дело.
-function deedCards(db, userId, timeZone, now = new Date(), borrowed = [], { withSubtasks = true } = {}) {
+// subtaskCards (?subtasks=1 у доски, «Подзадачи: Показывать») выносит свои
+// подзадачи на доску такими же карточками, как дела: со своей колонкой, сроком
+// и кружком, с пометкой subtask: true и названием родителя (parentTitle).
+// Счётчик у родителя остаётся в обоих режимах.
+function deedCards(db, userId, timeZone, now = new Date(), borrowed = [], { withSubtasks = true, subtaskCards = false } = {}) {
   const mine = borrowed.length ? `(c.user_id IS ? OR c.id IN (${borrowed.map(() => '?').join(',')}))` : 'c.user_id IS ?';
   const who = [userId, ...borrowed];
-  const rows = db.prepare(`SELECT c.id, c.created_at, c.parent_capture_id, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND ${mine} AND (c.subtask=0 OR c.user_id IS NOT ?) ORDER BY c.created_at`).all(...who, userId);
+  const rows = db.prepare(`SELECT c.id, c.created_at, c.parent_capture_id, c.subtask, c.user_id, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND ${mine}${subtaskCards ? '' : ' AND (c.subtask=0 OR c.user_id IS NOT ?)'} ORDER BY c.created_at`).all(...who, ...(subtaskCards ? [] : [userId]));
+  // Своя подзадача — с признаком и с автором-человеком; взятая чужая для него обычное дело.
+  const ownSubtask = row => subtaskCards && row.subtask === 1 && (row.user_id ?? null) === (userId ?? null);
+  const standing = subtaskCards ? standingSubtasks(rows, ownSubtask) : null;
+  const byId = subtaskCards ? new Map(rows.map(row => [row.id, row])) : null;
+  const titleOf = id => { try { return JSON.parse(byId.get(id)?.classification_json).summary || ''; } catch { return ''; } };
   const projections = db.prepare(`SELECT p.id, p.capture_id, p.projection_type FROM projections p JOIN captures c ON c.id=p.capture_id WHERE p.status='active' AND c.deleted_at IS NULL AND ${mine} AND p.projection_type IN ('task','meeting_event')`).all(...who);
   const completion = completionEvents(db);
   // Скрепка на карточке: сколько живых вложений у записи.
@@ -62,6 +71,8 @@ function deedCards(db, userId, timeZone, now = new Date(), borrowed = [], { with
   }
   const open = [], closed = [];
   for (const row of rows) {
+    const subtask = ownSubtask(row);
+    if (subtask && !standing.has(row.id)) continue;
     const completable = byCapture.get(row.id) || [];
     if (!completable.length) continue;
     const classification = JSON.parse(row.classification_json);
@@ -85,15 +96,44 @@ function deedCards(db, userId, timeZone, now = new Date(), borrowed = [], { with
       attachments: attachments.get(row.id) || 0,
       origin: originOfCapture(row),
       projectionIds: completable.map(projection => projection.id),
+      ...(subtask ? { subtask: true, parentTitle: titleOf(row.parent_capture_id) } : {}),
     });
   }
   closed.sort((left, right) => right.closedAt.localeCompare(left.closedAt));
   const shownClosed = closed.slice(0, CLOSED_LIMIT);
-  // «0/2» у родителя: считает сервер, а не доска по спрятанным карточкам. Вместе
-  // с числом идут строки карты подзадач (items, до шести): доска рисует их под
-  // названием, и второго запроса за ними нет.
-  if (withSubtasks) withSubtaskCounts(db, [...open, ...shownClosed], userId, { today: dateInZone(now, timeZone), key: 'captureId', withItems: true });
+  // «0/2» у родителя: считает сервер, а не доска по спрятанным карточкам. Счёт
+  // нужен и у подзадачи-ветки, вставшей карточкой, — но обход счёта не терпит корней,
+  // из которых один потомок другого (потомка он принимает за уже виденного, и у
+  // родителя счёта нет), поэтому карточки считаются слоями по глубине подзадач:
+  // в одном слое предков и потомков нет.
+  if (withSubtasks) {
+    const today = dateInZone(now, timeZone);
+    const depthOf = card => { let depth = 0; for (let row = byId.get(card.captureId); row && ownSubtask(row); row = byId.get(row.parent_capture_id)) depth++; return depth; };
+    const layers = new Map();
+    for (const card of [...open, ...shownClosed]) {
+      const depth = card.subtask ? depthOf(card) : 0;
+      if (!layers.has(depth)) layers.set(depth, []);
+      layers.get(depth).push(card);
+    }
+    for (const layer of layers.values()) withSubtaskCounts(db, layer, userId, { today, key: 'captureId' });
+  }
   return { open, closed: shownClosed };
+}
+
+// Какие подзадачи стоят на доске: те, у кого жива вся цепочка родителей до дела.
+// У удалённого родителя подзадачи остаются в таблице, но с доски уходят вместе с
+// ним (и возвращаются, если его вернуть). Обход идёт от дел вниз; цикл не страшен —
+// запись попадает в набор один раз, а набор обходится и с тем, что добавили по пути.
+function standingSubtasks(rows, isSubtask) {
+  const kids = new Map();
+  for (const row of rows) {
+    if (!isSubtask(row)) continue;
+    if (!kids.has(row.parent_capture_id)) kids.set(row.parent_capture_id, []);
+    kids.get(row.parent_capture_id).push(row.id);
+  }
+  const standing = new Set(rows.filter(row => !isSubtask(row)).map(row => row.id));
+  for (const id of standing) for (const kid of kids.get(id) || []) standing.add(kid);
+  return standing;
 }
 
 // Порядок по умолчанию (пока карточку не разложили руками) — как в TODO-буфере:
@@ -129,7 +169,7 @@ function ensureColumn(db, userId) {
   return column;
 }
 
-export function boardView(db, { userId, timeZone = 'Europe/Samara', now: at = new Date(), borrowed = [], withSubtasks = true } = {}) {
+export function boardView(db, { userId, timeZone = 'Europe/Samara', now: at = new Date(), borrowed = [], withSubtasks = true, subtaskCards = false } = {}) {
   const today = dateInZone(at, timeZone);
   ensureColumn(db, userId);
   const columns = db.prepare('SELECT id, name, position, color FROM board_columns WHERE user_id IS ? ORDER BY position, created_at').all(userId);
@@ -137,7 +177,7 @@ export function boardView(db, { userId, timeZone = 'Europe/Samara', now: at = ne
   const known = new Set(columns.map(column => column.id));
   const firstId = columns[0].id;
   const buckets = new Map(columns.map(column => [column.id, []]));
-  const { open, closed } = deedCards(db, userId, timeZone, at, borrowed, { withSubtasks });
+  const { open, closed } = deedCards(db, userId, timeZone, at, borrowed, { withSubtasks, subtaskCards });
   for (const card of open) {
     const placement = placements.get(card.captureId);
     // Без размещения, с потерянной колонкой и со старым «Входящие» (column_id
@@ -223,12 +263,14 @@ function ensureColumnAfter(db, userId) {
   return column;
 }
 
-export function moveCard(db, { userId, captureId, columnId = null, index }) {
+// subtaskCards — доска, с которой человек тянет карточку, показывает подзадачи
+// карточками: порядок колонки считается по тому же списку, что у него на экране.
+export function moveCard(db, { userId, captureId, columnId = null, index, subtaskCards = false }) {
   if (!Number.isInteger(index) || index < 0) return { error: 'invalid_index' };
   // Колонки «Входящие» нет: у карточки всегда есть настоящая колонка.
   if (columnId === null || columnId === undefined) return { error: 'invalid_column_id' };
   if (!ownColumn(db, userId, columnId)) return { error: 'column_not_found' };
-  const view = boardView(db, { userId, withSubtasks: false });
+  const view = boardView(db, { userId, withSubtasks: false, subtaskCards });
   const hasCard = view.columns.some(column => column.cards.some(card => card.captureId === captureId));
   if (!hasCard) return { error: 'card_not_found' };
   // Порядок целевой колонки перезаписывается целиком: позиции всегда плотные,

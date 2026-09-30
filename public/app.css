@@ -5359,7 +5359,7 @@ body {
 /* Метки — те же пилюли, что в колонках «Сегодня»: мелкие, круглые, цветом по
    смыслу: тип — бирюзовым или розовым, проект — синим, срок — серым или по
    состоянию, «важно» — оранжевым. */
-.btag[class*=" c-"], .btag.kind, .btag.project, .btag.tag, .btag.due, .btag.files {
+.btag[class*=" c-"], .btag.kind, .btag.project, .btag.tag, .btag.due, .btag.files, .btag.parent {
   display: inline-block;
   padding: 2px 7px;
   border-radius: 99px;
@@ -5397,8 +5397,8 @@ body {
 .btag.due.soon { background: var(--tint-wait); color: var(--yellow-51); }
 .btag.due.late { background: var(--tint-late); color: var(--red-50); font-weight: 600; }
 .board-card.overdue .btag.due.late { background: var(--n-100-2); }
-/* «0/2» у дела: подзадачи отдельными строками не стоят (ни на доске, ни в «Дне»,
-   ни в «Сделано»), у названия — тихая метка: значок вложенных строк и сколько
+/* «0/2» у дела: подзадачи отдельными строками не стоят (ни в «Дне» и «Сделано»,
+   ни на доске при «Подзадачи: Скрывать»), у названия — тихая метка: значок вложенных строк и сколько
    сделано из скольких. Все сделаны — зелёная. Метка кнопка: открывает карточку
    на «Подзадачах». Стоит у полоски прогресса (доска и список) и в строках «Сегодня». */
 .sub-badge {
@@ -5427,11 +5427,10 @@ body {
 .sub-badge.all-done:hover { background: var(--n-97-2); color: var(--green); }
 /* Просроченное красит всю мелкую строку дела; метка остаётся тихой. */
 .entry.overdue .entry-meta .sub-badge:not(.all-done) { color: var(--n-62); }
-/* Карта подзадач у родителя на доске и в списке: под названием тонкая полоска
-   прогресса (заполненная часть зелёная, дорожка — линия) с той же меткой «1/2»,
-   ниже — сами подзадачи строками: кружок и название, сделанные зачёркнуты и
-   приглушены. Кружок подзадачи карточку не тянет (пока он зажат, draggable у
-   карточки выключен), за остальное карточка тянется как прежде. */
+/* Полоска подзадач у родителя на доске и в списке: под названием тонкая полоска
+   прогресса (заполненная часть зелёная, дорожка — линия) с той же меткой «1/2».
+   Сами подзадачи строками внутри карточки не стоят: при «Подзадачи: Показывать»
+   они стоят на доске своими карточками, при «Скрывать» их нет. */
 .sub-map { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .sub-progress { display: flex; align-items: center; gap: 5px; min-width: 0; }
 .sub-bar {
@@ -5451,91 +5450,18 @@ body {
   transition: width 0.25s ease;
 }
 .sub-progress > .sub-badge { padding-right: 2px; }
-.sub-rows { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.sub-rows[hidden] { display: none; }
-.sub-row {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-  min-height: 22px;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.3;
-}
-.sub-check {
-  position: relative;
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 15px;
-  height: 15px;
-  padding: 0;
-  border: 1.5px solid var(--n-87-2);
-  border-radius: 50%;
-  background: var(--n-100);
-  color: transparent;
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 1;
-  cursor: pointer;
-  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
-}
-.sub-check::before { content: "✓"; }
-/* Нажимается шире, чем нарисован: маленький кружок не должен требовать снайпера. */
-.sub-check::after { content: ""; position: absolute; inset: -3px -6px; }
-.sub-check:hover:not(:disabled) { border-color: var(--green); color: var(--green); }
-.sub-row.done .sub-check { border-color: var(--green); background: var(--green); color: var(--paper); }
-.sub-row.done .sub-check:hover:not(:disabled) { background: transparent; color: var(--green); }
-.sub-check:disabled { opacity: 0.5; cursor: default; }
-.sub-name {
-  flex: 0 1 auto;
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--ink);
-  font: inherit;
-  text-align: left;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
-}
-.sub-name:hover { text-decoration: underline; text-decoration-color: var(--n-79); text-underline-offset: 3px; }
-.sub-row.done .sub-name { color: var(--n-66); text-decoration: line-through; text-decoration-color: var(--n-79); }
-.sub-nested { flex: none; color: var(--n-62); font-size: 10.5px; font-variant-numeric: tabular-nums; }
-.sub-more {
-  align-self: flex-start;
-  margin: 0 0 0 22px;
-  padding: 2px 0;
-  border: 0;
-  background: none;
-  color: var(--n-62);
-  font: inherit;
-  font-size: 11.5px;
-  font-weight: 500;
-  cursor: pointer;
-}
-.sub-more:hover { color: var(--ink); text-decoration: underline; text-decoration-color: var(--n-79); text-underline-offset: 3px; }
-.sub-check:focus-visible,
-.sub-name:focus-visible,
-.sub-more:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-radius: 4px; }
-.sub-check:focus-visible { border-radius: 50%; }
 @media (prefers-reduced-motion: reduce) {
-  .sub-bar-fill, .sub-check { transition: none; }
+  .sub-bar-fill { transition: none; }
 }
-@media (pointer: coarse) {
-  .sub-row { min-height: 30px; gap: 9px; }
-  .sub-check { width: 19px; height: 19px; font-size: 11px; }
-  .sub-check::after { inset: -5px -8px; }
-  .sub-more { padding: 6px 0; }
-}
-/* В списке карта — вторая строка сетки под названием; полоска не растягивается на всю ширину ленты. */
+/* «↳ Родитель» у подзадачи, вставшей на доску своей карточкой: мелкая метка под
+   названием, та же серая пилюля, что у остальных меток дела (.btag); длинное
+   название родителя обрезается многоточием и читается целиком в подсказке. */
+.btag.parent { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.board-body > .btag.parent { align-self: flex-start; }
+/* В списке метка и полоска — строки сетки под названием; полоска не растягивается на всю ширину ленты. */
+.g-row > .btag.parent { grid-column: 2 / -1; justify-self: start; }
 .g-row > .sub-map { grid-column: 2 / -1; }
 .g-row .sub-progress { max-width: 280px; }
-.g-row .sub-row { font-size: 12.5px; }
 .board-drop {
   height: 3px;
   border-radius: 99px;

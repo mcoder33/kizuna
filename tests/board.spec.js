@@ -246,7 +246,8 @@ test("доска: перечитывание с тем же ответом не 
   await settled(page);
   // Метка на узле пропадёт, только если карточку пересоздали.
   await card.evaluate((element) => { element.dataset.mark = "kept"; });
-  const reads = () => page.evaluate(() => performance.getEntriesByType("resource").filter((entry) => entry.name.endsWith("/api/board")).length);
+  // Доска просит себя с «?subtasks=1» (по умолчанию подзадачи показываются), поэтому считаем по пути, а не по концу адреса.
+  const reads = () => page.evaluate(() => performance.getEntriesByType("resource").filter((entry) => new URL(entry.name).pathname === "/api/board").length);
   const before = await reads();
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
   await expect.poll(reads).toBeGreaterThan(before);
@@ -1375,8 +1376,10 @@ test("приглашение в группе: по дню — срок груп�
   await reset(request);
 });
 
-// Подзадачи: на доске и в списке они отдельными карточками не стоят — у дела
-// полоска и метка «0/1» (сделано/всего), её число даёт сервер.
+// Подзадачи. «Подзадачи: Показывать» (умолчание) выносит их на доску и в список
+// отдельными карточками, как дела, с подписью «↳ родитель»; у родителя — полоска и
+// метка «0/1» (сделано/всего), число даёт сервер. «Скрывать» оставляет у родителя одну
+// полоску с числом, самих подзадач на доске нет.
 const subOf = async (request, parentId, title) => (await (await request.post(`/api/captures/${parentId}/subtasks`, { data: { title } })).json()).entry;
 const closeTask = async (request, entry) => {
   for (const projection of entry.projections.filter((item) => item.type === "task")) await request.post(`/api/projections/${projection.id}/complete`, { data: {} });
@@ -1390,61 +1393,104 @@ const greenOf = (page) => page.evaluate(() => {
   probe.remove();
   return color;
 });
+const colorOf = (page, token) => page.evaluate((name) => {
+  const probe = document.createElement("i");
+  probe.style.color = `var(${name})`;
+  document.body.append(probe);
+  const color = getComputedStyle(probe).color;
+  probe.remove();
+  return color;
+}, token);
+// Карточка или строка по названию: подпись «↳ родитель» у подзадачи повторяет название
+// родителя, поэтому искать по тексту всей карточки нельзя — только по самому названию.
+const titled = (page, selector, title) => page.locator(selector).filter({ has: page.locator(".board-title", { hasText: new RegExp(`^${title}$`) }) });
+// Закрыта ли подзадача на сервере: все её задачи отмечены.
+const closedOnServer = async (request, id) => {
+  const entry = (await (await request.get(`/api/captures/${id}`)).json()).entry;
+  const tasks = entry.projections.filter((item) => item.type === "task");
+  return tasks.length > 0 && tasks.every((item) => item.completion?.completed);
+};
+// Сегменты переключателя «Подзадачи» в строке фильтра и запрос доски, который он посылает.
+const subsToggle = (page) => page.locator("#board-filter .board-subs");
+const chooseSubs = async (page, name) => {
+  await openFilter(page);
+  await subsToggle(page).getByRole("button", { name }).click();
+};
+const boardAsked = (page, withSubtasks) => page.waitForRequest((asked) => {
+  const url = new URL(asked.url());
+  return url.pathname === "/api/board" && (url.searchParams.get("subtasks") === "1") === withSubtasks;
+});
 
-test("подзадача на доске не карточка: у дела метка «0/1» — на доске и в списке; счётчики считают дела; все сделаны — метка зелёная", async ({ page, request }) => {
+test("«Показывать»: подзадача стоит на доске своей карточкой с подписью «↳ родитель», у родителя полоска и «0/1»; счётчики считают все карточки; в списке то же", async ({ page, request }) => {
   await reset(request);
   const parentId = await deed(request, "Предварительно взять блокнот");
   await deed(request, "Проверить логи Hub");
   const child = await subOf(request, parentId, "Выбрать блокнот в клетку");
   await page.goto("/#board");
-
-  // Доска: две карточки — сами дела; подзадачи карточкой нет, колонка считает дела.
   await arrange(page, "board", ["col"]);
   const cards = page.locator("#board-columns .board-card");
-  const badge = cards.filter({ hasText: "Предварительно взять блокнот" }).locator(".sub-badge");
-  await expect(cards).toHaveCount(2);
-  // Подзадача — строка карты внутри карточки дела, а не своя карточка: названий карточек два.
-  await expect(cards.locator(".board-title")).toHaveText(["Предварительно взять блокнот", "Проверить логи Hub"]);
-  await expect(cards.filter({ hasText: "Выбрать блокнот" })).toHaveCount(1);
-  await expect(cards.filter({ hasText: "Предварительно взять блокнот" }).locator(".sub-name")).toHaveText("Выбрать блокнот в клетку");
-  await expect(badge).toHaveText("0/1");
-  await expect(badge).toHaveAccessibleName("Подзадачи: сделано 0 из 1. Открыть подзадачи");
+  const parent = titled(page, "#board-columns .board-card", "Предварительно взять блокнот");
+  const step = titled(page, "#board-columns .board-card", "Выбрать блокнот в клетку");
+
+  // Три карточки: два дела и подзадача. Подзадача — не строка внутри родителя: у неё свой кружок,
+  // своё название и подпись родителя под ним — мелкая метка в том же виде, что срок и прочие.
+  await expect(cards).toHaveCount(3);
+  await expect(cards.locator(".board-title")).toHaveText(["Предварительно взять блокнот", "Проверить логи Hub", "Выбрать блокнот в клетку"]);
+  await expect(step.getByRole("button", { name: "Готово: Выбрать блокнот в клетку" })).toBeVisible();
+  await expect(step.locator(".btag.parent")).toHaveText("↳ Предварительно взять блокнот");
+  await expect(page.locator("#board-columns .btag.parent")).toHaveCount(1);
+  await expect(parent.locator(".btag.parent")).toHaveCount(0);
+  const label = step.locator(".btag.parent");
+  await expect(label).toHaveCSS("font-size", "10px");
+  await expect(label).toHaveCSS("background-color", await colorOf(page, "--hairline"));
+  const [titleBox, labelBox] = [await step.locator(".board-title").boundingBox(), await label.boundingBox()];
+  expect(labelBox.y).toBeGreaterThan(titleBox.y + titleBox.height - 1);
+  expect(labelBox.x).toBeCloseTo(titleBox.x, 0);
+
+  // У родителя — полоска и «0/1», а строк подзадач внутри карточки нет; у подзадачи без своих подзадач полоски нет.
+  await expect(parent.locator(".sub-bar")).toBeVisible();
+  await expect(parent.locator(".sub-badge")).toHaveText("0/1");
+  await expect(parent.locator(".sub-badge")).toHaveAccessibleName("Подзадачи: сделано 0 из 1. Открыть подзадачи");
+  await expect(page.locator("#board-columns .sub-row, #board-columns .sub-check, #board-columns .sub-name")).toHaveCount(0);
+  await expect(step.locator(".sub-map")).toHaveCount(0);
   await expect(page.locator("#board-columns .sub-badge")).toHaveCount(1);
-  await expect(columnByName(page, "Дела").locator(".board-col-count")).toHaveText("2");
+  // Счётчик колонки считает все три показанные карточки.
+  await expect(columnByName(page, "Дела").locator(".board-col-count")).toHaveText("3");
 
-  // Список: те же две строки, у дела метка, счёт группы — «2».
+  // Список: те же три строки, подпись — под названием, у родителя полоска и число, счёт раздела — «3».
   await arrange(page, "list", ["col"]);
-  await expect(page.locator("#board-flat .g-row")).toHaveCount(2);
-  await expect(page.locator("#board-flat .g-row .board-title")).toHaveText(["Предварительно взять блокнот", "Проверить логи Hub"]);
-  await expect(page.locator("#board-flat .g-row").filter({ hasText: "Предварительно взять блокнот" }).locator(".sub-badge")).toHaveText("0/1");
-  await expect(page.locator("#board-flat .g-sec").first()).toContainText("· 2");
-  // Группировка по дню считает те же два дела, а не три записи.
+  const rows = page.locator("#board-flat .g-row");
+  const stepRow = titled(page, "#board-flat .g-row", "Выбрать блокнот в клетку");
+  await expect(rows).toHaveCount(3);
+  await expect(rows.locator(".board-title")).toHaveText(["Предварительно взять блокнот", "Проверить логи Hub", "Выбрать блокнот в клетку"]);
+  await expect(stepRow.locator(".btag.parent")).toHaveText("↳ Предварительно взять блокнот");
+  const [rowTitle, rowLabel] = [await stepRow.locator(".board-title").boundingBox(), await stepRow.locator(".btag.parent").boundingBox()];
+  expect(rowLabel.y).toBeGreaterThan(rowTitle.y + rowTitle.height - 1);
+  await expect(titled(page, "#board-flat .g-row", "Предварительно взять блокнот").locator(".sub-badge")).toHaveText("0/1");
+  await expect(page.locator("#board-flat .g-sec").first()).toContainText("· 3");
+  // Группировка по дню считает те же три дела.
   await arrange(page, "list", ["day"]);
-  await expect(page.locator("#board-flat .g-sec").filter({ hasText: "сегодня" })).toContainText("· 2");
+  await expect(page.locator("#board-flat .g-sec").filter({ hasText: "сегодня" })).toContainText("· 3");
 
-  // Закрыли подзадачу: «1/1» зелёным, а в «Закрыто» отдельной карточкой она не появилась.
+  // Закрыли подзадачу: в «Закрыто» она стоит такой же карточкой с подписью, у родителя «1/1» зелёным.
   await closeTask(request, child);
   await arrange(page, "board", ["col"]);
-  await expect(badge).toHaveText("1/1");
-  await expect(badge).toHaveClass(/all-done/);
-  await expect(badge).toHaveCSS("color", await greenOf(page));
-  await expect(page.locator("#board-columns .board-card.closed")).toHaveCount(0);
-  await expect(page.locator("#board-columns .board-card")).toHaveCount(2);
+  const closedStep = titled(page, "#board-columns .board-card.closed", "Выбрать блокнот в клетку");
+  await expect(closedStep).toHaveCount(1);
+  await expect(closedStep.locator(".btag.parent")).toHaveText("↳ Предварительно взять блокнот");
+  await expect(page.locator("#board-columns .board-card:not(.closed)")).toHaveCount(2);
+  await expect(columnByName(page, "Дела").locator(".board-col-count")).toHaveText("2");
+  await expect(page.locator("#board-columns .board-done-column .board-col-count")).toHaveText("1");
+  await expect(parent.locator(".sub-badge")).toHaveText("1/1");
+  await expect(parent.locator(".sub-badge")).toHaveClass(/all-done/);
+  await expect(parent.locator(".sub-badge")).toHaveCSS("color", await greenOf(page));
   await arrange(page, "list", ["col"]);
-  await expect(page.locator("#board-flat .g-row")).toHaveCount(2);
-  await expect(page.locator("#board-flat .g-row.closed")).toHaveCount(0);
-  // Родитель закрыт — он лежит в «Закрыто» со своей меткой, подзадачи рядом нет.
-  const parent = (await (await request.get(`/api/captures/${parentId}`)).json()).entry;
-  await closeTask(request, parent);
-  await arrange(page, "board", ["col"]);
-  const done = page.locator("#board-columns .board-card.closed");
-  await expect(done).toHaveCount(1);
-  await expect(done.locator(".sub-badge")).toHaveText("1/1");
-  await expect(done.locator(".sub-badge")).toHaveClass(/all-done/);
+  await expect(page.locator("#board-flat .g-row.closed")).toHaveCount(1);
+  await expect(titled(page, "#board-flat .g-row.closed", "Выбрать блокнот в клетку").locator(".btag.parent")).toHaveText("↳ Предварительно взять блокнот");
   await reset(request);
 });
 
-test("метка «0/1» на доске открывает карточку дела на «Подзадачах», а закрытая в карточке подзадача делает её «1/1» зелёной", async ({ page, request }) => {
+test("метка «0/1» у родителя на доске открывает его карточку на «Подзадачах», а закрытая в карточке подзадача делает метку «1/1» зелёной и уходит своей карточкой в «Закрыто»", async ({ page, request }) => {
   await reset(request);
   const parentId = await deed(request, "Предварительно взять блокнот");
   await subOf(request, parentId, "Выбрать блокнот в клетку");
@@ -1452,7 +1498,7 @@ test("метка «0/1» на доске открывает карточку д�
   await request.post(`/api/captures/${parentId}/notes`, { data: { body: Array.from({ length: 40 }, (_, index) => `Пункт ${index + 1} заметки про блокнот`).join("\n\n") } });
   await page.goto("/#board");
   await arrange(page, "board", ["col"]);
-  const card = page.locator("#board-columns .board-card").filter({ hasText: "Предварительно взять блокнот" });
+  const card = titled(page, "#board-columns .board-card", "Предварительно взять блокнот");
   const dialog = page.locator("#review-dialog");
   const section = dialog.locator("#card-subtasks");
 
@@ -1479,7 +1525,7 @@ test("метка «0/1» на доске открывает карточку д�
   await expect(dialog.locator(".card-top")).toBeInViewport({ ratio: 1 });
   expect(await dialog.evaluate((element) => element.querySelector(".card-main").scrollTop)).toBe(0);
 
-  // Подзадача закрыта кружком в карточке — метка за ней уже «1/1» и зелёная.
+  // Подзадача закрыта кружком в карточке — метка за ней уже «1/1» и зелёная, а её карточка ушла в «Закрыто».
   await section.locator(".subtask-check").check();
   await expect(section.locator(".subtask-count")).toHaveText("1 / 1");
   await page.keyboard.press("Escape");
@@ -1488,7 +1534,8 @@ test("метка «0/1» на доске открывает карточку д�
   await expect(badge).toHaveText("1/1");
   await expect(badge).toHaveClass(/all-done/);
   await expect(badge).toHaveCSS("color", await greenOf(page));
-  await expect(page.locator("#board-columns .board-card")).toHaveCount(1);
+  await expect(page.locator("#board-columns .board-card:not(.closed)")).toHaveCount(1);
+  await expect(titled(page, "#board-columns .board-card.closed", "Выбрать блокнот в клетку")).toHaveCount(1);
 
   // Открыли заново по названию — читается с начала: ни прежняя докрутка, ни колесо не липнут.
   await card.locator(".board-title").click();
@@ -1499,123 +1546,60 @@ test("метка «0/1» на доске открывает карточку д�
   await reset(request);
 });
 
-// Карта подзадач у родителя: под названием полоска прогресса с той же меткой «1/2»
-// и сами подзадачи строками; кружок закрывает и возвращает подзадачу на месте,
-// «Подзадачи: скрывать» в строке фильтра оставляет одну полоску.
-const colorOf = (page, token) => page.evaluate((name) => {
-  const probe = document.createElement("i");
-  probe.style.color = `var(${name})`;
-  document.body.append(probe);
-  const color = getComputedStyle(probe).color;
-  probe.remove();
-  return color;
-}, token);
-// Закрыта ли подзадача на сервере: все её задачи отмечены.
-const closedOnServer = async (request, id) => {
-  const entry = (await (await request.get(`/api/captures/${id}`)).json()).entry;
-  const tasks = entry.projections.filter((item) => item.type === "task");
-  return tasks.length > 0 && tasks.every((item) => item.completion?.completed);
-};
-// Строки карты и сегменты переключателя «Подзадачи» в строке фильтра.
-const subsToggle = (page) => page.locator("#board-filter .board-subs");
-const chooseSubs = async (page, name) => {
-  await openFilter(page);
-  await subsToggle(page).getByRole("button", { name }).click();
-};
-
-test("карта подзадач на карточке: полоска 4px, «1/2» и две строки; кружок закрывает и возвращает подзадачу на месте, доска не перерисовывается", async ({ page, request }) => {
+test("карточка подзадачи — как у дела: название открывает её карточку, кружок закрывает и возвращает, за название её переносят в другую колонку, и это помнится", async ({ page, request }) => {
   await reset(request);
   const parentId = await deed(request, "Подготовить квартальный отчёт");
   const first = await subOf(request, parentId, "Собрать цифры по продажам");
-  const second = await subOf(request, parentId, "Свести таблицы в один файл");
-  await closeTask(request, first);
+  await subOf(request, parentId, "Свести таблицы в один файл");
   await page.goto("/#board");
   await arrange(page, "board", ["col"]);
-  const card = page.locator("#board-columns .board-card").filter({ hasText: "Подготовить квартальный отчёт" });
-  const bar = card.locator(".sub-bar");
-  const fill = card.locator(".sub-bar-fill");
-  const badge = card.locator(".sub-badge");
-  const rows = card.locator(".sub-row");
-  const green = await greenOf(page);
+  await addColumn(page, "Ожидание");
+  const home = columnByName(page, "Дела");
+  const wait = columnByName(page, "Ожидание");
+  const parent = titled(page, "#board-columns .board-card", "Подготовить квартальный отчёт");
+  const step = titled(page, "#board-columns .board-card", "Собрать цифры по продажам");
+  const dialog = page.locator("#review-dialog");
+  await expect(home.locator(".board-card")).toHaveCount(3);
+  await expect(step).toHaveJSProperty("draggable", true);
 
-  // Под названием — тонкая полоска: дорожка — линия, заполненная часть зелёная и на
-  // половину; рядом та же метка «1/2». Ниже — строки подзадач.
-  await expect(bar).toBeVisible();
-  await expect(bar).toHaveCSS("height", "4px");
-  await expect(bar).toHaveCSS("background-color", await colorOf(page, "--line"));
-  await expect(fill).toHaveCSS("background-color", green);
-  await expect(fill).toHaveAttribute("style", /width: 50%/);
-  await expect(badge).toHaveText("1/2");
-  await expect(badge).not.toHaveClass(/all-done/);
-  const box = async (locator) => (await locator.boundingBox());
-  const [title, barBox, firstRow] = [await box(card.locator(".board-title")), await box(bar), await box(rows.first())];
-  expect(barBox.y).toBeGreaterThan(title.y + title.height - 1);
-  expect(firstRow.y).toBeGreaterThan(barBox.y + barBox.height);
-  expect(barBox.x).toBeCloseTo(title.x, 0);
+  // Название открывает карточку самой подзадачи, а не родителя; родитель назван в ней строкой «Подзадача дела».
+  await step.locator(".board-title").click();
+  await expect(dialog.locator(".card-title")).toHaveText("Собрать цифры по продажам");
+  await expect(dialog.locator(".card-origin")).toContainText("Подзадача дела «Подготовить квартальный отчёт»");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
 
-  // Две строки в порядке карточки: сделанная зачёркнута и приглушена, открытая — обычная.
-  await expect(rows).toHaveCount(2);
-  await expect(card.locator(".sub-name")).toHaveText(["Собрать цифры по продажам", "Свести таблицы в один файл"]);
-  await expect(rows.nth(0)).toHaveClass(/done/);
-  await expect(rows.nth(0).locator(".sub-name")).toHaveCSS("text-decoration-line", "line-through");
-  await expect(rows.nth(0).locator(".sub-name")).not.toHaveCSS("color", await colorOf(page, "--ink"));
-  await expect(rows.nth(0).locator(".sub-check")).toHaveCSS("background-color", green);
-  await expect(rows.nth(1)).not.toHaveClass(/done/);
-  await expect(rows.nth(1).locator(".sub-name")).toHaveCSS("text-decoration-line", "none");
-  await expect(rows.nth(1).locator(".sub-name")).toHaveCSS("color", await colorOf(page, "--ink"));
-  await expect(card.getByRole("button", { name: "Готово: Свести таблицы в один файл" })).toBeVisible();
-  await expect(card.getByRole("button", { name: "Вернуть в работу: Собрать цифры по продажам" })).toBeVisible();
-
-  // Кружок второй подзадачи закрывает её: «2/2» зелёным, полоска полная, строка зачёркнута.
-  // Карточка — тот же элемент: доска не перерисовывалась.
-  await card.evaluate((element) => { element.dataset.probe = "kept"; });
-  await rows.nth(1).locator(".sub-check").click();
-  await expect(badge).toHaveText("2/2");
-  await expect(badge).toHaveClass(/all-done/);
-  await expect(badge).toHaveCSS("color", green);
-  await expect(fill).toHaveAttribute("style", /width: 100%/);
-  await expect(rows.nth(1)).toHaveClass(/done/);
-  await expect(rows.nth(1).locator(".sub-name")).toHaveCSS("text-decoration-line", "line-through");
-  await expect(card.getByRole("button", { name: "Вернуть в работу: Свести таблицы в один файл" })).toBeVisible();
-  // Тем же вызовом, что кружок в карточке: на сервере подзадача закрыта, а родитель — нет.
-  await expect.poll(() => closedOnServer(request, second.id)).toBe(true);
+  // Кружок закрывает подзадачу: она уходит в «Закрыто», у родителя «1/2», сам родитель остаётся открытым.
+  await step.getByRole("button", { name: "Готово: Собрать цифры по продажам" }).click();
+  await expect.poll(() => closedOnServer(request, first.id)).toBe(true);
+  const closedStep = titled(page, "#board-columns .board-done-column .board-card", "Собрать цифры по продажам");
+  await expect(closedStep).toHaveCount(1);
+  await expect(parent.locator(".sub-badge")).toHaveText("1/2");
   expect(await closedOnServer(request, parentId)).toBe(false);
-  await settled(page);
-  await expect(card).toHaveAttribute("data-probe", "kept");
-  await expect(page.locator("#board-columns .board-card")).toHaveCount(1);
-  await expect(badge).toHaveText("2/2");
-
-  // Кружок закрытой возвращает её в работу: «1/2» и снова серым.
-  await rows.nth(0).locator(".sub-check").click();
-  await expect(rows.nth(0)).not.toHaveClass(/done/);
-  await expect(rows.nth(0).locator(".sub-name")).toHaveCSS("text-decoration-line", "none");
-  await expect(badge).toHaveText("1/2");
-  await expect(badge).not.toHaveClass(/all-done/);
-  await expect(fill).toHaveAttribute("style", /width: 50%/);
+  // Кружок закрытой возвращает её в работу — в ту же колонку.
+  await closedStep.getByRole("button", { name: "Вернуть в работу: Собрать цифры по продажам" }).click();
   await expect.poll(() => closedOnServer(request, first.id)).toBe(false);
+  await expect(titled(page, "#board-columns .board-column:not(.board-done-column) .board-card", "Собрать цифры по продажам")).toHaveCount(1);
+  await expect(parent.locator(".sub-badge")).toHaveText("0/2");
   await settled(page);
-  await expect(card).toHaveAttribute("data-probe", "kept");
 
-  // Страница перечитана: карта по данным сервера — «1/2», закрыта вторая.
-  await page.reload();
-  await expect(card.locator(".sub-row")).toHaveCount(2);
-  await expect(badge).toHaveText("1/2");
-  await expect(card.locator(".sub-row.done .sub-name")).toHaveText("Свести таблицы в один файл");
-
-  // Клавиша E на подзадаче в фокусе отмечает её, а не дело: «готово» — там, где стоит фокус.
-  const check = card.locator(".sub-row").nth(1).locator(".sub-check");
-  await check.focus();
-  await page.keyboard.press("e");
-  await expect(card.locator(".sub-row").nth(1)).not.toHaveClass(/done/);
-  await expect(badge).toHaveText("0/2");
-  await expect(check).toBeFocused();
-  await expect.poll(() => closedOnServer(request, second.id)).toBe(false);
-  expect(await closedOnServer(request, parentId)).toBe(false);
-  await expect(columnByName(page, "Дела").locator(".board-card")).toHaveCount(1);
+  // За название карточка переносится в другую колонку, как дело; перенос просит у сервера порядок по списку с подзадачами.
+  const moved = page.waitForRequest((asked) => asked.url().endsWith("/api/board/move") && JSON.parse(asked.postData()).subtasks === true);
+  await step.locator(".board-title").dragTo(wait.locator(".board-cards"));
+  await moved;
+  await expect(titled(page, "#board-columns .board-card", "Собрать цифры по продажам")).toHaveCount(1);
+  await expect(wait.locator(".board-card")).toHaveCount(1);
+  await expect(wait.locator(".board-title")).toHaveText("Собрать цифры по продажам");
+  await expect(home.locator(".board-card")).toHaveCount(2);
+  // Место помнится на сервере: после перезагрузки подзадача лежит в «Ожидание», родитель — в «Дела».
+  await arrange(page, "board", ["col"]);
+  await expect(wait.locator(".board-title")).toHaveText("Собрать цифры по продажам");
+  await expect(home.locator(".board-title")).toHaveText(["Подготовить квартальный отчёт", "Свести таблицы в один файл"]);
+  await expect(wait.locator(".btag.parent")).toHaveText("↳ Подготовить квартальный отчёт");
   await reset(request);
 });
 
-test("«Подзадачи: скрывать» в строке фильтра оставляет полоску и число без строк, помнится после перезагрузки; в списке то же, на «Сегодня» — только метка", async ({ page, request }) => {
+test("«Скрывать» убирает подзадачи с доски и из списка, у родителя остаются полоска и число; выбор помнится после перезагрузки, на «Сегодня» — только метка", async ({ page, request }) => {
   await reset(request);
   const parentId = await deed(request, "Подготовить квартальный отчёт");
   const first = await subOf(request, parentId, "Собрать цифры по продажам");
@@ -1623,11 +1607,12 @@ test("«Подзадачи: скрывать» в строке фильтра о
   await closeTask(request, first);
   await page.goto("/#board");
   await arrange(page, "board", ["col"]);
-  const card = page.locator("#board-columns .board-card").filter({ hasText: "Подготовить квартальный отчёт" });
+  const card = titled(page, "#board-columns .board-card", "Подготовить квартальный отчёт");
 
-  // По умолчанию подзадачи показываются; переключатель — два сегмента справа в строке фильтра.
+  // По умолчанию подзадачи показываются карточками (и закрытая — в «Закрыто»); переключатель — два сегмента справа в строке фильтра.
   expect(await stored(page, "kizuna-board-subtasks")).toBeNull();
-  await expect(card.locator(".sub-row")).toHaveCount(2);
+  await expect(page.locator("#board-columns .board-card:not(.closed)")).toHaveCount(2);
+  await expect(page.locator("#board-columns .board-card.closed")).toHaveCount(1);
   await openFilter(page);
   await expect(subsToggle(page)).toBeVisible();
   await expect(subsToggle(page).getByRole("button")).toHaveText(["Показывать", "Скрывать"]);
@@ -1640,12 +1625,19 @@ test("«Подзадачи: скрывать» в строке фильтра о
   expect(subsBox.x).toBeLessThan(todayBox.x);
   expect(subsBox.x).toBeGreaterThan(rowBox.x + rowBox.width / 2);
 
-  // «Скрывать»: строк нет, полоска и «1/2» на месте; выбор лежит в браузере.
+  // «Скрывать»: подзадач на доске нет совсем, у родителя полоска и «1/2»; выбор лежит в браузере.
+  const hidden = boardAsked(page, false);
   await chooseSubs(page, "Скрывать");
+  await hidden;
   await expect(subsToggle(page).getByRole("button", { name: "Скрывать" })).toHaveAttribute("aria-pressed", "true");
-  await expect(card.locator(".sub-row")).toHaveCount(0);
+  await expect(page.locator("#board-columns .board-card")).toHaveCount(1);
+  await expect(page.locator("#board-columns .btag.parent")).toHaveCount(0);
   await expect(card.locator(".sub-bar")).toBeVisible();
   await expect(card.locator(".sub-badge")).toHaveText("1/2");
+  await expect(card.locator(".sub-bar-fill")).toHaveAttribute("style", /width: 50%/);
+  await expect(card.locator(".sub-row")).toHaveCount(0);
+  await expect(columnByName(page, "Дела").locator(".board-col-count")).toHaveText("1");
+  await expect(page.locator("#board-columns .board-done-column .board-col-count")).toHaveText("0");
   expect(await stored(page, "kizuna-board-subtasks")).toBe("hide");
   // Это не условие фильтра: «Сбросить» его не трогает, а фильтр не считает.
   await addCondition(page, "day", ["today"]);
@@ -1653,44 +1645,46 @@ test("«Подзадачи: скрывать» в строке фильтра о
   await page.locator("#board-filter .board-filter-clear").click();
   await expect(filterToggle(page)).toHaveText("Фильтр");
   expect(await stored(page, "kizuna-board-subtasks")).toBe("hide");
-  await expect(card.locator(".sub-row")).toHaveCount(0);
+  await expect(page.locator("#board-columns .board-card")).toHaveCount(1);
 
-  // После перезагрузки — то же: строк нет, «Скрывать» нажато.
+  // После перезагрузки — то же: подзадач нет, «Скрывать» нажато.
   await page.reload();
   await expect(card.locator(".sub-bar")).toBeVisible();
-  await expect(card.locator(".sub-row")).toHaveCount(0);
+  await expect(page.locator("#board-columns .board-card")).toHaveCount(1);
   await openFilter(page);
   await expect(subsToggle(page).getByRole("button", { name: "Скрывать" })).toHaveAttribute("aria-pressed", "true");
 
-  // Список действует так же: у строки дела полоска и число, строк нет.
+  // Список действует так же: у строки дела полоска и число, подзадач нет.
   await arrange(page, "list", ["col"]);
-  const row = page.locator("#board-flat .g-row").filter({ hasText: "Подготовить квартальный отчёт" });
+  const row = titled(page, "#board-flat .g-row", "Подготовить квартальный отчёт");
   await expect(row.locator(".sub-bar")).toBeVisible();
   await expect(row.locator(".sub-badge")).toHaveText("1/2");
-  await expect(row.locator(".sub-row")).toHaveCount(0);
   await expect(page.locator("#board-flat .g-row")).toHaveCount(1);
-  // «Показывать» возвращает строки — и в списке, и на доске, выбор снова «show».
+  // «Показывать» возвращает подзадачи — и в списке, и на доске, выбор снова «show»; закрытая лежит в «Закрыто».
+  const shown = boardAsked(page, true);
   await chooseSubs(page, "Показывать");
-  await expect(row.locator(".sub-row")).toHaveCount(2);
-  await expect(row.locator(".sub-name")).toHaveText(["Собрать цифры по продажам", "Свести таблицы в один файл"]);
-  await expect(page.locator("#board-flat .g-row")).toHaveCount(1);
+  await shown;
+  await expect(page.locator("#board-flat .g-row")).toHaveCount(3);
+  await expect(page.locator("#board-flat .g-row:not(.closed) .board-title")).toHaveText(["Подготовить квартальный отчёт", "Свести таблицы в один файл"]);
+  await expect(titled(page, "#board-flat .g-row.closed", "Собрать цифры по продажам").locator(".btag.parent")).toHaveText("↳ Подготовить квартальный отчёт");
   expect(await stored(page, "kizuna-board-subtasks")).toBe("show");
   await arrange(page, "board", ["col"]);
-  await expect(card.locator(".sub-row")).toHaveCount(2);
+  await expect(page.locator("#board-columns .board-card")).toHaveCount(3);
 
-  // «Сегодня» — только метка, строк нет и при «показывать».
+  // «Сегодня» — только метка, подзадач отдельными строками нет и при «показывать».
   await page.goto("/");
   // Вкладка «День» открыта днём и закрыта вечером: повторный щелчок по открытой сворачивает ящик.
   const dayTab = page.getByRole("tab", { name: /^День/ });
   if ((await dayTab.getAttribute("aria-selected")) !== "true") await dayTab.click();
   const today = page.locator("#todo .entry").filter({ hasText: "Подготовить квартальный отчёт" });
   await expect(today.locator(".sub-badge")).toHaveText("1/2");
-  await expect(page.locator("#todo .sub-row, #todo .sub-map, #todo .sub-bar")).toHaveCount(0);
+  await expect(page.locator("#todo .entry").filter({ hasText: "Свести таблицы в один файл" })).toHaveCount(0);
+  await expect(page.locator("#todo .sub-map, #todo .sub-bar, #todo .btag.parent")).toHaveCount(0);
   await page.evaluate(() => localStorage.removeItem("kizuna-board-subtasks"));
   await reset(request);
 });
 
-test("переключатель «Подзадачи» — сегменты, как у «Вида»: активный залит тёмным со светлым текстом; клик меняет состояние и карточки без перезагрузки, выбор помнится", async ({ page, request }) => {
+test("переключатель «Подзадачи» — сегменты, как у «Вида»: активный залит тёмным со светлым текстом; клик перечитывает доску — карточки подзадач уходят и возвращаются без перезагрузки страницы, выбор помнится", async ({ page, request }) => {
   await reset(request);
   const parentId = await deed(request, "Подготовить квартальный отчёт");
   await subOf(request, parentId, "Собрать цифры по продажам");
@@ -1700,7 +1694,7 @@ test("переключатель «Подзадачи» — сегменты, к
   await openFilter(page);
   const show = subsToggle(page).getByRole("button", { name: "Показывать" });
   const hide = subsToggle(page).getByRole("button", { name: "Скрывать" });
-  const rows = page.locator("#board-columns .board-card .sub-row");
+  const cards = page.locator("#board-columns .board-card");
   const view = page.locator('#board-view button[aria-pressed="true"]');
   const paint = (locator) => locator.evaluate((element) => { const css = getComputedStyle(element); return [css.backgroundColor, css.color]; });
   const transparent = "rgba(0, 0, 0, 0)";
@@ -1711,157 +1705,28 @@ test("переключатель «Подзадачи» — сегменты, к
   expect(await paint(show)).toEqual(await paint(view));
   expect(await paint(show)).toEqual([await colorOf(page, "--ink"), await colorOf(page, "--paper")]);
   expect((await paint(hide))[0]).toBe(transparent);
-  await expect(rows).toHaveCount(2);
+  await expect(cards).toHaveCount(3);
 
-  // Клик меняет состояние, карточки и память, а страница не перезагружается.
+  // Клик перечитывает доску: «Скрывать» просит её без подзадач, «Показывать» — с ними; страница не перезагружается.
   await page.evaluate(() => { window.__sameDocument = true; });
+  const withoutSubs = boardAsked(page, false);
   await hide.click();
+  await withoutSubs;
   await expect(hide).toHaveAttribute("aria-pressed", "true");
   await expect(show).toHaveAttribute("aria-pressed", "false");
   expect(await paint(hide)).toEqual(await paint(view));
   expect((await paint(show))[0]).toBe(transparent);
-  await expect(rows).toHaveCount(0);
+  await expect(cards).toHaveCount(1);
   await expect(page.locator("#board-columns .board-card .sub-bar")).toBeVisible();
+  await expect(page.locator("#board-columns .board-card .sub-badge")).toHaveText("0/2");
   expect(await stored(page, "kizuna-board-subtasks")).toBe("hide");
+  const withSubs = boardAsked(page, true);
   await show.click();
+  await withSubs;
   await expect(show).toHaveAttribute("aria-pressed", "true");
-  await expect(rows).toHaveCount(2);
+  await expect(cards).toHaveCount(3);
+  await expect(page.locator("#board-columns .btag.parent")).toHaveText(["↳ Подготовить квартальный отчёт", "↳ Подготовить квартальный отчёт"]);
   expect(await stored(page, "kizuna-board-subtasks")).toBe("show");
   expect(await page.evaluate(() => window.__sameDocument)).toBe(true);
-  await reset(request);
-});
-
-test("сервер без строк подзадач в ответе доски (старше клиента): полоска и число на месте, переключатель меняет состояние и помнит выбор, ошибок в консоли нет", async ({ page, request }) => {
-  await reset(request);
-  const parentId = await deed(request, "Подготовить квартальный отчёт");
-  await subOf(request, parentId, "Собрать цифры по продажам");
-  await subOf(request, parentId, "Свести таблицы в один файл");
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
-  page.on("console", (message) => { if (message.type() === "error") errors.push(`console: ${message.text()}`); });
-  // Старый сервер отдаёт у подзадач только {done, total}, без items.
-  await page.route("**/api/board", async (route) => {
-    const response = await route.fetch();
-    const body = await response.json();
-    for (const card of [...body.columns.flatMap((column) => column.cards), ...(body.closed || [])]) if (card.subtasks) delete card.subtasks.items;
-    await route.fulfill({ response, json: body });
-  });
-  await page.goto("/#board");
-  await arrange(page, "board", ["col"]);
-  const card = page.locator("#board-columns .board-card").filter({ hasText: "Подготовить квартальный отчёт" });
-  await expect(card.locator(".sub-bar")).toBeVisible();
-  await expect(card.locator(".sub-badge")).toHaveText("0/2");
-  await expect(card.locator(".sub-row")).toHaveCount(0);
-  await expect(card.locator(".sub-more")).toHaveCount(0);
-
-  // Переключатель живой и без строк: состояние, память и полоска с числом.
-  await openFilter(page);
-  const show = subsToggle(page).getByRole("button", { name: "Показывать" });
-  const hide = subsToggle(page).getByRole("button", { name: "Скрывать" });
-  await hide.click();
-  await expect(hide).toHaveAttribute("aria-pressed", "true");
-  await expect(show).toHaveAttribute("aria-pressed", "false");
-  expect(await stored(page, "kizuna-board-subtasks")).toBe("hide");
-  await expect(card.locator(".sub-bar")).toBeVisible();
-  await expect(card.locator(".sub-badge")).toHaveText("0/2");
-  await show.click();
-  await expect(show).toHaveAttribute("aria-pressed", "true");
-  expect(await stored(page, "kizuna-board-subtasks")).toBe("show");
-  // Кружка у строк нет, а метка и полоска работают: метка открывает карточку на «Подзадачах».
-  await card.locator(".sub-badge").click();
-  await expect(page.locator("#review-dialog #card-subtasks")).toBeVisible();
-  await page.keyboard.press("Escape");
-  // То же в списке.
-  await arrange(page, "list", ["col"]);
-  const row = page.locator("#board-flat .g-row").filter({ hasText: "Подготовить квартальный отчёт" });
-  await expect(row.locator(".sub-bar")).toBeVisible();
-  await expect(row.locator(".sub-row")).toHaveCount(0);
-  await chooseSubs(page, "Скрывать");
-  await expect(subsToggle(page).getByRole("button", { name: "Скрывать" })).toHaveAttribute("aria-pressed", "true");
-  expect(errors).toEqual([]);
-  await page.evaluate(() => localStorage.removeItem("kizuna-board-subtasks"));
-  await reset(request);
-});
-
-test("больше пяти подзадач: первые пять строк и «ещё 2»; «ещё», название и метка открывают карточку родителя, кружок — нет; отметка в карточке видна на доске", async ({ page, request }) => {
-  await reset(request);
-  const parentId = await deed(request, "Организовать выезд команды");
-  for (let number = 1; number <= 7; number++) await subOf(request, parentId, `Шаг ${number}`);
-  await page.goto("/#board");
-  await arrange(page, "board", ["col"]);
-  const card = page.locator("#board-columns .board-card").filter({ hasText: "Организовать выезд команды" });
-  const rows = card.locator(".sub-row");
-  const dialog = page.locator("#review-dialog");
-
-  // Строк пять, за ними «ещё 2»; число — по всем семи.
-  await expect(rows).toHaveCount(5);
-  await expect(card.locator(".sub-name")).toHaveText(["Шаг 1", "Шаг 2", "Шаг 3", "Шаг 4", "Шаг 5"]);
-  await expect(card.locator(".sub-more")).toHaveText("ещё 2");
-  await expect(card.locator(".sub-badge")).toHaveText("0/7");
-  await expect(card.locator(".sub-bar-fill")).toHaveAttribute("style", /width: 0%/);
-
-  // «Ещё 2» открывает карточку родителя, а в ней — все семь.
-  await card.locator(".sub-more").click();
-  await expect(dialog).toBeVisible();
-  await expect(dialog.locator(".card-title")).toHaveText("Организовать выезд команды");
-  await expect(dialog.locator("#card-subtasks .subtask-count")).toHaveText("0 / 7");
-  await expect(dialog.locator("#card-subtask-list .subtask")).toHaveCount(7);
-  await page.keyboard.press("Escape");
-  await expect(dialog).toBeHidden();
-
-  // Название подзадачи — то же: карточка родителя на «Подзадачах».
-  await rows.nth(2).locator(".sub-name").click();
-  await expect(dialog).toBeVisible();
-  await expect(dialog.locator(".card-title")).toHaveText("Организовать выезд команды");
-  await expect(dialog.locator("#card-subtasks")).toBeVisible();
-  // Отметка в карточке — и карта на доске за ней: «1/7», первая строка зачёркнута.
-  await dialog.locator("#card-subtask-list .subtask-check").first().check();
-  await expect(dialog.locator("#card-subtasks .subtask-count")).toHaveText("1 / 7");
-  await page.keyboard.press("Escape");
-  await expect(dialog).toBeHidden();
-  await expect(card.locator(".sub-badge")).toHaveText("1/7");
-  await expect(rows.first()).toHaveClass(/done/);
-  await expect(card.locator(".sub-bar-fill")).toHaveAttribute("style", /width: 14%/);
-
-  // Кружок подзадачи карточку не открывает: отмечает на месте.
-  await rows.nth(1).locator(".sub-check").click();
-  await expect(card.locator(".sub-badge")).toHaveText("2/7");
-  await expect(rows.nth(1)).toHaveClass(/done/);
-  await expect(dialog).toBeHidden();
-  await reset(request);
-});
-
-test("кружок подзадачи не тянет карточку: перетаскивание за кружок ничего не переносит, за название — переносит", async ({ page, request }) => {
-  await reset(request);
-  const parentId = await deed(request, "Подготовить квартальный отчёт");
-  await subOf(request, parentId, "Собрать цифры по продажам");
-  await page.goto("/#board");
-  await arrange(page, "board", ["col"]);
-  await addColumn(page, "Ожидание");
-  const home = columnByName(page, "Дела");
-  const wait = columnByName(page, "Ожидание");
-  const card = home.locator(".board-card").filter({ hasText: "Подготовить квартальный отчёт" });
-  await expect(card).toHaveJSProperty("draggable", true);
-
-  // За кружок карточка не тянется — пока он нажат, её перетаскивание выключено, а потом включается снова.
-  await card.locator(".sub-check").dragTo(wait.locator(".board-cards"));
-  await expect(home.locator(".board-card")).toHaveCount(1);
-  await expect(wait.locator(".board-card")).toHaveCount(0);
-  await expect(card).toHaveJSProperty("draggable", true);
-  await expect(card).not.toHaveClass(/dragging/);
-  await expect(card.locator(".sub-row.done")).toHaveCount(0);
-  // Нажатый кружок — карточка не draggable.
-  const circle = await card.locator(".sub-check").boundingBox();
-  await page.mouse.move(circle.x + circle.width / 2, circle.y + circle.height / 2);
-  await page.mouse.down();
-  await expect(card).toHaveJSProperty("draggable", false);
-  await page.mouse.up();
-  await expect(card).toHaveJSProperty("draggable", true);
-  await settled(page);
-
-  // За название — переносится, как раньше.
-  await columnByName(page, "Дела").locator(".board-card").filter({ hasText: "Подготовить квартальный отчёт" }).locator(".board-title").dragTo(wait.locator(".board-cards"));
-  await expect(wait.locator(".board-card")).toHaveCount(1);
-  await expect(wait.locator(".board-card .sub-map")).toHaveCount(1);
   await reset(request);
 });

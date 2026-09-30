@@ -380,8 +380,15 @@ test('подзадача, отданная Ане и взятая ею, у не�
   assert.deepEqual(mine.columns.flatMap(column => column.cards).map(item => item.captureId), [parent.id]);
   const counter = mine.columns[0].cards[0].subtasks;
   assert.deepEqual({ done: counter.done, total: counter.total }, { done: 0, total: 1 });
-  // Карта подзадач на доске называет её строкой: кружок у Саши — его собственный.
-  assert.deepEqual(counter.items, [{ id: step.entry.id, title: 'Собрать цифры', done: false }]);
+  assert.equal('items' in counter, false, 'строк подзадач в ответе доски нет, только счётчик');
+  // С «Подзадачи: Показывать» у Саши она — его подзадача (карточка с названием родителя), а у Ани — по-прежнему обычное дело.
+  const shownMine = (await sasha.get('/api/board?subtasks=1').expect(200)).body.columns.flatMap(column => column.cards);
+  const own = shownMine.find(item => item.captureId === step.entry.id);
+  assert.equal(own.subtask, true);
+  assert.equal(own.parentTitle, parent.interpretation.classification.summary);
+  const shownHers = (await anya.get('/api/board?subtasks=1').expect(200)).body.columns.flatMap(column => column.cards).find(item => item.captureId === step.entry.id);
+  assert.equal('subtask' in shownHers, false);
+  assert.equal('parentTitle' in shownHers, false);
 });
 
 test('подзадачи, заведённые до признака, помечаются при переходе базы — по журналу событий, а дела пачки остаются обычными', async () => {

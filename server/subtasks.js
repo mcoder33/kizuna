@@ -17,7 +17,8 @@
 // Два разных «ребёнка». Карточка собирает в «Подзадачи» всех детей записи —
 // и настоящие подзадачи (captures.subtask=1, их заводит «＋ Подзадача»), и дела,
 // отделённые от пачки. Но только подзадачи уходят из списков и с доски и стоят
-// у родителя счётчиком «0/2»: отделённое дело самостоятельное, ему место в «Дне».
+// у родителя счётчиком «0/2» (на доске их можно вернуть отдельными карточками —
+// см. board.js): отделённое дело самостоятельное, ему место в «Дне».
 // Счётчик для списков — subtaskCounts, он идёт тем же обходом и той же метрикой,
 // что дуга в карточке, поэтому числа совпадают.
 import { canSeeCapture, canCompleteCapture } from './circles.js';
@@ -146,49 +147,24 @@ export function subtaskTree(db, rootId, userId, { today = todayIn('UTC') } = {})
   return { id: rootId, today, done, total, next, children: rootChildren, nodes };
 }
 
-// Строки карты подзадач на карточке доски: прямые дети родителя в том порядке,
-// в каком их показывает «Список» в карточке (по времени создания). Отдаётся не
-// больше SUBTASK_ROWS: пять строк рисует доска, шестая нужна лишь затем, чтобы
-// она знала, что есть ещё. Не больше — чтобы ответ доски не раздувался от дерева
-// в сотню шагов. У строки-ветки (у неё свои подзадачи) стоит счёт её листьев
-// nested — как «0 / 3» в списке карточки; у повторяющегося дела — показанный день
-// (occurrence), чтобы кружок закрывал ровно его, как кружок карточки; а если
-// отметить шаг нельзя (читатель круга) — canComplete: false.
-export const SUBTASK_ROWS = 6;
-function mapRows({ byId, rootKids }, rootId) {
-  return rootKids.get(rootId).slice(0, SUBTASK_ROWS).map(id => {
-    const node = byId.get(id);
-    return {
-      id: node.id,
-      title: node.title,
-      done: node.done,
-      ...(node.childIds.length ? { nested: { done: node.leafDone, total: node.leafTotal } } : {}),
-      ...(node.occurrence ? { occurrence: node.occurrence } : {}),
-      ...(node.canComplete ? {} : { canComplete: false }),
-    };
-  });
-}
-
 // «0/2» у родителя в списках: сколько подзадач сделано из всех. Идёт для многих
 // записей разом — доска и список не спрашивают дерево каждой карточки отдельно.
 // Только настоящие подзадачи (captures.subtask=1) и та же метрика, что у дуги в
 // карточке: считаются конечные шаги на всех уровнях. У записи без подзадач
-// ключа нет. withItems добавляет строки карты подзадач (items, см. mapRows) —
-// их ждёт только доска, остальным спискам хватает числа.
-export function subtaskCounts(db, rootIds, userId, { today = todayIn('UTC'), withItems = false } = {}) {
+// ключа нет.
+export function subtaskCounts(db, rootIds, userId, { today = todayIn('UTC') } = {}) {
   const counts = new Map();
   const ids = [...new Set(rootIds)].filter(Boolean);
   if (!ids.length) return counts;
   const found = collect(db, ids, userId, { today, onlySubtasks: true });
   for (const [rootId, progress] of settle(found))
-    if (progress.total) counts.set(rootId, withItems ? { ...progress, items: mapRows(found, rootId) } : progress);
+    if (progress.total) counts.set(rootId, progress);
   return counts;
 }
 // Проставляет счётчик записям и карточкам списков: у кого подзадачи есть —
-// поле subtasks {done, total}, а с withItems ещё и items. key — имя поля с
-// идентификатором записи.
-export function withSubtaskCounts(db, items, userId, { today, key = 'id', withItems = false } = {}) {
-  const counts = subtaskCounts(db, items.map(item => item[key]), userId, { today, withItems });
+// поле subtasks {done, total}. key — имя поля с идентификатором записи.
+export function withSubtaskCounts(db, items, userId, { today, key = 'id' } = {}) {
+  const counts = subtaskCounts(db, items.map(item => item[key]), userId, { today });
   for (const item of items) {
     const progress = counts.get(item[key]);
     if (progress) item.subtasks = { ...progress };
