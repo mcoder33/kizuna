@@ -8304,33 +8304,36 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0; }
    свои значения. */
 #review-dialog {
   --params-w: 340px;
-  --card-accent: #517550;
-  --card-arc: #8ea773;
-  --card-arc-track: #e7eddf;
-  --card-ring: #acbaa4;
-  --card-chip-bg: #f2f5ed;
-  --card-chip-hover: #e9efdf;
-  --card-chip-edge: #e5ebde;
-  --card-chip-text: #63795a;
-  --card-row-hover: #f6f8f2;
-  --card-panel-bg: #fafcf6;
-  --card-top-line: #edf0e9;
-  --card-crumb-dot: #849dc5;
-  --card-field-bg: #ffffff;
-  --card-field-edge: rgba(55, 53, 47, 0.12);
-  --card-field-edge-hover: rgba(55, 53, 47, 0.24);
-  --card-field-ring: rgba(81, 117, 80, 0.16);
+  /* Акцент карточки — тот же коралловый, что везде в Кизуне; зелёный остаётся
+     только у сделанного (кружок и строка «Сделано»). Оттенки считаются от
+     токенов, поэтому тёмная тема получает свои сами. */
+  --card-accent: var(--red-50);
+  --card-arc: var(--coral);
+  --card-arc-track: color-mix(in srgb, var(--coral) 14%, var(--paper));
+  --card-ring: color-mix(in srgb, var(--coral) 45%, var(--paper));
+  --card-chip-bg: color-mix(in srgb, var(--coral) 8%, var(--paper));
+  --card-chip-hover: color-mix(in srgb, var(--coral) 14%, var(--paper));
+  --card-chip-edge: color-mix(in srgb, var(--coral) 22%, var(--line));
+  --card-chip-text: var(--red-50);
+  --card-row-hover: color-mix(in srgb, var(--coral) 5%, var(--paper));
+  --card-panel-bg: var(--n-98-4);
+  --card-top-line: var(--line);
+  --card-crumb-dot: var(--blue-54);
+  --card-field-bg: var(--paper);
+  --card-field-edge: var(--n-23-a22);
+  --card-field-edge-hover: var(--n-23-a28);
+  --card-field-ring: color-mix(in srgb, var(--coral) 18%, transparent);
   transition: width 0.28s cubic-bezier(0.2, 0.75, 0.25, 1);
 }
 :root[data-theme="dark"] #review-dialog {
-  --card-accent: #8fb07f;
-  --card-arc: #8fb07f;
+  --card-accent: var(--coral);
+  --card-arc: var(--coral);
   --card-arc-track: rgba(255, 255, 255, 0.12);
   --card-ring: rgba(255, 255, 255, 0.34);
-  --card-chip-bg: rgba(255, 255, 255, 0.06);
-  --card-chip-hover: rgba(255, 255, 255, 0.1);
-  --card-chip-edge: rgba(255, 255, 255, 0.09);
-  --card-chip-text: rgba(255, 255, 255, 0.66);
+  --card-chip-bg: color-mix(in srgb, var(--coral) 14%, transparent);
+  --card-chip-hover: color-mix(in srgb, var(--coral) 22%, transparent);
+  --card-chip-edge: color-mix(in srgb, var(--coral) 30%, transparent);
+  --card-chip-text: var(--coral);
   --card-row-hover: rgba(255, 255, 255, 0.05);
   --card-panel-bg: #2b2b2b;
   --card-top-line: rgba(255, 255, 255, 0.08);
@@ -8338,18 +8341,18 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0; }
   --card-field-bg: rgba(255, 255, 255, 0.045);
   --card-field-edge: rgba(255, 255, 255, 0.1);
   --card-field-edge-hover: rgba(255, 255, 255, 0.2);
-  --card-field-ring: rgba(143, 176, 127, 0.22);
+  --card-field-ring: color-mix(in srgb, var(--coral) 28%, transparent);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) #review-dialog {
-    --card-accent: #8fb07f;
-    --card-arc: #8fb07f;
+    --card-accent: var(--coral);
+    --card-arc: var(--coral);
     --card-arc-track: rgba(255, 255, 255, 0.12);
     --card-ring: rgba(255, 255, 255, 0.34);
-    --card-chip-bg: rgba(255, 255, 255, 0.06);
-    --card-chip-hover: rgba(255, 255, 255, 0.1);
-    --card-chip-edge: rgba(255, 255, 255, 0.09);
-    --card-chip-text: rgba(255, 255, 255, 0.66);
+    --card-chip-bg: color-mix(in srgb, var(--coral) 14%, transparent);
+    --card-chip-hover: color-mix(in srgb, var(--coral) 22%, transparent);
+    --card-chip-edge: color-mix(in srgb, var(--coral) 30%, transparent);
+    --card-chip-text: var(--coral);
     --card-row-hover: rgba(255, 255, 255, 0.05);
     --card-panel-bg: #2b2b2b;
     --card-top-line: rgba(255, 255, 255, 0.08);
@@ -8357,7 +8360,7 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0; }
     --card-field-bg: rgba(255, 255, 255, 0.045);
     --card-field-edge: rgba(255, 255, 255, 0.1);
     --card-field-edge-hover: rgba(255, 255, 255, 0.2);
-    --card-field-ring: rgba(143, 176, 127, 0.22);
+    --card-field-ring: color-mix(in srgb, var(--coral) 28%, transparent);
   }
 }
 #review-dialog.params-instant,
