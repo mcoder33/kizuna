@@ -52,11 +52,12 @@ export function dayMetric({ open = 0, late = 0, done = 0, byDay = null, today })
 
 // Что говорит каждый счётчик: подпись (в панели), число как на экране, полная
 // фраза для читалки экрана и подсказка; act — что сделает нажатие, actOn — что
-// оно сделает, пока фильтр уже включён.
-export function metricLabels(metric) {
+// оно сделает, пока фильтр уже включён. Нажатие зависит от места: на «Сегодня»
+// оно работает со списком дня, на «Доске» — с колонками (place: "board").
+export function metricLabels(metric, { place = "today" } = {}) {
   const streakText = metric.capped ? `${metric.streak}+` : String(metric.streak);
   const streakWords = plural(metric.streak, DAYS);
-  return {
+  const labels = {
     planned: {
       caption: "запланировано",
       text: String(metric.planned),
@@ -102,6 +103,12 @@ export function metricLabels(metric) {
       act: "искра нарисуется заново",
     },
   };
+  if (place === "board") {
+    Object.assign(labels.planned, { act: "показать всё" });
+    Object.assign(labels.done, { act: "подсветить колонку «Закрыто»", actOn: "снять подсветку" });
+    Object.assign(labels.left, { act: "приглушить «Закрыто»" });
+  }
+  return labels;
 }
 
 // Подсказка у свёрнутой пилюли: фраза и то, что сделает нажатие.

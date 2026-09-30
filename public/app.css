@@ -10263,6 +10263,50 @@ body:has(#today:not([hidden])) > header { position: relative; }
 @media (max-width: 340px) {
   .metric-pill .mc-week { display: none; }
 }
+/* «Доска»: та же пилюля у правого края строки заголовка, по вертикали по центру «Доски».
+   Она компактнее, а полоска висит под ней и высоту строки не меняет. На узком экране —
+   своей строкой на всю ширину под заголовком. */
+.board-page .page-heading { display: flex; align-items: center; gap: 16px; }
+.metric-slot.board { position: relative; z-index: 4; flex: none; margin: 0 0 0 auto; }
+.metric-slot.board .metric-dock { display: block; }
+.metric-slot.board .metric-wrap { width: max-content; max-width: none; }
+.metric-slot.board .metric-pill { padding: 5px; gap: 0; }
+.metric-slot.board .metric-pill .mc { height: 26px; --fs: 14px; --ic: 18px; padding: 0 7px; }
+.metric-slot.board .mc-sep { margin: 0 1px; }
+.metric-slot.board .metric-pill .metric-spark { width: 32px; }
+.metric-slot.board .mc-tog { width: 26px; height: 26px; }
+.metric-slot.board .metric-wrap > .metric-strip { position: absolute; left: 12px; right: 12px; top: 100%; margin: 5px 0 0; }
+/* Подсветка по наведению поверх цвета самой поверхности: карточка остаётся плашкой, колонка — колонкой. */
+.board-card.metric-hl, .g-row.metric-hl { background: color-mix(in srgb, var(--metric-hl, var(--ink)) 14%, var(--paper)); }
+.board-column.metric-hl { background: color-mix(in srgb, var(--metric-hl, var(--ink)) var(--metric-hl-k, 14%), var(--n-98-4)); }
+.board-done-column.metric-hl { background: color-mix(in srgb, var(--metric-hl, var(--green)) 14%, color-mix(in srgb, var(--green) 7%, var(--paper))); }
+.g-sec.metric-hl, .g-kids.metric-hl { background: color-mix(in srgb, var(--metric-hl, var(--ink)) var(--metric-hl-k, 12%), color-mix(in srgb, var(--fc) 7%, var(--paper))); }
+/* Фильтр пилюли на доске и в списке: остальное приглушено, а то, что оставлено, подложено. */
+#board-columns[data-metric-filter="late"] .board-column:not(.board-done-column) .board-card:not(.is-late),
+#board-columns[data-metric-filter="late"] .board-done-column,
+#board-columns[data-metric-filter="open"] .board-done-column,
+#board-columns[data-metric-filter="done"] .board-column:not(.board-done-column),
+#board-flat[data-metric-filter="late"] .g-kids:not(.done) .g-row:not(.is-late),
+#board-flat[data-metric-filter="late"] .g-sec.done,
+#board-flat[data-metric-filter="late"] .g-kids.done,
+#board-flat[data-metric-filter="open"] .g-sec.done,
+#board-flat[data-metric-filter="open"] .g-kids.done,
+#board-flat[data-metric-filter="done"] .g-sec:not(.done),
+#board-flat[data-metric-filter="done"] .g-kids:not(.done) { opacity: 0.32; }
+#board-columns[data-metric-filter="late"] .board-card.is-late,
+#board-flat[data-metric-filter="late"] .g-row.is-late { background: color-mix(in srgb, var(--mc-red, var(--red-50)) 14%, var(--paper)); }
+#board-columns[data-metric-filter="done"] .board-done-column { background: color-mix(in srgb, var(--green) 14%, color-mix(in srgb, var(--green) 7%, var(--paper))); }
+@media (max-width: 600px) {
+  .board-page .page-heading { flex-wrap: wrap; row-gap: 12px; }
+  .metric-slot.board { flex: 1 1 100%; margin: 0; }
+  .metric-slot.board .metric-wrap { width: 100%; }
+  .metric-slot.board .metric-pill .mc { padding: 0 6px; }
+  .metric-slot.board .metric-wrap > .metric-strip { position: static; margin: 5px 12px 0; }
+}
+@media (max-width: 400px) {
+  .metric-slot.board .metric-pill { padding: 4px; }
+  .metric-slot.board .metric-pill .mc { padding: 0 3px; }
+}
 /* «Уменьшить движение»: без масштаба, без подпрыгиваний, числа меняются сразу. */
 @media (prefers-reduced-motion: reduce) {
   .mc-n.bump, .mc-ic.pulse, .mc-ic.wobble, .metric-spark.pulse, .metric-spark.redraw .ln, .metric-spark.redraw .area, .metric-flash { animation: none; }

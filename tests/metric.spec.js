@@ -38,9 +38,10 @@ async function openTab(page, name) {
   const tab = page.getByRole("tab", { name });
   if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
 }
-// Нажатие на сегмент: пока панель раскрыта, она закрывает сегмент собой, и настоящий
-// человек жмёт её карточку — та действует так же. force кладёт нажатие в точку сегмента.
-const press = (page, kind) => pill(page).locator(`.metric-pill [data-mc="${kind}"]`).click({ force: true });
+// Нажатие на сегмент. Пока панель раскрыта, она закрывает пилюлю собой, а её карточки стоят
+// не там, где сегменты, — под курсором в точке сегмента может оказаться чужая карточка.
+// Поэтому нажатие кладётся прямо на сегмент; настоящее нажатие карточки панели проверено отдельно.
+const press = (page, kind) => pill(page).locator(`.metric-pill [data-mc="${kind}"]`).dispatchEvent("click");
 // Как виден элемент глазами: прозрачность своя, умноженная на прозрачность предков.
 const shown = (locator) => locator.evaluate((element) => { let opacity = 1; for (let at = element; at && at.nodeType === 1; at = at.parentElement) opacity *= Number(getComputedStyle(at).opacity); return opacity; });
 
@@ -254,6 +255,17 @@ test("панель подписей — слой поверх: соседние 
   await expect(dock).toHaveClass(/open/);
   await page.mouse.move(2, 2);
   await expect(dock).not.toHaveClass(/open/);
+  // Карточка раскрытой панели нажимается так же, как сегмент под ней.
+  await page.mouse.move(2, 2);
+  await pill(page).locator(".metric-pill").hover();
+  await expect(dock).toHaveClass(/open/);
+  await panel.locator('[data-pc="late"]').click();
+  await expect(page.locator("#todo")).toHaveAttribute("data-metric-filter", "late");
+  await expect(pill(page).locator('.metric-panel [data-pc="late"]')).toHaveAttribute("aria-pressed", "true");
+  await panel.locator('[data-pc="late"]').click();
+  await expect(page.locator("#todo")).not.toHaveAttribute("data-metric-filter", /.+/);
+  await page.mouse.move(2, 2);
+  await expect(dock).not.toHaveClass(/open/);
   // Шеврон раскрывает и сворачивает.
   await pill(page).locator(".mc-tog").click();
   await expect(dock).toHaveClass(/open/);
@@ -335,6 +347,127 @@ test("кружок в списке обновляет числа на месте
   await expect(number(page, "left")).toHaveText("2");
 });
 
+const board = (page) => page.locator("#board-metric");
+const boardNumber = (page, kind) => board(page).locator(`.metric-pill [data-mc="${kind}"] .mc-n`);
+const boardPress = (page, kind) => board(page).locator(`.metric-pill [data-mc="${kind}"]`).dispatchEvent("click");
+
+test("доска: пилюля у правого края заголовка с теми же числами, «просрочено» оставляет только просроченные карточки", async ({ page, request }) => {
+  const done = await deed(request, "Подготовить договор для подрядчика", day(0));
+  await deed(request, "Позвонить в бухгалтерию", day(0));
+  await deed(request, "Заказать воду в офис", day(0));
+  await deed(request, "Отправить счёт клиенту", day(-1));
+  await closeDeed(request, done);
+  // Вход сразу на «Доску»: загрузка журнала не должна падать, пилюля считает по нему.
+  await page.goto("/#board");
+  await expect(board(page).locator(".metric-pill")).toBeVisible();
+  // Тост «Не удалось загрузить данные» держится секунды, поэтому, если первая загрузка упала, он ещё на экране.
+  expect(await page.locator("#toast").innerText()).not.toContain("Не удалось загрузить");
+  await expect(boardNumber(page, "planned")).toHaveText("4");
+  await expect(boardNumber(page, "done")).toHaveText("1");
+  await expect(boardNumber(page, "left")).toHaveText("3");
+  await expect(boardNumber(page, "late")).toHaveText("1");
+  await expect(board(page).locator('.metric-pill [data-mc="done"]')).toHaveAttribute("aria-label", "сделано 1 из 4");
+  await expect(board(page).locator(".metric-pill")).toHaveAttribute("aria-label", "Метрика дня");
+  // Место: в строке заголовка «Доска», у правого края, по вертикали по центру заголовка.
+  await expect(page.locator(".board-page .page-heading #board-metric")).toHaveCount(1);
+  const heading = await page.locator(".board-page h2").boundingBox();
+  const at = await board(page).locator(".metric-pill").boundingBox();
+  expect(at.x).toBeGreaterThan(heading.x + heading.width);
+  expect(Math.abs(at.y + at.height / 2 - (heading.y + heading.height / 2))).toBeLessThan(3);
+  const controls = await page.locator("#board .board-controls").boundingBox();
+  expect(Math.abs(at.x + at.width - (controls.x + controls.width))).toBeLessThan(6);
+  // Полоска висит под пилюлей и высоту строки заголовка не меняет.
+  const strip = await board(page).locator(".metric-wrap > .metric-strip").boundingBox();
+  expect(strip.y).toBeGreaterThanOrEqual(at.y + at.height);
+  await expect(board(page).locator(".metric-wrap > .metric-strip > i")).toHaveAttribute("style", /width: 25(\.0)?%/);
+
+  // Наведение на «просрочено» подсвечивает просроченную карточку, на «сделано» — колонку «Закрыто».
+  const lateCard = page.locator(".board-card.is-late");
+  await expect(lateCard).toHaveCount(1);
+  await expect(lateCard).toContainText("Отправить счёт");
+  await board(page).locator('.metric-pill [data-mc="late"]').hover();
+  await expect(lateCard).toHaveClass(/metric-hl/);
+  await expect(page.locator(".board-card:not(.is-late)").first()).not.toHaveClass(/metric-hl/);
+  await page.mouse.move(2, 2);
+  await board(page).locator('.metric-pill [data-mc="done"]').hover();
+  await expect(page.locator(".board-done-column")).toHaveClass(/metric-hl/);
+  await page.mouse.move(2, 2);
+  await board(page).locator('.metric-pill [data-mc="left"]').hover();
+  await expect(page.locator(".board-column:not(.board-done-column):not(.ghost)").first()).toHaveClass(/metric-hl/);
+  await expect(page.locator(".board-done-column")).not.toHaveClass(/metric-hl/);
+  await page.mouse.move(2, 2);
+  await expect(page.locator(".metric-hl")).toHaveCount(0);
+
+  // Нажатие: просроченная карточка видна целиком, остальные и «Закрыто» приглушены; повторное нажатие снимает.
+  await boardPress(page, "late");
+  await expect(page.locator("#board-columns")).toHaveAttribute("data-metric-filter", "late");
+  await expect(board(page).locator('.metric-pill [data-mc="late"]')).toHaveAttribute("aria-pressed", "true");
+  expect(await shown(lateCard)).toBe(1);
+  expect(await shown(page.locator(".board-column:not(.board-done-column) .board-card:not(.is-late)").first())).toBeLessThan(0.5);
+  expect(await shown(page.locator(".board-done-column"))).toBeLessThan(0.5);
+  await boardPress(page, "late");
+  await expect(page.locator("#board-columns")).not.toHaveAttribute("data-metric-filter", /.+/);
+  expect(await shown(page.locator(".board-card:not(.is-late)").first())).toBe(1);
+  expect(await shown(page.locator(".board-done-column"))).toBe(1);
+  // «Сделано» — подсветка колонки «Закрыто», остальные колонки приглушены.
+  await boardPress(page, "done");
+  await expect(page.locator("#board-columns")).toHaveAttribute("data-metric-filter", "done");
+  expect(await shown(page.locator(".board-done-column"))).toBe(1);
+  expect(await shown(page.locator(".board-column:not(.board-done-column):not(.ghost)").first())).toBeLessThan(0.5);
+  await boardPress(page, "done");
+  await expect(page.locator("#board-columns")).not.toHaveAttribute("data-metric-filter", /.+/);
+  // Фильтр не переживает перестановку панели доски: смена группировки снимает его.
+  await boardPress(page, "late");
+  await expect(page.locator("#board-columns")).toHaveAttribute("data-metric-filter", "late");
+  await page.locator('#board-view [data-view="list"]').click();
+  await expect(page.locator("#board-columns")).not.toHaveAttribute("data-metric-filter", /.+/);
+  await expect(board(page).locator('.metric-pill [data-mc="late"]')).toHaveAttribute("aria-pressed", "false");
+
+  // В виде «Список» те же строки: просроченная помечена, остальные при фильтре приглушены.
+  await expect(page.locator("#board-flat .board-row.is-late")).toHaveCount(1);
+  await boardPress(page, "late");
+  await expect(page.locator("#board-flat")).toHaveAttribute("data-metric-filter", "late");
+  expect(await shown(page.locator("#board-flat .board-row.is-late"))).toBe(1);
+  expect(await shown(page.locator("#board-flat .g-kids:not(.done) .board-row:not(.is-late)").first())).toBeLessThan(0.5);
+  expect(await shown(page.locator("#board-flat .g-kids.done"))).toBeLessThan(0.5);
+  await boardPress(page, "late");
+  await page.locator('#board-view [data-view="board"]').click();
+
+  // Фильтр не переживает уход со страницы, а числа на «Сегодня» те же.
+  await boardPress(page, "late");
+  await page.goto("/#today");
+  await page.goto("/#board");
+  await expect(page.locator("#board-columns")).not.toHaveAttribute("data-metric-filter", /.+/);
+  await expect(board(page).locator('.metric-pill [data-mc="late"]')).toHaveAttribute("aria-pressed", "false");
+  await page.goto("/#today");
+  await expect(page.locator("#day-metric .metric-pill")).toBeVisible();
+  for (const [kind, value] of [["planned", "4"], ["done", "1"], ["left", "3"], ["late", "1"]]) await expect(number(page, kind)).toHaveText(value);
+});
+
+test("доска: кружок на карточке обновляет числа пилюли, а возврат из «Закрыто» возвращает их", async ({ page, request }) => {
+  await deed(request, "Подготовить договор для подрядчика", day(0));
+  await deed(request, "Отправить счёт клиенту", day(-1));
+  await page.goto("/#board");
+  await expect(boardNumber(page, "planned")).toHaveText("2");
+  await expect(boardNumber(page, "late")).toHaveText("1");
+  await page.locator(".board-card.is-late .board-done").click();
+  // Просроченное закрыто: просрочек нет, сделано 1, а сегмент «просрочено» приглушён.
+  await expect(boardNumber(page, "late")).toHaveText("0", { timeout: 5000 });
+  await expect(boardNumber(page, "done")).toHaveText("1");
+  await expect(boardNumber(page, "left")).toHaveText("1");
+  await expect(boardNumber(page, "planned")).toHaveText("2");
+  await expect(board(page).locator('.metric-pill [data-mc="late"]')).toHaveClass(/is-zero/);
+  await expect(page.locator(".board-card.is-late")).toHaveCount(0);
+  // Фильтр, которому больше нечего показывать, не включается.
+  await boardPress(page, "late");
+  await expect(page.locator("#board-columns")).not.toHaveAttribute("data-metric-filter", /.+/);
+  // Возврат из «Закрыто» возвращает просрочку: карточка снова помечена.
+  await page.locator(".board-done-column .board-card.closed", { hasText: "Отправить счёт" }).locator(".board-done").click();
+  await expect(boardNumber(page, "late")).toHaveText("1", { timeout: 5000 });
+  await expect(boardNumber(page, "done")).toHaveText("0");
+  await expect(page.locator(".board-card.is-late")).toHaveCount(1);
+});
+
 // На телефоне наведения нет: пилюля занимает всю ширину, точек-разделителей нет,
 // первое нажатие раскрывает подписи, а второе уже действует.
 test.describe("телефон", () => {
@@ -367,5 +500,24 @@ test.describe("телефон", () => {
     // Нажатие мимо закрывает панель.
     await page.locator("#today-tabs").tap();
     await expect(dock).not.toHaveClass(/open/);
+  });
+
+  test("доска: пилюля своей строкой на всю ширину под заголовком", async ({ page, request }) => {
+    await deed(request, "Подготовить договор для подрядчика", day(0));
+    await page.goto("/#board");
+    await expect(boardNumber(page, "planned")).toHaveText("1");
+    const heading = await page.locator(".board-page h2").boundingBox();
+    const wrap = await board(page).locator(".metric-wrap").boundingBox();
+    expect(wrap.y).toBeGreaterThanOrEqual(heading.y + heading.height);
+    expect(wrap.x).toBeGreaterThanOrEqual(0);
+    expect(wrap.x + wrap.width).toBeLessThanOrEqual(390);
+    const controls = await page.locator("#board .board-controls").boundingBox();
+    expect(Math.abs(wrap.width - controls.width)).toBeLessThan(2);
+    // Полоска — в потоке под пилюлей, ни на что не налезает.
+    const strip = await board(page).locator(".metric-wrap > .metric-strip").boundingBox();
+    const pillBox = await board(page).locator(".metric-pill").boundingBox();
+    expect(strip.y).toBeGreaterThanOrEqual(pillBox.y + pillBox.height);
+    expect(strip.y + strip.height).toBeLessThanOrEqual(controls.y);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   });
 });

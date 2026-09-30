@@ -106,6 +106,20 @@ test('подписи: фразы для читалки экрана склоня
   assert.equal(capped.streak.tip, 'Серия: 30+ дней подряд');
 });
 
+test('на «Доске» нажатие говорит про колонки, а не про список дня', () => {
+  const metric = dayMetric({ open: 2, late: 1, done: 1, byDay: history([]), today: TODAY });
+  const today = metricLabels(metric);
+  const board = metricLabels(metric, { place: 'board' });
+  assert.equal(metricTitle(board.late), 'Просрочено: 1 · нажмите — только просроченные');
+  assert.equal(metricTitle(board.done), 'Сделано 1 из 4 · нажмите — подсветить колонку «Закрыто»');
+  assert.equal(metricTitle(board.done, { pressed: true }), 'Сделано 1 из 4 · нажмите ещё раз — снять подсветку');
+  assert.equal(metricTitle(board.left), 'Осталось дел: 3 · нажмите — приглушить «Закрыто»');
+  assert.equal(metricTitle(board.planned), 'Запланировано на сегодня: 4 · нажмите — показать всё');
+  assert.equal(metricTitle(today.done), 'Сделано 1 из 4 · нажмите — вкладка «Закрыто»', 'на «Сегодня» — как было');
+  // числа и фразы для читалки экрана у мест одни
+  for (const kind of METRIC_KINDS) { assert.equal(board[kind].text, today[kind].text); assert.equal(board[kind].aria, today[kind].aria); }
+});
+
 test('объявление для читалки экрана и доля для полоски', () => {
   const metric = dayMetric({ open: 2, late: 1, done: 1, today: TODAY });
   assert.equal(metricAnnouncement(metric), 'Сделано 1 из 4, осталось 3, просрочено 1');

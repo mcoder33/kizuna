@@ -1366,10 +1366,12 @@ const METRIC_ICONS = {
   week: '<path d="M2.6 16.8l4.5-5.6 3.6 3.3 4.3-7.6 3 3.4 3.4-4.4"/><circle cx="21.2" cy="6" r="1.3" fill="currentColor" stroke="none"/>',
   chev: '<path d="M6 9.5l6 6 6-6"/>',
 };
-const METRIC_SLOTS = { today: "#day-metric" };
-// Что оставляет в списке нажатие: фильтр → вид счётчика, который его держит.
-const METRIC_FILTER_KIND = { late: "late", open: "left" };
-const METRIC_KIND_FILTER = { late: "late", left: "open" };
+const METRIC_SLOTS = { today: "#day-metric", board: "#board-metric" };
+// Что оставляет в списке нажатие: фильтр → вид счётчика, который его держит. На
+// «Сегодня» фильтров два, «сделано» там открывает вкладку; на «Доске» «сделано» —
+// третий: он подсвечивает колонку «Закрыто» и приглушает остальные.
+const METRIC_FILTER_KIND = { late: "late", open: "left", done: "done" };
+const METRIC_KIND_FILTER = { late: "late", left: "open", done: "done" };
 // Наведение подсвечивает то, что счётчик считает; у серии и недели считать в списке нечего.
 const METRIC_HL_TONE = { planned: "ink", done: "green", left: "ink", late: "red" };
 const METRIC_INTENT_MS = 120;
@@ -1505,8 +1507,9 @@ function metricMirrorFocus(dock, target = null) {
 function metricTitles(dock) {
   const open = dock.classList.contains("open");
   const metric = metricUi.metric;
-  const labels = metric ? metricLabels(metric) : null;
-  const pressed = metricPressedKind();
+  const place = dock.closest(".metric-slot")?.dataset.place;
+  const labels = metric ? metricLabels(metric, { place }) : null;
+  const pressed = metricPressedKind(place);
   for (const element of dock.querySelectorAll(".metric-pill [data-mc]")) {
     if (open || !labels) element.removeAttribute("title");
     else element.title = metricTitle(labels[element.dataset.mc], { pressed: pressed === element.dataset.mc });
@@ -1614,7 +1617,8 @@ function metricPress(dock, kind) {
   // На тач-экране наведения нет: первое нажатие раскрывает подписи, а не действует.
   if (!dock.classList.contains("open") && !metricHoverMode()) { flags.pin = true; metricSync(dock); return; }
   if (kind === "streak" || kind === "week") { metricReplay(dock, kind); return; }
-  todayMetricPress(kind);
+  if (dock.closest(".metric-slot")?.dataset.place === "board") boardMetricPress(kind);
+  else todayMetricPress(kind);
 }
 function todayMetricPress(kind) {
   if (kind === "done") { pickTodayTab("journal"); return; }
@@ -1635,10 +1639,52 @@ function todayMetricPress(kind) {
   todayState.metricFilter = next;
   renderToday();
 }
+// «Доска»: нажатие оставляет на ней только это — фильтр живёт атрибутом у #board-columns
+// и #board-flat, карточки и строки не перерисовываются. «Запланировано» снимает фильтр
+// и вспышкой показывает всё; «сделано» ведёт к колонке «Закрыто».
+function boardMetricPress(kind) {
+  if (kind === "planned") {
+    boardState.metricFilter = null;
+    metricBoardApply();
+    paintDayMetric();
+    metricFlash([...document.querySelectorAll("#board-columns .board-column:not(.ghost), #board-flat .g-sec, #board-flat .g-kids")]);
+    return;
+  }
+  const filter = METRIC_KIND_FILTER[kind];
+  // Нулевой счётчик нечего показывать.
+  if (!metricUi.metric?.[kind] && boardState.metricFilter !== filter) return;
+  boardState.metricFilter = boardState.metricFilter === filter ? null : filter;
+  metricBoardApply();
+  paintDayMetric();
+  // Колонка «Закрыто» могла уехать за край ленты — подводим к ней.
+  if (boardState.metricFilter === "done") $(".board-done-column")?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: motionAllowed() ? "smooth" : "auto" });
+}
+// Доска перерисована или фильтр пилюли сменился: атрибут у лент и подсветка по месту.
+function metricBoardApply() {
+  const filter = boardState.metricFilter;
+  for (const id of ["board-columns", "board-flat"]) {
+    const element = document.getElementById(id);
+    if (!element) continue;
+    if (filter) element.dataset.metricFilter = filter;
+    else delete element.dataset.metricFilter;
+  }
+  metricRehighlight();
+}
+// Панель фильтров доски и вид со сгруппированным списком меняют состав карточек — фильтр пилюли снимается.
+function resetBoardMetricFilter() {
+  if (!boardState.metricFilter) return;
+  boardState.metricFilter = null;
+  metricBoardApply();
+  paintDayMetric();
+}
+// Дело со сроком раньше сегодняшнего дня: то же «просрочено», что у пилюли (повтор не просрочивается).
+function boardIsLate(card, closed = false) {
+  return !closed && Boolean(card.due?.date) && !card.due.repeat && card.due.date < (boardState.data?.today || currentDayDate);
+}
 function metricFlash(elements) {
   for (const element of elements) metricRestart(element, "metric-flash", 1000);
 }
-const metricPressedKind = () => METRIC_FILTER_KIND[todayState.metricFilter] || null;
+const metricPressedKind = (place) => METRIC_FILTER_KIND[place === "board" ? boardState.metricFilter : todayState.metricFilter] || null;
 // Фильтры пилюли живут, пока открыты та же страница и тот же день. Первый разбор
 // адреса случается во время чтения модуля — сбрасывать тогда нечего.
 function metricPageChanged(page) {
@@ -1651,6 +1697,7 @@ function metricPageChanged(page) {
 }
 function resetMetricFilters() {
   todayState.metricFilter = null;
+  if (boardState.metricFilter) { boardState.metricFilter = null; metricBoardApply(); }
 }
 
 // ── подсветка по наведению ──
@@ -1675,6 +1722,12 @@ function metricHighlight(kind) {
     mark(all('#today-brief [data-w="open"]'));
   }
   if (kind === "planned" || kind === "done") mark(all("#tab-journal"));
+  // «Доска»: просрочено — просроченные карточки, сделано — колонка «Закрыто», осталось —
+  // остальные колонки, запланировано — все. В списке то же по разделам и строкам.
+  if (kind === "late") mark(all("#board-columns .board-card.is-late, #board-flat .board-row.is-late"));
+  if (kind === "done") mark(all("#board-columns .board-done-column, #board-flat .g-sec.done, #board-flat .g-kids.done"));
+  if (kind === "left") mark(all("#board-columns .board-column:not(.board-done-column):not(.ghost), #board-flat .g-sec:not(.done), #board-flat .g-kids:not(.done)"));
+  if (kind === "planned") mark(all("#board-columns .board-column:not(.ghost), #board-flat .g-sec, #board-flat .g-kids"));
 }
 const metricRehighlight = () => { if (metricUi.hover) metricHighlight(metricUi.hover); };
 
@@ -1687,11 +1740,13 @@ function paintMetricSpark(svg, points, animate) {
   svg.innerHTML = `<path class="area" d="${area}"/><path class="ln" pathLength="1" d="${line}"/><circle cx="${dot.x}" cy="${dot.y}" r="${dot.r}"/>`;
   if (animate) metricRestart(svg, "redraw", 1000);
 }
-function paintMetricSlot(slot, metric, labels) {
+function paintMetricSlot(slot, metric) {
   const dock = slot.querySelector(".metric-dock");
   const first = !slot.dataset.ready;
-  const pressed = metricPressedKind();
-  const pressable = ["late", "left"];
+  const place = slot.dataset.place;
+  const labels = metricLabels(metric, { place });
+  const pressed = metricPressedKind(place);
+  const pressable = place === "board" ? ["late", "left", "done"] : ["late", "left"];
   const open = dock.classList.contains("open");
   for (const element of slot.querySelectorAll("[data-mc], [data-pc]")) {
     const kind = element.dataset.mc || element.dataset.pc;
@@ -1733,10 +1788,11 @@ function paintDayMetric() {
   // Фильтру, которому больше нечего показывать, не место в списке: он снимается сам.
   if (todayState.metricFilter === "late" && !metric.late) todayState.metricFilter = null;
   if (todayState.metricFilter === "open" && !metric.left) todayState.metricFilter = null;
-  const labels = metricLabels(metric);
+  const dropped = { late: !metric.late, open: !metric.left, done: !metric.done }[boardState.metricFilter];
+  if (dropped) { boardState.metricFilter = null; metricBoardApply(); }
   for (const [place, slot] of slots) {
     if (!slot.firstChild) mountMetric(slot, place);
-    paintMetricSlot(slot, metric, labels);
+    paintMetricSlot(slot, metric);
     slot.hidden = false;
   }
 }
@@ -7308,6 +7364,8 @@ const boardState = {
   mobileColumn: null,
   // Подзадачи отдельными карточками: "show" или "hide"; от него зависит запрос доски (boardUrl).
   subs: boardStoredSubs(),
+  // Фильтр пилюли метрики: "late" | "open" | "done" — остальное на доске приглушено.
+  metricFilter: null,
 };
 boardState.filterOpen = activeConditions(boardState.filter).length > 0;
 // «Подзадачи: Показывать» просит у сервера доску с подзадачами карточками; перенос
@@ -9050,7 +9108,7 @@ function boardMetaTags(card) {
 // тянутся и карточки, когда доска разложена по человеку, проекту или
 // источнику: перенос там ничего осмысленного не менял бы.
 function boardCardEl(card, { closed = false, draggable = !closed } = {}) {
-  const element = node("div", undefined, `board-card${closed ? " closed" : ""}`);
+  const element = node("div", undefined, `board-card${closed ? " closed" : ""}${boardIsLate(card, closed) ? " is-late" : ""}`);
   element.draggable = draggable;
   element.dataset.captureId = card.captureId;
   if (card.due?.repeat && card.due.date) element.dataset.occurrence = card.due.date;
@@ -9107,7 +9165,7 @@ function boardCardEl(card, { closed = false, draggable = !closed } = {}) {
 // Строка списка: кружок, название, справа — срок, люди и проект; под названием —
 // родитель (у подзадачи) и полоска подзадач (у дела с ними). Не тянется.
 function boardRowEl(card, { closed = false } = {}) {
-  const row = node("div", undefined, `g-row board-row${closed ? " closed" : ""}`);
+  const row = node("div", undefined, `g-row board-row${closed ? " closed" : ""}${boardIsLate(card, closed) ? " is-late" : ""}`);
   row.dataset.captureId = card.captureId;
   if (card.due?.repeat && card.due.date) row.dataset.occurrence = card.due.date;
   const right = node("span", undefined, "g-right");
@@ -9908,6 +9966,7 @@ function paintBoardFilter() {
 // пересобрана), и фокус возвращается на тот список или галочку, которые трогали.
 // Если условие слилось с уже стоящим, открывается список значений у него.
 function boardFilterChanged(focus = null) {
+  resetBoardMetricFilter();
   const before = boardState.filter.length;
   boardState.filter = mergeConditions(boardState.filter);
   if (focus && boardState.filter.length < before) {
@@ -9968,6 +10027,7 @@ function paintBoardBar() {
 // Вид или группировка сменились: запомнить и перерисовать. Открытое поле
 // быстрого дела не переезжает — колонки, где оно стояло, уже другие.
 function boardChanged() {
+  resetBoardMetricFilter();
   boardRemember();
   boardState.openAdder = null;
   boardState.adderDraft = null;
@@ -10066,6 +10126,7 @@ function renderBoard(source) {
   if (view !== "board") {
     clear($("#board-segments"));
     flat.append(boardListEl(open, closed, data));
+    metricBoardApply();
     return;
   }
   // Доска: колонка на группу первого уровня и «Закрыто» — такая же колонка, по
@@ -10097,6 +10158,7 @@ function renderBoard(source) {
   }
   // Сегмент колонок нужен, когда на телефоне показана одна колонка.
   paintBoardSegments([...lanes.querySelectorAll(".board-column")]);
+  metricBoardApply();
 }
 // Панель над доской, поиск и «+ Дело». «+ Дело» открывает поле в первой своей
 // колонке; там, где колонок человека нет (список, группы-не-колонки),
