@@ -585,10 +585,11 @@ header > nav.dock {
   position: absolute;
   left: 0;
   right: 0;
+  /* Число стоит в нижней половине листка, между полосой и нижним краем, а не на нём. */
   top: 50%;
-  margin-top: 1px;
+  margin-top: -2px;
   text-align: center;
-  font: 700 8.6px/1 system-ui, sans-serif;
+  font: 700 8px/1 system-ui, sans-serif;
   pointer-events: none;
 }
 .dock-item > a svg .band {
@@ -659,6 +660,7 @@ header > nav.dock {
 .dock-item:hover > a .dock-label {
   bottom: calc(100% + 10px);
 }
+/* Бейдж живёт внутри плитки, поэтому растёт и прыгает вместе с ней. */
 .dock-badge {
   position: absolute;
   top: -6px;
