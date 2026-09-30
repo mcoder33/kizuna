@@ -6195,10 +6195,9 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 .card-delete-ask button.danger { color: var(--red-50); }
 .card-delete-ask button:disabled { opacity: 0.5; cursor: default; }
 
-/* ── «Сегодня»: обложка по часам и три ящика ────────────────────────────────
+/* ── «Сегодня»: обложка по часам и два ящика ────────────────────────────────
    Дата с фазой суток, бриф и вопрос в поле меняются утром, днём, вечером и
-   ночью. Под полем — вкладки «Что делал», «День» и «Заметки», у каждой своя
-   полоса дней. */
+   ночью. Под полем — вкладки «Что делал» и «День», у каждой своя полоса дней. */
 .today-page .hero { max-width: var(--capture-width, 800px); margin: 0 auto 8px; }
 .capture-hint { font-size: 11.5px; color: var(--n-66); }
 /* Подсказка слева, «увеличить» и отправка — справа, рядом. */
@@ -7741,6 +7740,7 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0; }
    возвращается. Старая запись «сделал X» без дела внутри — кружок без нажатия. */
 .completion-button.auto { border-style: dashed; border-color: var(--green); background: var(--tint-done, transparent); cursor: default; }
 .completion-button.auto::before { color: var(--green); }
+.entry.completed > .completion-button.auto { background: color-mix(in srgb, var(--green) 8%, var(--paper)); }
 /* «Ещё N» — честная граница превью: видно, что список длиннее, и куда идти. */
 .preview-more {
   display: inline-block;
@@ -7974,57 +7974,60 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0; }
 }
 
 /* ── «Сделано» ───────────────────────────────────────────────────────────────
-   Три числа, неделя столбиками одной краской (--green), полоски по колонкам,
-   ниже — список по дням теми же строками, что «Что делал». */
+   Верх в две колонки: слева фраза про неделю, строка её семи дней без рамок и
+   чипы «куда ушла неделя», справа — ритм пяти недель клетками (чем больше
+   сделано, тем гуще --green). Ниже — список по дням теми же строками, что
+   «Что делал». На телефоне клетки встают под строкой недели. */
 .done-page { max-width: 820px; margin-inline: auto; }
-.done-nums { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 6px 0 22px; }
-.done-num { display: grid; gap: 2px; padding: 14px 16px; border-radius: 14px; background: var(--wash); }
-.done-num b { font-size: 30px; line-height: 1.1; font-weight: 700; font-variant-numeric: tabular-nums; }
-.done-num span { font-size: 13px; color: var(--muted); }
-.done-num.green { background: color-mix(in srgb, var(--green) 10%, var(--paper)); }
-.done-num.green b { color: var(--green); }
-.done-cap { margin: 0 0 8px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
-.done-week, .done-cols { margin-bottom: 22px; }
-.done-bars { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; align-items: end; height: 120px; }
-.done-bar { height: 100%; display: flex; align-items: flex-end; justify-content: center; }
-.done-bar-fill {
-  position: relative;
-  display: block;
-  width: 100%;
-  max-width: 44px;
-  border-radius: 8px 8px 3px 3px;
-  background: color-mix(in srgb, var(--green) 45%, var(--paper));
-  min-height: 2px;
+.done-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 28px; align-items: start; margin: 6px 0 4px; }
+.done-line { margin: 0 0 12px; font-size: 15px; color: var(--muted); }
+.done-line b { color: var(--ink); font-weight: 700; }
+.done-line b.g { color: var(--green); }
+.done-strip { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 2px 2px 12px; font-size: 13px; }
+.done-wd {
+  font: inherit;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--n-66);
+  border: 0;
+  background: transparent;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: 6px;
+  cursor: pointer;
 }
-.done-bar.today .done-bar-fill { background: var(--green); }
-.done-bar-n {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: -20px;
-  text-align: center;
-  font-size: 12.5px;
-  font-weight: 700;
-  font-style: normal;
-  color: var(--ink);
-}
-.done-bars-x { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; margin-top: 6px; text-align: center; font-size: 12px; color: var(--muted); }
-.done-bars-x .today { color: var(--ink); font-weight: 700; }
-.done-col { display: grid; grid-template-columns: 110px minmax(0, 1fr) 28px; align-items: center; gap: 10px; padding: 3px 0; font-size: 13.5px; }
-.done-col-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.done-col-track { display: block; height: 10px; border-radius: 99px; background: var(--wash); overflow: hidden; }
-.done-col-track i { display: block; height: 100%; border-radius: 99px; background: var(--green); }
-.done-col.meetings .done-col-track i { background: var(--fmt-blue); }
-.done-col b { text-align: right; font-variant-numeric: tabular-nums; }
-.done-empty { margin: 0; font-size: 13px; color: var(--muted); }
+.done-wd b { margin-left: 1px; font-size: 14px; letter-spacing: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
+.done-wd.z b { color: var(--n-87-2); font-weight: 400; }
+.done-wd.today, .done-wd.today b { color: var(--green); }
+.done-wd:hover { background: var(--hairline); }
+.done-wd.sel { background: var(--hairline); box-shadow: inset 0 0 0 1.5px var(--coral); }
+.done-wd:focus-visible, .done-cell:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.done-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 16px; }
+.done-chips:empty { display: none; }
+.done-chip { font-size: 12px; padding: 3px 9px; border-radius: 99px; border: 1px solid var(--line); background: var(--paper); color: var(--muted); }
+.done-chip b { margin-left: 1px; color: var(--ink); }
+.done-chip.meet { color: var(--blue-54); background: color-mix(in srgb, var(--blue-54) 9%, var(--paper)); border-color: transparent; }
+.done-rhythm { display: grid; gap: 6px; justify-items: start; }
+.done-cap { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--n-66); }
+.done-grid { display: grid; grid-template-columns: auto repeat(7, 16px); gap: 4px; align-items: center; width: fit-content; margin-top: 4px; }
+.done-grid-lbl { padding-right: 6px; font-size: 10.5px; color: var(--n-66); white-space: nowrap; }
+.done-grid-hd { font-size: 10px; text-align: center; text-transform: uppercase; color: var(--n-66); }
+.done-cell { display: block; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 4px; background: var(--line); cursor: pointer; }
+.done-cell.l1 { background: color-mix(in srgb, var(--green) 30%, var(--paper)); }
+.done-cell.l2 { background: color-mix(in srgb, var(--green) 60%, var(--paper)); }
+.done-cell.l3 { background: var(--green); }
+.done-cell.today { outline: 2px solid var(--ink); outline-offset: 1px; }
+.done-cell.sel { outline: 2px solid var(--coral); outline-offset: 1px; }
+.done-cell.future { background: transparent; border: 1px dashed var(--line); cursor: default; }
 .done-days .shelf-head { margin-top: 20px; }
 .done-days .shelf-head.today { color: var(--green); }
+/* «Все дни» стоит на конце полки, за линией. */
+.done-days .shelf-head::after { order: 1; }
+.done-all { order: 2; font: inherit; font-size: 11px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--blue-54); border: 0; background: transparent; padding: 0 2px; cursor: pointer; }
+.done-all:hover { text-decoration: underline; }
 .done-where { color: var(--muted); background: var(--hairline); }
 @media (max-width: 760px) {
-  .done-nums { gap: 8px; }
-  .done-num { padding: 12px; }
-  .done-num b { font-size: 24px; }
-  .done-col { grid-template-columns: 84px minmax(0, 1fr) 24px; }
+  .done-top { grid-template-columns: 1fr; }
 }
 #review-dialog.has-talk .review { padding-bottom: 0; }
 #review-dialog .card-nav-col:not(:empty) + .card-nav-rest:not(:empty)::before { content: " · "; }

@@ -230,7 +230,7 @@ function updatePageFromHash() {
   if (activePage === "admin") loadAdmin();
   if (activePage === "circles") loadCircles();
   if (activePage === "board") loadBoard();
-  if (activePage === "done") loadDone();
+  if (activePage === "done") loadDone({ fresh: true });
   // Календарь перечитывается при каждом открытии: сроки правятся из карточек
   // и с доски, а чужие события приходят синхронизацией в фоне. Первый разбор
   // адреса случается до того, как модуль дошёл до состояния календаря, —
@@ -676,12 +676,12 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
   card.append(meta);
   return card;
 }
-// ── «Сегодня»: обложка по часам, полоса дней, три ящика ──────────────────────
+// ── «Сегодня»: обложка по часам, полоса дней, два ящика ──────────────────────
 // Страница знает, который час: дата с фазой суток, бриф из двух-трёх фраз и
-// вопрос в поле меняются утром, днём, вечером и ночью. Под полем — три ящика
+// вопрос в поле меняются утром, днём, вечером и ночью. Под полем — два ящика
 // с вкладками и своей полосой дней: «Что делал» (закрытое кружком и прошедшие
-// встречи), «День», где дела лежат вместе с календарём, и «Заметки» — старые
-// записи-заметки дня.
+// встречи) и «День», где дела лежат вместе с календарём. Заметок здесь нет:
+// любая запись — туду, а старые заметки видны в «Обзоре» и в поиске.
 const TODAY_ZONE = "Europe/Samara";
 const circlesState = { circles: [], me: null, loading: false, tab: "chat", discussions: [] };
 // Перечитывание разговоров (refreshRoomsQuietly): идёт ли, нужно ли ещё раз и
@@ -693,8 +693,7 @@ function kcEdited() { roomsRefresh.edits += 1; }
 const todayState = {
   view: 0,            // смещение дня, показанного в «Дне», от сегодняшнего
   journalView: 0,     // то же для «Что делал»: у ящиков свои дни
-  notesView: 0,       // и для «Заметок»
-  tab: null,          // открытый ящик: "journal" | "day" | "notes" | null
+  tab: null,          // открытый ящик: "journal" | "day" | null
   manual: false,      // ящик выбран рукой — фаза его не трогает
   phase: null,
   cover: null,
@@ -902,7 +901,7 @@ function rememberTab() {
 function recallTab(phase) {
   try {
     const saved = JSON.parse(localStorage.getItem("kizuna-today-tab") || "null");
-    if (saved && saved.date === currentDayDate && saved.phase === phase && ["journal", "day", "notes", null].includes(saved.tab)) {
+    if (saved && saved.date === currentDayDate && saved.phase === phase && ["journal", "day", null].includes(saved.tab)) {
       todayState.tab = saved.tab;
       todayState.manual = true;
       return true;
@@ -966,11 +965,9 @@ function renderToday() {
   paintCover(cover, currentDayDate);
   const viewDate = shiftDate(currentDayDate, todayState.view);
   const journalDate = shiftDate(currentDayDate, todayState.journalView);
-  const notesDate = shiftDate(currentDayDate, todayState.notesView);
-  paintTabs(viewDate, journalDate, notesDate);
+  paintTabs(viewDate, journalDate);
   paintJournal(journalDate);
   paintDayList(viewDate);
-  paintNotes(notesDate);
   if (keep && !active.isConnected) {
     // Строку закрыли с клавиатуры — фокус встаёт на следующую, а не теряется.
     const find = (id) => id && keep.drawer && document.querySelector(`#${keep.drawer} [data-capture-id="${CSS.escape(id)}"]`);
@@ -1076,11 +1073,6 @@ function setJournalView(offset) {
   todayState.tab = "journal";
   renderToday();
 }
-function setNotesView(offset) {
-  todayState.notesView = offset;
-  todayState.tab = "notes";
-  renderToday();
-}
 function dayNavNode(date, { view, onView }) {
   const nav = node("div", undefined, "daynav");
   const step = (delta) => {
@@ -1133,18 +1125,16 @@ function dayCountNode(date) {
   wrap.append(document.createTextNode(parts.join(" · ")));
   return wrap;
 }
-const DRAWER_PANELS = { journal: "journal", day: "todo", notes: "today-notes" };
-function paintTabs(date, journalDate, notesDate) {
+const DRAWER_PANELS = { journal: "journal", day: "todo" };
+function paintTabs(date, journalDate) {
   const host = $("#today-tabs");
   clear(host);
-  const today = date === currentDayDate, journalToday = journalDate === currentDayDate, notesToday = notesDate === currentDayDate;
+  const today = date === currentDayDate, journalToday = journalDate === currentDayDate;
   const doneList = doneRows(journalDate);
   const doneCount = doneList ? String(doneList.length) : "…";
-  const notes = notesFor(notesDate);
   const tabs = [
     ["journal", journalToday ? "Что делал" : `Что делал ${shortDate(journalDate)}`, node("b", doneCount)],
     ["day", today ? "День" : `День ${shortDate(date)}`, dayCountNode(date)],
-    ["notes", notesToday ? "Заметки" : `Заметки ${shortDate(notesDate)}`, node("b", notes ? String(notes.length) : "…")],
   ];
   for (const [key, label, count] of tabs) {
     const button = node("button", undefined, "drawer-tab");
@@ -1162,7 +1152,6 @@ function paintTabs(date, journalDate, notesDate) {
       // его в закрытом. Открывается всегда то, что сейчас.
       todayState.view = 0;
       todayState.journalView = 0;
-      todayState.notesView = 0;
       rememberTab();
       renderToday();
     });
@@ -1630,46 +1619,19 @@ function paintJournal(date) {
 }
 // Запись другого дня из отчёта «Обзора»: карточка, если запись ещё среди
 // загруженных, иначе строка с названием и временем.
-function reportRecordNode(record, { done = true } = {}) {
+function reportRecordNode(record) {
   const entry = todayState.entries.find((candidate) => candidate.id === record.captureId);
-  if (entry) return entryCard(entry, done ? { doneAt: zoneMinutes(new Date(record.at)) } : {});
-  const row = node("div", undefined, `entry dense${done ? " completed" : ""}`);
+  if (entry) return entryCard(entry, { doneAt: zoneMinutes(new Date(record.at)) });
+  const row = node("div", undefined, "entry dense completed");
   row.dataset.captureId = record.captureId;
-  if (done) {
-    const mark = node("span", undefined, "completion-button static");
-    mark.setAttribute("aria-pressed", "true");
-    row.append(mark);
-  }
+  const mark = node("span", undefined, "completion-button static");
+  mark.setAttribute("aria-pressed", "true");
+  row.append(mark);
   const title = node("span", record.title, "entry-title");
   const meta = node("div", undefined, "entry-meta");
   meta.append(node("span", hm(zoneMinutes(new Date(record.at))), "tag time"));
   row.append(title, meta);
   return row;
-}
-// «Заметки» устроены как «Что делал»: свои стрелки по дням, сегодняшние — из
-// загруженных записей, другой день — из ленты отчёта «Обзора». Заметка здесь —
-// всё, что записано не делом, не встречей и не итогом: наблюдение, идея, вопрос.
-// Сделанной заметка не бывает: отмеченная «Сделано», она становится итогом и
-// уходит в «Что делал». null — день ещё не загружен.
-const NOTE_TYPES = ["note", "idea_question"];
-function notesFor(date) {
-  if (date === currentDayDate)
-    return todayState.entries.filter((entry) => NOTE_TYPES.includes(entry.interpretation.classification.primaryType) && entryDate(entry) === date);
-  const feed = todayState.cache.get(date)?.report?.feed;
-  if (!feed) return null;
-  return feed.filter((record) => NOTE_TYPES.includes(record.type)).sort((left, right) => String(right.at).localeCompare(String(left.at)));
-}
-function paintNotes(date) {
-  const container = $("#today-notes");
-  clear(container);
-  container.append(dayNavNode(date, { view: todayState.notesView, onView: setNotesView }));
-  const notes = notesFor(date);
-  if (!notes) { container.append(node("p", "Загружаю…", "empty")); ensureDayData(date); return; }
-  if (!notes.length) {
-    container.append(node("p", date === currentDayDate ? "Сегодня заметок нет." : date < currentDayDate ? "В этот день заметок не было." : "День ещё не наступил.", "empty"));
-    return;
-  }
-  for (const note of notes) container.append(date === currentDayDate ? entryCard(note, { compact: true }) : reportRecordNode(note, { done: false }));
 }
 // Другой день грузится, когда его открыли, и помнится до следующего изменения
 // журнала: чужие события — из календаря, сделанное — из отчёта «Обзора»;
@@ -1687,7 +1649,7 @@ async function ensureDayData(date) {
     todayState.loading.delete(date);
   }
   if (!currentDayDate) return;
-  if ([todayState.view, todayState.journalView, todayState.notesView].some((offset) => shiftDate(currentDayDate, offset) === date)) renderToday();
+  if ([todayState.view, todayState.journalView].some((offset) => shiftDate(currentDayDate, offset) === date)) renderToday();
 }
 // Раз в минуту обложка и строка «сейчас» пересчитываются — но не под руками:
 // с текстом в поле страница ждёт.
@@ -4502,6 +4464,16 @@ captureField.element.addEventListener("keydown", (event) => {
     event.stopPropagation();
     setCaptureLarge(false);
   }
+});
+// Клик в сторону — то же, что Esc: лист лежит поверх затемнённой страницы, и
+// нажатие мимо него его закрывает. Не «мимо» — сама форма и всплывающие меню
+// поля: подсказки страниц и людей, панель оформления. Они живут в <body>, а не
+// в форме, и без исключения закрывали бы лист на каждом выборе. Нажатие, а не
+// клик: выделение мышью, начатое в поле и отпущенное за листом, не закрывает.
+const CAPTURE_POPOVERS = "#capture-form, .link-menu, .mention-menu, .fmt-bar";
+document.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0 || !captureLarge() || event.target.closest?.(CAPTURE_POPOVERS)) return;
+  setCaptureLarge(false);
 });
 
 // Высота поля живёт в браузере и переживает перезагрузку; меняется нижним
@@ -8709,21 +8681,24 @@ async function loadBoard({ force = false } = {}) {
 }
 
 // ── «Сделано» ────────────────────────────────────────────────────────────────
-// Один экран: три числа, неделя столбиками, куда ушла неделя по колонкам и
-// список по дням — тот же «Что делал», только за семь дней. Всё считает сервер
-// (GET /api/done); страница ничего не хранит. Открывается из заголовка «Что
-// делал» на «Сегодня» и из заголовка колонки «Сделано» на доске.
+// Один экран. Вверху в две колонки: слева фраза про неделю, строка её семи
+// дней и чипы «куда ушла неделя» по колонкам доски, справа — ритм пяти недель
+// клетками. Ниже список по дням — тот же «Что делал», только за неделю. Клик по
+// клетке или по дню в строке недели показывает список этого дня, повторный клик
+// и «Все дни» возвращают неделю. Всё берётся из одного ответа GET /api/done —
+// с понедельника четыре недели назад по сегодня; фраза, строка и чипы считаются
+// на клиенте по последним семи дням. Страница помнит только выбранный день.
+// Открывается из заголовка колонки «Сделано» на доске и по адресу #done.
 const DONE_WEEKDAYS = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
 function doneDayWord(date, today) {
   if (date === today) return "Сегодня";
   if (date === shiftDate(today, -1)) return "Вчера";
   return DONE_WEEKDAYS[new Date(`${date}T12:00:00Z`).getUTCDay()];
 }
-function doneRangeWords(from, to) {
-  const a = new Date(`${from}T12:00:00Z`), b = new Date(`${to}T12:00:00Z`);
-  const month = (d) => CAL_MONTHS_G[d.getUTCMonth()];
-  if (a.getUTCMonth() === b.getUTCMonth()) return `${a.getUTCDate()}–${b.getUTCDate()} ${month(b)}`;
-  return `${a.getUTCDate()} ${month(a)} – ${b.getUTCDate()} ${month(b)}`;
+// Понедельник недели, в которую попадает дата. Функция, а не const: страница
+// #done открывается по адресу до того, как модуль дочитан до этого места.
+function weekMonday(date) {
+  return shiftDate(date, -((new Date(`${date}T12:00:00Z`).getUTCDay() + 6) % 7));
 }
 // Вернуть закрытое туду в работу: у старой записи-отчёта дела внутри нет.
 async function reopenDoneItem(item, button) {
@@ -8781,73 +8756,195 @@ function doneRowEl(item) {
   row.append(meta);
   return row;
 }
+const DONE_WEEKS = 5;
+const DONE_MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+const doneState = { data: null, selected: null, list: null };
+// Подписи недель слева от клеток: «31 авг –» — неделя перешла в другой месяц,
+// «7–13 сен» — месяц назван, когда он сменился, дальше «14–20» без него.
+function doneWeekLabels(mondays) {
+  let named = null;
+  return mondays.map((monday) => {
+    const first = new Date(`${monday}T12:00:00Z`), last = new Date(`${shiftDate(monday, 6)}T12:00:00Z`);
+    const month = first.getUTCMonth();
+    if (month !== last.getUTCMonth()) {
+      named = month;
+      return `${first.getUTCDate()} ${DONE_MONTHS[month]} –`;
+    }
+    const range = `${first.getUTCDate()}–${last.getUTCDate()}`;
+    if (named === month) return range;
+    named = month;
+    return `${range} ${DONE_MONTHS[month]}`;
+  });
+}
+// Густота клетки: 0 — цвет линии, 1 — треть зелёного, 2–3 — две трети, 4+ — весь.
+const doneLevel = (n) => (n >= 4 ? "l3" : n >= 2 ? "l2" : n === 1 ? "l1" : "");
+// Выбранный день отмечается на месте — без перерисовки страницы, чтобы клавиатурный
+// фокус остался на кнопке, которую нажали.
+function markDoneSelection() {
+  for (const button of $("#done").querySelectorAll("[data-date]")) {
+    const on = button.dataset.date === doneState.selected;
+    button.classList.toggle("sel", on);
+    button.setAttribute("aria-pressed", String(on));
+  }
+}
+function paintDoneList() {
+  const { data, selected, list } = doneState;
+  clear(list);
+  const today = data.today;
+  const itemsOn = new Map(data.days.map((day) => [day.date, day.items]));
+  const shelf = (title, count, { tone = "", all = false } = {}) => {
+    const head = node("h3", undefined, `shelf-head done-day${tone}`);
+    head.append(document.createTextNode(title), document.createTextNode(" "), node("span", `· ${count}`, "shelf-n"));
+    if (all) {
+      const back = node("button", "Все дни", "done-all");
+      back.type = "button";
+      back.addEventListener("click", showAllDoneDays);
+      head.append(back);
+    }
+    return head;
+  };
+  const rowsOf = (items) => {
+    const rows = node("div", undefined, "day-rows");
+    for (const item of items) rows.append(doneRowEl(item));
+    return rows;
+  };
+  if (selected) {
+    // Сегодняшний день — тот же список, что на полке «Сегодня» внизу недели.
+    const items = itemsOn.get(selected) || [];
+    const isToday = selected === today;
+    list.append(shelf(isToday ? "Сегодня" : longDate(selected), items.length, { tone: isToday ? " today" : "", all: true }));
+    if (items.length) list.append(rowsOf(items));
+    else list.append(node("p", isToday ? "Пока ничего." : "В этот день ничего не сделано.", "empty"));
+    return;
+  }
+  const from = shiftDate(today, -6);
+  for (const day of data.days) {
+    if (day.date < from || day.date > today || !day.items.length) continue;
+    list.append(shelf(doneDayWord(day.date, today), day.items.length, { tone: day.date === today ? " today" : "" }), rowsOf(day.items));
+  }
+  if (!list.childNodes.length) list.append(node("p", "Пока ничего. Первый кружок — сюда.", "empty"));
+}
+function selectDoneDay(date) {
+  doneState.selected = doneState.selected === date ? null : date;
+  markDoneSelection();
+  paintDoneList();
+}
+function showAllDoneDays() {
+  const date = doneState.selected;
+  doneState.selected = null;
+  markDoneSelection();
+  paintDoneList();
+  // Кнопка «Все дни» ушла вместе с полкой дня — фокус переезжает на его клетку.
+  $("#done").querySelector(`.done-cell[data-date="${date}"]`)?.focus();
+}
 function paintDone(data) {
   const page = $("#done");
   clear(page);
   const heading = node("div", undefined, "page-heading");
   heading.append(node("h2", "Сделано"));
   page.append(heading);
-  const nums = node("div", undefined, "done-nums");
-  for (const [value, label, tone] of [[data.counts.today, "сегодня", " green"], [data.counts.period, "за неделю", ""], [data.counts.meetings, "встреч прошло", ""]]) {
-    const cell = node("div", undefined, `done-num${tone}`);
-    cell.append(node("b", String(value)), node("span", label));
-    nums.append(cell);
+
+  const today = data.today;
+  const itemsOn = new Map(data.days.map((day) => [day.date, day.items]));
+  const countOn = (date) => itemsOn.get(date)?.length || 0;
+  const titleOf = (date) => `${longDate(date)} · ${countOn(date)}`;
+  const mondays = Array.from({ length: DONE_WEEKS }, (_, row) => shiftDate(weekMonday(today), (row - DONE_WEEKS + 1) * 7));
+  // Выбранный день, которого в клетках уже нет (ночью сменились сутки), сбрасывается.
+  if (doneState.selected && (doneState.selected < mondays[0] || doneState.selected > today)) doneState.selected = null;
+  doneState.data = data;
+
+  // Неделя — последние семь дней по сегодня; фраза и чипы считаются только по ней.
+  const week = Array.from({ length: 7 }, (_, index) => shiftDate(today, index - 6));
+  const weekItems = week.flatMap((date) => itemsOn.get(date) || []);
+  const meetings = weekItems.filter((item) => item.kind === "meeting").length;
+
+  const summary = node("div", undefined, "done-summary");
+  const line = node("p", undefined, "done-line");
+  line.append("За неделю сделано ", node("b", String(weekItems.length)), ", из них встреч ", node("b", String(meetings)), " · сегодня ", node("b", String(countOn(today)), "g"));
+
+  const strip = node("div", undefined, "done-strip");
+  strip.setAttribute("role", "group");
+  strip.setAttribute("aria-label", "Последние семь дней");
+  for (const date of week) {
+    const n = countOn(date);
+    const button = node("button", undefined, `done-wd${date === today ? " today" : ""}${n ? "" : " z"}`);
+    button.type = "button";
+    button.dataset.date = date;
+    button.title = titleOf(date);
+    button.setAttribute("aria-label", titleOf(date));
+    button.append(shortDate(date), " ", node("b", n ? String(n) : "–"));
+    strip.append(button);
   }
-  page.append(nums);
-  // Неделя столбиками одной краской: число подписано у сегодня и у лучшего
-  // дня, остальные — по наведению.
-  const byDay = new Map((data.byDay || []).map((item) => [item.date, item.n]));
-  const days = [];
-  for (let date = data.from; date <= data.to; date = shiftDate(date, 1)) days.push({ date, n: byDay.get(date) || 0 });
-  const peak = Math.max(0, ...days.map((day) => day.n));
-  const week = node("section", undefined, "done-week");
-  week.append(node("p", `По дням · ${doneRangeWords(data.from, data.to)}`, "done-cap"));
-  const bars = node("div", undefined, "done-bars"), names = node("div", undefined, "done-bars-x");
-  for (const day of days) {
-    const bar = node("div", undefined, `done-bar${day.date === data.today ? " today" : ""}`);
-    const label = new Date(`${day.date}T12:00:00Z`);
-    bar.title = `${label.getUTCDate()} ${CAL_MONTHS_G[label.getUTCMonth()]} · ${day.n}`;
-    const fill = node("i", undefined, "done-bar-fill");
-    fill.style.height = day.n && peak ? `${Math.max(6, Math.round((day.n / peak) * 100))}%` : "2px";
-    if (day.n && (day.date === data.today || day.n === peak)) fill.append(node("span", String(day.n), "done-bar-n"));
-    bar.append(fill);
-    bars.append(bar);
-    names.append(node("span", ["вс", "пн", "вт", "ср", "чт", "пт", "сб"][label.getUTCDay()], day.date === data.today ? "today" : ""));
-  }
-  week.append(bars, names);
-  page.append(week);
-  const columns = node("section", undefined, "done-cols");
-  columns.append(node("p", "По колонкам за неделю", "done-cap"));
-  const widest = Math.max(1, ...(data.byColumn || []).map((item) => item.n));
-  if (!(data.byColumn || []).length) columns.append(node("p", "За неделю ничего не закрыто.", "done-empty"));
-  for (const item of data.byColumn || []) {
-    const line = node("div", undefined, `done-col${item.name === "Встречи" ? " meetings" : ""}`);
-    const track = node("span", undefined, "done-col-track");
-    const fill = node("i");
-    fill.style.width = `${Math.max(4, Math.round((item.n / widest) * 100))}%`;
-    track.append(fill);
-    line.append(node("span", item.name, "done-col-name"), track, node("b", String(item.n)));
-    columns.append(line);
-  }
-  page.append(columns);
+
+  // Чипы «куда ушла неделя»: колонки доски по убыванию, встречи — синим и последними.
+  const chips = node("div", undefined, "done-chips");
+  const byColumn = new Map();
+  for (const item of weekItems) if (item.kind !== "meeting") byColumn.set(item.column, (byColumn.get(item.column) || 0) + 1);
+  const chip = (name, n, className = "done-chip") => {
+    const element = node("span", undefined, className);
+    element.append(name, " ", node("b", String(n)));
+    chips.append(element);
+  };
+  for (const [name, n] of [...byColumn].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ru"))) chip(name, n);
+  if (meetings) chip("Встречи", meetings, "done-chip meet");
+  summary.append(line, strip, chips);
+
+  const rhythm = node("div", undefined, "done-rhythm");
+  const grid = node("div", undefined, "done-grid");
+  grid.setAttribute("role", "group");
+  grid.setAttribute("aria-label", `Ритм за ${DONE_WEEKS} недель`);
+  grid.append(node("span"));
+  for (const name of CAL_DOW) grid.append(node("span", name, "done-grid-hd"));
+  const labels = doneWeekLabels(mondays);
+  mondays.forEach((monday, row) => {
+    grid.append(node("span", labels[row], "done-grid-lbl"));
+    for (let column = 0; column < 7; column += 1) {
+      const date = shiftDate(monday, column);
+      const cell = node("button", undefined, "done-cell");
+      cell.type = "button";
+      if (date > today) {
+        cell.classList.add("future");
+        cell.disabled = true;
+        cell.setAttribute("aria-label", `${longDate(date)} · ещё не наступил`);
+      } else {
+        const level = doneLevel(countOn(date));
+        if (level) cell.classList.add(level);
+        if (date === today) cell.classList.add("today");
+        cell.dataset.date = date;
+        cell.title = titleOf(date);
+        cell.setAttribute("aria-label", titleOf(date));
+      }
+      grid.append(cell);
+    }
+  });
+  rhythm.append(node("p", `Ритм · ${DONE_WEEKS} недель`, "done-cap"), grid);
+
+  const top = node("div", undefined, "done-top");
+  top.append(summary, rhythm);
+  top.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-date]");
+    if (button && !button.disabled) selectDoneDay(button.dataset.date);
+  });
   const list = node("div", undefined, "done-days drawer");
-  for (const day of data.days) {
-    if (!day.items.length) continue;
-    const shelf = node("h3", undefined, `shelf-head done-day${day.date === data.today ? " today" : ""}`);
-    shelf.append(document.createTextNode(doneDayWord(day.date, data.today)), document.createTextNode(" "), node("span", `· ${day.items.length}`, "shelf-n"));
-    const rows = node("div", undefined, "day-rows");
-    for (const item of day.items) rows.append(doneRowEl(item));
-    list.append(shelf, rows);
-  }
-  if (!list.childNodes.length) list.append(node("p", "Пока ничего. Первый кружок — сюда.", "empty"));
-  page.append(list);
+  doneState.list = list;
+  page.append(top, list);
+  markDoneSelection();
+  paintDoneList();
 }
-async function loadDone() {
+// Пять недель одним запросом: с понедельника четыре недели назад по сегодня.
+// До первого await здесь нельзя трогать const из этого раздела: при открытии
+// #done по адресу функция стартует раньше, чем модуль до них дошёл.
+async function loadDone({ fresh = false } = {}) {
   const page = $("#done");
   if (!page.childNodes.length) page.append(node("p", "Считаем сделанное…", "empty"));
   try {
-    const data = await request("/api/done");
+    const range = (today) => `from=${shiftDate(weekMonday(today), -28)}&to=${today}`;
+    const guess = currentDayDate || zoneDate(new Date());
+    let data = await request(`/api/done?${range(guess)}`);
+    // Часы страницы и сервера разошлись на границе суток — берём день сервера.
+    if (data.today !== guess) data = await request(`/api/done?${range(data.today)}`);
     currentDayDate ||= data.today;
+    if (fresh) doneState.selected = null;
     paintDone(data);
   } catch (error) {
     clear(page);

@@ -18,7 +18,7 @@ test.beforeEach(async ({ page }) => {
   await page.clock.install({ time: dayAt(13) });
 });
 
-// Под полем три ящика: открытое лежит в «Дне», закрытое — в «Что делал».
+// Под полем два ящика: открытое лежит в «Дне», закрытое — в «Что делал».
 async function showTab(page, name) {
   const tab = page.getByRole("tab", { name });
   if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
