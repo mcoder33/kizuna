@@ -96,11 +96,18 @@
     ></aside>
     <main>
       <section class="app-page today-page" id="today">
-        <section class="hero">
+        <section class="hero hero-head">
           <!-- Обложка живёт по часам: дата с фазой суток, две-три фразы о дне
                и вопрос в поле. Слова собираются шаблонами из данных дня. -->
           <p class="today-date" id="today-date"></p>
           <p class="today-brief" id="today-brief" aria-live="polite"></p>
+        </section>
+        <!-- Пилюля метрики дня: запланировано · сделано · осталось · просрочено,
+             серия и искра за неделю. Стоит между сводкой и полем и липнет к верху
+             окна, поэтому она — прямой потомок страницы, а не обложки: липкий
+             элемент ходит только внутри своего родителя. Рисует paintDayMetric. -->
+        <div id="day-metric" class="metric-slot stick" hidden></div>
+        <section class="hero hero-field">
           <form id="capture-form" class="capture">
             <!-- Поле ввода создаётся из public/markdown-live.js: разметка
                  оформляется прямо во время набора, поэтому это не textarea. -->
