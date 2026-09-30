@@ -9,13 +9,15 @@ test.beforeEach(async ({ page }) => {
   await page.clock.install({ time: dayAt(13) });
 });
 
-test("«?» открывает вопросы слева, прогон про поручение идёт справа и заканчивается выходом", async ({ page }) => {
+test("по адресу #guide вопросы слева, прогон про поручение идёт справа и заканчивается выходом", async ({ page }) => {
   await page.goto("/#today");
   const entriesBefore = await (await page.request.get("/api/entries")).text();
-  await page.getByRole("link", { name: "Как пользоваться" }).first().click();
+  // Ссылки на «Как пользоваться» в шапке больше нет: страница открывается по адресу.
+  await expect(page.locator(".help-link")).toHaveCount(0);
+  await page.evaluate(() => { location.hash = "#guide"; });
   const guide = page.locator("#guide");
   await expect(guide).toBeVisible();
-  await expect(page.locator(".help-link")).toHaveClass(/active/);
+  await expect(page.locator("nav a.active")).toHaveCount(0);
   await expect(guide.locator(".gd-q")).toHaveCount(18);
   await expect(guide.locator(".gd-q-side.live")).toHaveCount(4);
   await expect(guide.getByText("Выберите вопрос слева")).toBeVisible();
@@ -53,7 +55,6 @@ test("«?» открывает вопросы слева, прогон про п
   await guide.getByRole("button", { name: "Выйти из обучения" }).click();
   await expect(page.locator("#today")).toBeVisible();
   await expect(guide).toBeHidden();
-  await expect(page.locator(".help-link")).not.toHaveClass(/active/);
   // Прогон шёл в копии: в журнале ничего не прибавилось.
   expect(await (await page.request.get("/api/entries")).text()).toBe(entriesBefore);
   // Галочка переживает уход со страницы.

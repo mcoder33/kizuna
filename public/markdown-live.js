@@ -230,7 +230,7 @@ const LINE = "md-line";
 const normalize = (text) => String(text).replace(/\r\n?/g, "\n").replace(/ /g, " ");
 
 /** Поле ввода с живым Markdown. Возвращает элемент и небольшое API вокруг него. */
-export function createMarkdownField({ id, ariaLabel, placeholder = "", onInput, onSubmit } = {}) {
+export function createMarkdownField({ id, ariaLabel, placeholder = "", onInput, onSubmit, submitOnEnter = false } = {}) {
   const root = document.createElement("div");
   root.className = "md-field";
   if (id) root.id = id;
@@ -453,6 +453,19 @@ export function createMarkdownField({ id, ariaLabel, placeholder = "", onInput, 
       render({ line: caret.line, offset: Math.max(0, caret.offset + caretShift) });
       if (onInput) onInput(getValue());
       return;
+    }
+    // Поле записи: Enter отправляет, Shift+Enter переносит строку. Внутри
+    // списка или цитаты Enter продолжает их, как в Obsidian: пустой пункт
+    // заканчивает список, и следующий Enter уже отправляет. Пока идёт набор
+    // через IME, Enter принадлежит ему.
+    if (event.key === "Enter" && submitOnEnter && onSubmit && !event.shiftKey && !event.isComposing) {
+      const at = readCaret();
+      const head = at ? (lines[at.line] ?? "").slice(0, at.offset) : "";
+      if (!at || listContinuation(head) === null) {
+        event.preventDefault();
+        onSubmit(getValue());
+        return;
+      }
     }
     if (event.key === "Enter") {
       // Перенос строки контролируем сами: браузер иначе вставит свои <div>

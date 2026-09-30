@@ -38,34 +38,9 @@
       <nav aria-label="Разделы">
         <a class="active" href="#today">Сегодня</a>
         <a href="#board">Доска</a>
-        <a href="#circles">Круги</a>
-        <a href="#calendar">Календарь</a>
         <a href="#notes">Заметки</a>
       </nav>
       <div class="header-tail">
-      <details class="ai-menu">
-        <summary id="ai-summary" aria-label="Модель и провайдер">ИИ</summary>
-        <div class="ai-menu-popover">
-          <label class="provider-picker" for="ai-provider"
-            ><span>Провайдер</span
-            ><select id="ai-provider" aria-label="Провайдер ИИ"></select></label
-          ><label class="provider-picker model-picker" for="ai-model" hidden
-            ><span>Модель</span
-            ><select id="ai-model" aria-label="Модель ИИ"></select></label
-          ><span id="ai-status" class="status" role="status">Проверяем ИИ…</span>
-          <label class="provider-picker voice-quick-picker" for="voice-quick-provider" hidden
-            ><span>Голос</span
-            ><select id="voice-quick-provider" aria-label="Провайдер голоса">
-              <option value="openai">OpenAI</option>
-              <option value="gemini">Google Gemini</option>
-            </select></label
-          ><label class="provider-picker voice-model-quick-picker" for="voice-quick-model" hidden
-            ><span>Модель голоса</span
-            ><select id="voice-quick-model" aria-label="Модель голоса"></select></label
-          >
-          <a class="ai-menu-more" href="#settings">Все настройки →</a>
-        </div>
-      </details>
       <!-- Колокольчик хранит историю уведомлений; число на нём — только то,
            что ждёт вашего ответа, остальное непрочитанное — точкой. -->
       <details class="bell-menu" id="bell-menu">
@@ -76,11 +51,6 @@
         ></summary>
         <div class="bell-popover" id="bell-popover"></div>
       </details>
-      <!-- «?» — страница «Как пользоваться»: вопросы слева, прогон в копии
-           интерфейса справа. Рядом с настройками, потому что ищут её там же.
-           Вид тот же, что у настроек, но класс свой: «.settings-link» в шапке
-           одна, на это опираются проверки. -->
-      <a class="help-link" href="#guide" aria-label="Как пользоваться" title="Как пользоваться">?</a>
       <a class="settings-link" href="#settings" aria-label="Настройки">
         <svg
           viewBox="0 0 24 24"
@@ -133,110 +103,29 @@
             <!-- Поле ввода создаётся из public/markdown-live.js: разметка
                  оформляется прямо во время набора, поэтому это не textarea. -->
             <div id="capture-shots" class="capture-shots" hidden></div>
-            <div id="capture-todo-line" class="todo-line" hidden></div>
             <div class="capture-foot">
-              <div
-                id="capture-types"
-                class="type-dots"
-                role="tablist"
-                aria-label="Тип записи"
-              ></div>
-              <span class="foot-sep" aria-hidden="true"></span>
-              <div id="capture-tags" class="tags"></div>
-              <button
-                id="capture-expand"
-                class="capture-expand"
-                type="button"
-                aria-label="Увеличить поле"
-                aria-pressed="false"
-                title="Увеличить поле"
-              >
-                <svg
-                  class="ic-expand"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.6"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M9 4.5H6.5a2 2 0 0 0-2 2V9" />
-                  <path d="M15 4.5h2.5a2 2 0 0 1 2 2V9" />
-                  <path d="M9 19.5H6.5a2 2 0 0 1-2-2V15" />
-                  <path d="M15 19.5h2.5a2 2 0 0 0 2-2V15" />
-                </svg>
-                <svg
-                  class="ic-collapse"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.6"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M4.5 9H7a2 2 0 0 0 2-2V4.5" />
-                  <path d="M19.5 9h-2.5a2 2 0 0 1-2-2V4.5" />
-                  <path d="M4.5 15H7a2 2 0 0 1 2 2v2.5" />
-                  <path d="M19.5 15h-2.5a2 2 0 0 0-2 2v2.5" />
-                </svg>
-              </button>
-              <button
-                id="capture-voice"
-                class="capture-voice"
-                type="button"
-                aria-label="Поговорить с журналом"
-                aria-pressed="false"
-                title="Поговорить с журналом"
-              >
-                <!-- Волна, а не микрофон: микрофон обещает запись голоса,
-                     а здесь идёт разговор — и слышно обе стороны. -->
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2.2"
-                  stroke-linecap="round"
-                  aria-hidden="true"
-                >
-                  <path d="M3 9.5v5" />
-                  <path d="M7.5 7v10" />
-                  <path d="M12 4v16" />
-                  <path d="M16.5 7v10" />
-                  <path d="M21 9.5v5" />
-                </svg>
-              </button>
+              <span class="capture-hint">Enter — отправить, Shift+Enter — новая строка</span>
               <button
                 id="capture-submit"
                 type="submit"
                 aria-label="Сохранить запись"
-                title="Сохранить запись — ⌘/Ctrl + Enter"
+                title="Сохранить запись — Enter"
               >
                 →
               </button>
             </div>
-            <!-- Края карточки тянутся, как у окна: нижний — высота, боковые —
-                 ширина, углы — обе. Двойной клик по краю возвращает размер. -->
-            <div class="capture-resize" data-dir="s" aria-hidden="true"></div>
-            <div class="capture-resize" data-dir="e" aria-hidden="true"></div>
-            <div class="capture-resize" data-dir="w" aria-hidden="true"></div>
-            <div class="capture-resize" data-dir="se" aria-hidden="true"></div>
-            <div class="capture-resize" data-dir="sw" aria-hidden="true"></div>
           </form>
         </section>
-        <!-- Под полем — три ящика: «Что делал», «День», где дела лежат вместе
-             с календарём, и «Заметки» дня. В каждом свои стрелки по дням. -->
-        <section class="drawers" aria-label="Дневная сводка">
-          <div class="drawer-tabs" id="today-tabs" role="tablist"></div>
-          <div id="journal" class="stack drawer" role="tabpanel" aria-labelledby="tab-journal" hidden>
-            <p class="empty">Пока нет зафиксированной работы за сегодня.</p>
-          </div>
-          <div id="todo" class="stack drawer day-list" role="tabpanel" aria-labelledby="tab-day" hidden>
+        <!-- Под полем два списка: «Сегодня» — открытые дела вместе со встречами
+             из календаря, «Что делал» — закрытое сегодня и прошедшие встречи. -->
+        <section class="today-lists drawers" aria-label="Дневная сводка">
+          <h2 class="shelf-head" id="shelf-today">Сегодня <span class="shelf-n" id="today-count"></span></h2>
+          <div id="todo" class="stack drawer day-list">
             <p class="empty">Открытых дел нет.</p>
           </div>
-          <div id="today-notes" class="stack drawer" role="tabpanel" aria-labelledby="tab-notes" hidden>
-            <p class="empty">Сегодня заметок нет.</p>
+          <h2 class="shelf-head done"><a href="#done">Что делал <span class="shelf-n" id="done-count"></span></a></h2>
+          <div id="journal" class="stack drawer day-list">
+            <p class="empty">Пока ничего. Первый кружок — сюда.</p>
           </div>
         </section>
       </section>
@@ -625,106 +514,16 @@
           </fieldset>
 
           <fieldset class="settings-group">
-            <legend>Разговор</legend>
-            <label class="setting" for="setting-voiceProvider"
-              ><span class="setting-name">Провайдер голоса</span
-              ><select id="setting-voiceProvider">
-                <option value="">Выбирает ключ</option>
-                <option value="openai">OpenAI</option>
-                <option value="gemini">Google Gemini</option>
-              </select><span class="setting-state" id="state-voiceProvider"></span
+            <legend>Разбор записей</legend>
+            <label class="setting" for="ai-provider"
+              ><span class="setting-name">Провайдер</span
+              ><select id="ai-provider" aria-label="Провайдер ИИ"></select
             ></label>
-            <label class="setting" for="setting-voiceModel"
-              ><span class="setting-name">Модель OpenAI</span
-              ><span class="setting-model"
-                ><select id="setting-voiceModel"></select
-                ><input
-                  id="custom-voiceModel"
-                  type="text"
-                  autocomplete="off"
-                  placeholder="gpt-realtime"
-                  hidden
-              /></span
+            <label class="setting model-picker" for="ai-model" hidden
+              ><span class="setting-name">Модель</span
+              ><select id="ai-model" aria-label="Модель ИИ"></select
             ></label>
-            <label class="setting" for="setting-geminiVoiceModel"
-              ><span class="setting-name">Модель Gemini</span
-              ><span class="setting-model"
-                ><select id="setting-geminiVoiceModel"></select
-                ><input
-                  id="custom-geminiVoiceModel"
-                  type="text"
-                  autocomplete="off"
-                  placeholder="models/gemini-3.1-flash-live-preview"
-                  hidden
-              /></span
-            ></label>
-            <p class="setting-hint">
-              Список моделей приходит от провайдера: что у него есть сегодня, то
-              и в списке. Нужной в нём нет — «Другая» открывает поле для имени.
-            </p>
-            <label class="setting" for="setting-voiceName"
-              ><span class="setting-name">Голос OpenAI</span
-              ><select id="setting-voiceName"></select
-            ></label>
-            <label class="setting" for="setting-geminiVoiceName"
-              ><span class="setting-name">Голос Gemini</span
-              ><select id="setting-geminiVoiceName"></select
-            ></label>
-            <p class="setting-hint">
-              Род голоса подсказывается модели: с мужским она говорит о себе
-              «записал», с женским — «записала», с нейтральным обходится без
-              рода.
-            </p>
-            <label class="setting" for="setting-sleepAfterSeconds"
-              ><span class="setting-name">Засыпать после тишины, с</span
-              ><input
-                id="setting-sleepAfterSeconds"
-                type="number"
-                min="10"
-                max="600"
-                step="5"
-              /></label
-            >
-            <label class="setting" for="setting-wakeWord"
-              ><span class="setting-name">Слово пробуждения</span
-              ><input id="setting-wakeWord" type="text" placeholder="кизуна" /></label
-            >
-            <label class="setting" for="setting-voiceInterrupt"
-              ><span class="setting-name">Перебить Кизуну</span
-              ><select id="setting-voiceInterrupt">
-                <option value="easy">с полуслова</option>
-                <option value="normal">обычно</option>
-                <option value="loud">только громко</option>
-              </select></label
-            >
-            <label class="setting" for="setting-voicePause"
-              ><span class="setting-name">Отвечать после паузы</span
-              ><select id="setting-voicePause">
-                <option value="quick">сразу — 0,3 с</option>
-                <option value="normal">обычно — 0,5 с</option>
-                <option value="wait">подождать — 1 с</option>
-                <option value="think">дать подумать — 2 с</option>
-              </select></label
-            >
-            <p class="setting-hint">
-              Кизуна замолкает от шума или чужих голосов — «только громко».
-              Начинает отвечать, пока вы подбираете слово, — «подождать».
-              Можно и голосом: «не сбивайся от шума», «дай мне подумать».
-            </p>
-            <label class="setting setting-wide" for="setting-systemPrompt"
-              ><span class="setting-name">Системный промпт</span
-              ><textarea
-                id="setting-systemPrompt"
-                rows="4"
-                placeholder="Например: обращайся ко мне на «ты», отвечай короче, спрашивай про проект"
-              ></textarea
-            ></label>
-            <p class="setting-hint">
-              Дописывается к основному промпту разговора, а не заменяет его:
-              правила инструментов и памяти остаются в силе. Пустое поле
-              возвращает характер по умолчанию — мягкий японский акцент
-              Кизуны.
-            </p>
+            <p id="ai-status" class="setting-hint status" role="status">Проверяем ИИ…</p>
           </fieldset>
 
           <fieldset class="settings-group">
@@ -903,70 +702,6 @@
                 Новые резервные коды
               </button>
             </div>
-          </fieldset>
-
-          <fieldset class="settings-group" id="voice-limit-group">
-            <legend>Предел разговора</legend>
-            <p class="setting-hint" id="voice-quota-state">Считаем…</p>
-            <label class="setting" for="setting-voiceEnabled"
-              ><span class="setting-name">Разговор доступен</span
-              ><select id="setting-voiceEnabled">
-                <option value="on">Да</option>
-                <option value="off">Нет, выключен для всех</option>
-              </select></label
-            >
-            <label class="setting" for="setting-voiceLimitWindow"
-              ><span class="setting-name">Считать за</span
-              ><select id="setting-voiceLimitWindow">
-                <option value="day">Сутки</option>
-                <option value="week">Неделю</option>
-                <option value="month">Месяц</option>
-                <option value="total">Всё время</option>
-              </select></label
-            >
-            <label class="setting" for="setting-voiceLimitMinutes"
-              ><span class="setting-name">Предел, минут</span
-              ><input
-                id="setting-voiceLimitMinutes"
-                type="number"
-                min="0"
-                step="5"
-                placeholder="без предела"
-            /></label>
-            <label class="setting" for="setting-voiceLimitUsd"
-              ><span class="setting-name">Предел, $</span
-              ><input
-                id="setting-voiceLimitUsd"
-                type="number"
-                min="0"
-                step="0.5"
-                placeholder="без предела"
-            /></label>
-            <label class="setting" for="setting-voiceRateUsdPerMinute"
-              ><span class="setting-name">Цена OpenAI, $/мин</span
-              ><input
-                id="setting-voiceRateUsdPerMinute"
-                type="number"
-                min="0"
-                step="0.01"
-                placeholder="0"
-            /></label>
-            <label class="setting" for="setting-voiceGeminiRateUsdPerMinute"
-              ><span class="setting-name">Цена Gemini, $/мин</span
-              ><input
-                id="setting-voiceGeminiRateUsdPerMinute"
-                type="number"
-                min="0"
-                step="0.01"
-                placeholder="0"
-            /></label>
-            <p class="setting-hint">
-              Звук идёт от браузера прямо к провайдеру, мимо сервера, поэтому
-              настоящего счёта у нас нет: мы знаем минуты разговора и умножаем
-              их на цену, которую вы здесь укажете. Предел по минутам работает и
-              без цены — и именно он надёжно перекрывает разговор. Когда предел
-              исчерпан, новый разговор просто не начинается.
-            </p>
           </fieldset>
 
           <fieldset class="settings-group">

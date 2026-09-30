@@ -146,28 +146,6 @@ test("второй фактор показывает код для телефо�
   await expect(page.locator("#totp-state")).toContainText("Выключен");
 });
 
-test("предел разговора виден в настройках и закрывает разговор, когда исчерпан", async ({ page, request }) => {
-  await request.put("/api/settings", { data: { voiceLimitMinutes: "0", voiceLimitWindow: "day" } });
-  await page.goto("/#settings");
-  await expect(page.locator("#voice-quota-state")).toContainText("разговор сейчас закрыт");
-
-  const refused = await request.post("/api/voice/session", { data: {} });
-  expect(refused.status()).toBe(429);
-  expect((await refused.json()).error.code).toBe("voice_limit_minutes");
-
-  await request.put("/api/settings", { data: { voiceLimitMinutes: "" } });
-  const allowed = await request.post("/api/voice/session", { data: {} });
-  expect(allowed.status()).toBe(200);
-  const session = await allowed.json();
-  // Разговор заведён в книге расхода: браузер отчитается о минутах, когда
-  // закончит, и они попадут в предел.
-  expect(session.voiceSessionId).toMatch(/^[0-9a-f-]{36}$/);
-  const closed = await request.post(`/api/voice/session/${session.voiceSessionId}/close`, {
-    data: { seconds: 42 },
-  });
-  expect(closed.status()).toBe(200);
-  expect((await closed.json()).quota.spentMinutes).toBeGreaterThanOrEqual(0);
-});
 
 test("выход возвращает на страницу входа", async ({ browser }) => {
   // Вход здесь делается заново, своей сессией: выход закрывает именно её.
@@ -205,13 +183,11 @@ test("администратор ставит человеку потолок р
 
   // Потолок правится полем прямо в карточке, а не вопросом в модальном окне.
   await card.locator('input[data-key="monthlyLimitUsd"]').fill("7");
-  await card.locator('input[data-key="voiceLimitMinutes"]').fill("30");
   await card.getByRole("button", { name: "Сохранить пределы" }).click();
 
   const saved = page.locator("#admin-users .admin-user").filter({ hasText: email });
   await expect(saved).toContainText("в этом месяце $0.00 из $7");
   await expect(saved.locator('input[data-key="monthlyLimitUsd"]')).toHaveValue("7");
-  await expect(saved.locator('input[data-key="voiceLimitMinutes"]')).toHaveValue("30");
 
   // Пустое поле возвращает человека под общий потолок, а не обнуляет его.
   await saved.locator('input[data-key="monthlyLimitUsd"]').fill("");

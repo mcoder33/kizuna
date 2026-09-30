@@ -18,29 +18,27 @@ test.beforeEach(async ({ page }) => {
   await page.clock.install({ time: dayAt(13) });
 });
 
-// На «Сегодня» видна одна вкладка: запись может лежать в «Дне» или в «Что делал».
-// Помощник находит её в любой и открывает нужную вкладку.
-async function showTab(page, name) {
-  const tab = page.getByRole("tab", { name });
-  if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
-}
-// Дело со сроком «завтра» (заглушка модели читает слово «завтра» даже из
-// таблицы) лежит в завтрашнем дне — стрелка в «Дне» ведёт и туда.
+// На «Сегодня» два списка: открытое лежит в «Сегодня», закрытое — в «Что делал».
+// Запись, которой заглушка модели поставила срок «завтра» (она читает слово
+// даже из таблицы), с сегодняшнего списка уходит; тогда срок переносится на
+// сегодня, чтобы открыть карточку отсюда: тест про карточку, а не про дату.
 async function todayEntry(page, text) {
-  const inDay = page.locator("#todo .entry").filter({ hasText: text });
-  const inJournal = page.locator("#journal .entry").filter({ hasText: text });
+  const rows = page.locator("#todo .entry, #journal .entry").filter({ hasText: text });
   await expect
     .poll(async () => {
-      if ((await inDay.count()) || (await inJournal.count())) return true;
-      await page.locator('#todo .daynav [data-step="1"]').click();
-      if (await inDay.count()) return true;
-      await page.locator('#todo .daynav [data-view="0"]').click();
+      if (await rows.count()) return true;
+      const list = await (await page.request.get("/api/entries?limit=20")).json();
+      const entry = list.entries.find((candidate) => candidate.raw.includes(text));
+      const schedule = entry?.interpretation.classification.entities.schedule;
+      if (entry && schedule?.date && schedule.date > (await (await page.request.get("/api/day")).json()).date) {
+        const today = (await (await page.request.get("/api/day")).json()).date;
+        await page.request.post(`/api/captures/${entry.id}/corrections`, { data: { patch: { schedule: { date: today, time: schedule.time || null } } } });
+        await page.reload();
+      }
       return false;
     }, { timeout: 15000 })
     .toBe(true);
-  if (await inJournal.count()) { await showTab(page, /Что делал/); return inJournal.first(); }
-  await showTab(page, /^День/);
-  return inDay.first();
+  return rows.first();
 }
 
 async function openCard(page, listSelector, raw) {
@@ -183,7 +181,7 @@ test("escape closes the card and keeps what was typed", async ({ page }) => {
   await expect(page.locator(".card-markdown")).toContainText("дописанное перед закрытием");
 });
 
-test("closing a task removes it from today without filing it as reported work", async ({ page }) => {
+test("closing a todo moves it from «Сегодня» to «Что делал»", async ({ page }) => {
   const raw = "Нужно проверить уход закрытой задачи";
   await page.goto("/");
   await capture(page, raw);
@@ -192,8 +190,8 @@ test("closing a task removes it from today without filing it as reported work", 
   await card.getByRole("button", { name: "Готово" }).click();
 
   await expect(page.locator("#todo")).not.toContainText(raw);
-  // дневник — это записи-отчёты, закрытие задачи отчётом не является
-  await expect(page.locator("#journal")).not.toContainText(raw);
+  // «Что делал» — итог дня: закрытое кружком туду встаёт туда со временем закрытия
+  await expect(page.locator("#journal")).toContainText(raw);
 
   // С открытых дел доски оно тоже ушло, но лежит хвостом списка в «Закрытых» —
   // там же его возвращают в работу.
@@ -222,7 +220,7 @@ test("a closed decision with an action leaves the day and never returns", async 
   await dayCard.getByRole("button", { name: "Готово" }).click();
 
   await expect(page.locator("#todo")).not.toContainText(raw);
-  await expect(page.locator("#journal")).not.toContainText(raw);
+  await expect(page.locator("#journal")).toContainText(raw);
   // После перезагрузки закрытая запись в день не возвращается: закрыта по данным.
   await page.reload();
   await expect(page.locator("#todo .entry").filter({ hasText: raw })).toHaveCount(0);
@@ -252,7 +250,6 @@ test("reported work is a type: choosing «результат» moves a task into
   await expect(row.locator(".completion-button")).toHaveCount(0);
 
   // Назвать запись снова делом — значит вернуть её в работу.
-  await showTab(page, /Что делал/);
   await openCard(page, "#journal", raw);
   if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
   await page.locator("#review-primary-type").selectOption("task");
@@ -279,7 +276,10 @@ test("properties changed in the card are saved when Escape closes it", async ({ 
   await page.locator("#review-project").press("Escape");
   expect((await saved).status()).toBe(200);
   await expect(page.locator("#review-dialog")).toBeHidden();
-  await expect(page.locator("#todo .entry").filter({ hasText: raw })).toContainText("Проект по Esc");
+  // В строке списка проекта нет: он живёт в разборе записи.
+  await expect
+    .poll(async () => (await (await page.request.get("/api/entries?limit=20")).json()).entries.find((candidate) => candidate.raw === raw).interpretation.classification.entities.projects)
+    .toContain("Проект по Esc");
 });
 
 test("an untouched card closes without sending a correction", async ({ page }) => {
@@ -322,10 +322,11 @@ test("markdown is decorated inside the capture field as it is typed", async ({ p
   await expect(field).toHaveText("--зачёркнуто-- и **жирный** с `кодом`");
   await expect(field.locator(".md-mark").first()).toHaveText("--");
 
-  // Перенос строки и блочная разметка.
-  await page.keyboard.press("Enter");
+  // Перенос строки и блочная разметка: Enter отправляет, поэтому строки
+  // разделяет Shift+Enter.
+  await page.keyboard.press("Shift+Enter");
   await page.keyboard.type("# Заголовок");
-  await page.keyboard.press("Enter");
+  await page.keyboard.press("Shift+Enter");
   await page.keyboard.type("- пункт");
   await expect(field.locator(".md-heading")).toHaveText("Заголовок");
   await expect(field.locator(".md-bullet")).toHaveText("- ");
@@ -335,8 +336,6 @@ test("markdown is decorated inside the capture field as it is typed", async ({ p
   const posted = page.waitForRequest(
     (request) => request.url().endsWith("/api/captures") && request.method() === "POST",
   );
-  // Заметок на главной нет — запись отправляется делом, чтобы открыть карточку с «Сегодня».
-  await page.locator('#capture-types [data-value="todo"]').click();
   await page.getByRole("button", { name: "Сохранить запись" }).click();
   const sent = JSON.parse((await posted).postData() || "{}");
   expect(sent.raw).toBe("--зачёркнуто-- и **жирный** с `кодом`\n# Заголовок\n- пункт");
@@ -392,8 +391,6 @@ test("obsidian markup works end to end: typed in the field, rendered in the card
   const posted = page.waitForRequest(
     (request) => request.url().endsWith("/api/captures") && request.method() === "POST",
   );
-  // Заметок на главной нет — запись отправляется делом, чтобы открыть карточку с «Сегодня».
-  await page.locator('#capture-types [data-value="todo"]').click();
   await page.getByRole("button", { name: "Сохранить запись" }).click();
   expect(JSON.parse((await posted).postData() || "{}").raw).toBe(raw);
 
@@ -479,8 +476,6 @@ test("the card body is the same live field as the capture card, and the title st
   const raw = ["# Разбор недели", "- [ ] отчёт", "| Что | Когда |", "| --- | ---: |", "| созвон | завтра |"].join("\n");
   await page.getByLabel("Новая запись").click();
   await page.keyboard.insertText(raw);
-  // Заметок на главной нет — запись отправляется делом, чтобы открыть карточку с «Сегодня».
-  await page.locator('#capture-types [data-value="todo"]').click();
   await page.getByRole("button", { name: "Сохранить запись" }).click();
 
   // Заголовок — первая значимая строка с многоточием, а не склейка таблицы.
@@ -629,86 +624,9 @@ test("a callout looks like one filled block, a plain quote stays a quote", async
   await expect(lines.last()).not.toHaveClass(/md-callout/);
 });
 
-test("the expand button lifts the card into a sheet fitted to the window", async ({ page, request }) => {
-  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
-  await page.setViewportSize({ width: 1280, height: 900 });
-  await page.goto("/");
-  const form = page.locator("#capture-form");
-  const field = page.getByLabel("Новая запись");
-  const expand = page.locator("#capture-expand");
 
-  await expect(expand).toHaveAttribute("aria-pressed", "false");
-  await field.click();
-  await page.keyboard.type("# Заметка на листе");
-  const before = await form.boundingBox();
 
-  await expand.click();
-  await expect(form).toHaveClass(/capture-large/);
-  await expect(page.locator("body")).toHaveClass(/capture-large-open/);
-  await expect(expand).toHaveAttribute("aria-pressed", "true");
-  await page.waitForTimeout(350);
-
-  // Лист выходит на передний план и вписан в окно с большими отступами.
-  await expect(form).toHaveCSS("position", "fixed");
-  const sheet = await form.boundingBox();
-  const viewport = page.viewportSize();
-  expect(sheet.height).toBeGreaterThan(before.height * 2);
-  expect(sheet.height).toBeLessThan(viewport.height);
-  expect(sheet.y).toBeGreaterThan(20);
-  expect(sheet.x).toBeGreaterThan(100);
-  // Пропорция листа — чуть шире A4. Допуск на округление пикселей.
-  expect(sheet.height / sheet.width).toBeGreaterThan(1.26);
-  expect(sheet.height / sheet.width).toBeLessThan(1.34);
-  // Страница под листом не прокручивается.
-  await expect(page.locator("body")).toHaveCSS("overflow", "hidden");
-
-  // Текст, фокус и разметка на месте: DOM не перестраивался.
-  await expect(field.locator(".md-heading")).toHaveText("Заметка на листе");
-  await expect(field).toBeFocused();
-  await page.keyboard.press("Enter");
-  await page.keyboard.type("- [ ] пункт");
-  await expect(field.locator(".md-checkbox")).toHaveCount(1);
-
-  // Esc возвращает карточку на место, ничего не потеряв.
-  await page.keyboard.press("Escape");
-  await expect(form).not.toHaveClass(/capture-large/);
-  await expect(page.locator("body")).not.toHaveClass(/capture-large-open/);
-  // На месте карточка снова в потоке — relative держит ручки размера.
-  await expect(form).toHaveCSS("position", "relative");
-  await expect(field.locator(".md-heading")).toHaveText("Заметка на листе");
-
-  // Отправка с листа возвращает карточку к обычному виду.
-  await expand.click();
-  const posted = page.waitForRequest(
-    (request_) => request_.url().endsWith("/api/captures") && request_.method() === "POST",
-  );
-  await page.getByRole("button", { name: "Сохранить запись" }).click();
-  expect(JSON.parse((await posted).postData() || "{}").raw).toContain("# Заметка на листе");
-  await expect(form).not.toHaveClass(/capture-large/);
-  await expect(field).toHaveText("");
-});
-
-test("on a phone the sheet fills the screen without overflow", async ({ page, request }) => {
-  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
-  await page.setViewportSize({ width: 390, height: 760 });
-  await page.goto("/");
-  await page.getByLabel("Новая запись").click();
-  await page.keyboard.type("# Заметка на телефоне");
-  await page.locator("#capture-expand").click();
-  await page.waitForTimeout(350);
-
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
-  expect(overflow).toBe(false);
-  const sheet = await page.locator("#capture-form").boundingBox();
-  // Пропорция A4 на телефоне не выдерживается: важнее место под текст.
-  expect(sheet.width).toBeGreaterThan(340);
-  expect(sheet.height).toBeGreaterThan(690);
-  // Подвал остаётся внутри листа.
-  const foot = await page.locator(".capture-foot").boundingBox();
-  expect(foot.y + foot.height).toBeLessThanOrEqual(sheet.y + sheet.height + 1);
-});
-
-test("лист и карточка тихо проявляются, а не летят через экран", async ({ page, request }) => {
+test("карточка тихо проявляется, а не летит через экран", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
@@ -716,43 +634,8 @@ test("лист и карточка тихо проявляются, а не ле
   // Движение в приложении одно на всё: короткое проявление на месте. Ни
   // перелёта из точки клика, ни роста размеров, ни масштаба — только
   // прозрачность и мягкий сдвиг по вертикали.
-  const form = page.locator("#capture-form");
-  await page.getByLabel("Новая запись").click();
-  await page.keyboard.type("# Заметка на листе");
-  await page.locator("#capture-expand").click();
-  const sheetFrames = await form.evaluate((node) =>
-    node.getAnimations().map((animation) => ({
-      duration: animation.effect.getTiming().duration,
-      keys: animation.effect.getKeyframes().map((frame) => ({
-        opacity: frame.opacity,
-        transform: frame.transform,
-        width: frame.width,
-      })),
-    })),
-  );
-  expect(sheetFrames.length).toBe(1);
-  expect(sheetFrames[0].duration).toBe(300);
-  const [first, last] = sheetFrames[0].keys;
-  expect(first.opacity).toBe("0");
-  expect(last.opacity).toBe("1");
-  // Постоянное смещение листа остаётся на месте, к нему добавлен только сдвиг.
-  expect(first.transform).toContain("translate(-50%, -50%)");
-  expect(first.transform).toContain("translateY(12px)");
-  expect(last.transform).toBe("translate(-50%, -50%)");
-  // Размеры не анимируются вовсе: их считает раскладка.
-  expect(first.width).toBeUndefined();
-
-  await page.waitForTimeout(400);
-  const sheet = await form.boundingBox();
-  // Пропорция листа — чуть шире A4. Допуск на округление пикселей.
-  expect(sheet.height / sheet.width).toBeGreaterThan(1.26);
-  expect(sheet.height / sheet.width).toBeLessThan(1.34);
-  await page.keyboard.press("Escape");
-
   await page.getByLabel("Новая запись").click();
   await page.keyboard.type("запись для карточки");
-  // Заметок на главной нет — запись отправляется делом, чтобы открыть карточку с «Сегодня».
-  await page.locator('#capture-types [data-value="todo"]').click();
   await page.getByRole("button", { name: "Сохранить запись" }).click();
   const entry = page.locator("#today .entry").filter({ hasText: "запись для карточки" }).first();
   await expect(entry).toBeVisible({ timeout: 15000 });
@@ -788,8 +671,6 @@ test("the entry card opens as a notion page: wide peek with a 708px column", asy
 
   await page.getByLabel("Новая запись").click();
   await page.keyboard.type("запись для проверки страницы");
-  // Заметок на главной нет — запись отправляется делом, чтобы открыть карточку с «Сегодня».
-  await page.locator('#capture-types [data-value="todo"]').click();
   await page.getByRole("button", { name: "Сохранить запись" }).click();
   const entry = page.locator("#today .entry").filter({ hasText: "проверки страницы" }).first();
   await expect(entry).toBeVisible({ timeout: 15000 });
@@ -820,8 +701,6 @@ test("the card is resized by dragging its edge, the size survives reopening", as
 
   await page.getByLabel("Новая запись").click();
   await page.keyboard.type("запись для растягивания");
-  // Заметок на главной нет — запись отправляется делом, чтобы открыть карточку с «Сегодня».
-  await page.locator('#capture-types [data-value="todo"]').click();
   await page.getByRole("button", { name: "Сохранить запись" }).click();
   const entry = page.locator("#today .entry").filter({ hasText: "растягивания" }).first();
   await expect(entry).toBeVisible({ timeout: 15000 });
@@ -883,8 +762,6 @@ test("a capture can be deleted from its card and brought back from the toast", a
   const raw = "запись, которую удалим и вернём";
   await page.getByLabel("Новая запись").click();
   await page.keyboard.type(raw);
-  // Заметок на главной нет — запись отправляется делом, чтобы открыть карточку с «Сегодня».
-  await page.locator('#capture-types [data-value="todo"]').click();
   await page.getByRole("button", { name: "Сохранить запись" }).click();
 
   const card = page.locator("#today .entry").filter({ hasText: "удалим и вернём" }).first();
@@ -919,8 +796,6 @@ test("a card reopened after closing is visible, not a ghost", async ({ page, req
   await page.goto("/");
   await page.getByLabel("Новая запись").click();
   await page.keyboard.type("запись для повторного открытия");
-  // Заметок на главной нет — запись отправляется делом, чтобы открыть карточку с «Сегодня».
-  await page.locator('#capture-types [data-value="todo"]').click();
   await page.getByRole("button", { name: "Сохранить запись" }).click();
 
   const card = page.locator("#today .entry").filter({ hasText: "повторного открытия" }).first();
@@ -946,8 +821,6 @@ test("к записи можно приложить файл, посмотрет
   await page.goto("/");
   await page.getByLabel("Новая запись").click();
   await page.keyboard.type("запись со снимком доски");
-  // Заметок на главной нет — запись отправляется делом, чтобы открыть карточку с «Сегодня».
-  await page.locator('#capture-types [data-value="todo"]').click();
   await page.getByRole("button", { name: "Сохранить запись" }).click();
   const entry = page.locator("#today .entry").filter({ hasText: "снимком доски" }).first();
   await expect(entry).toBeVisible({ timeout: 15000 });
@@ -1042,9 +915,9 @@ test("статус записи — значком и словом: под за�
   await capture(page, raw);
   await openCard(page, "#todo", raw);
 
-  // Дело без срока: статус назван словом и ведёт свёрнутую строку свойств,
-  // которая стоит выше «Записано» — первой строкой карточки.
-  await expect(page.locator("#review-dialog .props-summary .entry-status")).toHaveText("Без срока");
+  // Дело без названной даты ложится на сегодня: статус назван словом и ведёт
+  // свёрнутую строку свойств, которая стоит выше «Записано» — первой строкой карточки.
+  await expect(page.locator("#review-dialog .props-summary .entry-status")).toHaveText("Сегодня");
   const barBox = await page.locator("#review-dialog .props-bar").boundingBox();
   const writtenBox = await page.locator("#review-dialog .card-written").boundingBox();
   expect(barBox.y).toBeLessThan(writtenBox.y);
@@ -1116,22 +989,18 @@ test("a screenshot pasted into the capture field opens a preview on click", asyn
   await expect(shot).toHaveCount(1);
 });
 
-test("an unclassified capture stays off the day until it is typed as a deed", async ({ page }) => {
+test("a capture the model could not parse still lands as a todo for today", async ({ page }) => {
   const raw = "Созвон с Женей был по доработкам [[сбой модели]]";
   await page.goto("/");
   await capture(page, raw);
-  // Модель упала — запись сохранена заметкой без разбора: на главной её нет,
-  // но карточка открывается по ссылке, как из уведомления.
-  await expect(page.locator("#todo")).not.toContainText("Созвон с Женей");
-  await expect(page.locator("#journal")).not.toContainText("Созвон с Женей");
+  // Модель упала — запись всё равно туду на сегодня: ничего не теряется и
+  // ничего не переспрашивается, поправить можно в карточке.
   const findEntry = async () => (await (await page.request.get("/api/entries?limit=100")).json()).entries.find((candidate) => candidate.raw.includes("Созвон с Женей")) || null;
   await expect.poll(findEntry, { timeout: 15000 }).not.toBeNull();
-  const entry = await findEntry();
-  await page.goto(`/#today?open=${entry.id}`);
+  const row = page.locator("#todo .entry").filter({ hasText: "Созвон с Женей" });
+  await expect(row).toBeVisible({ timeout: 15000 });
+  await row.locator(".entry-title").click();
   await expect(page.locator("#review-dialog")).toBeVisible();
-  await expect(page.locator(".review-question")).toContainText("без разбора");
-  // Человек назвал её задачей — теперь это дело, и оно в дне.
-  await page.locator("#review-primary-type").selectOption("task");
   await page.locator("#review-close").click();
   await expect(page.locator("#todo")).toContainText("Созвон с Женей");
 });
@@ -1210,7 +1079,7 @@ test("a cross next to a filled property resets it at once: a dated task becomes 
 // Г «Отметил — следующее»: кружок у названия закрывает дело сразу, а карточка,
 // открытая из «Дня», идёт к следующему открытому делу. Плашка «Готово ·
 // Вернуть · + итог» даёт передумать или дописать, чем кончилось.
-test("кружок в карточке закрывает дело и ведёт к следующему делу «Дня»", async ({ page, request }) => {
+test("кружок в карточке закрывает дело и ведёт к следующему делу «Сегодня»", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   const today = (await (await request.get("/api/day")).json()).date;
   for (const raw of ["Разбор: третье дело", "Разбор: второе дело", "Разбор: первое дело"])
@@ -1224,12 +1093,12 @@ test("кружок в карточке закрывает дело и ведёт
   const dialog = page.locator("#review-dialog");
   const title = dialog.locator(".card-title");
   await expect(title).toHaveText(titles[0]);
-  await expect(dialog.locator(".card-nav-crumb")).toHaveText("День · 1 из 3");
+  await expect(dialog.locator(".card-nav-crumb")).toHaveText("Сегодня · 1 из 3");
   // Отметили — дело закрыто сразу, строка «Сделано» видна до перехода.
   await dialog.locator(".card-tick").click();
   await expect(dialog.locator(".card-done-ok")).toContainText("Сделано сегодня в");
   await expect(title).toHaveText(titles[1], { timeout: 5000 });
-  await expect(dialog.locator(".card-nav-crumb")).toHaveText("День · 2 из 3");
+  await expect(dialog.locator(".card-nav-crumb")).toHaveText("Сегодня · 2 из 3");
   const snack = dialog.locator(".card-snack");
   await expect(snack).toContainText(`Готово: «${titles[0].slice(0, 20)}`);
 
@@ -1261,16 +1130,16 @@ test("кружок в карточке закрывает дело и ведёт
   await expect(title).toHaveText(titles[1], { timeout: 5000 });
   await page.waitForTimeout(400);
   await dialog.locator(".card-tick").click();
-  await expect(dialog.locator(".card-finish-title")).toHaveText("В «Дне» всё отмечено", { timeout: 5000 });
+  await expect(dialog.locator(".card-finish-title")).toHaveText("На «Сегодня» всё отмечено", { timeout: 5000 });
   await dialog.locator(".card-finish-close").click();
 
   await expect(page.locator("#todo .day-rows .entry")).toHaveCount(0);
-  // Итог — запись-результат в «Что делал», дело осталось закрытым делом.
+  // Итог — дочерняя запись, закрытая при записи: она в «Что делал», а дело
+  // осталось закрытым делом.
   await expect.poll(async () => {
     const { entries } = await (await request.get("/api/entries")).json();
-    return entries.filter((entry) => entry.interpretation.classification.primaryType === "outcome_decision" && entry.parentId).length;
+    return entries.filter((entry) => entry.parentId && entry.raw.includes("Разобрал первое")).length;
   }, { timeout: 15000 }).toBe(1);
-  await page.getByRole("tab", { name: /Что делал/ }).click();
   await expect(page.locator("#journal")).toContainText("Разобрал первое");
 });
 

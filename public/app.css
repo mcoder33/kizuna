@@ -570,67 +570,6 @@ nav a.active {
   align-items: center;
   gap: 8px;
 }
-.ai-menu {
-  position: relative;
-}
-/* Вместо двух подписанных селекторов и плашки статуса в шапке — одна короткая
-   метка; подробности открываются поповером. */
-.ai-menu summary {
-  padding: 6px 11px;
-  border: 1px solid var(--line);
-  border-radius: 99px;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 12px;
-  list-style: none;
-  white-space: nowrap;
-}
-.ai-menu summary::-webkit-details-marker {
-  display: none;
-}
-.ai-menu[open] summary,
-.ai-menu summary:hover {
-  color: var(--ink);
-}
-.ai-menu-popover {
-  position: absolute;
-  top: calc(100% + 10px);
-  right: 0;
-  z-index: 6;
-  display: grid;
-  gap: 12px;
-  width: 260px;
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--n-100);
-  box-shadow: 0 10px 28px var(--orange-21-a10);
-}
-/* Из быстрого выбора всегда виден путь ко всему остальному. */
-.ai-menu-more {
-  font-size: 11.5px;
-  color: var(--muted);
-  text-decoration: none;
-}
-.ai-menu-more:hover {
-  color: var(--ink);
-}
-.provider-picker {
-  display: grid;
-  gap: 5px;
-  font-size: 11px;
-  color: var(--n-54);
-}
-.provider-picker select {
-  font: inherit;
-  width: 100%;
-  max-width: none;
-  border: 1px solid var(--line);
-  border-radius: 99px;
-  padding: 7px 24px 7px 10px;
-  background: var(--n-100);
-  color: var(--ink);
-}
 .status {
   padding: 7px 9px;
   border: 1px solid var(--line);
@@ -805,844 +744,6 @@ main {
   margin-top: 10px;
   padding-top: 11px;
   border-top: 1px solid var(--hairline);
-}
-/* ── кнопка разговора: такой же тихий значок, что и «развернуть» ── */
-/* Кнопка разговора и кнопка отправки стоят в одном месте и меняются: пока
-   писать нечего — это разговор, появился текст — отправка. Значит и выглядеть
-   они должны одинаково, иначе на глазах у человека кнопка «прыгнет». */
-.capture-voice {
-  flex: none;
-  width: 38px;
-  height: 38px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: var(--coral);
-  color: var(--n-100);
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-  transition:
-    background 0.15s,
-    box-shadow 0.15s,
-    transform 0.1s;
-}
-.capture-voice svg {
-  width: 20px;
-  height: 20px;
-}
-.capture-voice:hover {
-  background: var(--red-54);
-}
-.capture-voice:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-/* Идёт разговор — кнопка не меняет цвет, а обрастает кольцом: смена заливки
-   читалась бы как «другая кнопка», а это та же самая, только сейчас включена. */
-.capture-voice[aria-pressed='true'] {
-  box-shadow: 0 0 0 3px var(--red-90);
-}
-.capture-voice:active {
-  transform: scale(0.92);
-}
-
-/* ── панель разговора: продолжение карточки, а не отдельное окно ── */
-.voice-panel {
-  margin-top: 12px;
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  background: var(--n-100);
-  box-shadow: var(--shadow);
-  padding: 14px 16px 12px;
-  text-align: left;
-  animation: voice-enter 0.24s ease-out;
-}
-@keyframes voice-enter {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-}
-/* ── сцена разговора: светящееся кольцо ──────────────────────────────────── */
-/* Уровень звука приходит из voice.js в --voice-level (0…1): от него зависят
-   размах кольца, яркость свечения и высота волн внутри. */
-@property --voice-ink {
-  syntax: "<color>";
-  inherits: true;
-  initial-value: var(--violet-65);
-}
-.voice-stage {
-  --voice-level: 0;
-  --voice-ink: var(--violet-63);
-  --arc-a: var(--blue-78);
-  --arc-b: var(--violet-74);
-  --arc-c: var(--blue-88);
-  --arc-d: var(--pink-85);
-  --voice-spin: 26s;
-  display: grid;
-  justify-items: center;
-  gap: 14px;
-  padding: 10px 0;
-  transition:
-    --voice-ink 1.2s ease,
-    --arc-a 1.2s ease,
-    --arc-b 1.2s ease;
-}
-.voice-orb {
-  position: relative;
-  width: 168px;
-  height: 168px;
-  border: 0;
-  padding: 0;
-  background: none;
-  border-radius: 50%;
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-  isolation: isolate;
-  transform: scale(calc(1 + var(--voice-level) * 0.05));
-  transition:
-    transform 0.14s ease-out,
-    width 0.9s cubic-bezier(0.16, 1, 0.3, 1),
-    height 0.9s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.voice-orb:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 12px;
-}
-/* Свечение вокруг кольца: мягкое пятно, которое разгорается от голоса. */
-.voice-halo {
-  position: absolute;
-  inset: -14%;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    color-mix(in srgb, var(--arc-b) 55%, transparent) 0%,
-    color-mix(in srgb, var(--arc-a) 34%, transparent) 48%,
-    transparent 72%
-  );
-  filter: blur(22px);
-  opacity: calc(0.66 + var(--voice-level) * 0.34);
-  transition: opacity 0.2s ease-out;
-}
-/* Три дуги одного кольца. Каждая — почти окружность с прозрачным сектором,
-   поэтому при вращении свет перетекает по ободу, а не крутится колесом. */
-.voice-arc {
-  position: absolute;
-  border-radius: 50%;
-  border: 3px solid transparent;
-  background:
-    conic-gradient(
-        from 0deg,
-        transparent 0deg,
-        var(--arc-a) 60deg,
-        var(--arc-b) 150deg,
-        var(--arc-c) 240deg,
-        transparent 330deg
-      )
-      border-box;
-  -webkit-mask:
-    linear-gradient(var(--n-0) 0 0) padding-box,
-    linear-gradient(var(--n-0) 0 0);
-  -webkit-mask-composite: xor;
-  mask:
-    linear-gradient(var(--n-0) 0 0) padding-box,
-    linear-gradient(var(--n-0) 0 0);
-  mask-composite: exclude;
-  animation: voice-spin var(--voice-spin) linear infinite;
-}
-.voice-arc-1 {
-  inset: 2%;
-  border-width: 4px;
-}
-.voice-arc-2 {
-  inset: 8%;
-  border-width: 3px;
-  opacity: 0.8;
-  animation-duration: calc(var(--voice-spin) * 1.6);
-  animation-direction: reverse;
-  background:
-    conic-gradient(
-        from 140deg,
-        transparent 0deg,
-        var(--arc-c) 70deg,
-        var(--arc-d) 170deg,
-        var(--arc-a) 250deg,
-        transparent 340deg
-      )
-      border-box;
-}
-.voice-arc-3 {
-  inset: 14%;
-  border-width: 2px;
-  opacity: 0.55;
-  animation-duration: calc(var(--voice-spin) * 0.72);
-  background:
-    conic-gradient(
-        from 280deg,
-        transparent 0deg,
-        var(--arc-b) 80deg,
-        var(--arc-a) 180deg,
-        transparent 320deg
-      )
-      border-box;
-}
-@keyframes voice-spin {
-  to {
-    rotate: 1turn;
-  }
-}
-/* Стеклянная середина: чуть светлее фона, с бликом сверху. */
-.voice-glass {
-  position: absolute;
-  inset: 17%;
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 34% 26%, var(--n-100-a90) 0%, var(--n-100-a0) 52%),
-    radial-gradient(circle at 50% 60%, var(--n-100-a55) 0%, var(--violet-97-a25) 100%);
-}
-/* Волны рисует голос — canvas лежит поверх стекла, внутри кольца. */
-.voice-waves {
-  position: absolute;
-  inset: 17%;
-  width: 66%;
-  height: 66%;
-  border-radius: 50%;
-}
-.voice-phase {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--voice-ink);
-  transition: color 0.8s ease;
-}
-/* Мелкий эквалайзер: короткий признак того, что микрофон открыт. */
-.voice-meter {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  height: 30px;
-}
-.voice-bar {
-  width: 4px;
-  height: 6px;
-  border-radius: 99px;
-  background: var(--voice-ink);
-  opacity: 0.7;
-}
-.voice-bar:nth-child(4) {
-  width: 5px;
-  opacity: 1;
-}
-.voice-bar:nth-child(3),
-.voice-bar:nth-child(5) {
-  opacity: 0.85;
-}
-
-/* Отвечает — кольцо теплеет и раскручивается заметнее. */
-.voice-stage[data-state="speaking"] {
-  --voice-ink: var(--blue-63);
-  --arc-a: var(--blue-87);
-  --arc-b: var(--blue-84);
-  --arc-c: var(--blue-95);
-  --voice-spin: 17s;
-}
-.voice-stage[data-state="thinking"] {
-  --voice-ink: var(--violet-59);
-  --arc-a: var(--violet-81);
-  --arc-b: var(--violet-88);
-  --voice-spin: 11s;
-}
-/* Спит: цвет уходит в серый, кольцо поджимается и почти замирает — микрофон в
-   этот момент выключен, и комнату разговор не слышит. */
-.voice-stage[data-state="sleeping"] {
-  --voice-ink: var(--violet-69);
-  --arc-a: var(--violet-89);
-  --arc-b: var(--violet-91);
-  --arc-c: var(--n-94-2);
-  --arc-d: var(--n-94-3);
-  --voice-spin: 70s;
-}
-.voice-stage[data-state="sleeping"] .voice-orb {
-  transform: scale(0.82);
-}
-.voice-stage[data-state="sleeping"] .voice-halo {
-  opacity: 0.25;
-}
-
-/* ── живой разговор во весь экран ────────────────────────────────────────── */
-/* Пока идёт разговор, остального интерфейса не видно: шапка разговора, кольцо,
-   подпись и строка ввода. Так же ведёт себя голосовой режим в телефоне. */
-html.voice-live-open,
-body.voice-live-open {
-  overflow: hidden;
-}
-.voice-panel.voice-live {
-  position: fixed;
-  /* Не inset: 0, а высота по живому вьюпорту: в мобильном браузере нижний край
-     «fixed» уходит под панель адреса, и подсказка с полем ввода прятались за
-     ней. dvh следит за тем, что видно прямо сейчас; vh остаётся для браузеров,
-     которые dvh не знают. Отступы снизу и сверху учитывают вырез и полосу
-     жеста, иначе текст ложится под них. */
-  inset: 0 0 auto;
-  height: 100vh;
-  height: 100dvh;
-  z-index: 20;
-  margin: 0;
-  padding: calc(22px + env(safe-area-inset-top, 0px)) 24px calc(26px + env(safe-area-inset-bottom, 0px));
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  /* Фон не белый: очень светлая сиренево-голубая дымка, на которой свет
-     кольца читается, а не тонет. */
-  background:
-    radial-gradient(90vmin 70vmin at 50% 34%, var(--violet-98) 0%, var(--violet-98-a0) 72%),
-    linear-gradient(168deg, var(--violet-96-2) 0%, var(--violet-96-3) 52%, var(--violet-96-4) 100%);
-  display: grid;
-  /* minmax(0, …), а не просто 1fr: иначе средняя строка держит свой
-     минимальный размер, и на низком окне подпись с полем ввода уезжает за
-     край — последняя строка обрезается пополам. */
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  animation: voice-live-enter 0.36s cubic-bezier(0.16, 1, 0.3, 1);
-}
-@keyframes voice-live-enter {
-  from {
-    opacity: 0;
-    transform: scale(0.98);
-  }
-}
-.voice-panel.voice-live .voice-head {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 12px;
-}
-/* minmax-порог колонок снимается явно: иначе «Обзор» и «Настройки» держат
-   ширину по своему тексту, шапка перестаёт влезать в узкий экран и утаскивает
-   вправо весь экран разговора. */
-.voice-panel.voice-live .voice-head > * {
-  min-width: 0;
-}
-.voice-head-tail {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  justify-content: flex-end;
-}
-.voice-round-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--violet-41);
-  font-size: 14px;
-  text-decoration: none;
-}
-.voice-round,
-.voice-panel.voice-live .voice-close {
-  display: grid;
-  place-items: center;
-  width: 42px;
-  height: 42px;
-  flex: none;
-  border: 1px solid var(--violet-67-a22);
-  border-radius: 14px;
-  background: var(--n-100-a75);
-  box-shadow: 0 6px 18px var(--violet-60-a12);
-  color: var(--violet-48);
-  transition:
-    background 0.3s ease,
-    color 0.3s ease,
-    border-color 0.3s ease;
-}
-.voice-round svg {
-  width: 19px;
-  height: 19px;
-}
-.voice-round-link:hover .voice-round,
-.voice-panel.voice-live .voice-close:hover {
-  background: var(--n-100);
-  border-color: var(--violet-58-a40);
-  color: var(--ink);
-}
-.voice-panel.voice-live .voice-close {
-  font-size: 15px;
-  cursor: pointer;
-  padding: 0;
-}
-/* Знак и имя по центру шапки: то же кольцо, что и на сцене, только крошечное. */
-.voice-brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0;
-  font-size: 21px;
-  font-weight: 800;
-  letter-spacing: -0.3px;
-  color: var(--ink);
-  white-space: nowrap;
-}
-.voice-brand-mark {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  border: 3px solid transparent;
-  background: conic-gradient(from 0deg, var(--blue-83), var(--violet-81), var(--blue-92), var(--pink-89), var(--blue-83)) border-box;
-  -webkit-mask:
-    linear-gradient(var(--n-0) 0 0) padding-box,
-    linear-gradient(var(--n-0) 0 0);
-  -webkit-mask-composite: xor;
-  mask:
-    linear-gradient(var(--n-0) 0 0) padding-box,
-    linear-gradient(var(--n-0) 0 0);
-  mask-composite: exclude;
-}
-/* Вне разговора шапка панели остаётся прежней строкой с крестиком. */
-.voice-panel:not(.voice-live) .voice-brand,
-.voice-panel:not(.voice-live) .voice-round-link {
-  display: none;
-}
-.voice-panel.voice-live .voice-stage {
-  align-content: center;
-  gap: 22px;
-  /* Если и ужатого круга много (совсем низкое окно), прокручивается сцена —
-     шапка и поле ввода при этом остаются на месте. */
-  min-height: 0;
-  overflow-y: auto;
-}
-/* На низком окне ужимается круг, а не текст: круг — украшение происходящего,
-   а подпись и поле ввода — само происходящее. На высоком экране 44vh больше
-   380px и ничего не меняет. */
-.voice-panel.voice-live .voice-orb {
-  width: min(52vmin, 380px, 44vh);
-  height: min(52vmin, 380px, 44vh);
-}
-.voice-panel.voice-live .voice-arc-1 { border-width: 11px; }
-.voice-panel.voice-live .voice-arc-2 { border-width: 7px; }
-.voice-panel.voice-live .voice-arc-3 { border-width: 4px; }
-.voice-panel.voice-live .voice-halo { filter: blur(34px); }
-.voice-panel.voice-live .voice-phase { font-size: 19px; }
-/* Сказанное остаётся строкой под кольцом — как подпись, а не как переписка. */
-/* Видно последнее сказанное, а не всю переписку: строки идут снизу вверх и
-   выше обрезаются. Маски нет — от неё короткая строка гасла целиком. */
-/* Под кольцом видно ровно последнее сказанное: строки идут снизу вверх, выше
-   обрезается. Это подпись к происходящему, а не переписка. */
-.voice-panel.voice-live .voice-log {
-  display: flex;
-  flex-direction: column-reverse;
-  align-items: center;
-  justify-content: flex-start;
-  height: 26px;
-  overflow: hidden;
-  margin: 0;
-  max-width: min(620px, 88vw);
-  text-align: center;
-  border: 0;
-  padding: 0;
-  background: none;
-  font-size: 16px;
-}
-.voice-panel.voice-live .voice-line {
-  max-width: 100%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.voice-panel.voice-live .voice-log:empty::before {
-  content: "Скажите, что записать — или спросите о прошлом";
-  color: var(--violet-70);
-}
-.voice-panel.voice-live .voice-line {
-  background: none;
-  padding: 2px 0;
-  color: var(--violet-46);
-}
-.voice-panel.voice-live .voice-line.voice-me {
-  color: var(--ink);
-}
-/* Имена инструментов человеку не нужны — нужен итог: что записано и куда. */
-.voice-panel.voice-live .voice-line.voice-tool {
-  display: none;
-}
-.voice-line.voice-done {
-  color: var(--green);
-}
-.voice-panel.voice-live .voice-line.voice-done {
-  color: var(--teal-54);
-  font-weight: 600;
-}
-/* Низ: широкая пилюля с микрофоном слева и отдельная круглая кнопка отправки. */
-.voice-panel.voice-live .voice-say {
-  position: relative;
-  max-width: 660px;
-  margin: 0 auto;
-  width: 100%;
-  gap: 12px;
-  border-top: 0;
-  padding-top: 0;
-}
-.voice-panel.voice-live .voice-input {
-  border: 1px solid var(--violet-67-a30);
-  border-radius: 999px;
-  background: var(--n-100-a72);
-  padding: 16px 22px 16px 52px;
-  font-size: 15px;
-  color: var(--ink);
-  box-shadow: 0 8px 24px var(--violet-60-a10);
-  transition:
-    background 0.3s ease,
-    border-color 0.3s ease;
-}
-.voice-panel.voice-live .voice-input::placeholder {
-  color: var(--violet-70);
-}
-.voice-panel.voice-live .voice-input:focus-visible {
-  outline: none;
-  background: var(--n-100);
-  border-color: var(--violet-58-a50);
-}
-/* Значок микрофона живёт внутри пилюли слева: в живом режиме он показывает,
-   что поле голосовое, без ключа — включает браузерное распознавание. */
-.voice-panel.voice-live .voice-listen {
-  position: absolute;
-  left: 11px;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: 0;
-  background: var(--violet-71-a16);
-  color: var(--violet-56);
-}
-.voice-panel.voice-live .voice-send {
-  width: 54px;
-  height: 54px;
-  flex: none;
-  border: 1px solid var(--violet-67-a30);
-  border-radius: 50%;
-  background: var(--n-100-a72);
-  box-shadow: 0 8px 24px var(--violet-60-a12);
-  color: var(--violet-41);
-  font-size: 18px;
-  transition:
-    background 0.3s ease,
-    color 0.3s ease;
-}
-.voice-panel.voice-live .voice-send:hover {
-  background: var(--n-100);
-  color: var(--ink);
-}
-.voice-panel.voice-live .voice-hint {
-  max-width: 560px;
-  margin: 12px auto 0;
-  text-align: center;
-  color: var(--violet-64);
-  font-size: 13px;
-}
-
-/* На телефоне шапка разговора остаётся значками: подпись рядом с круглой
-   кнопкой — первое, что перестаёт влезать, а часы и шестерёнка понятны и без
-   слова. Ужимается заодно всё, что меряется пикселями: сами кнопки, знак и
-   поля экрана. */
-@media (max-width: 560px) {
-  .voice-panel.voice-live {
-    padding: calc(16px + env(safe-area-inset-top, 0px)) 14px calc(18px + env(safe-area-inset-bottom, 0px));
-  }
-  .voice-panel.voice-live .voice-head {
-    gap: 8px;
-  }
-  .voice-panel.voice-live .voice-round-label {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-  }
-  .voice-panel.voice-live .voice-round,
-  .voice-panel.voice-live .voice-close {
-    width: 38px;
-    height: 38px;
-    border-radius: 12px;
-  }
-  .voice-panel.voice-live .voice-head-tail {
-    gap: 8px;
-  }
-  .voice-panel.voice-live .voice-brand {
-    font-size: 18px;
-    gap: 8px;
-  }
-  .voice-panel.voice-live .voice-brand-mark {
-    width: 22px;
-    height: 22px;
-    border-width: 2.5px;
-  }
-  .voice-panel.voice-live .voice-hint {
-    font-size: 12px;
-    margin-top: 10px;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .voice-arc {
-    animation: none;
-  }
-  .voice-orb {
-    transition: none;
-  }
-  .voice-panel.voice-live {
-    animation: none;
-  }
-}
-
-.voice-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-/* Состояние разговора видно на орбе, а строка в шапке осталась ради
-   скринридера: два одинаковых заголовка рядом — это шум, а не забота. */
-.voice-status {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: 0;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-}
-.voice-close {
-  border: 0;
-  background: none;
-  color: var(--n-82);
-  cursor: pointer;
-  font-size: 13px;
-  padding: 2px 4px;
-  border-radius: 6px;
-}
-.voice-close:hover {
-  color: var(--ink);
-  background: var(--hairline);
-}
-.voice-log {
-  display: grid;
-  gap: 6px;
-  max-height: 220px;
-  overflow-y: auto;
-  margin: 10px 0;
-  font-size: 13.5px;
-}
-.voice-log:empty {
-  display: none;
-}
-.voice-line {
-  margin: 0;
-  padding: 6px 10px;
-  border-radius: 10px;
-}
-.voice-me {
-  background: var(--tint-todo);
-  color: var(--ink);
-  justify-self: end;
-  max-width: 85%;
-}
-.voice-bot {
-  background: var(--hairline);
-  color: var(--ink);
-  max-width: 92%;
-}
-.voice-tool {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  color: var(--muted);
-  padding: 2px 8px;
-}
-.voice-say {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  border-top: 1px solid var(--hairline);
-  padding-top: 10px;
-}
-.voice-input {
-  flex: 1;
-  font: inherit;
-  font-size: 14px;
-  border: 0;
-  outline: 0;
-  background: none;
-  color: var(--ink);
-  padding: 6px 2px;
-}
-.voice-input::placeholder {
-  color: var(--n-79);
-}
-.voice-listen {
-  flex: none;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 0;
-  border-radius: 99px;
-  background: none;
-  color: var(--n-82);
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-  transition:
-    color 0.15s,
-    background 0.15s;
-}
-.voice-listen svg {
-  width: 16px;
-  height: 16px;
-}
-.voice-listen:hover {
-  color: var(--muted);
-  background: var(--hairline);
-}
-.voice-listen[aria-pressed="true"] {
-  color: var(--n-100);
-  background: var(--type-auto);
-  animation: voice-pulse 1.4s ease-in-out infinite;
-}
-@keyframes voice-pulse {
-  50% {
-    opacity: 0.72;
-  }
-}
-.voice-send {
-  border: 0;
-  background: var(--type-auto);
-  color: var(--n-100);
-  border-radius: 99px;
-  font: inherit;
-  font-weight: 700;
-  padding: 7px 13px;
-  cursor: pointer;
-  line-height: 1;
-}
-.voice-hint {
-  margin: 8px 0 0;
-  font-size: 11.5px;
-  color: var(--muted);
-}
-.voice-hint:empty {
-  display: none;
-}
-
-/* ── кнопка «развернуть»: тихий кубик рядом с отправкой ── */
-.capture-expand {
-  flex: none;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
-  background: none;
-  color: var(--n-82);
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-  transition:
-    color 0.15s,
-    background 0.15s;
-}
-.capture-expand svg {
-  width: 16px;
-  height: 16px;
-}
-.capture-expand:hover {
-  color: var(--muted);
-  background: var(--hairline);
-}
-.capture-expand:active {
-  transform: scale(0.92);
-}
-.capture-expand .ic-collapse {
-  display: none;
-}
-.capture-large .capture-expand {
-  color: var(--muted);
-}
-.capture-large .capture-expand .ic-expand {
-  display: none;
-}
-.capture-large .capture-expand .ic-collapse {
-  display: block;
-}
-
-/* ── лист: карточка выходит на передний план и вписывается в окно ── */
-/* Пропорция листа (1 : 1.3 — чуть шире A4) считается от высоты окна, а когда
-   окно узкое — от ширины: лист всегда целиком виден, без прокрутки страницы. */
-body.capture-large-open {
-  overflow: hidden;
-}
-body.capture-large-open::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 8;
-  background: var(--n-23-a28);
-  backdrop-filter: blur(2px);
-  animation: capture-backdrop 0.24s ease-out;
-}
-@keyframes capture-backdrop {
-  from {
-    opacity: 0;
-  }
-}
-.capture.capture-large {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  z-index: 9;
-  height: min(92vh, calc((100vw - 120px) * 1.3));
-  width: min(calc(92vh / 1.3), calc(100vw - 120px));
-  max-width: none;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 40px 90px var(--n-23-a22);
-  transform: translate(-50%, -50%);
-}
-.capture.capture-large .body,
-.today-page .capture.capture-large .body {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-}
-.today-page .capture.capture-large .md-field {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  /* Чуть крупнее обычного поля (15px), но без «плаката»: 18px с заголовками
-     в 24px читались как афиша, а не как документ. */
-  font-size: 16px;
-  line-height: 1.55;
-}
-@media (prefers-reduced-motion: reduce) {
-  body.capture-large-open::before {
-    animation: none;
-  }
-}
-/* На телефоне пропорция листа не нужна: важнее место под текст. */
-@media (max-width: 760px) {
-  .capture.capture-large {
-    height: calc(100dvh - 32px);
-    width: calc(100vw - 24px);
-  }
-  .today-page .capture.capture-large .md-field {
-    font-size: 17px;
-  }
-}
-
-.foot-sep {
-  width: 1px;
-  height: 18px;
-  background: var(--hairline);
-  margin: 0 4px;
-  flex: none;
 }
 #capture-submit,
 .memory button {
@@ -1899,17 +1000,6 @@ body.capture-large-open::before {
   background: var(--tint-late);
   color: var(--red-50);
   font-weight: 600;
-}
-/* «Ещё N» — честная граница превью: видно, что список длиннее, и куда идти. */
-.preview-more {
-  display: inline-block;
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--muted);
-  text-decoration: none;
-}
-.preview-more:hover {
-  color: var(--ink);
 }
 .entry-meta .tag.undated {
   background: var(--hairline);
@@ -2784,10 +1874,6 @@ dialog form > div {
     justify-content: flex-start;
     gap: 14px;
   }
-  .ai-menu {
-    order: 3;
-    margin-left: auto;
-  }
   .dashboard,
   .memory,
   .settings,
@@ -2814,81 +1900,6 @@ dialog form > div {
 .memory button:disabled {
   cursor: wait;
   opacity: 0.65;
-}
-
-/* ── метки типов в подвале: точка, активная раскрывается в подпись ── */
-.type-dots {
-  display: flex;
-  gap: 3px;
-  align-items: center;
-  flex: none;
-}
-.type-dot {
-  position: relative;
-  height: 28px;
-  min-width: 28px;
-  border-radius: 99px;
-  border: 0;
-  background: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 9px;
-  font: inherit;
-  color: var(--c);
-}
-.type-dot .mark {
-  width: 10px;
-  height: 10px;
-  border-radius: 99px;
-  background: var(--c);
-  flex: none;
-  transition: transform 0.15s;
-}
-.type-dot:hover .mark {
-  transform: scale(1.25);
-}
-.type-dot .label {
-  max-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  font-size: 11.5px;
-  font-weight: 700;
-  color: var(--c);
-  transition:
-    max-width 0.22s ease,
-    margin-left 0.22s ease;
-}
-.type-dot:hover .label,
-.type-dot[aria-selected="true"] .label {
-  max-width: 84px;
-  margin-left: 7px;
-}
-.type-dot[aria-selected="true"] {
-  background: var(--tint);
-}
-.type-dot[aria-selected="true"] .mark {
-  transform: none;
-}
-
-/* ── строка параметров ТУДУ ── */
-.todo-line {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
-  align-items: center;
-  margin-top: 8px;
-  padding: 2px 3px 0;
-  font-size: 12.5px;
-  color: var(--n-72);
-  animation: todo-line-enter 0.18s ease-out;
-}
-@keyframes todo-line-enter {
-  from {
-    opacity: 0;
-    transform: translateY(-2px);
-  }
 }
 .ghost {
   border: 0;
@@ -2917,105 +1928,6 @@ dialog form > div {
 .ghost.prio-low[aria-pressed="true"] {
   color: var(--blue-54-2);
   background: var(--tint-note);
-}
-.todo-line .sep {
-  color: var(--n-91);
-  margin: 0 6px;
-  user-select: none;
-}
-.picker-anchor {
-  position: relative;
-  display: inline-flex;
-}
-.picker-anchor input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  pointer-events: none;
-  border: 0;
-  padding: 0;
-}
-
-/* ── теги в подвале ── */
-.tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  font-size: 12px;
-  position: relative;
-  flex: 1;
-  min-width: 110px;
-}
-.tag-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: var(--tint-note);
-  border: 1px solid var(--blue-92-2);
-  color: var(--blue-45);
-  border-radius: 7px;
-  padding: 3px 5px 3px 8px;
-  font-size: 11.5px;
-  font-weight: 600;
-}
-.tag-chip button {
-  border: 0;
-  background: none;
-  cursor: pointer;
-  color: inherit;
-  font: inherit;
-  font-size: 12px;
-  line-height: 1;
-  opacity: 0.5;
-  padding: 0 1px;
-}
-.tag-chip button:hover {
-  opacity: 1;
-}
-.tag-input {
-  font: inherit;
-  font-size: 12px;
-  border: 0;
-  outline: 0;
-  background: none;
-  min-width: 80px;
-  flex: 1;
-  color: var(--ink);
-  padding: 4px 2px;
-}
-.tag-input::placeholder {
-  color: var(--n-81);
-}
-.tag-suggest {
-  position: absolute;
-  z-index: 7;
-  bottom: 100%;
-  display: grid;
-  gap: 1px;
-  min-width: 168px;
-  padding: 6px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--n-100);
-  box-shadow: 0 10px 28px var(--orange-21-a10);
-}
-.tag-suggest button {
-  font: inherit;
-  font-size: 12.5px;
-  text-align: left;
-  cursor: pointer;
-  border: 0;
-  background: none;
-  color: var(--ink);
-  padding: 6px 9px;
-  border-radius: 7px;
-}
-.tag-suggest button:hover,
-.tag-suggest button.cursor {
-  background: var(--wash);
 }
 .capture-notifications {
   position: fixed;
@@ -3132,10 +2044,12 @@ dialog form > div {
 .today-page .capture {
   padding: 16px;
 }
-/* Высота поля — своя у каждого: нижний край карточки тянется, выбор хранится
-   в браузере и приходит сюда переменной. */
+/* Поле растёт вместе с текстом: две строки в покое, до сорока процентов
+   высоты окна — дальше прокрутка внутри. */
 .today-page .md-field {
-  min-height: var(--capture-height, 150px);
+  min-height: 3.4em;
+  max-height: 40vh;
+  overflow-y: auto;
   font-size: 17px;
 }
 .today-page .capture #capture-submit {
@@ -3169,7 +2083,7 @@ dialog form > div {
     font-size: 13px;
   }
   .today-page .md-field {
-    min-height: var(--capture-height, 112px);
+    min-height: 3.4em;
   }
   .today-page .dashboard {
     grid-template-columns: minmax(0, 1fr);
@@ -7196,9 +6110,7 @@ main:has(> #board:not([hidden])) { max-width: none; padding-left: 0; padding-rig
 :root[data-font="mono"] .card-title-edit {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
-:root[data-text="small"] .md-field,
-:root[data-text="small"] .today-page .capture.capture-large .md-field,
-:root[data-text="small"] .md-block { font-size: 13.5px; }
+:root[data-text="small"] .md-field, :root[data-text="small"] .md-block { font-size: 13.5px; }
 
 /* ── Календарь: вид «Доски» ──────────────────────────────────────────────────
    Та же панель, что колонка на доске: рамка, скругление, тихий фон. Свои дела
@@ -7616,29 +6528,22 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 .card-delete-ask button.danger { color: var(--red-50); }
 .card-delete-ask button:disabled { opacity: 0.5; cursor: default; }
 
-/* ── «Сегодня»: обложка по часам, полоса дней, три ящика ─────────────────────
+/* ── «Сегодня»: обложка по часам и два списка ────────────────────────────────
    Дата с фазой суток, бриф и вопрос в поле меняются утром, днём, вечером и
-   ночью. Под полем — полоса дней и три ящика: «Что делал», «День», где дела
-   лежат вместе с календарём, и «Заметки» дня. Колонок на главной больше нет. */
-/* Ширина карточки ввода — своя у каждого: тянется за боковые края, выбор
-   хранится в браузере и приходит сюда переменной. */
-.today-page .hero { max-width: var(--capture-width, 800px); margin: 0 auto 8px; }
-/* Ручкам нужна опора, но только у карточки на месте: у листа своё
-   `position: fixed` выше в файле, и правило для всех карточек перебило бы его. */
-.today-page .capture:not(.capture-large) { position: relative; }
-.today-page .capture.resizing { user-select: none; }
-/* Ручки: невидимые полосы вдоль краёв и квадраты в нижних углах; о том, что
-   край тянется, говорит только курсор. */
-.capture-resize { position: absolute; z-index: 1; touch-action: none; user-select: none; }
-.capture-resize[data-dir="s"] { left: 14px; right: 14px; bottom: -4px; height: 9px; cursor: ns-resize; }
-.capture-resize[data-dir="e"] { top: 14px; bottom: 14px; right: -4px; width: 9px; cursor: ew-resize; }
-.capture-resize[data-dir="w"] { top: 14px; bottom: 14px; left: -4px; width: 9px; cursor: ew-resize; }
-.capture-resize[data-dir="se"] { right: -4px; bottom: -4px; width: 18px; height: 18px; cursor: nwse-resize; }
-.capture-resize[data-dir="sw"] { left: -4px; bottom: -4px; width: 18px; height: 18px; cursor: nesw-resize; }
-.capture.capture-large .capture-resize { display: none; }
-@media (max-width: 760px) {
-  .capture-resize[data-dir="e"], .capture-resize[data-dir="w"], .capture-resize[data-dir="se"], .capture-resize[data-dir="sw"] { display: none; }
-}
+   ночью. Под полем — «Сегодня» (дела вместе с календарём) и «Что делал»
+   (закрытое сегодня и прошедшие встречи). */
+.today-page .hero { max-width: 800px; margin: 0 auto 8px; }
+.capture-hint { font-size: 11.5px; color: var(--n-66); }
+.capture-foot #capture-submit { margin-left: auto; }
+/* Заголовок полки: тихие капсы и тонкая линия до края. «Что делал» зелёный —
+   это уже сделано. */
+.shelf-head { display: flex; align-items: center; gap: 8px; margin: 22px 2px 6px; font-size: 11px; font-weight: 650; letter-spacing: 0.08em; text-transform: uppercase; color: var(--n-66); }
+.shelf-head::after { content: ""; flex: 1; height: 1px; background: var(--hairline); }
+.shelf-head.done, .shelf-head.done a { color: var(--green); }
+.shelf-head a { display: inline-flex; gap: 8px; color: inherit; text-decoration: none; }
+.shelf-head a:hover { text-decoration: underline; }
+.shelf-n { font-variant-numeric: tabular-nums; }
+.shelf-n:empty { display: none; }
 .today-date { margin: 0 0 8px; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--n-66); }
 .today-phase.morning { color: var(--yellow-51); }
 .today-phase.day { color: var(--blue-61); }
@@ -7658,25 +6563,10 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 .today-brief { margin: 0 auto 22px; max-width: 560px; font-size: 15px; line-height: 1.55; color: var(--n-52); text-wrap: balance; }
 .today-brief b { color: var(--ink); font-weight: 650; }
 .today-brief a { color: var(--red-66); font-weight: 650; text-decoration: none; border-bottom: 1px solid var(--red-83); }
-.daynav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; }
-.daynav-step { border: 0; background: none; font: inherit; font-size: 12px; font-weight: 600; color: var(--n-52); cursor: pointer; padding: 6px 8px; border-radius: 99px; display: inline-flex; align-items: center; gap: 6px; }
-.daynav-step:hover { background: var(--n-96); color: var(--ink); }
-.daynav-arrow { font-style: normal; font-size: 16px; line-height: 1; color: var(--n-72); }
-.daynav-date { text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; }
-.daynav-current { text-align: center; font-size: 13px; display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; }
-.daynav-current b { font-weight: 700; }
-.daynav-mark { font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--red-66); }
-.daynav-today { border: 0; background: none; font: inherit; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--red-66); cursor: pointer; padding: 2px 8px; border-radius: 99px; }
-.daynav-today:hover { background: var(--red-97); }
 /* Ящики той же ширины, что карточка ввода: растянул или сузил карточку —
    списки под ней идут следом, и всё стоит одним столбцом. */
-.drawers { max-width: var(--capture-width, 800px); margin: 0 auto; }
-.drawer-tabs { display: flex; justify-content: center; gap: 6px; margin: 10px 0 0; flex-wrap: wrap; }
-.drawer-tab { border: 1px solid transparent; background: none; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--n-52); padding: 7px 12px; border-radius: 99px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
-.drawer-tab b { color: var(--ink); font-weight: 700; }
-.drawer-tab em { font-style: normal; color: var(--red-50); font-weight: 600; }
-.drawer-tab[aria-selected="true"] { border-color: var(--n-92); background: var(--n-100); color: var(--ink); }
-.drawer { margin-top: 16px; text-align: left; gap: 6px; }
+.drawers { max-width: 800px; margin: 0 auto; }
+.drawer { margin-top: 0; text-align: left; gap: 6px; }
 .drawer .entry, .drawer .entry:first-child { padding: 11px 12px; border-top: 0; border-radius: 12px; background: var(--n-98-4); font-size: 12px; }
 .drawer .entry-meta { font-size: 10px; }
 .drawer .entry-actions { gap: 7px; margin-top: 7px; }
@@ -7781,10 +6671,7 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 .day-own { padding: 10px 12px; border-radius: 12px; background: var(--n-98-4); font-size: 12px; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
 .day-own-title { font-weight: 650; }
 .day-own.done .day-own-title { color: var(--n-62); text-decoration: line-through; }
-.drawer .preview-more { display: inline-block; margin-top: 6px; font-size: 12px; color: var(--muted); text-decoration: none; }
-.drawer .preview-more:hover { color: var(--ink); }
 @media (max-width: 480px) {
-  .daynav-current { font-size: 12px; }
   .day-row { grid-template-columns: 38px minmax(0, 1fr); gap: 6px; }
 }
 
@@ -9188,3 +8075,17 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0; }
   .kc-menu.kc-talks-menu { left: 8px; right: 8px; width: auto; }
   .kc-alone { padding-top: 16px; }
 }
+
+/* Встреча, закрывшаяся сама по календарю: пунктирный зелёный кружок, руками не
+   возвращается. Старая запись «сделал X» без дела внутри — кружок без нажатия. */
+.completion-button.auto { border-style: dashed; border-color: var(--green); background: var(--tint-done, transparent); cursor: default; }
+.completion-button.auto::before { color: var(--green); }
+.completion-button.static { cursor: default; }
+.entry.auto-done { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: 9px; padding: 6px 8px; font-size: 12.5px; }
+.entry.auto-done .entry-title { font-weight: 500; color: var(--n-62); text-decoration: line-through; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.entry.completed .entry-title { color: var(--n-62); text-decoration: line-through; }
+.entry-meta .tag.time { background: none; color: var(--n-62); font-variant-numeric: tabular-nums; }
+.entry-meta .tag.auto { background: none; color: var(--green); }
+.entry-people { display: inline-flex; margin-left: 2px; }
+.entry-people .ava.mini { margin-left: -4px; box-shadow: 0 0 0 2px var(--paper); }
+.entry-people .ava.mini:first-child { margin-left: 0; }

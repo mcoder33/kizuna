@@ -29,13 +29,11 @@ async function capture(page, raw) {
 // страница видит один и тот же день — 13:00, фаза «день». Таймеры при этом
 // идут как обычно.
 const dayAt = (hour) => { const at = new Date(); at.setHours(hour, 0, 0, 0); return at; };
-// Дела и встречи на другой день живут в своём дне: стрелки по дням внутри
-// ящика «День». Смещение считается от сегодняшнего дня.
-async function showDay(page, offset) {
-  const back = page.locator('#todo .daynav [data-view="0"]');
-  if (await back.count()) await back.click();
-  const step = page.locator(`#todo .daynav [data-step="${offset > 0 ? 1 : -1}"]`);
-  for (let i = 0; i < Math.abs(offset); i += 1) await step.click();
+// Дело на другой день с «Сегодня» уходит: там только сегодняшнее, просроченное
+// и то, что без срока. Оно лежит на доске и в /api/entries.
+async function entryByRaw(page, raw) {
+  const entries = await (await page.request.get("/api/entries")).json();
+  return entries.entries.find((entry) => entry.raw.includes(raw));
 }
 test.beforeEach(async ({ page, request }) => {
   await request.post("/api/reset", {
@@ -47,40 +45,41 @@ test("async capture shows a short success notification and adds the entry to the
   page,
 }) => {
   await page.goto("/");
-  // В шапке остались обе двери: быстрый выбор модели и шестерёнка во все
-  // настройки.
-  await expect(page.locator("#ai-summary")).toHaveText("fast");
+  // В шапке три двери и шестерёнка: Круги, Календарь, «?» и меню модели ушли.
+  await expect(page.locator("header nav a")).toHaveText(["Сегодня", "Доска", "Заметки"]);
   await expect(page.locator(".settings-link")).toHaveAttribute("href", "#settings");
-  await page.locator(".ai-menu summary").click();
-  await expect(page.getByText("Выбран: OpenRouter")).toBeVisible();
-  await expect(page.locator(".ai-menu-more")).toHaveAttribute("href", "#settings");
-  await page.locator(".ai-menu summary").click();
+  await expect(page.locator(".ai-menu, .help-link")).toHaveCount(0);
   await capture(page, "Завтра в 11 созвон по Hub");
   await expect(page.locator("#capture-notifications")).toContainText("Готово");
-  await showDay(page, 1);
-  await expect(page.locator("#todo")).toContainText("созвон по Hub");
+  // Единственный ответ на запись: что легло и на какой день.
+  await expect(page.locator("#toast")).toContainText(/Легло: «.*созвон по Hub.*» · завтра/i);
+  // Дело на завтра с сегодняшнего списка ушло, но в журнале есть.
+  await expect(page.locator("#todo")).not.toContainText(/созвон по Hub/i);
+  expect(await entryByRaw(page, "созвон по Hub")).toBeTruthy();
   await page.screenshot({ path: "tmp/screenshots/async-capture-ready.png" });
 });
 test("medium-confidence Codex classification remains visible in Plan", async ({ page }) => {
-  await page.goto("/");
-  await page.locator(".ai-menu summary").click();
+  // Провайдера разбора выбирают в настройках, а не в шапке.
+  await page.goto("/#settings");
   await page.getByLabel("Провайдер ИИ").selectOption("codex-cli");
+  await page.goto("/#today");
   await capture(page, "Завтра в 11 созвон по Hub");
-  // Заглушка Codex не разбирает срок: встреча без даты лежит в сегодняшнем дне.
+  // Заглушка Codex не разбирает срок: дело без даты лежит в сегодняшнем списке.
   await expect(page.locator("#todo")).toContainText("Созвон по Hub");
 });
-test("success notification disappears without shifting the drawers under the field", async ({
+test("success notification disappears without shifting the lists under the field", async ({
   page,
 }) => {
   await page.goto("/");
-  const drawersTop = await page.locator(".drawers").evaluate((element) => element.getBoundingClientRect().top);
+  const listsTop = await page.locator(".today-lists").evaluate((element) => element.getBoundingClientRect().top);
   await capture(page, "Завтра в 12 встреча по Hub");
-  expect(await page.locator(".drawers").evaluate((element) => element.getBoundingClientRect().top)).toBe(drawersTop);
+  expect(await page.locator(".today-lists").evaluate((element) => element.getBoundingClientRect().top)).toBe(listsTop);
   await expect(page.locator("#capture-notifications .capture-notification")).toHaveCount(0, {
     timeout: 5000,
   });
-  // Под полем три ящика: «Что делал», «День» и «Заметки». Колонок больше нет.
-  await expect(page.locator(".drawer-tab")).toHaveCount(3);
+  // Под полем два списка: «Сегодня» и «Что делал». Вкладок и ящиков нет.
+  await expect(page.locator(".shelf-head")).toHaveText([/^Сегодня/, /^Что делал/]);
+  await expect(page.locator(".drawer-tab, .daynav")).toHaveCount(0);
 });
 test("notification stack is pinned to the viewport right edge on desktop", async ({
   page,
@@ -97,32 +96,24 @@ test("notification stack is pinned to the viewport right edge on desktop", async
     });
   expect(geometry.rightGap).toBeLessThanOrEqual(24);
 });
-test("today separates reported work, the day's plan and the day's notes", async ({
+test("today separates reported work from the day's open todos", async ({
   page,
 }) => {
   await page.goto("/");
   await capture(page, "доработал обновление контекста для Hub");
-  await expect(page.locator("#journal")).toContainText(
-    "доработал обновление контекста",
-  );
+  // «Доработал X» — туду, закрытая сразу: она в «Что делал», не в «Сегодня».
+  await expect(page.locator("#journal")).toContainText("доработал обновление контекста");
+  await expect(page.locator("#todo")).not.toContainText("доработал обновление контекста");
   await capture(page, "Завтра в 11 созвон по Hub");
-  // Завтрашняя встреча живёт в завтрашнем дне, а не в сегодняшнем списке.
+  // Завтрашнее дело живёт в завтрашнем дне, а не в сегодняшнем списке.
   await expect(page.locator("#todo")).not.toContainText("созвон по Hub");
-  await showDay(page, 1);
-  await expect(page.locator("#todo")).toContainText("созвон по Hub");
-  await showDay(page, 0);
-  // Заметка не попадает ни в сделанное, ни в дела: у неё свой ящик.
   await capture(page, "Сегодня посмотрел работу с голосовым ИИ");
-  await expect(page.locator("#journal")).not.toContainText("голосовым ИИ");
-  await expect(page.locator("#todo")).not.toContainText("голосовым ИИ");
+  // Любая запись — туду: даже наблюдение ложится в сегодняшний список.
   const entries = await (await page.request.get("/api/entries")).json();
   expect(entries.entries.some((entry) => entry.raw.includes("голосовым ИИ"))).toBe(true);
-  await expect(page.getByRole("tab", { name: /Что делал/ })).toBeVisible();
-  await expect(page.getByRole("tab", { name: /День/ })).toBeVisible();
-  await page.getByRole("tab", { name: /^Заметки/ }).click();
-  await expect(page.locator("#today-notes")).toContainText("голосовым ИИ");
-  await expect(page.locator("#today-notes")).not.toContainText("доработал обновление контекста");
-  expect(await page.locator("#attention").count()).toBe(0);
+  await expect(page.locator("#todo, #journal").filter({ hasText: "голосовым ИИ" })).toHaveCount(1);
+  await expect(page.locator(".shelf-head")).toHaveCount(2);
+  expect(await page.locator("#attention, #today-notes, .drawer-tab").count()).toBe(0);
   await page.evaluate(() => { location.hash = "#memory"; });
   await expect(page.locator("#memory")).toBeVisible();
   await expect(page.locator("#today")).toBeHidden();
@@ -149,12 +140,7 @@ test("запись с намерениями дробится на дела, и 
   await expect(notification).toContainText("«Допинываем бот детектор»");
   await expect(notification.getByRole("button", { name: "Убрать дела" })).toBeVisible();
 
-  // Дела живут в «Дне» обычными делами, а не строчками внутри чужой заметки.
-  const openTab = async (name) => {
-    const tab = page.getByRole("tab", { name });
-    if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
-  };
-  await openTab(/^День/);
+  // Дела живут в «Сегодня» обычными делами, а не строчками внутри чужой заметки.
   await expect(page.locator("#todo")).toBeVisible();
   const deal = page.locator("#todo .entry").filter({ hasText: "Допинываем бот детектор" });
   await expect(deal).toBeVisible({ timeout: 20000 });
@@ -167,7 +153,6 @@ test("запись с намерениями дробится на дела, и 
   await page.keyboard.press("Escape");
 
   // Исходная запись цела и помнит оба дела.
-  await openTab(/Что делал/);
   const source = page.locator("#journal .entry").filter({ hasText: "Созвонились по ВойсОпс" });
   await expect(source).toBeVisible();
   await source.locator(".entry-title").click();
@@ -190,74 +175,20 @@ test("пустой журнал предлагает первый шаг, и о�
   await expect(page.locator("#capture-notifications")).toContainText(text);
   await expect(start).toBeHidden({ timeout: 20000 });
 });
-// Обложка и список не говорят одно и то же: дата с брифом видны, только пока
-// оба ящика закрыты — иначе «Вторник, 15 сентября» стоит на экране дважды,
-// сверху и в полосе дней. Днём фаза открывает «День», поэтому страница
-// встречает списком.
-test("дата и бриф пропадают при раскрытом ящике и возвращаются, когда всё свёрнуто", async ({ page }) => {
+test("дата и бриф стоят над полем всегда, а полки идут под ним", async ({ page }) => {
   await page.goto("/");
   const brief = page.locator("#today-brief");
   const date = page.locator("#today-date");
-  const dayNavDate = page.locator("#todo .daynav b");
-  const dayTab = page.getByRole("tab", { name: /^День/ });
-  const journalTab = page.getByRole("tab", { name: /Что делал/ });
-  await expect(dayTab).toHaveAttribute("aria-selected", "true");
-  await expect(brief).toBeHidden();
-  await expect(date).toBeHidden();
-  // Дата на экране всё-таки есть — одна, в полосе дней раскрытого ящика.
-  await expect(dayNavDate).toBeVisible();
-  // Свернули — обложка вернулась на своё место, над полем ввода.
-  await dayTab.click();
   await expect(date).toBeVisible();
   await expect(brief).toBeVisible();
   await expect(brief).not.toHaveText("");
-  // Соседний ящик прячет их так же.
-  await journalTab.click();
-  await expect(date).toBeHidden();
-  await expect(brief).toBeHidden();
-  await journalTab.click();
-  await expect(date).toBeVisible();
-  await expect(brief).toBeVisible();
+  const field = page.getByLabel("Новая запись");
+  const top = async (locator) => (await locator.boundingBox()).y;
+  expect(await top(date)).toBeLessThan(await top(field));
+  expect(await top(field)).toBeLessThan(await top(page.locator("#shelf-today")));
+  expect(await top(page.locator("#shelf-today"))).toBeLessThan(await top(page.locator("#journal")));
 });
-// Стрелки уводят ящик в другой день, но переключение ящика — всегда «сегодня»:
-// закрыли, открыли соседний или вернулись — оба дня сегодняшние.
-test("переключение ящика возвращает оба дня на сегодня", async ({ page }) => {
-  await page.goto("/");
-  const dayTab = page.getByRole("tab", { name: /^День/ });
-  const journalTab = page.getByRole("tab", { name: /Что делал/ });
-  const dayLabel = page.locator("#tab-day .drawer-tab-label");
-  const journalLabel = page.locator("#tab-journal .drawer-tab-label");
-  const dayToday = page.locator("#todo .daynav .daynav-mark");
-  const journalToday = page.locator("#journal .daynav .daynav-mark");
-
-  // Ушли стрелкой в завтра: это видно и в ящике, и на самой вкладке.
-  await showDay(page, 1);
-  await expect(dayLabel).not.toHaveText("День");
-  await expect(dayToday).toHaveCount(0);
-
-  // Открыли соседний ящик — «День» уже вернулся на сегодня.
-  await journalTab.click();
-  await expect(journalToday).toBeVisible();
-  await expect(journalLabel).toHaveText("Что делал");
-  await expect(dayLabel).toHaveText("День");
-
-  // Теперь в другой день ушёл «Что делал» — и вернулся, когда открыли «День».
-  await page.locator('#journal .daynav [data-step="-1"]').click();
-  await expect(journalLabel).not.toHaveText("Что делал");
-  await dayTab.click();
-  await expect(dayToday).toBeVisible();
-  await expect(journalLabel).toHaveText("Что делал");
-
-  // Закрыли ящик — открытый снова показывает сегодня, а не тот день.
-  await page.locator('#todo .daynav [data-step="1"]').click();
-  await expect(dayToday).toHaveCount(0);
-  await dayTab.click();
-  await expect(page.locator("#todo")).toBeHidden();
-  await expect(dayLabel).toHaveText("День");
-  await dayTab.click();
-  await expect(dayToday).toBeVisible();
-});
-test("the day keeps tasks and meetings together; notes never land among them", async ({
+test("the day keeps every todo together; tomorrow's ones wait for their day", async ({
   page,
 }) => {
   const task = "Нужно подготовить контекст для Hub";
@@ -268,68 +199,12 @@ test("the day keeps tasks and meetings together; notes never land among them", a
   await capture(page, meeting);
   await capture(page, note);
   await expect(page.locator("#todo")).toContainText(task);
-  await expect(page.locator("#todo")).not.toContainText("голосовым ИИ");
-  await expect(
-    page.locator("#todo .completion-button").first(),
-  ).toBeVisible();
-  await showDay(page, 1);
-  await expect(page.locator("#todo")).toContainText(meeting);
-  await expect(page.locator("#todo")).not.toContainText("голосовым ИИ");
+  // Наблюдение — тоже туду на сегодня, у него есть кружок.
+  await expect(page.locator("#todo")).toContainText("голосовым ИИ");
+  await expect(page.locator("#todo .completion-button").first()).toBeVisible();
+  await expect(page.locator("#todo")).not.toContainText("созвон по Hub");
   expect(await page.locator(".calendar-block").count()).toBe(0);
-  // Заметка лежит в своём ящике — рядом с «Днём», а не среди дел.
-  await page.getByRole("tab", { name: /^Заметки/ }).click();
-  await expect(page.locator("#today-notes")).toContainText(note);
-  await expect(page.locator("#today-notes")).not.toContainText(task);
-  await expect(page.locator("#todo")).toBeHidden();
-});
-// «Заметки» устроены как «День»: число на вкладке, свои стрелки по дням, и из
-// строки открывается карточка записи.
-test("заметки дня лежат в своём ящике со стрелками по дням", async ({ page }) => {
-  const note = "Доступы к стенду лежат в хранилище";
-  await page.goto("/");
-  const notesTab = page.getByRole("tab", { name: /^Заметки/ });
-  const drawer = page.locator("#today-notes");
-  await expect(notesTab.locator("b")).toHaveText("0");
-  await capture(page, note);
-  await expect(notesTab.locator("b")).toHaveText("1");
-  await notesTab.click();
-  await expect(drawer.locator(".daynav .daynav-mark")).toBeVisible();
-  await expect(drawer.locator(".entry")).toHaveCount(1);
-  await expect(drawer).toContainText(note);
-  // Вчера заметок не было: ящик так и говорит, а вкладка называет день.
-  await drawer.locator('.daynav [data-step="-1"]').click();
-  await expect(drawer).toContainText("В этот день заметок не было.");
-  await expect(page.locator("#tab-notes .drawer-tab-label")).not.toHaveText("Заметки");
-  await drawer.locator(".daynav-today").click();
-  await expect(page.locator("#tab-notes .drawer-tab-label")).toHaveText("Заметки");
-  await drawer.locator(".entry-title").first().click();
-  await expect(page.locator("#review-dialog")).toBeVisible();
-});
-// Сделанной заметка не бывает: отметка «Сделано» в карточке делает её итогом,
-// и запись переезжает из «Заметок» в «Что делал».
-test("заметка, отмеченная «Сделано», становится итогом и переезжает в «Что делал»", async ({ page }) => {
-  const note = "Доступы к стенду лежат в хранилище";
-  await page.goto("/");
-  await capture(page, note);
-  await page.getByRole("tab", { name: /^Заметки/ }).click();
-  await page.locator("#today-notes .entry-title").first().click();
-  await expect(page.locator("#review-dialog")).toBeVisible();
-  const propsBar = page.locator(".props-bar");
-  if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
-  const type = page.locator("#review-primary-type");
-  const done = page.locator("#review-completed");
-  await expect(type).toHaveValue("note");
-  await done.click();
-  await expect(done).toHaveAttribute("aria-pressed", "true");
-  await expect(type).toHaveValue("outcome_decision");
-  // Назвали обратно заметкой — отметка снялась.
-  await type.selectOption("note");
-  await expect(done).toHaveAttribute("aria-pressed", "false");
-  await done.click();
-  await page.locator("#review-close").click();
-  await expect(page.locator("#today-notes")).not.toContainText(note);
-  await page.getByRole("tab", { name: /Что делал/ }).click();
-  await expect(page.locator("#journal .entry").filter({ hasText: note })).toContainText("результат");
+  await expect(page.locator("#today-count")).toHaveText("2");
 });
 test("TODO buffer keeps overdue incomplete items ahead of other open work", async ({
   page,
@@ -362,10 +237,10 @@ test("TODO buffer keeps overdue incomplete items ahead of other open work", asyn
   const firstTodo = page.locator("#todo .entry").first();
   await expect(firstTodo).toContainText(overdue);
   await expect(firstTodo).toHaveClass(/overdue/);
-  // «Просрочено» говорит заголовок полосы, а не каждая её строка: слово рядом с
-  // красным сроком было одним и тем же дважды.
-  await expect(page.locator("#todo .day-late .entry").first()).toContainText(overdue);
-  await expect(page.locator("#todo .day-group.late")).toContainText("просрочено");
+  // Просроченное стоит первым в общем списке, с чипом «со вчера», а не отдельной
+  // полкой.
+  await expect(firstTodo.locator(".tag.due.late")).toHaveText("со вчера");
+  await expect(page.locator("#todo .day-group")).toHaveCount(0);
 });
 test("reported meeting stays in Done without becoming an active plan item", async ({
   page,
@@ -376,7 +251,7 @@ test("reported meeting stays in Done without becoming an active plan item", asyn
   await expect(page.locator("#journal")).toContainText(raw);
   await expect(page.locator("#todo")).not.toContainText(raw);
 });
-test("completed reports, including ready wording, are Done while negated reports remain notes", async ({
+test("completed reports, including ready wording, are Done while negated reports stay open todos", async ({
   page,
 }) => {
   const completed = "Готово: обсудили план по Hub";
@@ -386,9 +261,10 @@ test("completed reports, including ready wording, are Done while negated reports
   await expect(page.locator("#journal")).toContainText(completed);
   await expect(page.locator("#todo")).not.toContainText(completed);
   await capture(page, negated);
-  // Отрицание — заметка: её нет ни в сделанном, ни в делах дня.
+  // Отрицание — не сделанное: заметок нет, запись остаётся открытым туду на
+  // сегодня и в «Что делал» не попадает.
+  await expect(page.locator("#todo")).toContainText(negated);
   await expect(page.locator("#journal")).not.toContainText(negated);
-  await expect(page.locator("#todo")).not.toContainText(negated);
 });
 test("async conflict keeps correction folded until the user asks to clarify", async ({
   page,
@@ -424,7 +300,7 @@ test("ambiguous async meeting has a compact clarification action", async ({
   await expect(page.locator("#review-primary-type")).toBeVisible();
   await expect(page.locator(".review-confidence")).toBeHidden();
 });
-test("user completion survives reload, is single-flight, and undo returns a meeting to work", async ({
+test("user completion survives reload, is single-flight, and undo returns a todo to work", async ({
   page,
 }) => {
   const raw = "Сегодня в 11 созвон по Hub для completion";
@@ -440,38 +316,34 @@ test("user completion survives reload, is single-flight, and undo returns a meet
     button.click();
     button.click();
   });
-  // Закрытая задача уходит с «Сегодня» и не попадает в дневник «Что делал»:
-  // дневник — это записи-отчёты, а закрытие задачи не отчёт.
+  // Закрытое дело уходит из «Сегодня» и встаёт в «Что делал» с временем закрытия.
   await expect(page.locator("#todo")).not.toContainText(raw);
-  await expect(page.locator("#journal")).not.toContainText(raw);
+  const closed = page.locator("#journal .entry").filter({ hasText: raw });
+  await expect(closed).toHaveCount(1);
+  await expect(closed.locator(".tag.time")).toHaveText(/^\d{2}:\d{2}$/);
   await page.screenshot({
     path: "tmp/screenshots/completion-ledger-fixture.png",
   });
-  // Закрытая встреча лежит хвостом списка дел в «Закрытых» и переживает
-  // перезагрузку — закрытие записано в данных, а не в состоянии страницы.
-  await page.goto("/#board?view=list");
-  const closedCard = page
-    .locator("#board-columns .board-column.closed .board-card")
-    .filter({ hasText: raw })
-    .first();
-  await expect(closedCard).toBeVisible();
+  // Закрытие записано в данных, а не в состоянии страницы: переживает перезагрузку.
   await page.reload();
-  await expect(closedCard).toBeVisible();
+  await expect(page.locator("#journal .entry").filter({ hasText: raw })).toHaveCount(1);
   const entries = await (await page.request.get("/api/entries")).json(),
     entry = entries.entries.find((candidate) => candidate.raw === raw),
     projection = entry.projections.find(
-      (candidate) => candidate.type === "meeting_event",
+      (candidate) => candidate.type === "task",
     );
   expect(projection.completion.completed).toBe(true);
+  expect(projection.completion.completedAt).toBeTruthy();
   // Двойной щелчок по «Вернуть в работу» — один запрос: кнопка гаснет сразу.
-  await closedCard
+  await page
+    .locator("#journal .entry")
+    .filter({ hasText: raw })
     .getByRole("button", { name: /Вернуть в работу/ })
     .evaluate((button) => {
       button.click();
       button.click();
     });
-  await expect(page.locator("#board-columns .board-column.closed")).toHaveCount(0);
-  await page.goto("/#today");
+  await expect(page.locator("#journal")).not.toContainText(raw);
   await expect(
     page
       .locator("#todo .entry")
@@ -504,8 +376,7 @@ test("an unavailable requested provider is labelled unavailable", async ({
   await page.addInitScript(() =>
     localStorage.setItem("pagent.ai-provider", "openai"),
   );
-  await page.goto("/");
-  await page.locator(".ai-menu summary").click();
+  await page.goto("/#settings");
   await expect(page.locator("#ai-status")).toContainText("OpenAI — недоступен");
 });
 test("reload resumes one pending poller without a second capture POST", async ({
@@ -792,7 +663,7 @@ test("provider selection has one stable listener after failed and repeated onlin
   await expect.poll(() => statusReads).toBe(2);
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
   await expect.poll(() => statusReads).toBe(3);
-  await page.locator(".ai-menu summary").click();
+  await page.evaluate(() => { location.hash = "#settings"; });
   await page.getByLabel("Провайдер ИИ").selectOption("fallback");
   await expect.poll(() => statusReads).toBe(4);
   expect(
@@ -896,14 +767,13 @@ test("a failed job keeps the raw capture and offers an explicit retry", async ({
     page.getByRole("button", { name: /Повторить/ }),
   ).toBeVisible();
 });
-test("correction from an upcoming card after reload is single-flight", async ({
+test("correction from a today card after reload is single-flight", async ({
   page,
 }) => {
-  const raw = "Завтра в 11 созвон по Hub";
+  const raw = "Сегодня в 11 созвон по Hub";
   await page.goto("/");
   await capture(page, raw);
   await page.reload();
-  await showDay(page, 1);
   await expect(page.locator("#todo")).toContainText("созвон по Hub");
   let corrections = 0;
   page.on("request", (request) => {
@@ -924,7 +794,7 @@ test("correction from an upcoming card after reload is single-flight", async ({
     button.click();
     button.click();
   });
-  await expect(page.locator("#todo")).toContainText("Свой проект");
+  await expect.poll(async () => (await entryByRaw(page, raw)).interpretation.classification.entities.projects).toContain("Свой проект");
   expect(corrections).toBe(1);
 });
 test("correction from a plan card after reload is single-flight and creates one version", async ({
@@ -952,10 +822,9 @@ test("correction from a plan card after reload is single-flight and creates one 
     button.click();
     button.click();
   });
-  await expect(page.locator("#todo")).toContainText("Attention проект");
-  const entries = await (await page.request.get("/api/entries")).json(),
-    entry = entries.entries.find((candidate) => candidate.raw === raw);
-  expect(entry.interpretation.version).toBe(2);
+  await expect.poll(async () => (await entryByRaw(page, raw)).interpretation.version).toBe(2);
+  const entry = await entryByRaw(page, raw);
+  expect(entry.interpretation.classification.entities.projects).toContain("Attention проект");
   expect(corrections).toBe(1);
 });
 test("memory disables controls while pending and restores them after the response", async ({
@@ -998,7 +867,7 @@ test("memory disables controls while pending and restores them after the respons
 test("mobile critical path has no horizontal overflow and keeps capture and corrections reachable", async ({
   page,
 }) => {
-  const raw = "Завтра в 11 созвон с Илья по Hub";
+  const raw = "Сегодня в 11 созвон с Илья по Hub";
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   expect(
@@ -1010,7 +879,6 @@ test("mobile critical path has no horizontal overflow and keeps capture and corr
   ).toBe(true);
   await capture(page, raw);
   await expect(page.locator("#capture-notifications")).toContainText(raw);
-  await showDay(page, 1);
   await expect(
     page
       .locator("#todo .entry")
@@ -1042,11 +910,9 @@ test("initial root load and legacy deck produce no console, page or resource err
   });
   await page.goto("/");
   await expect(page.getByLabel("Новая запись")).toBeVisible();
-  // На пустом поле главное действие — разговор: кнопка отправки появляется
-  // только вместе с текстом, поэтому на свежей странице ждём именно эту.
-  await expect(
-    page.getByRole("button", { name: "Поговорить с журналом" }),
-  ).toBeVisible();
+  // Кнопка отправки на месте всегда; кнопки разговора больше нет.
+  await expect(page.getByRole("button", { name: "Сохранить запись" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Поговорить с журналом" })).toHaveCount(0);
   await expect(page.locator('link[rel="icon"]')).toHaveAttribute(
     "href",
     /^data:image\/svg\+xml/,
@@ -1195,14 +1061,11 @@ test("карточки обновляются в реальном времени
   await expect(page.locator("#todo .entry")).toHaveCount(0, { timeout: 15000 });
 });
 
-// Карточка отвечает на «когда это было» и «к чему относится»: время записи
-// видно всегда, срок и проект — когда они есть.
-test("в «Дне» дело — строка без времени записи, в «Что делал» — карточка с ним", async ({ page, request }) => {
+test("в «Сегодня» дело — плотная строка без времени записи, в «Что делал» — со временем закрытия", async ({ page, request }) => {
   await page.goto("/");
   const created = await request.post("/api/captures", {
     data: {
       raw: "созвон по Hub",
-      primaryType: "todo",
       due: { date: "2026-08-27", time: "11:00" },
     },
   });
@@ -1210,76 +1073,67 @@ test("в «Дне» дело — строка без времени записи
   const entry = page.locator("#todo .entry").filter({ hasText: "созвон по Hub" }).first();
   await expect(entry).toBeVisible({ timeout: 15000 });
 
-  // В «Дне» строка плотная: проект и срок остаются, а слово «срок» и время
-  // записи — нет. Время записи повторялось у каждой из двенадцати строк и не
-  // отличало ни одну; отвечает на «когда это было» карточка.
-  await expect(entry.locator(".entry-meta .tag.project")).toHaveText("Hub");
-  await expect(entry.locator(".entry-meta .tag.due")).toHaveText("27.08, 11:00");
+  // Срок в прошлом: строка красная, с чипом «с 27 авг». Ни типа, ни проекта,
+  // ни тегов, ни времени записи в ней нет.
+  await expect(entry).toHaveClass(/dense/);
+  await expect(entry).toHaveClass(/overdue/);
+  await expect(entry.locator(".entry-meta .tag.due")).toHaveText("с 27 авг");
+  await expect(entry.locator(".entry-meta .tag.project, .entry-meta .tag.task")).toHaveCount(0);
   await expect(entry.locator(".entry-meta")).not.toContainText("срок:");
   await expect(entry.locator(".entry-meta")).not.toContainText(/сегодня, \d{2}:\d{2}/);
 
-  // Полная карточка осталась там, где записей немного: в «Что делал» время
-  // записи с днём на месте — на вопрос «когда это было» отвечает она.
-  const done = await request.post("/api/captures", {
-    data: { raw: "Сделали разбор по Hub", primaryType: "outcome" },
-  });
+  // «Сделали X» — туду, закрытая при записи: в «Что делал» она строкой с
+  // временем закрытия, а не временем записи с днём.
+  const done = await request.post("/api/captures", { data: { raw: "Сделали разбор по Hub" } });
   await page.reload();
-  await page.getByRole("tab", { name: /Что делал/ }).click();
   const card = page.locator("#journal .entry").filter({ hasText: "Сделали разбор по Hub" }).first();
   await expect(card).toBeVisible({ timeout: 15000 });
-  await expect(card).not.toHaveClass(/dense/);
-  await expect(card.locator(".entry-meta")).toContainText(/сегодня, \d{2}:\d{2}/);
+  await expect(card).toHaveClass(/dense/);
+  await expect(card).toHaveClass(/completed/);
+  await expect(card.locator(".entry-meta .tag.time")).toHaveText(/^\d{2}:\d{2}$/);
+  await expect(card.locator(".entry-meta")).not.toContainText(/сегодня, /);
 
   await request.delete(`/api/captures/${(await created.json()).entry.id}`);
   await request.delete(`/api/captures/${(await done.json()).entry.id}`);
 });
 
-// Просрочено или нет должно быть видно на карточке, а не вычисляться в уме:
-// у дела со сроком — состояние, у дела без срока — прямое «без срока».
-test("карточка говорит, просрочено дело или нет", async ({ page, request }) => {
+test("«Сегодня» говорит, просрочено дело или нет: чип «с 27 сен» и красная строка", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   await page.goto("/");
 
   // Сроки берём рядом с сегодняшним днём: далёкие даты приложение не принимает.
-  // Дни считаются в часовом поясе приложения, а не в UTC: после 20:00 UTC это
-  // уже разные даты, и «через три дня» уезжало на день мимо того дня, который
-  // открывает полоса дней, — проверка падала каждую ночь.
+  // Дни считаются в часовом поясе приложения, а не в UTC.
   const day = (shift) =>
     new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Samara", year: "numeric", month: "2-digit", day: "2-digit" })
       .format(new Date(Date.now() + shift * 86400000));
   const late = await request.post("/api/captures", {
-    data: { raw: "сдать отчёт", primaryType: "todo", due: { date: day(-3) } },
+    data: { raw: "сдать отчёт", due: { date: day(-3) } },
+  });
+  const yesterday = await request.post("/api/captures", {
+    data: { raw: "позвонить банку", due: { date: day(-1) } },
   });
   const soon = await request.post("/api/captures", {
-    data: { raw: "созвон по релизу", primaryType: "todo", due: { date: day(3) } },
+    data: { raw: "созвон по релизу", due: { date: day(3) } },
   });
   const undated = await request.post("/api/captures", {
-    data: { raw: "купить кофе", primaryType: "todo" },
+    data: { raw: "купить кофе" },
   });
 
   const card = (text) => page.locator("#todo .entry").filter({ hasText: text }).first();
   await expect(card("сдать отчёт")).toBeVisible({ timeout: 15000 });
   await expect(card("сдать отчёт")).toHaveClass(/overdue/);
-  // Просроченное лежит в своей полосе, и красный срок в строке — вторая
-  // половина того же: слово «просрочено» говорит заголовок полосы.
-  await expect(page.locator("#todo .day-late").filter({ hasText: "сдать отчёт" })).toHaveCount(1);
-  await expect(card("сдать отчёт").locator(".tag.due.late")).toHaveText(/\d{2}\.\d{2}/);
+  // Просроченное — обычная строка списка с чипом: «со вчера» или «с 27 сен».
+  await expect(card("позвонить банку").locator(".tag.due.late")).toHaveText("со вчера");
+  await expect(card("сдать отчёт").locator(".tag.due.late")).toHaveText(/^с \d{1,2} [а-я]+$/);
   await expect(card("сдать отчёт").locator(".tag.late:not(.due)")).toHaveCount(0);
 
-  // У дела без срока метки срока нет вовсе, и это читается как «без срока»
-  // ровно потому, что у дел со сроком она есть.
+  // Дело без срока сервер кладёт на сегодня: метки срока у него нет вовсе.
   await expect(card("купить кофе").locator(".tag.due")).toHaveCount(0);
   await expect(card("купить кофе")).toHaveClass(/dense/);
+  await expect(card("купить кофе")).not.toHaveClass(/overdue/);
 
-  // Дело со сроком через три дня живёт в своём дне полосы дней, а не в сегодняшнем.
+  // Дело со сроком через три дня в сегодняшнем списке не стоит.
   await expect(page.locator("#todo")).not.toContainText("созвон по релизу");
-  await showDay(page, 3);
-  // «В срок» в плотной строке не пишется: это состояние по умолчанию, и слово
-  // стояло бы у каждого непросроченного дела. Видно другое — срок не красный.
-  await expect(card("созвон по релизу").locator(".tag.due")).not.toHaveClass(/late/);
-  await expect(card("созвон по релизу").locator(".tag.late")).toHaveCount(0);
-  await expect(card("созвон по релизу")).not.toHaveClass(/overdue/);
-  await showDay(page, 0);
 
   // В самой карточке видно, когда запись сделана.
   await card("купить кофе").locator(".entry-title").click();
@@ -1293,15 +1147,11 @@ test("карточка говорит, просрочено дело или не
   expect(underlined).toBe(0);
   await page.locator("#review-close").click();
 
-  for (const response of [late, soon, undated])
+  for (const response of [late, yesterday, soon, undated])
     await request.delete(`/api/captures/${(await response.json()).entry.id}`);
 });
 
-// «День» начинается со встреч: пока они лежали под делами, до «что у меня в
-// 12:30» человек добирался через двенадцать строк. Просрочка под встречами не
-// тонет — она идёт своей полосой, а остальные дела лежат плотными строками, из
-// которых убрано то, что повторяется у каждой и ничего не различает.
-test("«День» показывает сначала встречи, потом просрочку, потом дела", async ({
+test("«Сегодня» — один список: просрочка, потом часы, потом дела без часа", async ({
   page,
   request,
 }) => {
@@ -1312,35 +1162,34 @@ test("«День» показывает сначала встречи, пото�
       .format(new Date(Date.now() + shift * 86400000));
   const created = [];
   for (const data of [
-    { raw: "сдать отчёт", primaryType: "todo", due: { date: day(-3) } },
-    { raw: "созвон с командой", primaryType: "todo", due: { date: day(0), time: "16:30" } },
-    { raw: "прибраться в заметках", primaryType: "todo" },
+    { raw: "прибраться в заметках" },
+    { raw: "созвон с командой", due: { date: day(0), time: "16:30" } },
+    { raw: "сдать отчёт", due: { date: day(-3) } },
   ])
     created.push(await request.post("/api/captures", { data }));
 
   const todo = page.locator("#todo");
   await expect(todo.locator(".entry")).toHaveCount(3, { timeout: 15000 });
-  // Порядок разделов — это и есть ответ на «что я вижу первым».
-  await expect(todo.locator(".day-group")).toHaveText(["по часам", "просрочено · 1", "на сегодня", "без срока · 1"]);
-  // Сегодняшнее без часа — пусто: полка говорит, что дело можно взять из запаса.
-  await expect(todo.locator(".day-shelf-empty")).toContainText("из запаса");
-  await expect(todo.locator(".entry").first()).toContainText("созвон с командой");
+  // Порядок и есть ответ на «что я вижу первым»: просроченное, потом строки с
+  // часом (перед ними — «сейчас»), потом дела без часа. Заголовков-полок внутри
+  // списка нет.
+  await expect(todo.locator(".entry")).toContainText([/сдать отчёт/, /созвон с командой/, /прибраться в заметках/]);
+  await expect(todo.locator(".day-group")).toHaveCount(0);
+  await expect(page.locator("#today-count")).toHaveText("3");
+  await expect(todo.locator(".now-mark")).toHaveCount(1);
 
-  // Просрочка — в своей полосе, а не строкой общего списка. Слово «просрочено»
-  // при ней больше не повторяется: его говорит заголовок полосы.
-  const late = todo.locator(".day-late .entry");
+  const late = todo.locator(".entry.overdue");
   await expect(late).toHaveCount(1);
   await expect(late).toContainText("сдать отчёт");
   await expect(late).not.toContainText("просрочено");
 
   // Плотная строка: ни «задача», ни «без срока», ни времени записи.
-  const row = todo.locator(".day-rows .entry").first();
+  const row = todo.locator(".entry").last();
   await expect(row).toHaveClass(/dense/);
-  await expect(row).toContainText("прибраться в заметках");
   await expect(row).not.toContainText("без срока");
   await expect(row).not.toContainText("задача");
 
-  // У встречи в её же часе срок не повторяется — время слева уже сказано.
+  // У дела в его же часе срок не повторяется — время слева уже сказано.
   await expect(todo.locator(".day-row .entry")).not.toContainText("срок");
 
   for (const response of created)
@@ -1383,30 +1232,26 @@ test("дела без срока показываются все, а ящик н
     await request.delete(`/api/captures/${(await response.json()).entry.id}`);
 });
 
-// Дела на другие дни живут в своих днях: в сегодняшнем списке их нет, но хвост
-// «Ещё N» их считает, а «Что делал» показывает всё записанное за день.
-test("future-dated tasks stay in their days while the tail counts them", async ({ page, request }) => {
+test("future-dated todos wait for their day: not in «Сегодня», on the board", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   await page.goto("/");
   for (const name of ["первое дело", "второе дело", "третье дело"])
     await request.post("/api/captures", {
-      data: { raw: name, primaryType: "todo", due: { date: "2026-12-31" }, priority: "high", tags: ["первый", "второй", "третий"] },
+      data: { raw: name, due: { date: "2026-12-31" }, priority: "high", tags: ["первый", "второй", "третий"] },
     });
   for (const name of ["раз", "два", "три", "четыре", "пять", "шесть", "семь"])
-    await request.post("/api/captures", { data: { raw: `Обсудили ${name}`, primaryType: "outcome" } });
-  const tail = page.locator("#todo .preview-more");
-  await expect(tail).toHaveText("Ещё 3 — весь список →", { timeout: 15000 });
-  await expect(tail).toHaveAttribute("href", "#board?view=list");
-  expect(await page.locator("#todo .entry").count()).toBe(0);
-  // Полный список — доска видом «Список», открывается этой же ссылкой.
-  await tail.click();
-  await expect(page.locator("#board")).toBeVisible();
-  await expect(page.locator("#board-columns")).toHaveClass(/list/);
-  await expect(page.locator("#board-columns .board-card")).toHaveCount(3);
-  await page.locator('nav a[href="#today"]').click();
-  await page.getByRole("tab", { name: /Что делал/ }).click();
+    await request.post("/api/captures", { data: { raw: `Обсудили ${name}` } });
+  // Семь «Обсудили …» — закрытые сразу туду: «Что делал» показывает все. Дел на
+  // декабрь в сегодняшнем списке нет и хвоста «Ещё N» тоже.
   await expect(page.locator("#journal .entry:visible")).toHaveCount(7, { timeout: 15000 });
-  await expect(page.locator("#todo")).toBeHidden();
+  expect(await page.locator("#todo .entry").count()).toBe(0);
+  await expect(page.locator("#todo .preview-more")).toHaveCount(0);
+  await expect(page.locator("#todo")).toContainText("Открытых дел нет");
+  await expect(page.locator("#done-count")).toHaveText("7");
+  // Будущие дела лежат на доске.
+  await page.locator('nav a[href="#board"]').click();
+  await expect(page.locator("#board")).toBeVisible();
+  await expect(page.locator("#board-columns .board-card").filter({ hasText: /первое|второе|третье/ })).toHaveCount(3);
 });
 
 // Настройки в приложении: раньше это правилось только в .env с перезапуском.
@@ -1419,66 +1264,35 @@ test("настройки меняются в приложении и приме�
   await expect(page.locator("#setting-openaiKey")).toHaveValue("");
   await expect(page.locator("#state-openaiKey")).toHaveText(/не настроен|••••/);
 
-  // Меняем поведение разговора и вид журнала.
-  await page.locator("#setting-sleepAfterSeconds").fill("60");
-  await page.locator("#setting-wakeWord").fill("журнал");
-  await page.locator("#setting-wakeWord").blur();
+  // Меняем напоминания и предел ответа модели.
+  await page.locator("#setting-remindHour").selectOption("08:00");
+  await page.locator("#setting-modelMaxTokens").fill("2048");
+  await page.locator("#setting-modelMaxTokens").blur();
   await expect(page.locator("#settings-status")).toHaveText("Сохранено");
 
   // Сохранилось на сервере само, без кнопки, — и не только на экране.
   await expect
     .poll(async () => {
       const saved = (await (await request.get("/api/settings")).json()).settings;
-      return [saved.sleepAfterSeconds, saved.wakeWord].join("|");
+      return [saved.remindHour, saved.modelMaxTokens].join("|");
     })
-    .toBe("60|журнал");
+    .toBe("08:00|2048");
 
   // Шесть дел — шесть строк в ящике: ничего не обрезается и не прячется.
   const created = [];
   for (const name of ["дело 1", "дело 2", "дело 3", "дело 4", "дело 5", "дело 6"])
-    created.push(await request.post("/api/captures", { data: { raw: name, primaryType: "todo" } }));
+    created.push(await request.post("/api/captures", { data: { raw: name } }));
   await page.locator('nav a[href="#today"]').click();
   await expect(page.locator("#todo .entry:visible")).toHaveCount(6, { timeout: 15000 });
 
-  // Новое слово пробуждения видно в подсказке разговора.
-  await page.locator("#capture-voice").click();
-  await expect(page.locator("#voice-hint")).toContainText("Ключа нет");
-
   // Возвращаем как было и убираем записи.
   await request.put("/api/settings", {
-    data: { sleepAfterSeconds: "", wakeWord: "" },
+    data: { remindHour: "", modelMaxTokens: "" },
   });
   for (const response of created)
     await request.delete(`/api/captures/${(await response.json()).entry.id}`);
 });
 
-// Очерёдность разговора выбирается словами, а не миллисекундами, и хранится у
-// человека: выбранное остаётся и после перезагрузки.
-test("чуткость перебивания и паузу перед ответом выбирают в настройках разговора", async ({ page, request }) => {
-  await request.put("/api/settings", { data: { voiceInterrupt: "", voicePause: "" } });
-  await page.goto("/#settings");
-  const interrupt = page.locator("#setting-voiceInterrupt");
-  const pause = page.locator("#setting-voicePause");
-  await expect(interrupt).toBeVisible();
-  await expect(interrupt).toHaveValue("normal");
-  await expect(pause).toHaveValue("normal");
-  await expect(interrupt.locator("option")).toHaveText(["с полуслова", "обычно", "только громко"]);
-  await expect(pause.locator("option")).toHaveText(["сразу — 0,3 с", "обычно — 0,5 с", "подождать — 1 с", "дать подумать — 2 с"]);
-
-  await interrupt.selectOption("loud");
-  await pause.selectOption("think");
-  await expect
-    .poll(async () => {
-      const saved = (await (await request.get("/api/settings")).json()).settings;
-      return `${saved.voiceInterrupt}|${saved.voicePause}`;
-    })
-    .toBe("loud|think");
-  await page.reload();
-  await expect(page.locator("#setting-voiceInterrupt")).toHaveValue("loud");
-  await expect(page.locator("#setting-voicePause")).toHaveValue("think");
-
-  await request.put("/api/settings", { data: { voiceInterrupt: "", voicePause: "" } });
-});
 
 test("некорректная настройка не сохраняется и объясняет причину", async ({ page, request }) => {
   await page.goto("/#settings");
@@ -1489,50 +1303,6 @@ test("некорректная настройка не сохраняется и
   expect(saved.settings.timeZone).not.toBe("Не/Зона");
 });
 
-// Голос выбирается списком, а не набирается руками: от него зависит род, в
-// котором модель говорит о себе, и произвольная строка это согласование ломала.
-test("голос выбирается из списка, а добавка к промпту дописывается к основному", async ({
-  page,
-  request,
-}) => {
-  await page.goto("/#settings");
-  const gemini = page.locator("#setting-geminiVoiceName");
-  await expect(gemini).toBeVisible();
-  // В списке видно и имя, и род — выбирают осознанно.
-  await expect(gemini.locator("option")).toContainText([/Puck — мужской/, /Charon — мужской/]);
-  await expect(page.locator("#setting-voiceName option").first()).toContainText("Marin — женский");
-
-  // Род берётся у голоса того провайдера, которым разговор идёт сейчас. В этом
-  // прогоне ключей нет, поэтому проверяем голос OpenAI — он и считается
-  // действующим.
-  await gemini.selectOption("Charon");
-  await page.locator("#setting-voiceName").selectOption("cedar");
-  // Поле предзаполнено характером Кизуны по умолчанию.
-  await expect(page.locator("#setting-systemPrompt")).toHaveValue(/японским акцентом/);
-  await page.locator("#setting-systemPrompt").fill("Отвечай короче и по делу.");
-  await page.locator("#setting-systemPrompt").blur();
-
-  // Настройки ушли сами; ждём, пока последняя долетит до инструкций.
-  await expect
-    .poll(async () => (await (await request.get("/api/voice/status")).json()).instructions)
-    .toContain("От человека: Отвечай короче и по делу.");
-  const voice = await (await request.get("/api/voice/status")).json();
-  expect(voice.instructions).toContain("мужским голосом");
-  // Основные правила разговора добавка не отменяет.
-  expect(voice.instructions).toContain("Кизуна");
-
-  // Женский голос меняет род, а не дописывает вторую строку.
-  await page.locator("#setting-voiceName").selectOption("sage");
-  await expect
-    .poll(async () => (await (await request.get("/api/voice/status")).json()).instructions)
-    .toContain("женским голосом");
-  const female = await (await request.get("/api/voice/status")).json();
-  expect(female.instructions).not.toContain("мужским голосом");
-
-  await request.put("/api/settings", {
-    data: { geminiVoiceName: "", voiceName: "", systemPrompt: "" },
-  });
-});
 
 // Расходы должны быть видны, а не выясняться в личном кабинете провайдера.
 test("расходы видно в настройках", async ({ page, request }) => {
@@ -1558,156 +1328,41 @@ test("расходы видно в настройках", async ({ page, request
   await expect(page.locator("#usage-table .usage-detail")).toContainText("fake/fast");
 });
 
-// Одна кнопка на два дела, как в разговорных приложениях: пока писать нечего —
-// это разговор, появился текст — отправка. Проверяется не картинка, а то, что в
-// каждый момент на месте ровно одна кнопка и она делает то, что обещает.
-test("кнопка в углу поля меняется: разговор на пустом, отправка на наборе", async ({ page }) => {
-  await page.goto("/");
-  const voice = page.getByRole("button", { name: "Поговорить с журналом" });
-  const submit = page.getByRole("button", { name: "Сохранить запись" });
 
-  await expect(voice).toBeVisible();
-  await expect(submit).toBeHidden();
 
-  await page.getByLabel("Новая запись").fill("купить кофе");
-  await expect(submit).toBeVisible();
-  await expect(voice).toBeHidden();
 
-  // Обе занимают одно место: иначе кнопка прыгала бы на глазах у человека.
-  const submitBox = await submit.boundingBox();
-  await page.getByLabel("Новая запись").fill("");
-  await expect(voice).toBeVisible();
-  const voiceBox = await voice.boundingBox();
-  expect(Math.round(voiceBox.x)).toBe(Math.round(submitBox.x));
-  expect(Math.round(voiceBox.width)).toBe(Math.round(submitBox.width));
-
-  // Одни пробелы — ещё не запись.
-  await page.getByLabel("Новая запись").fill("   ");
-  await expect(voice).toBeVisible();
-  await expect(submit).toBeHidden();
-});
-
-// Значок на кнопке рисуется вручную путями, и однажды он уже уехал: полосы
-// стояли с разным шагом, а вся волна — правее центра. Проверяется геометрия, а
-// не картинка: центр краски должен совпадать с центром кнопки.
-test("волна на кнопке разговора стоит ровно по центру круга", async ({ page }) => {
-  await page.goto("/");
-  const geometry = await page.evaluate(() => {
-    const button = document.querySelector("#capture-voice");
-    const paths = [...button.querySelectorAll("path")];
-    const stroke = parseFloat(getComputedStyle(paths[0]).strokeWidth);
-    const boxes = paths.map((path) => path.getBoundingClientRect());
-    const button_ = button.getBoundingClientRect();
-    const ink = {
-      left: Math.min(...boxes.map((box) => box.left)) - stroke / 2,
-      right: Math.max(...boxes.map((box) => box.right)) + stroke / 2,
-      top: Math.min(...boxes.map((box) => box.top)) - stroke / 2,
-      bottom: Math.max(...boxes.map((box) => box.bottom)) + stroke / 2,
-    };
-    return {
-      сдвигX: (ink.left + ink.right) / 2 - (button_.left + button_.right) / 2,
-      сдвигY: (ink.top + ink.bottom) / 2 - (button_.top + button_.bottom) / 2,
-      доля: (ink.right - ink.left) / button_.width,
-      // Шаг между полосами должен быть одинаковым: разный читается как «криво».
-      шаги: boxes
-        .map((box) => box.left)
-        .sort((left, right) => left - right)
-        .slice(1)
-        .map((value, index, all) => value - boxes.map((box) => box.left).sort((a, b) => a - b)[index]),
-      круглая: getComputedStyle(button).borderRadius,
-      квадратная: Math.abs(button_.width - button_.height) < 0.5,
-    };
-  });
-
-  expect(Math.abs(geometry.сдвигX)).toBeLessThan(0.5);
-  expect(Math.abs(geometry.сдвигY)).toBeLessThan(0.5);
-  expect(geometry.квадратная).toBe(true);
-  expect(geometry.круглая).toBe("50%");
-  // Волна заполняет круг, а не теряется в нём.
-  expect(geometry.доля).toBeGreaterThan(0.4);
-  expect(geometry.доля).toBeLessThan(0.6);
-  const шаг = geometry.шаги[0];
-  for (const value of geometry.шаги) expect(Math.abs(value - шаг)).toBeLessThan(0.5);
-});
-
-// Края карточки ввода тянутся, как у окна: нижний — высота, боковые — ширина.
-// Карточка стоит по центру, поэтому правый край идёт за курсором, а ширина
-// растёт на удвоенный сдвиг. Размер переживает перезагрузку, двойной клик по
-// краю возвращает его.
-test("карточка ввода тянется за края и помнит размер", async ({ page }) => {
-  await page.goto("/");
-  const form = page.locator("#capture-form");
-  const field = page.getByLabel("Новая запись");
-  const width = async () => (await form.boundingBox()).width;
-  const height = async () => field.evaluate((element) => parseFloat(getComputedStyle(element).minHeight));
-  const drag = async (dir, dx, dy) => {
-    const box = await page.locator(`#capture-form .capture-resize[data-dir="${dir}"]`).boundingBox();
-    const x = box.x + box.width / 2, y = box.y + box.height / 2;
-    await page.mouse.move(x, y);
-    await page.mouse.down();
-    await page.mouse.move(x + dx / 2, y + dy / 2);
-    await page.mouse.move(x + dx, y + dy);
-    await page.mouse.up();
-  };
-  const startWidth = await width(), startHeight = await height();
-  await drag("e", 60, 0);
-  expect(Math.round(await width())).toBe(Math.round(startWidth + 120));
-  await drag("s", 0, 40);
-  expect(Math.round(await height())).toBe(Math.round(startHeight + 40));
-  await page.reload();
-  expect(Math.round(await width())).toBe(Math.round(startWidth + 120));
-  expect(Math.round(await height())).toBe(Math.round(startHeight + 40));
-  // Левый край уменьшает ширину, если тянуть внутрь.
-  await drag("w", 30, 0);
-  expect(Math.round(await width())).toBe(Math.round(startWidth + 60));
-  await page.locator('#capture-form .capture-resize[data-dir="se"]').dblclick();
-  expect(Math.round(await width())).toBe(Math.round(startWidth));
-  expect(Math.round(await height())).toBe(Math.round(startHeight));
-});
-
-// Ж «Две полки»: сегодняшнее лежит своей полкой под часами, запас без срока —
-// своей; в шапке «Дня» — столько же дел, сколько в утренней сводке. Дело из
-// запаса берут на сегодня, не открывая карточку, а по списку ходят клавишами.
-test("«День» делит сегодняшнее и запас, берёт дело на сегодня и закрывается с клавиатуры", async ({ page, request }) => {
+test("«Сегодня» закрывается с клавиатуры: J идёт по делам, E закрывает, «Вернуть» возвращает", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   const today = (await (await request.get("/api/day")).json()).date;
   const created = [];
   for (const data of [
-    { raw: "проработать тему путешествий", primaryType: "todo", due: { date: today } },
-    { raw: "потыкать новые AI-инструменты", primaryType: "todo" },
-    { raw: "собрать дни рождения команды", primaryType: "todo" },
+    { raw: "проработать тему путешествий", due: { date: today } },
+    { raw: "потыкать новые AI-инструменты" },
+    { raw: "собрать дни рождения команды" },
   ])
     created.push(await (await request.post("/api/captures", { data })).json());
   await page.goto("/");
   const todo = page.locator("#todo");
   await expect(todo.locator(".entry")).toHaveCount(3, { timeout: 15000 });
-  await expect(todo.locator(".day-group")).toHaveText(["на сегодня · 1", "без срока · 2"]);
-  await expect(page.locator("#tab-day .drawer-count")).toContainText("1 дело");
+  await expect(page.locator("#today-count")).toHaveText("3");
+  // Без срока не бывает: всё, что записано, лежит на сегодня одним списком.
+  await expect(todo.locator(".day-group, .quick-due")).toHaveCount(0);
 
-  // «на сегодня» по наведению переносит дело из запаса на сегодняшнюю полку.
-  const stock = todo.locator(".day-rows.stock .entry").filter({ hasText: "дни рождения" });
-  await stock.hover();
-  await stock.getByRole("button", { name: "на сегодня" }).click();
-  await expect(todo.locator(".day-group")).toHaveText(["на сегодня · 2", "без срока · 1"]);
-  await expect(page.locator("#tab-day .drawer-count")).toContainText("2 дела");
-  await page.locator("#toast").getByRole("button", { name: "Вернуть" }).click();
-  await expect(todo.locator(".day-group")).toHaveText(["на сегодня · 1", "без срока · 2"]);
-
-  // Клавиши: J — к первому делу, J — ко второму, E — готово; T — на сегодня.
+  // Клавиши: J — к первому делу, E — готово; тост «Вернуть» кладёт обратно.
   await page.locator("body").click({ position: { x: 5, y: 5 } });
   await page.keyboard.press("j");
   await expect(todo.locator(".entry").first()).toBeFocused();
+  const title = await todo.locator(".entry").first().locator(".entry-title").innerText();
   await page.keyboard.press("e");
-  await expect(todo.locator(".entry").filter({ hasText: "путешествий" })).toHaveCount(0);
+  await expect(todo.locator(".entry").filter({ hasText: title })).toHaveCount(0);
+  await expect(page.locator("#journal .entry").filter({ hasText: title })).toHaveCount(1);
+  await expect(page.locator("#today-count")).toHaveText("2");
+  await expect(page.locator("#done-count")).toHaveText("1");
   await expect(page.locator("#toast")).toContainText("Отмечено как готовое");
   await page.locator("#toast").getByRole("button", { name: "Вернуть" }).click();
-  await expect(todo.locator(".entry").filter({ hasText: "путешествий" })).toHaveCount(1);
-  // До строки запаса — теми же J, пока фокус не встанет на неё.
-  const aiRow = todo.locator(".entry").filter({ hasText: "AI-инструменты" });
-  for (let step = 0; step < 4 && !(await aiRow.evaluate((row) => row === document.activeElement)); step += 1) await page.keyboard.press("j");
-  await expect(aiRow).toBeFocused();
-  await page.keyboard.press("t");
-  await expect(todo.locator(".day-group")).toHaveText(["на сегодня · 2", "без срока · 1"]);
+  await expect(todo.locator(".entry").filter({ hasText: title })).toHaveCount(1);
+  await expect(page.locator("#journal .entry")).toHaveCount(0);
+  await expect(page.locator("#journal")).toContainText("Пока ничего. Первый кружок — сюда.");
 
   for (const response of created) await request.delete(`/api/captures/${response.entry.id}`);
 });

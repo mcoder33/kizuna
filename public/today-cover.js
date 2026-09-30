@@ -1,15 +1,12 @@
 // Обложка «Сегодня»: страница знает, который час. Здесь — чистая логика без
-// DOM: фаза суток по порогам, бриф из двух-трёх предложений по данным дня,
-// вопрос в поле и тип записи по фазе. Слова собираются шаблонами, а не
+// DOM: фаза суток по порогам, бриф из двух-трёх предложений по данным дня и
+// вопрос в поле по фазе. Слова собираются шаблонами, а не
 // моделью: мгновенно и предсказуемо. Модельный «Бриф» остаётся отдельной
 // страницей.
 
 // Пороги в минутах от полуночи: начало дня, конец утра, начало вечера, конец
 // дня. Ночь — до начала дня и после конца.
 export const DEFAULT_THRESHOLDS = { dayStart: 8 * 60, morningEnd: 11 * 60, eveningStart: 18 * 60, dayEnd: 22 * 60 };
-// Окно «после встречи»: сколько минут после конца встречи без итога страница
-// спрашивает, как она прошла.
-export const AFTER_MEETING_MINUTES = 20;
 
 export const PHASE_NAMES = { morning: "утро", day: "день", evening: "вечер", night: "ночь", weekend: "выходной" };
 
@@ -49,9 +46,8 @@ export function coverFor({
   doneCount = 0,
   tomorrow = null,        // {count, first: {start, title}} | null
   calendar = false,       // подключён ли календарь
-  endedMeeting = null,    // встреча, закончившаяся только что без итога
   thresholds = DEFAULT_THRESHOLDS,
-  defaultPlaceholder = "Запишите мысль, план, встречу или итог дня",
+  defaultPlaceholder = "Что нужно сделать?",
 }) {
   const sorted = [...meetings].sort((a, b) => a.start - b.start);
   const running = sorted.find((meeting) => minutes >= meeting.start && minutes < meeting.end) || null;
@@ -80,7 +76,7 @@ export function coverFor({
   };
   const space = (parts) => (parts.length ? [" ", ...parts] : []);
 
-  let brief = [], placeholder = defaultPlaceholder, type = "auto", tab = "day";
+  let brief = [], placeholder = defaultPlaceholder;
   if (phase === "weekend") {
     brief.push("Выходной");
     if (calendar) {
@@ -98,23 +94,14 @@ export function coverFor({
       else if (next) brief.push(`Сегодня ${plural(sorted.length, MEETINGS)}, первая в ${hm(next.start)} — `, { b: next.title }, ".");
       else brief.push("Встреч сегодня нет.");
       brief.push(...space(taskSentence()));
-      tab = "day";
     } else {
       brief.push(`День закончился${doneCount ? `: сделано ${doneCount}` : ""}.`);
       if (calendar) {
         if (tomorrow?.count && tomorrow.first) brief.push(` Завтра ${plural(tomorrow.count, MEETINGS)}, первая в ${hm(tomorrow.first.start)} — `, { b: tomorrow.first.title }, ".");
         else brief.push(" Завтра встреч нет.");
       }
-      tab = "journal";
     }
     placeholder = "Запишите и отпустите";
-  } else if (endedMeeting) {
-    brief.push("Закончилась ", { b: endedMeeting.title }, " — как прошла?");
-    brief.push(...space(nextSentence()));
-    brief.push(...space(taskSentence()));
-    placeholder = `Как прошла «${endedMeeting.title}»?`;
-    type = "outcome";
-    tab = phase === "evening" ? "journal" : "day";
   } else if (phase === "morning") {
     brief.push("Доброе утро. ");
     if (!calendar) brief.push("Календарь не подключён.");
@@ -133,8 +120,6 @@ export function coverFor({
     else brief.push(" Все дела закрыты.");
     if (calendar && tomorrow?.first) brief.push(` Завтра первая встреча в ${hm(tomorrow.first.start)}.`);
     placeholder = "Чем закончился день?";
-    type = "outcome";
-    tab = "journal";
   } else {
     if (!calendar) brief.push("Календарь не подключён — встреч не вижу.");
     else if (running) brief.push("Идёт ", { b: running.title }, `, до ${hm(running.end)}`, ...join(running), ".");
@@ -142,16 +127,7 @@ export function coverFor({
     if (calendar) brief.push(...(brief.length ? space(nextSentence()) : nextSentence()));
     brief.push(...(brief.length ? space(taskSentence()) : taskSentence()));
   }
-  return { phase, brief, placeholder, type, tab, running, next: after, endedMeeting };
-}
-
-// Встреча, закончившаяся недавно и без следа в памяти: запись после её конца
-// считается следом, точнее сейчас не скажешь.
-export function endedRecently({ meetings = [], minutes, lastEntryMinutes = null, window = AFTER_MEETING_MINUTES }) {
-  return [...meetings]
-    .filter((meeting) => !meeting.busy && !meeting.hasOutcome && minutes >= meeting.end && minutes - meeting.end <= window)
-    .filter((meeting) => lastEntryMinutes == null || lastEntryMinutes < meeting.end)
-    .sort((a, b) => b.end - a.end)[0] || null;
+  return { phase, brief, placeholder, running, next: after };
 }
 
 export const WEEKDAYS = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];

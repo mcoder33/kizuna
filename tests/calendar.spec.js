@@ -22,7 +22,9 @@ test("календарь: неделя, день, месяц, перенос м�
   await page.reload();
   const calendar = page.locator("#calendar-view");
   await expect(calendar).toBeVisible();
-  await expect(page.locator("nav a.active")).toHaveText("Календарь");
+  // Страница открывается по адресу, а в шапке ей пункта нет: ни один не активен.
+  await expect(page.locator("nav a")).toHaveText(["Сегодня", "Доска", "Заметки"]);
+  await expect(page.locator("nav a.active")).toHaveCount(0);
   await expect(page.locator("#calendar .page-heading h2")).toHaveText("Календарь");
   await expect(calendar.locator(".cal-title")).toContainText(String(new Date(`${monday}T12:00:00Z`).getUTCDate()));
   // Дело со временем — блок в сетке, дело без времени — чип в полосе «без
@@ -338,9 +340,9 @@ test("своя серия: повторы в сетке, «только этот
   await expect(calendar.locator(`.cal-col[data-date="${monday}"] .cal-ev.task`, { hasText: "Стендап" })).toHaveCount(1);
 });
 
-// «День» на главной: повтор виден в своём дне с подписью правила, и завтра
-// тоже. Время фиксировано на 13:00, чтобы ящик «День» был открыт.
-test("«День»: повторяющееся дело видно сегодня и завтра с подписью повтора", async ({ page, request }) => {
+// «Сегодня» на главной: повтор виден в своём часе с подписью правила. Время
+// фиксировано на 13:00, чтобы строка «сейчас» стояла после утреннего повтора.
+test("«Сегодня»: повторяющееся дело видно в своём часе с подписью повтора", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   const today = (await (await request.get("/api/day")).json()).date;
   await request.post("/api/captures", { data: { raw: "Проверить почту", primaryType: "todo", due: { date: shift(today, -3), time: "09:00", repeat: { freq: "daily" } } } });
@@ -355,8 +357,6 @@ test("«День»: повторяющееся дело видно сегодн�
   await expect(card.locator(".tag.due")).toHaveText("каждый день");
   await expect(todo.locator(".day-row", { hasText: "Проверить почту" }).locator(".day-time")).toHaveText("09:00");
   await expect(card.locator(".tag.late")).toHaveCount(0);
-  await todo.locator('.daynav [data-step="1"]').click();
-  await expect(todo.locator(".entry", { hasText: "Проверить почту" }).locator(".tag.due")).toHaveText("каждый день");
 });
 // Сетка по умолчанию дотягивается до низа окна, а её нижний край тянется
 // рукой: высота переживает перезагрузку, двойной клик возвращает подгонку.

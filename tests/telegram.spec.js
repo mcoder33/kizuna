@@ -36,16 +36,14 @@ test("написанное боту Telegram ложится на «Сегодн�
     await expect(section.locator("#telegram-connect")).toBeHidden();
     await expect(section.getByRole("button", { name: "Отключить" })).toBeVisible();
 
-    // Написанное боту разбирается и встаёт в «День» обычным делом.
+    // Написанное боту разбирается и встаёт в «Сегодня» обычным делом.
     await request.post(`${FAKE}/__push`, { data: { text: "Нужно купить корм коту сегодня" } });
     await page.goto("/#today");
-    const tab = page.getByRole("tab", { name: /^День/ });
-    if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
     await expect(page.locator("#todo .entry").filter({ hasText: "Нужно купить корм коту сегодня" })).toBeVisible({ timeout: 20000 });
 
     // Бот ответил на сообщение итогом разбора.
     const said = async () => (await (await request.get(`${FAKE}/__said`)).json()).said.map((line) => line.text).join("\n");
-    await expect.poll(said, { timeout: 20000 }).toContain("📌 Дело «Нужно купить корм коту сегодня» — сегодня");
+    await expect.poll(said, { timeout: 20000 }).toContain("📌 Легло на сегодня: «Нужно купить корм коту сегодня»");
 
     // «Отключить» — и раздел снова предлагает подключиться.
     await page.goto("/#settings");
