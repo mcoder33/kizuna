@@ -6,6 +6,7 @@
 
 import { occursOn } from './repeat.js';
 import { occurrencesByCapture } from './occurrences.js';
+import { withSubtaskCounts } from './subtasks.js';
 
 const COMPLETABLE = new Set(['task', 'meeting_event']);
 const DAY_MS = 86400000;
@@ -56,9 +57,11 @@ function completionEvents(db) {
 // Записи пользователя одной выборкой: активная классификация плюс состояние
 // завершения. Закрыто — когда закрыты все завершаемые проекции записи
 // (правило то же, что у карточек и TODO-буфера).
-export function loadEntries(db, userId) {
+// subtasks: false — без подзадач: отчёты и «Сделано» считают дела, а подзадача
+// стоит у родителя счётчиком «0/2». Помощнику журнала (journal.js) они видны.
+export function loadEntries(db, userId, { subtasks = true } = {}) {
   const occurrences = occurrencesByCapture(db, userId);
-  const rows = db.prepare(`SELECT c.id, c.created_at, c.occurred_at, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND c.user_id IS ? ORDER BY c.created_at`).all(userId);
+  const rows = db.prepare(`SELECT c.id, c.created_at, c.occurred_at, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL${subtasks ? '' : ' AND c.subtask=0'} AND c.user_id IS ? ORDER BY c.created_at`).all(userId);
   const projections = db.prepare(`SELECT p.id, p.capture_id, p.projection_type FROM projections p JOIN captures c ON c.id=p.capture_id WHERE p.status='active' AND c.deleted_at IS NULL AND c.user_id IS ?`).all(userId);
   const completion = completionEvents(db);
   const byCapture = new Map();
@@ -124,7 +127,7 @@ function buildPulse(entries, { from, to, unit, timeZone }) {
 }
 
 export function periodReport(db, { period, now, timeZone, userId }) {
-  const entries = loadEntries(db, userId);
+  const entries = loadEntries(db, userId, { subtasks: false });
   const today = dateInZone(now, timeZone);
   let { from, to, prevFrom, prevTo, unit } = periodRange(period, today, entries);
   if (period === 'all') {
@@ -259,7 +262,7 @@ function serviceReport(db, { fromAt, toAt, userId }) {
 }
 
 export function dayReport(db, { date, now, timeZone, userId }) {
-  const entries = loadEntries(db, userId);
+  const entries = loadEntries(db, userId, { subtasks: false });
   const today = dateInZone(now, timeZone);
   const startAt = dayStartInZone(date, timeZone), endAt = dayStartInZone(shiftDate(date, 1), timeZone);
   const feed = entries
@@ -276,6 +279,8 @@ export function dayReport(db, { date, now, timeZone, userId }) {
   // Экземпляр повтора, закрытый кружком в этот день, — тоже сделанное.
   for (const entry of entries) for (const item of entry.occurrences) if (inRange(item.completedAt, startAt, endAt)) done.push({ captureId: entry.id, title: summaryOf(entry), type: entry.classification.primaryType, at: item.completedAt, occurrence: item.date });
   done.sort((a, b) => (a.at < b.at ? -1 : 1));
+  // У закрытого дела с подзадачами — их счёт, как в «Закрыто» на «Сегодня».
+  withSubtaskCounts(db, done, userId, { today, key: 'captureId' });
   // Не успел: срок был в этот день, к концу дня не закрыто. Если закрыли позже —
   // так и говорим, это честнее, чем молча убрать строку из прошлого дня.
   const missed = entries

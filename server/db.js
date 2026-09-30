@@ -349,6 +349,25 @@ function migrate(db) {
     db.exec("CREATE UNIQUE INDEX IF NOT EXISTS agent_memories_key ON agent_memories(IFNULL(user_id,''), key)");
     db.exec('CREATE INDEX IF NOT EXISTS agent_memories_user ON agent_memories(user_id, status, updated_at DESC)');
     db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(18, now());
+    migrateSubtaskFlag(db);
+}
+// Миграция 25: подзадача — запись, заведённая кнопкой «+ Подзадача» в карточке.
+// parent_capture_id есть и у дел, отделённых от пачки («созвонились, решили
+// допинать А и Б»), но те — самостоятельные дела, им место в «Дне» и на доске;
+// подзадачи же показываются только у родителя счётчиком «0/2». Родитель у тех и
+// других бывает одинаковым (закрытый отчёт «сделал X, надо Y»), поэтому отличает
+// их признак на самой записи, а не догадка по родителю. Подзадачи, заведённые до
+// признака, помнит журнал событий: по нему они и помечаются один раз.
+function migrateSubtaskFlag(db) {
+  const columns = new Set(db.prepare('PRAGMA table_info(captures)').all().map(column => column.name));
+  if (!columns.has('subtask')) {
+    db.exec('ALTER TABLE captures ADD COLUMN subtask INTEGER NOT NULL DEFAULT 0');
+    db.exec("UPDATE captures SET subtask=1 WHERE parent_capture_id IS NOT NULL AND id IN (SELECT json_extract(payload_json,'$.captureId') FROM activity_events WHERE type='subtask_created')");
+  }
+  // Только подзадачи: обход дерева спрашивает детей родителя, а обычных дел с
+  // родителем на порядок больше.
+  db.exec('CREATE INDEX IF NOT EXISTS captures_subtask ON captures(parent_capture_id) WHERE subtask=1');
+  db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(25, now());
 }
 // Ограничение переписывается из собственного определения таблицы, а не из
 // зашитой здесь копии: копия разошлась бы с настоящей схемой на первой же новой
@@ -979,7 +998,9 @@ export function createSubtask(db, { parentId, title, userId, timeZone = 'Europe/
   const childId = db.transaction(() => {
     const childId = id(), interpretationId = id(), undoGroupId = id();
     const childClassification = actionClassification(title, JSON.parse(parent.classification_json), new Date(at), timeZone);
-    db.prepare('INSERT INTO captures(id,raw,modality,occurred_at,created_at,privacy_scope,deleted_at,user_id,parent_capture_id) VALUES(?,?,?,?,?,?,NULL,?,?)')
+    // subtask=1 — признак подзадачи: по нему её прячут из списков и доски и
+    // считают в «0/2» у родителя, в отличие от дела, отделённого от пачки.
+    db.prepare('INSERT INTO captures(id,raw,modality,occurred_at,created_at,privacy_scope,deleted_at,user_id,parent_capture_id,subtask) VALUES(?,?,?,?,?,?,NULL,?,?,1)')
       .run(childId, title, 'text', at, at, 'private', userId, parentId);
     db.prepare('INSERT INTO interpretations VALUES(?,?,?,?,?,?,?,?,?,NULL)')
       .run(interpretationId, childId, 1, 'active', 'manual', null, JSON.stringify(childClassification), JSON.stringify(childClassification.confidence || {}), at);
@@ -1294,11 +1315,12 @@ export function undoOccurrence(db, projectionId, date, { timeZone = 'Europe/Sama
   replaceInterpretation(db, target.captureId, withSkip(target.classification, skip), 'manual', null, true, null, { timeZone });
   return { captureId: target.captureId, occurrence:null, changed:true };
 }
+// Подзадачи в списках не стоят отдельными строками: они видны у родителя счётчиком и в его карточке.
 export function listEntries(db, { cursor, limit = 40, userId }) {
-  const rows = db.prepare(`SELECT c.*, i.id interpretation_id, i.version, i.provider, i.model, i.classification_json, i.field_confidence_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND c.user_id IS ? ${cursor ? 'AND c.created_at < ?' : ''} ORDER BY c.created_at DESC LIMIT ?`).all(...(cursor ? [userId, cursor, limit] : [userId, limit]));
+  const rows = db.prepare(`SELECT c.*, i.id interpretation_id, i.version, i.provider, i.model, i.classification_json, i.field_confidence_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND c.subtask=0 AND c.user_id IS ? ${cursor ? 'AND c.created_at < ?' : ''} ORDER BY c.created_at DESC LIMIT ?`).all(...(cursor ? [userId, cursor, limit] : [userId, limit]));
   return { entries: rows.map(row => fullEntry(db, row)), nextCursor: rows.length === limit ? rows.at(-1).created_at : null };
 }
-export function serializeEntry(row) { return { id: row.id, raw: row.raw, occurredAt: row.occurred_at, createdAt: row.created_at, parentId: row.parent_capture_id || null, interpretation: { id: row.interpretation_id, version: row.version, provider: row.provider, model: row.model, classification: JSON.parse(row.classification_json), confidence: JSON.parse(row.field_confidence_json) }, projections: [] }; }
+export function serializeEntry(row) { return { id: row.id, raw: row.raw, occurredAt: row.occurred_at, createdAt: row.created_at, parentId: row.parent_capture_id || null, ...(row.subtask ? { subtask: true } : {}), interpretation: { id: row.interpretation_id, version: row.version, provider: row.provider, model: row.model, classification: JSON.parse(row.classification_json), confidence: JSON.parse(row.field_confidence_json) }, projections: [] }; }
 // Что отделилось от записи: дела, заведённые из её же текста. Нужно и карточке
 // («из этой записи завели два дела»), и уведомлению о новой записи, где их
 // можно сразу отменить.
@@ -1317,7 +1339,7 @@ export function fullEntry(db, row) { const entry = serializeEntry(row); entry.no
   entry.origin = (jobOf(row.id) ?? (row.parent_capture_id ? jobOf(row.parent_capture_id) : undefined))?.origin || null;
   if (entry.parentId) { const parent = db.prepare("SELECT c.id, c.raw, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.id=? AND c.deleted_at IS NULL").get(entry.parentId); const classification = parent ? JSON.parse(parent.classification_json) : null; entry.parent = parent ? { id: parent.id, raw: parent.raw, title: classification.summary, type: classification.primaryType, container: isContainer(classification), splitSource: splitActionsOf(classification).length > 0 } : null; }
   return entry; }
-export function day(db, userId) { const rows = db.prepare(`SELECT c.*, i.id interpretation_id, i.version, i.provider, i.model, i.classification_json, i.field_confidence_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND c.user_id IS ? ORDER BY c.created_at DESC LIMIT 100`).all(userId); return rows.map(row=>fullEntry(db,row)); }
+export function day(db, userId) { const rows = db.prepare(`SELECT c.*, i.id interpretation_id, i.version, i.provider, i.model, i.classification_json, i.field_confidence_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND c.subtask=0 AND c.user_id IS ? ORDER BY c.created_at DESC LIMIT 100`).all(userId); return rows.map(row=>fullEntry(db,row)); }
 export function dayView(db, date, now=new Date(), userId=null) { const entries=day(db,userId).filter(entry=>!isSplitContainer(entry)); const scheduled=entry=>entry.interpretation.classification.entities.schedule; const onDay=s=>Boolean(s?.date)&&(s.date===date||occursOn(s,date)); const sortAtOf=s=>{if(!s?.sortAt)return null;if(!s.repeat)return s.sortAt;const next=nextOccurrence(s,date);return next?`${next}T${s.time||'23:59'}:00`:null;}; const completable=entry=>entry.projections.find(projection=>['task','meeting_event'].includes(projection.type)); const dayEntries=entries.filter(entry=>onDay(scheduled(entry))); const horizon=new Date(now.getTime()+48*60*60*1000); const upcoming=entries.filter(entry=>{const c=entry.interpretation.classification,s=scheduled(entry),projection=completable(entry);return !projection?.completion.completed&&['meeting_event','task'].includes(c.primaryType)&&sortAtOf(s)&&new Date(sortAtOf(s))>=now&&new Date(sortAtOf(s))<=horizon}).sort((a,b)=>new Date(sortAtOf(scheduled(a)))-new Date(sortAtOf(scheduled(b)))); const attention=entries.filter(entry=>{const c=entry.interpretation.classification,projection=completable(entry);return !projection?.completion.completed&&!c.completed&&((c.primaryType==='task'&&!scheduled(entry)?.date)||c.entities.followUp||c.primaryType==='outcome_decision')}); return {day:dayEntries,upcoming,attention}; }
 
 const dailySectionLabels = { doneYesterday:'Сделано вчера', decisions:'Решения', carried:'Перенесённое', blockers:'Блокеры', today:'Сегодня' };

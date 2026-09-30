@@ -6,6 +6,7 @@
 import crypto from 'node:crypto';
 import { dateInZone } from './reports.js';
 import { describeRepeat, effectiveDate } from './repeat.js';
+import { withSubtaskCounts } from './subtasks.js';
 
 const now = () => new Date().toISOString();
 export const COLUMN_NAME_LIMIT = 40;
@@ -36,10 +37,13 @@ export const CLOSED_LIMIT = 50;
 // Взятое чужое дело живёт на доске рядом со своими: человек взял его на себя,
 // и спрашивать «чьё оно» каждый раз, глядя на список, незачем. Сама запись
 // при этом остаётся у автора — сюда приходит только её идентификатор.
-function deedCards(db, userId, timeZone, now = new Date(), borrowed = []) {
+// Подзадачи своей карточки не имеют: они сидят у родителя счётчиком «0/2» и
+// открываются в его карточке. Исключение — подзадача, отданная другому человеку
+// и им взятая: у него родителя нет, и она для него обычное дело.
+function deedCards(db, userId, timeZone, now = new Date(), borrowed = [], { withSubtasks = true } = {}) {
   const mine = borrowed.length ? `(c.user_id IS ? OR c.id IN (${borrowed.map(() => '?').join(',')}))` : 'c.user_id IS ?';
   const who = [userId, ...borrowed];
-  const rows = db.prepare(`SELECT c.id, c.created_at, c.parent_capture_id, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND ${mine} ORDER BY c.created_at`).all(...who);
+  const rows = db.prepare(`SELECT c.id, c.created_at, c.parent_capture_id, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND ${mine} AND (c.subtask=0 OR c.user_id IS NOT ?) ORDER BY c.created_at`).all(...who, userId);
   const projections = db.prepare(`SELECT p.id, p.capture_id, p.projection_type FROM projections p JOIN captures c ON c.id=p.capture_id WHERE p.status='active' AND c.deleted_at IS NULL AND ${mine} AND p.projection_type IN ('task','meeting_event')`).all(...who);
   const completion = completionEvents(db);
   // Скрепка на карточке: сколько живых вложений у записи.
@@ -84,7 +88,10 @@ function deedCards(db, userId, timeZone, now = new Date(), borrowed = []) {
     });
   }
   closed.sort((left, right) => right.closedAt.localeCompare(left.closedAt));
-  return { open, closed: closed.slice(0, CLOSED_LIMIT) };
+  const shownClosed = closed.slice(0, CLOSED_LIMIT);
+  // «0/2» у родителя: считает сервер, а не доска по спрятанным карточкам.
+  if (withSubtasks) withSubtaskCounts(db, [...open, ...shownClosed], userId, { today: dateInZone(now, timeZone), key: 'captureId' });
+  return { open, closed: shownClosed };
 }
 
 // Порядок по умолчанию (пока карточку не разложили руками) — как в TODO-буфере:
@@ -120,7 +127,7 @@ function ensureColumn(db, userId) {
   return column;
 }
 
-export function boardView(db, { userId, timeZone = 'Europe/Samara', now: at = new Date(), borrowed = [] } = {}) {
+export function boardView(db, { userId, timeZone = 'Europe/Samara', now: at = new Date(), borrowed = [], withSubtasks = true } = {}) {
   const today = dateInZone(at, timeZone);
   ensureColumn(db, userId);
   const columns = db.prepare('SELECT id, name, position, color FROM board_columns WHERE user_id IS ? ORDER BY position, created_at').all(userId);
@@ -128,7 +135,7 @@ export function boardView(db, { userId, timeZone = 'Europe/Samara', now: at = ne
   const known = new Set(columns.map(column => column.id));
   const firstId = columns[0].id;
   const buckets = new Map(columns.map(column => [column.id, []]));
-  const { open, closed } = deedCards(db, userId, timeZone, at, borrowed);
+  const { open, closed } = deedCards(db, userId, timeZone, at, borrowed, { withSubtasks });
   for (const card of open) {
     const placement = placements.get(card.captureId);
     // Без размещения, с потерянной колонкой и со старым «Входящие» (column_id
@@ -219,7 +226,7 @@ export function moveCard(db, { userId, captureId, columnId = null, index }) {
   // Колонки «Входящие» нет: у карточки всегда есть настоящая колонка.
   if (columnId === null || columnId === undefined) return { error: 'invalid_column_id' };
   if (!ownColumn(db, userId, columnId)) return { error: 'column_not_found' };
-  const view = boardView(db, { userId });
+  const view = boardView(db, { userId, withSubtasks: false });
   const hasCard = view.columns.some(column => column.cards.some(card => card.captureId === captureId));
   if (!hasCard) return { error: 'card_not_found' };
   // Порядок целевой колонки перезаписывается целиком: позиции всегда плотные,

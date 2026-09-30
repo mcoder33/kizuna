@@ -1423,3 +1423,129 @@ test("приглашение в группе: по дню — срок груп�
   await expect(page.locator(".board-column:not(.ghost) .board-add-button")).toHaveCount(0);
   await reset(request);
 });
+
+// Подзадачи: на доске, в списке и в таблице они отдельными карточками не стоят —
+// у дела метка «0/1» (сделано/всего), её число даёт сервер.
+const subOf = async (request, parentId, title) => (await (await request.post(`/api/captures/${parentId}/subtasks`, { data: { title } })).json()).entry;
+const closeTask = async (request, entry) => {
+  for (const projection of entry.projections.filter((item) => item.type === "task")) await request.post(`/api/projections/${projection.id}/complete`, { data: {} });
+};
+// Цвет «сделано» из токена, а не зашитое число: метка «1/1» красится им же.
+const greenOf = (page) => page.evaluate(() => {
+  const probe = document.createElement("i");
+  probe.style.color = "var(--green)";
+  document.body.append(probe);
+  const color = getComputedStyle(probe).color;
+  probe.remove();
+  return color;
+});
+
+test("подзадача на доске не карточка: у дела метка «0/1» — на доске, в списке и в таблице; счётчики считают дела; все сделаны — метка зелёная", async ({ page, request }) => {
+  await reset(request);
+  const parentId = await deed(request, "Предварительно взять блокнот");
+  await deed(request, "Проверить логи Hub");
+  const child = await subOf(request, parentId, "Выбрать блокнот в клетку");
+  await page.goto("/#board");
+
+  // Доска: две карточки — сами дела; подзадачи карточкой нет, колонка считает дела.
+  await arrange(page, "board", ["col"]);
+  const cards = page.locator("#board-columns .board-card");
+  const badge = cards.filter({ hasText: "Предварительно взять блокнот" }).locator(".sub-badge");
+  await expect(cards).toHaveCount(2);
+  await expect(cards.filter({ hasText: "Выбрать блокнот" })).toHaveCount(0);
+  await expect(badge).toHaveText("0/1");
+  await expect(badge).toHaveAccessibleName("Подзадачи: сделано 0 из 1. Открыть подзадачи");
+  await expect(page.locator("#board-columns .sub-badge")).toHaveCount(1);
+  await expect(columnByName(page, "Дела").locator(".board-col-count")).toHaveText("2");
+
+  // Список и таблица: те же две строки, у дела метка, счёт группы — «2».
+  await arrange(page, "list", ["col"]);
+  await expect(page.locator("#board-flat .g-row")).toHaveCount(2);
+  await expect(page.locator("#board-flat .g-row").filter({ hasText: "Выбрать блокнот" })).toHaveCount(0);
+  await expect(page.locator("#board-flat .g-row").filter({ hasText: "Предварительно взять блокнот" }).locator(".sub-badge")).toHaveText("0/1");
+  await expect(page.locator("#board-flat .g-sec").first()).toContainText("· 2");
+  await arrange(page, "table", ["col"]);
+  await expect(page.locator("#board-flat tr.board-row")).toHaveCount(2);
+  await expect(page.locator("#board-flat tr.board-row").filter({ hasText: "Выбрать блокнот" })).toHaveCount(0);
+  await expect(page.locator("#board-flat tr.board-row").filter({ hasText: "Предварительно взять блокнот" }).locator(".sub-badge")).toHaveText("0/1");
+  await expect(page.locator("#board-flat .g-sec").first()).toContainText("· 2");
+  // Группировка по дню считает те же два дела, а не три записи.
+  await arrange(page, "list", ["day"]);
+  await expect(page.locator("#board-flat .g-sec").filter({ hasText: "сегодня" })).toContainText("· 2");
+
+  // Закрыли подзадачу: «1/1» зелёным, а в «Сделано» отдельной карточкой она не появилась.
+  await closeTask(request, child);
+  await arrange(page, "board", ["col"]);
+  await expect(badge).toHaveText("1/1");
+  await expect(badge).toHaveClass(/all-done/);
+  await expect(badge).toHaveCSS("color", await greenOf(page));
+  await expect(page.locator("#board-columns .board-card.closed")).toHaveCount(0);
+  await expect(page.locator("#board-columns .board-card")).toHaveCount(2);
+  await arrange(page, "list", ["col"]);
+  await expect(page.locator("#board-flat .g-row")).toHaveCount(2);
+  await expect(page.locator("#board-flat .g-row.closed")).toHaveCount(0);
+  // Родитель закрыт — он лежит в «Сделано» со своей меткой, подзадачи рядом нет.
+  const parent = (await (await request.get(`/api/captures/${parentId}`)).json()).entry;
+  await closeTask(request, parent);
+  await arrange(page, "board", ["col"]);
+  const done = page.locator("#board-columns .board-card.closed");
+  await expect(done).toHaveCount(1);
+  await expect(done.locator(".sub-badge")).toHaveText("1/1");
+  await expect(done.locator(".sub-badge")).toHaveClass(/all-done/);
+  await reset(request);
+});
+
+test("метка «0/1» на доске открывает карточку дела на «Подзадачах», а закрытая в карточке подзадача делает её «1/1» зелёной", async ({ page, request }) => {
+  await reset(request);
+  const parentId = await deed(request, "Предварительно взять блокнот");
+  await subOf(request, parentId, "Выбрать блокнот в клетку");
+  // Длинное описание уводит «Подзадачи» за нижний край карточки: без докрутки их не видно.
+  await request.post(`/api/captures/${parentId}/notes`, { data: { body: Array.from({ length: 40 }, (_, index) => `Пункт ${index + 1} заметки про блокнот`).join("\n\n") } });
+  await page.goto("/#board");
+  await arrange(page, "board", ["col"]);
+  const card = page.locator("#board-columns .board-card").filter({ hasText: "Предварительно взять блокнот" });
+  const dialog = page.locator("#review-dialog");
+  const section = dialog.locator("#card-subtasks");
+
+  // По названию карточка открывается с начала: раздел «Подзадачи» ниже экрана.
+  await card.locator(".board-title").click();
+  await expect(section).toBeVisible();
+  await expect(section.locator(".subtask-count")).toHaveText("0 / 1");
+  await expect(section).not.toBeInViewport();
+  // Длинную карточку читают колесом: прокрутка — в колонке содержимого.
+  const scrolled = () => dialog.locator("#review").evaluate((element) => element.scrollTop);
+  expect(await scrolled()).toBe(0);
+  await page.mouse.move(720, 450);
+  await page.mouse.wheel(0, 600);
+  await expect.poll(scrolled).toBeGreaterThan(0);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+
+  // По метке — сразу на «Подзадачах»: колонка докручена, верхняя строка окна на месте.
+  await card.locator(".sub-badge").click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator(".card-title")).not.toBeInViewport();
+  await expect(section).toBeInViewport({ ratio: 1 });
+  await expect(section.locator(".subtask-name")).toHaveText("Выбрать блокнот в клетку");
+  await expect(dialog.locator(".card-top")).toBeInViewport({ ratio: 1 });
+  expect(await dialog.evaluate((element) => element.querySelector(".card-main").scrollTop)).toBe(0);
+
+  // Подзадача закрыта кружком в карточке — метка за ней уже «1/1» и зелёная.
+  await section.locator(".subtask-check").check();
+  await expect(section.locator(".subtask-count")).toHaveText("1 / 1");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  const badge = card.locator(".sub-badge");
+  await expect(badge).toHaveText("1/1");
+  await expect(badge).toHaveClass(/all-done/);
+  await expect(badge).toHaveCSS("color", await greenOf(page));
+  await expect(page.locator("#board-columns .board-card")).toHaveCount(1);
+
+  // Открыли заново по названию — читается с начала: ни прежняя докрутка, ни колесо не липнут.
+  await card.locator(".board-title").click();
+  await expect(section).toBeVisible();
+  await expect(section).not.toBeInViewport();
+  expect(await scrolled()).toBe(0);
+  await page.keyboard.press("Escape");
+  await reset(request);
+});

@@ -4,6 +4,7 @@
 // отдельно: закрытые туду читаются из леджера, встречи — из календаря.
 import { dateInZone, loadEntries, shiftDate } from './reports.js';
 import { DEFAULT_COLUMN } from './board.js';
+import { withSubtaskCounts } from './subtasks.js';
 
 const OTHER_COLUMN = 'Без колонки';
 export const MEETINGS_COLUMN = 'Встречи';
@@ -47,7 +48,8 @@ export function doneView(db, { userId, from, to, now = new Date(), timeZone = 'E
   const inRange = date => date >= from && date <= to;
   const columnOf = columnNames(db, userId);
   const items = [];
-  for (const entry of loadEntries(db, userId)) {
+  // Закрытая подзадача отдельной строкой не стоит: она входит в счёт родителя («1/2»).
+  for (const entry of loadEntries(db, userId, { subtasks: false })) {
     const title = entry.classification.summary || '';
     const meeting = entry.classification.primaryType === 'meeting_event';
     if (entry.closed && entry.closedAt) {
@@ -66,6 +68,8 @@ export function doneView(db, { userId, from, to, now = new Date(), timeZone = 'E
       if (inRange(date)) items.push({ id: entry.id, title, date, time: timeInZone(at, timeZone), kind: 'todo', column: columnOf(entry.id), auto: false, projectionId: entry.projectionId, occurrence: item.date });
     }
   }
+  // У закрытого дела с подзадачами — их счёт; у встреч из календаря и старых отчётов их нет.
+  withSubtaskCounts(db, items.filter(item => !item.legacy), userId, { today });
   for (const meeting of meetingsOf(calendar, { userId, from, to, today, nowTime: timeInZone(now, timeZone) }))
     if (inRange(meeting.date)) items.push({ id: meeting.id, title: meeting.title, date: meeting.date, time: meeting.time, kind: 'meeting', column: MEETINGS_COLUMN, auto: true });
 

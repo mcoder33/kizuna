@@ -5268,6 +5268,39 @@ body {
 .btag.due.soon { background: var(--tint-wait); color: var(--yellow-51); }
 .btag.due.late { background: var(--tint-late); color: var(--red-50); font-weight: 600; }
 .board-card.overdue .btag.due.late { background: var(--n-100-2); }
+/* «0/2» у дела: подзадачи отдельными строками не стоят (ни на доске, ни в «Дне»,
+   ни в «Сделано»), у названия — тихая метка: значок вложенных строк и сколько
+   сделано из скольких. Все сделаны — зелёная. Метка кнопка: открывает карточку
+   на «Подзадачах». Одна на доску, список, таблицу и строки «Сегодня». */
+.sub-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 3px;
+  margin: 0;
+  padding: 1px 6px 1px 4px;
+  border: 0;
+  border-radius: 99px;
+  background: none;
+  color: var(--n-62);
+  font: inherit;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.sub-badge-icon { display: inline-flex; width: 13px; height: 13px; }
+.sub-badge-icon svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+/* Под названием значок встаёт в линию с его левым краем, а не с краем метки. */
+.board-meta > .sub-badge:first-child { margin-left: -4px; }
+.sub-badge:hover { background: var(--hairline); color: var(--ink); }
+.sub-badge:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.sub-badge.all-done { color: var(--green); }
+.sub-badge.all-done:hover { background: var(--n-97-2); color: var(--green); }
+/* Просроченное красит всю мелкую строку карточки; метка остаётся тихой. */
+.board-card.overdue .board-meta .sub-badge:not(.all-done),
+.entry.overdue .entry-meta .sub-badge:not(.all-done) { color: var(--n-62); }
 .board-drop {
   height: 3px;
   border-radius: 99px;
@@ -8721,11 +8754,14 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0; }
   z-index: auto;
 }
 
-/* Колонка содержимого: прокрутка — в ней, верхняя строка стоит. */
+/* Колонка содержимого: прокрутка — в ней, верхняя строка стоит. Правило «две
+   панели» выше ставит .review overflow: hidden, и без явного auto длинная
+   карточка не прокручивалась ни колесом, ни пальцем (полосы нет, scrollbar-width: none). */
 #review-dialog .review {
   flex: 1;
   height: auto;
   min-height: 0;
+  overflow-y: auto;
   padding: 26px max(32px, calc((100% - 788px) / 2)) 28px;
 }
 #review-dialog .card-head {

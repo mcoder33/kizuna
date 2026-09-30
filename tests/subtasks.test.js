@@ -9,7 +9,7 @@ import path from 'node:path';
 import { createApp } from '../server/index.js';
 import { fakeModelService } from './helpers/fake-model.js';
 import { authed } from './helpers/auth.js';
-import { createSubtask } from '../server/db.js';
+import { createSubtask, openDatabase } from '../server/db.js';
 
 function freshApp() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pagent-subtasks-'));
@@ -282,4 +282,124 @@ test('еженедельный шаг с уже закрытым ближайш�
   snapshot = await tree(api, coffee.id);
   assert.equal(snapshot.nodes[0].occurrence, tomorrow);
   assert.equal(snapshot.done, 0);
+});
+
+// Подзадачи в списках: у родителя — счётчик, отдельных строк нет.
+const SPLIT_RAW = ['Созванивались по ВойсОпс', '', 'Что решили, 2 вектора', '1. Допинываем бот детектор', '2. Допинываем карусель с генератором фраз'].join('\n');
+
+test('в /api/entries и /api/day подзадач нет, а у родителя есть subtasks {done,total} — тот же счёт, что у дуги в карточке', async () => {
+  const api = authed(freshApp());
+  const coffee = await deed(api, 'Купить кофе');
+  const other = await deed(api, 'Нужно проверить Hub');
+  const stock = await sub(api, coffee.id, 'Проверить запас в шкафу');
+  const jar = await sub(api, coffee.id, 'Взять с собой банку');
+  await sub(api, stock.entry.id, 'Открыть банку');
+  await complete(api, jar.entry.id);
+
+  const entries = (await api.get('/api/entries?limit=100').expect(200)).body.entries;
+  assert.deepEqual(entries.map(entry => entry.id).sort(), [coffee.id, other.id].sort(), 'в списке только дела');
+  const parent = entries.find(entry => entry.id === coffee.id);
+  const snapshot = await tree(api, coffee.id);
+  assert.deepEqual(parent.subtasks, { done: 1, total: 2 });
+  assert.deepEqual(parent.subtasks, { done: snapshot.done, total: snapshot.total }, 'список и карточка считают одинаково');
+  assert.equal('subtasks' in entries.find(entry => entry.id === other.id), false, 'у дела без подзадач поля нет');
+
+  const day = (await api.get('/api/day').expect(200)).body;
+  const shown = [...day.day, ...day.upcoming, ...day.attention];
+  assert.ok(shown.some(entry => entry.id === coffee.id));
+  assert.deepEqual(shown.find(entry => entry.id === coffee.id).subtasks, { done: 1, total: 2 });
+  for (const hidden of [stock, jar]) assert.equal(shown.some(entry => entry.id === hidden.entry.id), false, 'в дне подзадачи нет');
+
+  // Сама запись подзадачи читается по id: карточка и ссылка её открывают, и она помнит, что подзадача.
+  const opened = (await api.get(`/api/captures/${jar.entry.id}`).expect(200)).body.entry;
+  assert.equal(opened.subtask, true);
+  assert.equal(opened.parentId, coffee.id);
+  assert.equal((await api.get(`/api/captures/${coffee.id}`).expect(200)).body.entry.subtask, undefined);
+});
+
+test('десяток подзадач не съедает окно последних записей: лимит считается по делам', async () => {
+  const api = authed(freshApp());
+  const first = await deed(api, 'Первое дело');
+  const second = await deed(api, 'Второе дело');
+  for (let index = 0; index < 6; index++) await sub(api, first.id, `Шаг ${index}`);
+  const page = (await api.get('/api/entries?limit=3').expect(200)).body;
+  assert.deepEqual(page.entries.map(entry => entry.id).sort(), [first.id, second.id].sort());
+  assert.equal(page.nextCursor, null, 'страница не заполнена подзадачами, листать дальше нечего');
+  assert.deepEqual(page.entries.find(entry => entry.id === first.id).subtasks, { done: 0, total: 6 });
+});
+
+test('дела, отделённые от пачки, — обычные записи: в списках стоят сами и не считаются подзадачами родителя', async () => {
+  const api = authed(freshApp());
+  const batch = (await api.post('/api/captures').send({ raw: SPLIT_RAW }).expect(201)).body;
+  assert.equal(batch.parts.length, 2);
+  const report = (await api.post('/api/captures').send({ raw: ['Сделал ревью по Хабу', '1. Отправить Ане замечания по ревью', '2. Согласовать сроки с командой'].join('\n') }).expect(201)).body;
+  assert.equal(report.parts.length, 2);
+  const entries = (await api.get('/api/entries?limit=100').expect(200)).body.entries;
+  for (const part of [...batch.parts, ...report.parts]) {
+    const entry = entries.find(item => item.id === part.id);
+    assert.ok(entry, 'отделённое дело в списке');
+    assert.equal(entry.subtask, undefined);
+    assert.equal(entry.parentId !== null, true, 'ссылка на исходную запись остаётся');
+  }
+  assert.equal('subtasks' in entries.find(item => item.id === report.entry.id), false, 'у отчёта «сделал X, надо Y» счётчика нет');
+  const day = (await api.get('/api/day').expect(200)).body;
+  const titles = [...day.day, ...day.upcoming, ...day.attention].map(entry => entry.interpretation.classification.summary);
+  assert.ok(titles.includes('Допинываем бот детектор'));
+  assert.ok(titles.includes('Отправить Ане замечания по ревью'));
+  // А подзадача, заведённая под таким делом, — настоящая подзадача.
+  const child = await sub(api, batch.parts[0].id, 'Прогнать тесты');
+  assert.equal(child.entry.subtask, true);
+  const later = (await api.get('/api/entries?limit=100').expect(200)).body.entries;
+  assert.equal(later.some(item => item.id === child.entry.id), false);
+  assert.deepEqual(later.find(item => item.id === batch.parts[0].id).subtasks, { done: 0, total: 1 });
+});
+
+test('подзадача, отданная Ане и взятая ею, у неё — обычное дело, а у Саши остаётся внутри родителя', async () => {
+  const app = freshApp();
+  const sasha = authed(app, { email: 'sasha@kizuna.test', role: 'admin' });
+  const anya = authed(app, { email: 'anya@kizuna.test', role: 'user' });
+  await sasha.patch('/api/account').send({ name: 'Саша' }).expect(200);
+  await anya.patch('/api/account').send({ name: 'Аня' }).expect(200);
+  const circle = (await sasha.post('/api/circles').send({ name: 'Хаб' }).expect(201)).body.circle;
+  const invite = (await sasha.post(`/api/circles/${circle.id}/invite`).send({}).expect(201)).body;
+  await anya.post(`/api/circles/invite/${invite.token}/accept`).send({}).expect(200);
+  const parent = await deed(sasha, 'Подготовить смету по Хабу');
+  const step = await sub(sasha, parent.id, 'Собрать цифры');
+  await sasha.post(`/api/captures/${step.entry.id}/assign`).send({ assigneeId: anya.user.id, circleId: circle.id }).expect(200);
+  const assignmentId = (await anya.get('/api/inbox').expect(200)).body.rows.find(row => row.captureId === step.entry.id).id;
+  await anya.post(`/api/assignments/${assignmentId}/respond`).send({ take: true }).expect(200);
+
+  // У Ани взятое дело стоит на доске и в дне — у неё родителя нет.
+  const hers = (await anya.get('/api/board').expect(200)).body;
+  const card = hers.columns.flatMap(column => column.cards).find(item => item.captureId === step.entry.id);
+  assert.ok(card, 'взятая подзадача — карточка доски');
+  assert.equal('subtasks' in card, false);
+  assert.deepEqual((await anya.get('/api/day').expect(200)).body.borrowed.map(item => item.id), [step.entry.id]);
+  // У Саши она спрятана, а родитель считает её.
+  const mine = (await sasha.get('/api/board').expect(200)).body;
+  assert.deepEqual(mine.columns.flatMap(column => column.cards).map(item => item.captureId), [parent.id]);
+  assert.deepEqual(mine.columns[0].cards[0].subtasks, { done: 0, total: 1 });
+});
+
+test('подзадачи, заведённые до признака, помечаются при переходе базы — по журналу событий, а дела пачки остаются обычными', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pagent-subtasks-'));
+  const file = path.join(dir, 'test.sqlite');
+  const app = createApp({ aiService: fakeModelService(), databasePath: file });
+  const api = authed(app);
+  const coffee = await deed(api, 'Купить кофе');
+  const step = await sub(api, coffee.id, 'Взять банку');
+  const deeper = await sub(api, step.entry.id, 'Открыть банку');
+  await api.post('/api/captures').send({ raw: SPLIT_RAW }).expect(201);
+  assert.deepEqual(app.database.prepare('SELECT id FROM captures WHERE subtask=1 ORDER BY created_at').all().map(row => row.id), [step.entry.id, deeper.entry.id]);
+  // База «до признака»: колонки нет, подзадачи помнит только журнал событий.
+  app.database.exec('DROP INDEX captures_subtask; ALTER TABLE captures DROP COLUMN subtask');
+  assert.equal(app.database.prepare('PRAGMA table_info(captures)').all().some(column => column.name === 'subtask'), false);
+  const reopened = openDatabase(file);
+  assert.deepEqual(reopened.prepare('SELECT id FROM captures WHERE subtask=1 ORDER BY created_at').all().map(row => row.id), [step.entry.id, deeper.entry.id]);
+  assert.equal(reopened.prepare('SELECT COUNT(*) n FROM captures WHERE parent_capture_id IS NOT NULL AND subtask=0').get().n, 2, 'два дела из пачки остались обычными');
+  assert.ok(reopened.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name='captures_subtask'").get(), 'индекс подзадач вернулся');
+  // Повторное открытие признак не трогает.
+  reopened.prepare('UPDATE captures SET subtask=0 WHERE id=?').run(deeper.entry.id);
+  assert.deepEqual(openDatabase(file).prepare('SELECT id FROM captures WHERE subtask=1').all().map(row => row.id), [step.entry.id], 'миграция не повторяется');
+  reopened.close();
 });

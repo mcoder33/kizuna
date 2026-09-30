@@ -236,3 +236,52 @@ test("карточка закрытого дела и закрытого при 
   await expect(tick).toHaveClass(/is-done/);
   await expect(tick).toHaveAttribute("aria-label", /Вернуть в работу/);
 });
+
+// Закрытая подзадача отдельной строкой в «Сделано» не стоит: у закрытого дела —
+// метка «1/1», по ней карточка открывается на «Подзадачах».
+test("«Сделано» и «Закрыто»: закрытая подзадача строкой не стоит, у закрытого дела метка «1/1», по ней карточка открывается на «Подзадачах»", async ({ page, request }) => {
+  await reset(request);
+  const made = async (raw) => (await (await request.post("/api/captures", { data: { raw, primaryType: "todo" } })).json()).entry;
+  const close = async (entry) => {
+    for (const projection of entry.projections.filter((item) => item.type === "task")) await request.post(`/api/projections/${projection.id}/complete`, { data: {} });
+  };
+  const parent = await made("Отправить отчёт по Hub Ане");
+  const alone = await made("Проверить логи Hub");
+  const child = (await (await request.post(`/api/captures/${parent.id}/subtasks`, { data: { title: "Собрать цифры для отчёта" } })).json()).entry;
+  await close(child);
+  await close(parent);
+  await close(alone);
+
+  // «Закрыто» на «Сегодня»: два дела, подзадачи среди них нет, метка у того, у кого она есть.
+  await page.goto("/");
+  await showTab(page, /^Закрыто/);
+  const rows = page.locator("#journal .entry");
+  await expect(rows).toHaveCount(2, { timeout: 15000 });
+  await expect(rows.filter({ hasText: "Собрать цифры" })).toHaveCount(0);
+  await expect(page.locator("#tab-journal b")).toHaveText("2");
+  await expect(rows.filter({ hasText: "Отправить отчёт" }).locator(".sub-badge")).toHaveText("1/1");
+  await expect(rows.filter({ hasText: "Проверить логи" }).locator(".sub-badge")).toHaveCount(0);
+
+  // Страница «Сделано»: то же — «Сегодня · 2», фраза недели считает дела, метка зелёная.
+  await page.locator('nav a[href="#done"]').click();
+  const done = page.locator("#done");
+  await expect(done.locator(".done-day")).toHaveText(["Сегодня · 2"]);
+  await expect(done.locator(".done-line")).toHaveText("За неделю сделано 2, из них встреч 0 · сегодня 2");
+  await expect(done.locator(".done-days .entry")).toHaveCount(2);
+  await expect(done.locator(".done-days .entry").filter({ hasText: "Собрать цифры" })).toHaveCount(0);
+  const badge = done.locator(".done-days .entry").filter({ hasText: "Отправить отчёт" }).locator(".sub-badge");
+  await expect(badge).toHaveText("1/1");
+  await expect(badge).toHaveClass(/all-done/);
+  await expect(done.locator(".done-days .sub-badge")).toHaveCount(1);
+  // Тот же счёт отдаёт API: подзадача в «Сделано» отдельной строкой не идёт.
+  const api = await (await request.get("/api/done")).json();
+  expect(api.counts.today).toBe(2);
+  expect(api.days[0].items.find((item) => item.id === parent.id).subtasks).toEqual({ done: 1, total: 1 });
+
+  // Метка открывает карточку закрытого дела на «Подзадачах».
+  await badge.click();
+  const dialog = page.locator("#review-dialog");
+  await expect(dialog.locator(".card-title")).toHaveText("Отправить отчёт по Hub Ане");
+  await expect(dialog.locator("#card-subtasks .subtask-count")).toHaveText("1 / 1");
+  await expect(dialog.locator("#card-subtasks .subtask-name")).toHaveText("Собрать цифры для отчёта");
+});

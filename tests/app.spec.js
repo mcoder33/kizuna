@@ -1800,3 +1800,53 @@ test("вечером во фразе обложки «3 дела» и «пере
   expect(await scheduleById(request, ids.today)).toMatchObject({ date: today });
   await expect(brief).toContainText("Не закрыто 3 дела со сроком — перенести на завтра?");
 });
+
+// Подзадача не стоит в «Дне» и в «Закрыто» отдельной строкой: у дела метка «0/1»,
+// а вкладки считают дела.
+test("«День» и «Закрыто»: у дела с подзадачей одна строка с меткой «0/1», подзадачи строкой нет; закрыл в карточке — «1/1» зелёным", async ({ page, request }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  const made = async (raw) => (await (await request.post("/api/captures", { data: { raw, primaryType: "todo" } })).json()).entry;
+  const parent = await made("Предварительно взять блокнот");
+  await made("Проверить логи Hub");
+  await request.post(`/api/captures/${parent.id}/subtasks`, { data: { title: "Выбрать блокнот в клетку" } });
+  await page.goto("/");
+  await openTab(page, /^День/);
+  const todo = page.locator("#todo");
+  const row = todo.locator(".entry").filter({ hasText: "Предварительно взять блокнот" });
+  await expect(todo.locator(".entry")).toHaveCount(2, { timeout: 15000 });
+  await expect(todo.locator(".entry").filter({ hasText: "Выбрать блокнот" })).toHaveCount(0);
+  await expect(row.locator(".sub-badge")).toHaveText("0/1");
+  await expect(todo.locator(".sub-badge")).toHaveCount(1);
+  await expect(page.locator("#tab-day .drawer-count")).toContainText("2 дела");
+  await expect(page.locator("#tab-journal b")).toHaveText("0");
+
+  // Метка открывает карточку дела на «Подзадачах»; кружок подзадачи закрывает шаг, а не дело.
+  await row.locator(".sub-badge").click();
+  const dialog = page.locator("#review-dialog");
+  await expect(dialog.locator(".card-title")).toHaveText("Предварительно взять блокнот");
+  await expect(dialog.locator("#card-subtasks .subtask-count")).toHaveText("0 / 1");
+  await dialog.locator("#card-subtasks .subtask-check").check();
+  await expect(dialog.locator("#card-subtasks .subtask-count")).toHaveText("1 / 1");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  const badge = row.locator(".sub-badge");
+  await expect(badge).toHaveText("1/1");
+  await expect(badge).toHaveClass(/all-done/);
+  // Закрытая подзадача строкой в «Дне» и в «Закрыто» не стоит, вкладки считают дела.
+  await expect(todo.locator(".entry")).toHaveCount(2);
+  await expect(page.locator("#tab-day .drawer-count")).toContainText("2 дела");
+  await expect(page.locator("#tab-journal b")).toHaveText("0");
+  await openTab(page, /^Закрыто/);
+  await expect(page.locator("#journal .entry")).toHaveCount(0);
+  await openTab(page, /^День/);
+
+  // Закрыли само дело: оно в «Закрыто» одной строкой со своей меткой «1/1».
+  await row.locator(".completion-button").click();
+  await expect(page.locator("#tab-journal b")).toHaveText("1");
+  await openTab(page, /^Закрыто/);
+  const closed = page.locator("#journal .entry");
+  await expect(closed).toHaveCount(1);
+  await expect(closed).toContainText("Предварительно взять блокнот");
+  await expect(closed.locator(".sub-badge")).toHaveText("1/1");
+  await expect(closed.locator(".sub-badge")).toHaveClass(/all-done/);
+});

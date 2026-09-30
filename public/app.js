@@ -537,7 +537,7 @@ function attachRowSwipe(row, { onRight = null, onLeft = null } = {}) {
   // Название — кнопка во всю строку, поэтому смахивание начинается и на нём;
   // кружок и кнопки срока нажимаются как обычно.
   row.addEventListener("pointerdown", (event) => {
-    if (event.pointerType !== "touch" || event.target.closest(".completion-button, .quick-due, a, input")) return;
+    if (event.pointerType !== "touch" || event.target.closest(".completion-button, .quick-due, .sub-badge, a, input")) return;
     drag = { x: event.clientX, y: event.clientY, id: event.pointerId, moving: false, dx: 0 };
   });
   row.addEventListener("pointermove", (event) => {
@@ -590,6 +590,26 @@ function sinceLabel(date) {
   if (currentDayDate && date === shiftDate(currentDayDate, -1)) return "со вчера";
   return `с ${Number(date.slice(8, 10))} ${SHORT_MONTHS[Number(date.slice(5, 7)) - 1] || ""}`.trim();
 }
+// «0/2» у родителя, как в Todoist: подзадачи отдельными строками не стоят ни на
+// доске, ни в списках «Сегодня» и «Сделано» — у дела лишь тихая метка с числом
+// сделанных из всех. Число приходит с сервера (subtasks {done, total}); все
+// сделаны — метка зелёная. Нажатие открывает карточку дела на «Подзадачах».
+const SUBTASK_GLYPH = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2" width="8" height="3.6" rx="1.2"/><rect x="6.2" y="9.8" width="8" height="3.6" rx="1.2"/><path d="M3.8 5.6v4.2a1.8 1.8 0 0 0 1.8 1.8h.6"/></svg>';
+function subtaskBadge(subtasks, open) {
+  if (!subtasks?.total) return null;
+  const all = subtasks.done >= subtasks.total;
+  const badge = node("button", undefined, `sub-badge${all ? " all-done" : ""}`);
+  badge.type = "button";
+  const icon = node("span", undefined, "sub-badge-icon");
+  icon.innerHTML = SUBTASK_GLYPH;
+  badge.append(icon, node("span", `${subtasks.done}/${subtasks.total}`, "sub-badge-count"));
+  const words = `Подзадачи: сделано ${subtasks.done} из ${subtasks.total}`;
+  badge.title = `${words}. Открыть`;
+  badge.setAttribute("aria-label", `${words}. Открыть подзадачи`);
+  // Строка кликабельна целиком (название, клавиши): метка свой щелчок не отдаёт.
+  badge.addEventListener("click", (event) => { event.stopPropagation(); open(); });
+  return badge;
+}
 // Строка дела: кружок, название и справа тихие чипы — час или «со вчера»,
 // люди, круг, кому передано. Типа, проекта и тегов у неё нет: всё, что
 // записано, — дело. doneAt — минуты закрытия для строки «Закрыто».
@@ -635,22 +655,27 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
   }
   const title = markdownNode("button", c.summary, "entry-title", { inline: true, links: false, firstLine: true });
   title.type = "button";
-  title.addEventListener("click", () => {
+  // subtasks — открыть на разделе «Подзадачи»: по метке «0/2» у названия.
+  const openCard = ({ subtasks = false } = {}) => {
     // Карточка вытекает из той записи, по которой щёлкнули.
     const review = reviewFromEntry(entry);
     cardOccurrence = c.entities.schedule?.repeat && on && scheduledOn(entry, on) ? on : null;
     const list = card.closest("#todo, #journal");
     pendingCardList = list ? { label: list.id === "journal" ? "Закрыто" : "День", items: rowsAsList([...list.querySelectorAll(".entry[data-capture-id]")]), id: entry.id, occurrence: card.dataset.occurrence || null } : null;
+    cardScrollTarget = subtasks ? entry.id : null;
     // Запись из круга открывается перечитанной: обсуждение и исполнитель
     // меняются у другого человека, и показывать вчерашний разговор нельзя.
     if (entry.foreign || circleOf(entry)) { openSharedCard(entry.id); return; }
     showCorrection(entry, review.level === "high" ? undefined : review);
-  });
+  };
+  title.addEventListener("click", () => openCard());
   card.append(title);
   // Просроченное не переносят в карточке — оно решается прямо в строке.
   if (overdue && !c.entities.schedule?.repeat && !completed) card.append(quickDueEl(entry, [["сегодня", 0], ["завтра", 1]]));
   // Дело из запаса берут на сегодня, не открывая карточку.
   if (takeToday && !completed) card.append(quickDueEl(entry, [["на сегодня", 0]]));
+  const subs = subtaskBadge(entry.subtasks, () => openCard({ subtasks: true }));
+  if (subs) meta.append(subs);
   const mark = circleOf(entry);
   if (mark) meta.append(circleChip(mark, { small: true }));
   // Чьё это дело: взятое — «от Саши», отданное — «Аня · ждёт ответа». Второе и
@@ -1684,6 +1709,8 @@ function doneItemRow(item) {
   title.type = "button";
   title.addEventListener("click", () => openCaptureById(item.id));
   const meta = node("div", undefined, "entry-meta");
+  const subs = subtaskBadge(item.subtasks, () => openCaptureById(item.id, { subtasks: true }));
+  if (subs) meta.append(subs);
   if (item.occurrence) meta.append(node("span", "повтор", "tag due"));
   meta.append(node("span", item.time, "tag time"));
   row.append(title, meta);
@@ -1727,6 +1754,8 @@ function reportRecordNode(record) {
   row.append(mark);
   const title = node("span", record.title, "entry-title");
   const meta = node("div", undefined, "entry-meta");
+  const subs = subtaskBadge(record.subtasks, () => openCaptureById(record.captureId, { subtasks: true }));
+  if (subs) meta.append(subs);
   meta.append(node("span", hm(zoneMinutes(new Date(record.at))), "tag time"));
   row.append(title, meta);
   return row;
@@ -1864,6 +1893,9 @@ let closeCardSlashMenu = null;
 // остаётся открытой и у подзадачи.
 let cardStack = [];
 let cardEntryId = null;
+// Карточку открыли по метке «0/2» у названия: когда раздел «Подзадачи» нарисован,
+// она докручивается до него. Держит id записи — чужая карточка не прокрутится.
+let cardScrollTarget = null;
 // Номер перехода: ответ на запрос, обогнанный другим переходом или закрытием,
 // карточку уже не меняет.
 let cardNavToken = 0;
@@ -1878,6 +1910,7 @@ function resetCardFocus() {
   cardNavToken += 1;
   cardStack = [];
   cardEntryId = null;
+  cardScrollTarget = null;
   cardDrafts.clear();
   setCardParams(false, { instant: true });
 }
@@ -3392,6 +3425,15 @@ function cardPath(ancestors) {
   return nav;
 }
 const stepsWord = (count) => (count % 10 === 1 && count % 100 !== 11 ? "шага" : "шагов");
+// Колонка содержимого докручивается до раздела сама, а не через scrollIntoView:
+// тот крутит ещё и внешние обёртки окна (overflow: hidden программно всё равно
+// прокручивается), и вместе с разделом уезжает верхняя строка карточки.
+function scrollCardTo(element, { smooth = false } = {}) {
+  const area = $("#review");
+  if (!area || !element?.isConnected) return;
+  const top = element.getBoundingClientRect().top - area.getBoundingClientRect().top + area.scrollTop;
+  area.scrollTo({ top: Math.max(0, top - 12), behavior: smooth && motionAllowed() ? "smooth" : "instant" });
+}
 // Раздел «Подзадачи»: настоящие дочерние дела на любой глубине. «Список» —
 // прямые дети, «Карта» — всё дерево с раскрывающимися ветками; оба живут на
 // одних данных. Дуга вокруг кружка и подпись под названием считают только
@@ -3611,11 +3653,16 @@ function cardSubtasks(entry, { halo, caption }) {
     nextLink.title = tree.next ? `Открыть «${tree.next.title}»` : "";
     nextLink.onclick = tree.next ? () => openSubtaskCard(tree.next.id, tree.nodes.find((item) => item.id === tree.next.id)?.occurrence || null) : null;
     next.classList.toggle("all-done", hasChildren && !remaining);
+    // Пришли по метке «0/2» — раздел уже нарисован, карточка встаёт на нём.
+    if (cardScrollTarget === entry.id && hasChildren) {
+      cardScrollTarget = null;
+      requestAnimationFrame(() => scrollCardTo(section));
+    }
   };
   caption.addEventListener("click", () => {
     cardStepView = "map";
     paint();
-    section.scrollIntoView({ block: "start", behavior: motionAllowed() ? "smooth" : "instant" });
+    scrollCardTo(section, { smooth: true });
     views.querySelector('[data-step-view="map"]')?.focus({ preventScroll: true });
   });
   const closeComposer = (refocus = true) => {
@@ -3654,6 +3701,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   const area = $("#review"),
     dialog = $("#review-dialog"),
     c = entry.interpretation.classification;
+  if (cardScrollTarget && cardScrollTarget !== entry.id) cardScrollTarget = null;
   // Сбоку по записи щёлкнули, не закрыв карточку. По той же самой — набранное
   // уходит на сервер, и она перечитывается на месте (запись пришла из списка,
   // а в нём могло быть не всё). По другой — прежняя уступает место, а набранное
@@ -4208,6 +4256,9 @@ function showReview(entry, review, undoGroupId, provenance) {
     // Только при открытии: после сохранения уточнения карточка
     // перерисовывается на месте, и проявлять её заново незачем.
     appearCard(dialog);
+    // Окно скрыто между открытиями и помнит прокрутку прежней карточки: новая
+    // читается с начала (к «Подзадачам» её при нужде докрутит метка «0/2»).
+    area.scrollTop = 0;
     // Фокус на самой карточке: иначе он уходит на крестик или на селектор
     // типа, хотя карточку открывают ради заметок.
     dialog.focus();
@@ -6235,13 +6286,14 @@ function reportCard(title, { right = null, hint = null } = {}) {
   return card;
 }
 // Каждая строка — дверь: клик открывает ту же карточку записи, что и журнал.
-async function openReportEntry(captureId, { occurrence = null } = {}) {
+async function openReportEntry(captureId, { occurrence = null, subtasks = false } = {}) {
   cardOccurrence = occurrence;
   try {
     const { entries } = await request("/api/entries?limit=100");
     const entry = entries.find((candidate) => candidate.id === captureId);
     if (!entry) { toast("Запись не нашлась среди последних ста."); return; }
     const review = reviewFromEntry(entry);
+    cardScrollTarget = subtasks ? captureId : null;
     showCorrection(entry, review.level === "high" ? undefined : review);
   } catch (error) {
     toast(error.message);
@@ -8337,16 +8389,21 @@ function boardDoneButton(card, element, closed) {
 // Открытые дела в порядке показа: по ним карточка листает стрелками, как бы ни
 // была разложена доска — колонками, разделами списка или строками таблицы.
 const boardOpenRows = () => [...$("#board").querySelectorAll(".board-card[data-capture-id]:not(.closed), .board-row[data-capture-id]:not(.closed)")];
+// Карточка записи: по названию — с начала, по метке «0/2» — на «Подзадачах».
+function openBoardCard(card, element, { subtasks = false } = {}) {
+  pendingCardList = { label: "Доска", items: rowsAsList(boardOpenRows()), id: card.captureId, occurrence: element.dataset.occurrence || null };
+  openReportEntry(card.captureId, { subtasks });
+}
 // Название — кнопка: открывает карточку записи.
 function boardTitleButton(card, element) {
   const title = node("button", card.title.split("\n")[0], "board-title");
   title.type = "button";
-  title.addEventListener("click", () => {
-    pendingCardList = { label: "Доска", items: rowsAsList(boardOpenRows()), id: card.captureId, occurrence: element.dataset.occurrence || null };
-    openReportEntry(card.captureId);
-  });
+  title.addEventListener("click", () => openBoardCard(card, element));
   return title;
 }
+// «0/2» у дела: подзадач на доске отдельными карточками нет, их число — метка
+// у названия (и в карточке, и в строке списка, и в таблице).
+const boardSubtaskBadge = (card, element) => subtaskBadge(card.subtasks, () => openBoardCard(card, element, { subtasks: true }));
 // Срок одной меткой: «со вчера» у просроченного, дата — если не сегодня, час —
 // если он есть.
 function boardDueTag(card) {
@@ -8402,6 +8459,8 @@ function boardCardEl(card, { closed = false, draggable = !closed } = {}) {
   }
   body.append(titleRow);
   const meta = node("div", undefined, "board-meta");
+  const subs = boardSubtaskBadge(card, element);
+  if (subs) meta.append(subs);
   if (closed) meta.append(node("span", boardClosedWhen(card), "btag due"));
   else meta.append(...boardMetaTags(card));
   if (meta.childNodes.length) body.append(meta);
@@ -8427,6 +8486,8 @@ function boardRowEl(card, { closed = false } = {}) {
   row.dataset.captureId = card.captureId;
   if (card.due?.repeat && card.due.date) row.dataset.occurrence = card.due.date;
   const right = node("span", undefined, "g-right");
+  const subs = boardSubtaskBadge(card, row);
+  if (subs) right.append(subs);
   if (closed) right.append(node("span", boardClosedWhen(card), "btag due"));
   else right.append(...boardMetaTags(card), ...(card.projects || []).map((name) => node("span", name, "btag project")));
   row.append(boardDoneButton(card, row, closed), boardTitleButton(card, row), right);
@@ -8451,6 +8512,8 @@ function boardTableRowEl(card, depth, cols, { closed = false } = {}) {
   first.style.paddingLeft = `${10 + (depth - 1) * 16}px`;
   const wrap = node("span", undefined, "tt");
   wrap.append(boardDoneButton(card, row, closed), boardTitleButton(card, row));
+  const subs = boardSubtaskBadge(card, row);
+  if (subs) wrap.append(subs);
   first.append(wrap);
   row.append(first);
   for (const field of cols) row.append(node("td", boardCell(card, field, closed)));
@@ -9724,18 +9787,22 @@ function doneRowEl(item) {
     mark.addEventListener("click", () => reopenDoneItem(item, mark));
   }
   row.append(mark);
+  // Карточка листается по дням страницы; по метке «0/2» — сразу на «Подзадачах».
+  const openItem = ({ subtasks = false } = {}) => {
+    const list = row.closest(".done-days");
+    pendingCardList = list ? { label: "Сделано", items: rowsAsList([...list.querySelectorAll(".entry[data-capture-id]")]), id: item.id, occurrence: null } : null;
+    openReportEntry(item.id, { subtasks });
+  };
   if (item.auto) row.append(node("span", item.title, "entry-title"));
   else {
     const title = node("button", item.title, "entry-title");
     title.type = "button";
-    title.addEventListener("click", () => {
-      const list = row.closest(".done-days");
-      pendingCardList = list ? { label: "Сделано", items: rowsAsList([...list.querySelectorAll(".entry[data-capture-id]")]), id: item.id, occurrence: null } : null;
-      openReportEntry(item.id);
-    });
+    title.addEventListener("click", () => openItem());
     row.append(title);
   }
   const meta = node("div", undefined, "entry-meta");
+  const subs = item.auto ? null : subtaskBadge(item.subtasks, () => openItem({ subtasks: true }));
+  if (subs) meta.append(subs);
   if (item.auto) meta.append(node("span", "прошла по календарю", "tag auto"));
   else if (item.column && !old) meta.append(node("span", item.column, "tag done-where"));
   meta.append(node("span", item.time, "tag time"));
@@ -11243,10 +11310,10 @@ async function paintUpcomingReminders() {
       : "Впереди напоминаний нет: у открытых дел со сроком они появятся сами.";
   } catch { element.textContent = ""; }
 }
-async function openCaptureById(id) {
+async function openCaptureById(id, { subtasks = false } = {}) {
   // По ссылке карточка открывается так же, как по клику в списке: с вопросом
-  // модели, если разбор неуверенный.
-  try { const { entry } = await request(`/api/captures/${encodeURIComponent(id)}`); const review = reviewFromEntry(entry); showCorrection(entry, review.level === "high" ? undefined : review); }
+  // модели, если разбор неуверенный. subtasks — сразу на разделе «Подзадачи».
+  try { const { entry } = await request(`/api/captures/${encodeURIComponent(id)}`); const review = reviewFromEntry(entry); cardScrollTarget = subtasks ? id : null; showCorrection(entry, review.level === "high" ? undefined : review); }
   catch (error) { toast(error.message); }
 }
 $("#push-enable")?.addEventListener("click", () => enablePush().catch((error) => { toast(error.message || "Не удалось включить уведомления"); paintPush(); }));

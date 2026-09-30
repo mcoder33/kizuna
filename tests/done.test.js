@@ -134,3 +134,57 @@ test('done: a meeting across midnight closes on the day and hour of its end, not
   const done = (await api.get(`/api/done?from=${dayBefore}&to=${yesterday}`).expect(200)).body;
   assert.deepEqual(done.days.map(day => [day.date, day.items.map(item => [item.title, item.time])]), [[yesterday, [['Ночной релиз', '00:30']]]]);
 });
+
+// Закрытая подзадача не стоит в «Сделано» отдельной строкой: она входит в счёт
+// закрытого родителя («1/2»), как и на доске.
+const stepOf = async (api, parentId, title) => (await api.post(`/api/captures/${parentId}/subtasks`).send({ title }).expect(201)).body.entry;
+const closeTask = async (api, entry) => { for (const projection of entry.projections.filter(item => item.type === 'task')) await api.post(`/api/projections/${projection.id}/complete`).send({}).expect(200); };
+
+test('done: a closed subtask is not a row of its own, the closed parent carries {done,total}', async () => {
+  const app = freshApp(), api = authed(app);
+  const range = `from=${shiftDate(today(), -6)}&to=${today()}`;
+  const parent = await post(api, 'Купить кофе для Hub');
+  const alone = await post(api, 'Нужно проверить колонки');
+  const stock = await stepOf(api, parent.id, 'Проверить запас в шкафу');
+  const jar = await stepOf(api, parent.id, 'Взять с собой банку');
+  await closeTask(api, stock);
+  await closeTask(api, jar);
+  // Обе подзадачи закрыты, родитель открыт: «Сделано» пусто — строки подзадач не считаются делами.
+  let done = (await api.get(`/api/done?${range}`).expect(200)).body;
+  assert.deepEqual(done.days, []);
+  assert.equal(done.counts.today, 0);
+  assert.equal(done.counts.period, 0);
+  assert.deepEqual(done.byColumn, []);
+  // Закрыли родителя и дело без подзадач: две строки, у родителя счёт, у второго поля нет.
+  await closeTask(api, parent);
+  await closeTask(api, alone);
+  done = (await api.get(`/api/done?${range}`).expect(200)).body;
+  assert.equal(done.counts.today, 2);
+  assert.equal(done.counts.period, 2);
+  const items = done.days[0].items;
+  assert.deepEqual(items.map(item => item.title).sort(), [alone, parent].map(entry => entry.interpretation.classification.summary).sort());
+  assert.deepEqual(items.find(item => item.id === parent.id).subtasks, { done: 2, total: 2 });
+  assert.equal('subtasks' in items.find(item => item.id === alone.id), false);
+  assert.equal(done.byColumn.reduce((total, column) => total + column.n, 0), 2, 'счётчики колонок — только дела');
+  // Вернули подзадачу в работу: родитель остаётся строкой «Сделано», счёт откатился.
+  await api.post(`/api/projections/${jar.projections.find(item => item.type === 'task').id}/undo-complete`).send({}).expect(200);
+  done = (await api.get(`/api/done?${range}`).expect(200)).body;
+  assert.deepEqual(done.days[0].items.find(item => item.id === parent.id).subtasks, { done: 1, total: 2 });
+});
+
+test('done: the day report does not list a closed subtask either; its closed parent keeps the count', async () => {
+  const app = freshApp(), api = authed(app);
+  const parent = await post(api, 'Купить кофе для Hub');
+  const stock = await stepOf(api, parent.id, 'Проверить запас в шкафу');
+  await closeTask(api, stock);
+  // «Что делал»: сделал X — туду, закрытая при записи; её подзадача закрыта кружком.
+  const born = await post(api, 'Сделал ревью по TCAM');
+  const reviewStep = await stepOf(api, born.id, 'Разобрать замечания');
+  await closeTask(api, reviewStep);
+  const report = (await api.get(`/api/reports/day?date=${today()}`).expect(200)).body;
+  assert.deepEqual(report.done.map(item => item.captureId), [born.id], 'подзадача в «Сделано» отдельно не стоит');
+  assert.deepEqual(report.done[0].subtasks, { done: 1, total: 1 });
+  assert.equal(report.feed.some(item => [stock.id, reviewStep.id].includes(item.captureId)), false, 'ленты дня подзадачи тоже не видят');
+  const period = (await api.get('/api/reports?period=week').expect(200)).body;
+  assert.equal(period.counters.done, 1, 'в отчёте периода закрытые подзадачи не считаются делами: закрыт только «Сделал ревью»');
+});
