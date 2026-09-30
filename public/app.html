@@ -170,19 +170,34 @@
         <div class="page-heading">
           <h2>Доска</h2>
         </div>
-        <!-- Над доской только поиск и «+ Дело»: видов, свойств и фильтра нет.
-             Слева прибита колонка «Сделано», дальше колонки человека. -->
+        <!-- Над доской: вид (как рисовать — доска, список, таблица) и группировка
+             (по каким полям раскладывать, уровней сколько угодно); справа поиск
+             и «+ Дело». «Сделано» — первая колонка доски и последний раздел
+             списка и таблицы. Панель и обе ленты собирает public/app.js. -->
         <div class="board-controls">
+          <div class="board-bar">
+            <span class="board-bar-label">Вид</span>
+            <span class="board-seg" id="board-view" role="group" aria-label="Вид">
+              <button type="button" data-view="board" aria-pressed="true">Доска</button>
+              <button type="button" data-view="list" aria-pressed="false">Список</button>
+              <button type="button" data-view="table" aria-pressed="false">Таблица</button>
+            </span>
+            <span class="board-bar-label">Группировать</span>
+            <span class="board-grp" id="board-grp" role="group" aria-label="Группировка"></span>
+            <span class="board-hint" id="board-hint"></span>
+          </div>
           <div class="board-tools">
             <label class="board-search">
               <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>
               <input id="board-search" type="search" placeholder="Поиск" aria-label="Поиск по делам" autocomplete="off" />
             </label>
+            <input id="board-quick" class="board-quick" type="text" placeholder="Что сделать?" aria-label="Новое дело" maxlength="500" autocomplete="off" hidden />
             <button type="button" class="board-new" id="board-new">+ Дело</button>
           </div>
         </div>
         <div class="board-segments" id="board-segments" role="tablist" aria-label="Колонки"></div>
         <div id="board-columns" class="board-columns" aria-label="Колонки доски"></div>
+        <div id="board-flat" class="board-flat" aria-label="Дела" hidden></div>
       </section>
 
       <!-- «Сделано»: три числа, неделя столбиками, по колонкам и список по дням.

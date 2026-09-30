@@ -5365,6 +5365,221 @@ main:has(> #board:not([hidden])) { max-width: none; padding-left: 0; padding-rig
 .board-card.closed { cursor: default; background: transparent; }
 .board-card.closed .board-title { text-decoration: line-through; text-decoration-color: var(--n-79); color: var(--muted); }
 
+/* ── доска: вид и группировка ────────────────────────────────────────────────
+   Вид — как рисовать (доска, список, таблица), группировка — по каким полям
+   раскладывать; полей можно взять сколько угодно, каждое следующее вкладывается
+   в предыдущее. У каждого поля свой цвет: рамка, подложка и заголовок группы
+   красятся им — вложенные карточки в рамке, как матрёшка, без толстых кромок над
+   колонками и без подчёркиваний. Цвета — токены палитры, в тёмной теме они
+   переворачиваются сами. */
+:root {
+  --f-col: var(--blue-54);
+  --f-day: var(--orange-56);
+  --f-who: var(--violet-54);
+  --f-proj: var(--teal-49);
+  --f-src: var(--n-52);
+}
+.board-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 8px 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.board-bar-label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--n-66);
+  font-weight: 650;
+}
+.board-seg {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: var(--paper);
+}
+.board-seg button {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 4px 11px;
+  border: 0;
+  border-radius: 99px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.board-seg button:hover { color: var(--ink); }
+.board-seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+.board-grp { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.board-lv {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 2px 2px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fc) 12%, var(--paper));
+}
+.board-lv i { margin-right: 4px; font-style: normal; font-size: 10.5px; font-weight: 700; color: var(--fc); }
+.board-lv select {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 3px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+.board-then { padding: 0 2px; color: var(--n-66); }
+.board-lv-remove {
+  padding: 0 5px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--n-66);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.board-lv-remove:hover { background: var(--n-25-a8); color: var(--ink); }
+.board-lv-add {
+  padding: 3px 9px;
+  border: 1px dashed var(--n-87);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--blue-54);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.board-lv-add:hover { background: var(--n-25-a8); }
+.board-lv-none { color: var(--n-66); }
+.board-hint { margin-left: auto; color: var(--muted); }
+/* Поле быстрого дела вместо колонки: встаёт рядом с «+ Дело». */
+.board-quick {
+  width: 220px;
+  max-width: 100%;
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* Колонка-группа (первый уровень — не «Колонка»): заголовок не правится и не тянется. */
+.board-column.group .board-col-head,
+.board-column.group .board-col-name { cursor: default; }
+
+/* Вложенные коробки подгрупп внутри колонки доски. */
+.g-box {
+  --fc: var(--muted);
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--fc) 38%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--fc) 7%, var(--paper));
+}
+.g-bh { display: flex; align-items: baseline; gap: 6px; padding: 0 2px 2px; color: var(--fc); font-size: 13px; font-weight: 700; line-height: 1.3; }
+.g-box .g-box > .g-bh { font-size: 12.5px; }
+.g-box .g-box .g-box > .g-bh { font-size: 12px; }
+.g-bh .n, .g-sec .n { color: var(--muted); font-weight: 600; }
+
+/* Лента списка и таблицы: колонка чтения, а не полотно во всю ширину окна. */
+.board-flat { min-width: 0; max-width: 1080px; padding: 6px 0 26px; }
+/* Список: разделы — заголовок и тело в одной рамке цвета поля. */
+.g-list { display: grid; gap: 0; }
+.g-sec {
+  --fc: var(--muted);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 7px 12px 4px;
+  border: 1px solid color-mix(in srgb, var(--fc) 38%, var(--line));
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  background: color-mix(in srgb, var(--fc) 7%, var(--paper));
+  color: var(--fc);
+  font-size: 14px;
+  font-weight: 700;
+}
+.g-sec .n { font-size: 12px; }
+.g-sec a { color: inherit; text-decoration: none; }
+.g-sec a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.g-sec.d2 { margin-top: 8px; font-size: 13px; }
+.g-sec.d3 { margin-top: 6px; font-size: 12.5px; }
+.g-sec.done, .g-kids.done { --fc: var(--green); }
+.g-kids {
+  --fc: var(--muted);
+  padding: 2px 8px 8px;
+  border: 1px solid color-mix(in srgb, var(--fc) 38%, var(--line));
+  border-top: 0;
+  border-radius: 0 0 10px 10px;
+  background: color-mix(in srgb, var(--fc) 7%, var(--paper));
+}
+.g-rows { display: grid; gap: 3px; }
+.g-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--paper);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.g-row .board-done { margin-top: 0; }
+.g-row .board-title { font-size: 13.5px; font-weight: inherit; }
+.g-right { display: flex; align-items: center; gap: 5px; white-space: nowrap; font-size: 12px; color: var(--muted); }
+.g-row.closed { color: var(--muted); font-weight: 500; }
+.board-row.closed .board-title { text-decoration: line-through; text-decoration-color: var(--n-79); color: var(--muted); }
+#board-flat .board-row[data-capture-id]:focus-visible { outline: 1.5px solid var(--focus); outline-offset: -1.5px; }
+
+/* Таблица: заголовки групп — строки на всю ширину с той же рамкой цвета поля и
+   ступенчатым отступом; кружок вплотную к названию. */
+.board-table-wrap { max-width: 100%; overflow-x: auto; }
+.g-table { width: 100%; min-width: 560px; border-collapse: collapse; font-size: 13px; background: var(--paper); }
+.g-table th {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--n-66);
+  font-weight: 650;
+  white-space: nowrap;
+}
+.g-table td { padding: 7px 10px; border-bottom: 1px solid var(--hairline); color: var(--ink); vertical-align: middle; }
+.g-table td:not(.t) { white-space: nowrap; }
+.g-table td.t { min-width: 220px; font-weight: 600; }
+.g-table .tt { display: inline-flex; align-items: center; gap: 9px; max-width: 100%; }
+.g-table .board-done { flex: none; margin-top: 0; }
+.g-table .board-title { width: auto; font-size: 13px; font-weight: inherit; }
+.g-table tr.closed td { color: var(--muted); }
+.g-table tr.closed td.t { font-weight: 500; }
+.g-table tr.sec td { padding: 0; border-bottom: 0; }
+.g-table tr.sec .g-sec { margin: 6px 0 2px; padding: 5px 12px; border: 1px solid color-mix(in srgb, var(--fc) 38%, var(--line)); border-radius: 8px; }
+.g-table tr.sec .g-sec.d2 { margin-left: 16px; }
+.g-table tr.sec .g-sec.d3 { margin-left: 32px; }
+#board-flat tr.board-row[data-capture-id]:focus-visible { outline: 1.5px solid var(--focus); outline-offset: -1.5px; }
+
+/* Список и таблица — не колонки: сегмента колонок для телефона у них нет. */
+#board:not([data-view="board"]) .board-segments { display: none; }
+
 /* Телефон: одна колонка на экран, сверху сегмент подписей колонок. */
 .board-segments { display: none; }
 @media (max-width: 760px) {

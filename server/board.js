@@ -14,6 +14,10 @@ export const COLUMNS_LIMIT = 12;
 // и цвета в заметках: одна гамма на всё приложение.
 export const COLUMN_COLORS = ['gray', 'brown', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'red'];
 
+// Откуда дело пришло, как его различает доска: «telegram» (и пересланное),
+// «notes» (дело из строки заметки), всё остальное — «field», поле записи.
+export const originGroup = origin => origin === 'telegram' || origin === 'telegram_forward' ? 'telegram' : origin === 'notes' ? 'notes' : 'field';
+
 export function completionEvents(db) {
   const map = new Map();
   for (const row of db.prepare("SELECT projection_id, event_type, occurred_at FROM ledger_events WHERE projection_id IS NOT NULL AND event_type IN ('completed','completion_undone') ORDER BY rowid").iterate())
@@ -35,11 +39,18 @@ export const CLOSED_LIMIT = 50;
 function deedCards(db, userId, timeZone, now = new Date(), borrowed = []) {
   const mine = borrowed.length ? `(c.user_id IS ? OR c.id IN (${borrowed.map(() => '?').join(',')}))` : 'c.user_id IS ?';
   const who = [userId, ...borrowed];
-  const rows = db.prepare(`SELECT c.id, c.created_at, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND ${mine} ORDER BY c.created_at`).all(...who);
+  const rows = db.prepare(`SELECT c.id, c.created_at, c.parent_capture_id, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND ${mine} ORDER BY c.created_at`).all(...who);
   const projections = db.prepare(`SELECT p.id, p.capture_id, p.projection_type FROM projections p JOIN captures c ON c.id=p.capture_id WHERE p.status='active' AND c.deleted_at IS NULL AND ${mine} AND p.projection_type IN ('task','meeting_event')`).all(...who);
   const completion = completionEvents(db);
   // Скрепка на карточке: сколько живых вложений у записи.
   const attachments = new Map(db.prepare(`SELECT a.capture_id, COUNT(*) n FROM capture_attachments a JOIN captures c ON c.id=a.capture_id WHERE a.deleted_at IS NULL AND ${mine} GROUP BY a.capture_id`).all(...who).map(row => [row.capture_id, row.n]));
+  // Откуда пришло дело: источник называет первая задача разбора записи. У дела,
+  // отделённого от пачки, своей задачи нет — оно из того же места, что и
+  // запись-родитель (пересланная пачка из Telegram даёт дела «из Telegram»).
+  const origins = new Map();
+  for (const job of db.prepare(`SELECT j.capture_id, j.origin FROM capture_jobs j JOIN captures c ON c.id=j.capture_id WHERE ${mine} ORDER BY j.created_at`).all(...who))
+    if (!origins.has(job.capture_id)) origins.set(job.capture_id, job.origin);
+  const originOfCapture = row => originGroup(origins.has(row.id) ? origins.get(row.id) : origins.get(row.parent_capture_id));
   const byCapture = new Map();
   for (const projection of projections) {
     if (!byCapture.has(projection.capture_id)) byCapture.set(projection.capture_id, []);
@@ -68,6 +79,7 @@ function deedCards(db, userId, timeZone, now = new Date(), borrowed = []) {
       // Люди из разбора: на карточке — строкой с инициалами, как в Notion.
       people: classification.entities?.people || [],
       attachments: attachments.get(row.id) || 0,
+      origin: originOfCapture(row),
       projectionIds: completable.map(projection => projection.id),
     });
   }
@@ -127,7 +139,11 @@ export function boardView(db, { userId, timeZone = 'Europe/Samara', now: at = ne
   return {
     today,
     columns: columns.map(column => ({ id: column.id, name: column.name, color: column.color || null, cards: sortBucket(buckets.get(column.id), today) })),
-    closed,
+    // Закрытое дело лежит в своей колонке и вернётся в неё, если его вернуть в работу.
+    closed: closed.map(card => {
+      const placement = placements.get(card.captureId);
+      return { ...card, columnId: placement && placement.column_id !== null && known.has(placement.column_id) ? placement.column_id : firstId };
+    }),
   };
 }
 

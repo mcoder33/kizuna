@@ -176,3 +176,45 @@ test('cards carry the people the model found in the note',async()=>{
   const card=board.columns[0].cards[0];
   assert.ok(Array.isArray(card.people));
 });
+
+// Откуда пришло дело: доска раскладывает по источнику. Имя источника — на языке
+// доски: пересланное из Telegram тоже «telegram», дело из заметки — «notes»,
+// всё остальное (с главной, без задачи разбора) — «field».
+test('cards carry where they came from: field, telegram (also forwarded), notes; a split child takes its parent’s origin',async()=>{
+  const app=freshApp(),api=authed(app),db=app.database;
+  const job=(captureId,origin)=>db.prepare("INSERT INTO capture_jobs(id,capture_id,selected_provider,state,stage,retryable,created_at,user_id,origin) VALUES(?,?,?,?,?,?,?,?,?)").run(crypto.randomUUID(),captureId,'fallback','succeeded','complete',0,new Date().toISOString(),api.user.id,origin);
+  const create=async raw=>(await api.post('/api/captures').send({raw}).expect(201)).body.entry;
+  const plain=await create('Нужно проверить поле');
+  const chat=await create('Нужно проверить телеграм');
+  const forwarded=await create('Нужно проверить пересланное');
+  const fromNotes=await create('Нужно проверить заметки');
+  const closed=await create('Сделал отчёт из телеграма');
+  job(plain.id,null);job(chat.id,'telegram');job(forwarded.id,'telegram_forward');job(fromNotes.id,'notes');job(closed.id,'telegram');
+  // Пачка из пересланных сообщений: родитель — контейнер, дела отделились от него без своей задачи.
+  const batch=(await api.post('/api/captures').send({raw:['Пересланное от Ани','1. Отправить смету по Hub','2. Согласовать макет с командой'].join('\n')}).expect(201)).body;
+  assert.equal(batch.parts.length,2);
+  job(batch.entry.id,'telegram_forward');
+  const board=(await api.get('/api/board').expect(200)).body;
+  const originOf=title=>board.columns[0].cards.find(card=>card.title===title)?.origin;
+  assert.equal(originOf('Нужно проверить поле'),'field');
+  assert.equal(originOf('Нужно проверить телеграм'),'telegram');
+  assert.equal(originOf('Нужно проверить пересланное'),'telegram');
+  assert.equal(originOf('Нужно проверить заметки'),'notes');
+  for(const part of batch.parts)assert.equal(board.columns[0].cards.find(card=>card.captureId===part.id).origin,'telegram');
+  // Закрытая карточка помнит источник и колонку, в которую вернётся.
+  assert.equal(board.closed.length,1);
+  assert.equal(board.closed[0].origin,'telegram');
+  assert.equal(board.closed[0].columnId,board.columns[0].id);
+  // Карточка записи называет тот же источник, в том числе у отделённого дела.
+  assert.equal((await api.get(`/api/captures/${batch.parts[0].id}`).expect(200)).body.entry.origin,'telegram_forward');
+});
+
+test('a closed card remembers its own column, not the first one',async()=>{
+  const api=authed(freshApp());
+  const later=(await api.post('/api/board/columns').send({name:'Позже'}).expect(201)).body;
+  const task=(await api.post('/api/captures').send({raw:'Нужно проверить колонку закрытого'}).expect(201)).body.entry;
+  await api.post('/api/board/move').send({captureId:task.id,columnId:later.id,index:0}).expect(200);
+  await api.post(`/api/projections/${task.projections.find(p=>p.type==='task').id}/complete`).send({}).expect(200);
+  const board=(await api.get('/api/board').expect(200)).body;
+  assert.equal(board.closed[0].columnId,later.id);
+});
