@@ -5,25 +5,26 @@ const today=()=>dateInZone(new Date(),'Europe/Samara');
 const names=board=>board.columns.map(column=>column.name);
 const cardsOf=(board,name)=>board.columns.find(column=>column.name===name).cards.map(card=>card.title);
 
-test('board shows open deeds in inbox with the todo order and hides the rest',async()=>{
+test('board shows open todos in the first column «Дела» with the todo order and hides the closed',async()=>{
   const api=authed(freshApp()),yesterday=shiftDate(today(),-1);
-  await api.post('/api/captures').send({raw:'Просто заметка для доски'}).expect(201);
+  const note=(await api.post('/api/captures').send({raw:'Просто заметка для доски'}).expect(201)).body.entry;
   const future=(await api.post('/api/captures').send({raw:'спланировать отпуск',primaryType:'todo',due:{date:shiftDate(today(),3)}}).expect(201)).body.entry;
   const overdue=(await api.post('/api/captures').send({raw:'позвонить в салон',primaryType:'todo',due:{date:yesterday}}).expect(201)).body.entry;
   const undated=(await api.post('/api/captures').send({raw:'Нужно проверить Hub'}).expect(201)).body.entry;
   const done=(await api.post('/api/captures').send({raw:'Нужно закрыть дело'}).expect(201)).body.entry;
   await api.post(`/api/projections/${done.projections.find(p=>p.type==='task').id}/complete`).send({}).expect(200);
   const board=(await api.get('/api/board').expect(200)).body;
-  // одна колонка — «Входящие»; заметка и закрытая задача на доску не попадают
-  assert.deepEqual(names(board),['Входящие']);
-  assert.deepEqual(cardsOf(board,'Входящие'),[overdue,undated,future].map(e=>e.interpretation.classification.summary));
+  // «Входящих» нет: у человека одна колонка «Дела», каждая запись — туду (на сегодня, если срок не назван), закрытая на доску не попадает
+  assert.deepEqual(names(board),['Дела']);
+  assert.ok(board.columns.every(column=>column.id!==null));
+  assert.deepEqual(cardsOf(board,'Дела'),[overdue,note,undated,future].map(e=>e.interpretation.classification.summary));
   const first=board.columns[0].cards[0];
   assert.equal(first.captureId,overdue.id);
   assert.ok(first.projectionIds.length>0);
   assert.equal(first.due.date,yesterday);
 });
 
-test('columns: create, rename, reorder, delete returns deeds to inbox',async()=>{
+test('columns: create, rename, reorder, delete returns deeds to the first column',async()=>{
   const api=authed(freshApp());
   const work=(await api.post('/api/board/columns').send({name:'В работе'}).expect(201)).body;
   const wait=(await api.post('/api/board/columns').send({name:'Ждёт'}).expect(201)).body;
@@ -31,19 +32,19 @@ test('columns: create, rename, reorder, delete returns deeds to inbox',async()=>
   const task=(await api.post('/api/captures').send({raw:'Нужно проверить колонки'}).expect(201)).body.entry;
   await api.post('/api/board/move').send({captureId:task.id,columnId:work.id,index:0}).expect(200);
   let board=(await api.get('/api/board').expect(200)).body;
-  assert.deepEqual(names(board),['Входящие','В работе','Ждёт']);
+  assert.deepEqual(names(board),['Дела','В работе','Ждёт']);
   assert.deepEqual(cardsOf(board,'В работе'),[task.interpretation.classification.summary]);
   // переименование и перестановка
   await api.patch(`/api/board/columns/${wait.id}`).send({name:'Ожидание'}).expect(200);
-  await api.patch(`/api/board/columns/${wait.id}`).send({index:0}).expect(200);
+  await api.patch(`/api/board/columns/${wait.id}`).send({index:1}).expect(200);
   board=(await api.get('/api/board').expect(200)).body;
-  assert.deepEqual(names(board),['Входящие','Ожидание','В работе']);
-  // удаление колонки возвращает дела во «Входящие»
+  assert.deepEqual(names(board),['Дела','Ожидание','В работе']);
+  // удаление колонки возвращает дела в первую из оставшихся
   const removed=(await api.delete(`/api/board/columns/${work.id}`).expect(200)).body;
-  assert.equal(removed.movedToInbox,1);
+  assert.equal(removed.moved,1);
   board=(await api.get('/api/board').expect(200)).body;
-  assert.deepEqual(names(board),['Входящие','Ожидание']);
-  assert.ok(cardsOf(board,'Входящие').includes(task.interpretation.classification.summary));
+  assert.deepEqual(names(board),['Дела','Ожидание']);
+  assert.ok(cardsOf(board,'Дела').includes(task.interpretation.classification.summary));
 });
 
 test('card moves persist order inside and between columns',async()=>{
@@ -58,10 +59,13 @@ test('card moves persist order inside and between columns',async()=>{
   let board=(await api.get('/api/board').expect(200)).body;
   const summaries={first:first.interpretation.classification.summary,second:second.interpretation.classification.summary,third:third.interpretation.classification.summary};
   assert.deepEqual(cardsOf(board,'В работе'),[summaries.second,summaries.third,summaries.first]);
-  // перенос обратно во «Входящие» с ручным порядком
-  await api.post('/api/board/move').send({captureId:third.id,columnId:null,index:0}).expect(200);
+  // перенос обратно в первую колонку с ручным порядком; без колонки перенести нельзя — «Входящих» нет
+  const home=board.columns[0];
+  assert.equal(home.name,'Дела');
+  await api.post('/api/board/move').send({captureId:third.id,columnId:null,index:0}).expect(400);
+  await api.post('/api/board/move').send({captureId:third.id,columnId:home.id,index:0}).expect(200);
   board=(await api.get('/api/board').expect(200)).body;
-  assert.deepEqual(cardsOf(board,'Входящие')[0],summaries.third);
+  assert.deepEqual(cardsOf(board,'Дела')[0],summaries.third);
   assert.deepEqual(cardsOf(board,'В работе'),[summaries.second,summaries.first]);
   // индекс за пределами — прижимается к концу, не ошибка
   await api.post('/api/board/move').send({captureId:third.id,columnId:column.id,index:99}).expect(200);
@@ -78,10 +82,11 @@ test('board validates input and stays private per user',async()=>{
   await api.post('/api/board/move').send({captureId:'not-a-uuid',columnId:null,index:0}).expect(400);
   const stranger=authed(app,{email:'stranger@kizuna.test',role:'user'});
   const foreign=(await stranger.get('/api/board').expect(200)).body;
-  assert.deepEqual(names(foreign),['Входящие']);
+  assert.deepEqual(names(foreign),['Дела']);
   assert.equal(foreign.columns[0].cards.length,0);
   // чужие колонка и дело недоступны
-  await stranger.post('/api/board/move').send({captureId:task.id,columnId:null,index:0}).expect(404);
+  await stranger.post('/api/board/move').send({captureId:task.id,columnId:foreign.columns[0].id,index:0}).expect(404);
+  await stranger.post('/api/board/move').send({captureId:task.id,columnId:column.id,index:0}).expect(404);
   await stranger.patch(`/api/board/columns/${column.id}`).send({name:'Взлом'}).expect(404);
   await stranger.delete(`/api/board/columns/${column.id}`).expect(404);
 });
@@ -112,8 +117,30 @@ test('full reset clears the board too and is not blocked by placements',async()=
   await api.post('/api/board/move').send({captureId:task.id,columnId:column.id,index:0}).expect(200);
   await api.post('/api/reset').send({confirmation:'СБРОСИТЬ КИЗУНА'}).expect(200);
   const board=(await api.get('/api/board').expect(200)).body;
-  assert.deepEqual(names(board),['Входящие']);
+  assert.deepEqual(names(board),['Дела']);
   assert.equal(board.columns[0].cards.length,0);
+});
+
+test('the last column can be deleted: «Дела» appears and takes the todos; the board never has an empty id',async()=>{
+  const api=authed(freshApp());
+  const first=(await api.get('/api/board').expect(200)).body.columns[0];
+  const task=(await api.post('/api/captures').send({raw:'Нужно проверить удаление'}).expect(201)).body.entry;
+  await api.post('/api/board/move').send({captureId:task.id,columnId:first.id,index:0}).expect(200);
+  const removed=(await api.delete(`/api/board/columns/${first.id}`).expect(200)).body;
+  assert.equal(removed.moved,1);
+  const board=(await api.get('/api/board').expect(200)).body;
+  assert.deepEqual(names(board),['Дела']);
+  assert.notEqual(board.columns[0].id,first.id);
+  assert.deepEqual(cardsOf(board,'Дела'),[task.interpretation.classification.summary]);
+});
+
+test('a todo closed at birth ("сделал X") sits in the closed tail, not in the columns',async()=>{
+  const api=authed(freshApp());
+  const created=(await api.post('/api/captures').send({raw:'Сделал отчёт по Hub'}).expect(201)).body.entry;
+  const board=(await api.get('/api/board').expect(200)).body;
+  assert.equal(board.columns[0].cards.length,0);
+  assert.deepEqual(board.closed.map(card=>card.captureId),[created.id]);
+  assert.equal(board.closed[0].closedDate,today());
 });
 
 test('board cards carry the number of live attachments',async()=>{

@@ -30,7 +30,9 @@ export const TELEGRAM_API = 'https://api.telegram.org';
 export const LINK_TTL_MS = 15 * 60 * 1000;
 // Предел записи тот же, что у поля на главной.
 const RAW_LIMIT = 10000;
-const GROUP_QUIET_MS = 1500;
+// Пачка пересланных сообщений — один блок: пока чат молчит меньше этого,
+// сообщения копятся, и в журнал уходит одна запись, а в ответ — одно сообщение.
+const GROUP_QUIET_MS = 4000;
 const POLL_TIMEOUT_S = 50;
 // Аватарка бота — знак Кизуны с сайта (public/icon.svg): те же белые ворота на
 // том же красном, только красное во весь квадрат. Telegram показывает фото
@@ -222,7 +224,6 @@ export function composeCapture(messages, { files = [], timeZone = 'Europe/Samara
 // ── ответ после разбора ─────────────────────────────────────────────────────
 // Та же сводка, что показывает карточка записи на главной после разбора: что
 // получилось, когда, что отделилось, что осталось неясным.
-const TYPE_LINES = { task: '📌 Дело', meeting_event: '📅 Встреча', note: '📝 Заметка', idea_question: '💡 Идея', outcome_decision: '🏁 Результат' };
 export function whenText(schedule, today) {
   if (!schedule || (!schedule.date && !schedule.time)) return '';
   const words = [];
@@ -233,17 +234,37 @@ export function whenText(schedule, today) {
   return words.join(' ');
 }
 const clip = (text, limit) => { const value = String(text || '').replace(/\s+/g, ' ').trim(); return value.length > limit ? `${value.slice(0, limit - 1)}…` : value; };
+// Срок в ответе: сегодняшний день не называем («на сегодня» уже в заголовке),
+// остальное — словами: «в пятницу», «завтра в 11:00», «каждую среду».
+function dueText(schedule, today) {
+  if (!schedule) return '';
+  if (!schedule.date || schedule.date === today) return whenText({ ...schedule, date: null }, today);
+  return whenText(schedule, today);
+}
 export function resultText({ state, classification = null, parts = [], captureGone = false }, { today }) {
   if (captureGone) return 'Запись уже удалена из журнала.';
   if (state === 'cancelled') return 'Разбор отменён — запись сохранена как есть.';
-  if (state !== 'succeeded' || !classification) return '⚠️ Записано, но не разобрано — тип можно указать в карточке записи.';
-  if (classification.unclassified) return '⚠️ Записано без разбора — тип можно указать в карточке записи.';
+  if (state !== 'succeeded' || !classification) return '⚠️ Записано, но не разобрано — название и срок можно поправить в карточке записи.';
   const lines = [];
-  const when = whenText(classification.entities?.schedule || classification.entities?.doneOn, today);
-  lines.push(`${TYPE_LINES[classification.primaryType] || TYPE_LINES.note} «${clip(classification.summary, 140)}»${when ? ` — ${when}` : ''}`);
+  const title = `«${clip(classification.summary, 140)}»`;
+  const partTitles = parts.map(part => `«${clip(part.title, 80)}»`);
+  if (classification.completed === true) {
+    const when = whenText(classification.entities?.doneOn, today);
+    lines.push(`🏁 Записано как сделанное: ${title}${when ? ` — ${when}` : ''}`);
+    if (partTitles.length) lines.push(`Легло ${partTitles.length} ${plural(partTitles.length, ['туду', 'туду', 'туду'])} на сегодня:\n${partTitles.map(item => `• ${item}`).join('\n')}`);
+  } else {
+    const due = dueText(classification.entities?.schedule, today);
+    const onToday = !classification.entities?.schedule?.date || classification.entities.schedule.date === today;
+    if (!partTitles.length) lines.push(`📌 Легло${onToday ? ' на сегодня' : ''}: ${title}${due ? ` — ${due}` : ''}`);
+    else {
+      const count = partTitles.length + 1;
+      lines.push(`📌 Легло ${count} ${plural(count, ['туду', 'туду', 'туду'])}${onToday ? ' на сегодня' : ''}:`);
+      lines.push(`• ${title}${due ? ` — ${due}` : ''}`);
+      for (const item of partTitles) lines.push(`• ${item}${onToday ? '' : ' — сегодня'}`);
+    }
+  }
   const projects = (classification.entities?.projects || []).filter(Boolean);
   if (projects.length) lines.push(`Проект: ${projects.join(', ')}`);
-  if (parts.length) lines.push(`Отдельно ${parts.length} ${plural(parts.length, ['дело', 'дела', 'дел'])}: ${parts.map(part => `«${clip(part.title, 80)}»`).join(', ')}`);
   const review = gateClassification(classification);
   if (review.question) lines.push(`❓ ${review.question}`);
   return lines.join('\n');

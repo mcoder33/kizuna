@@ -141,7 +141,7 @@ test('classification through OpenRouter reaches the ledger shape with provenance
   assert.equal(result.classification.unclassified, undefined);
 });
 
-test('transport and schema failures degrade to an unclassified capture with a safe reason', async () => {
+test('transport and schema failures degrade to a plain todo capture with a safe reason', async () => {
   const cases = [
     [{ '/models': () => ok(catalogue), '/chat/completions': () => ({ ok: false, status: 429 }) }, 'rate_limited'],
     [{ '/models': () => ok(catalogue), '/chat/completions': () => ({ ok: false, status: 401 }) }, 'unavailable'],
@@ -153,7 +153,9 @@ test('transport and schema failures degrade to an unclassified capture with a sa
     const result = await service.classify('Завтра в 11 созвон', 'openrouter');
     assert.equal(result.usedProvider, 'fallback', reason);
     assert.equal(result.fallbackReason, reason);
-    assert.equal(result.classification.unclassified, true);
+    assert.equal(result.classification.primaryType, 'task', 'модель недоступна — запись всё равно дело');
+    assert.equal(result.classification.summary, 'Завтра в 11 созвон');
+    assert.equal(result.classification.unclassified, undefined);
   }
 });
 

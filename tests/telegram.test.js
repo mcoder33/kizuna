@@ -140,7 +140,7 @@ test('a message is recorded and parsed exactly like the main page input', async 
     assert.equal(saving.text, '✍️ Записано, ИИ разбирает…');
     const result = ctx.fake.said().find(line => line.method === 'editMessageText');
     assert.equal(result.messageId, saving.messageId);
-    assert.equal(result.text, '📌 Дело «Нужно позвонить маме завтра в 18:00» — завтра в 18:00');
+    assert.equal(result.text, '📌 Легло: «Нужно позвонить маме завтра в 18:00» — завтра в 18:00');
     // Кнопки к записи нет: адрес Кизуны в тесте — не публичный https.
     assert.equal(result.markup, null);
   } finally { await ctx.app.captureJobWorker.stop(); }
@@ -257,7 +257,7 @@ test('the reply leads to the record when Kizuna lives at a public https address'
     await eventually(() => assert.ok(ctx.fake.said().some(line => line.method === 'editMessageText')));
     const capture = ctx.db.prepare('SELECT id FROM captures').get();
     const result = ctx.fake.said().find(line => line.method === 'editMessageText');
-    assert.equal(result.text, '📅 Встреча «Созвон по Hub завтра в 11:00» — завтра в 11:00\nПроект: Hub');
+    assert.equal(result.text, '📌 Легло: «Созвон по Hub завтра в 11:00» — завтра в 11:00\nПроект: Hub');
     assert.deepEqual(result.markup, { inline_keyboard: [[{ text: 'Открыть в Кизуне', url: `https://kizuna.example.com/#today?open=${capture.id}` }]] });
   } finally { await ctx.app.captureJobWorker.stop(); }
 });
@@ -323,8 +323,10 @@ test('the reply after parsing says what the main page says', () => {
     state: 'succeeded',
     classification: { primaryType: 'task', summary: 'Отправить счёт', entities: { schedule: { date: '2026-09-24', time: null }, projects: [] }, ambiguity: { field: 'people', question: 'Кому отправить?' } },
     parts: [{ title: 'Позвонить в банк' }],
-  }, { today }), '📌 Дело «Отправить счёт» — сегодня\nОтдельно 1 дело: «Позвонить в банк»\n❓ Кому отправить?');
-  assert.equal(resultText({ state: 'succeeded', classification: { primaryType: 'note', summary: 'Идеи к отпуску', entities: { schedule: null, projects: [] } } }, { today }), '📝 Заметка «Идеи к отпуску»');
+  }, { today }), '📌 Легло 2 туду на сегодня:\n• «Отправить счёт»\n• «Позвонить в банк»\n❓ Кому отправить?');
+  assert.equal(resultText({ state: 'succeeded', classification: { primaryType: 'task', summary: 'Идеи к отпуску', entities: { schedule: { date: today, time: '15:00' }, projects: [] } } }, { today }), '📌 Легло на сегодня: «Идеи к отпуску» — в 15:00');
+  assert.equal(resultText({ state: 'succeeded', classification: { primaryType: 'task', summary: 'Квартальный отчёт', entities: { schedule: { date: '2026-09-25', time: null }, projects: [] } } }, { today }), '📌 Легло: «Квартальный отчёт» — завтра');
+  assert.equal(resultText({ state: 'succeeded', classification: { primaryType: 'task', completed: true, summary: 'Ревью по Hub', entities: { schedule: null, doneOn: { date: '2026-09-23', time: null }, projects: [] } } }, { today }), '🏁 Записано как сделанное: «Ревью по Hub» — вчера');
   assert.match(resultText({ state: 'failed' }, { today }), /не разобрано/);
   assert.equal(resultText({ state: 'succeeded', captureGone: true }, { today }), 'Запись уже удалена из журнала.');
 });

@@ -459,7 +459,7 @@ test('итог к делу — запись-результат, привязан
   const child = app.database.prepare('SELECT parent_capture_id, raw FROM captures WHERE id=?').get(created.captureId);
   assert.deepEqual(child, { parent_capture_id: entry.id, raw: 'Доступ есть у всех, кроме календаря' });
   const job = app.database.prepare('SELECT overrides_json FROM capture_jobs WHERE capture_id=?').get(created.captureId);
-  assert.deepEqual(JSON.parse(job.overrides_json), { primaryType: 'outcome_decision' });
+  assert.deepEqual(JSON.parse(job.overrides_json), { completed: true });
 });
 
 test('об изменениях в выбранном календаре лента молчит, а приглашения из него приходят', async () => {

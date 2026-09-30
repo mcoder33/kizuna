@@ -7,7 +7,6 @@ import request from 'supertest';
 import { openDatabase, createLedger, enqueueCaptureJob } from '../server/db.js';
 import { normalizeClassification } from '../server/classifier.js';
 import { journalOverview, listJournal, vocabulary } from '../server/journal.js';
-import { runVoiceTool, voiceBriefing } from '../server/voice.js';
 import { createApp } from '../server/index.js';
 import { authed } from './helpers/auth.js';
 import { fakeModelService } from './helpers/fake-model.js';
@@ -26,6 +25,9 @@ function entry(db, raw, { userId = null, type = 'task', projects = [], people = 
     { primaryType: type, entities: { projects, people, when: when ? { time: null, ...when } : null, followUp: null }, additionalTypes: [], summary: raw, proposedActions: [], completed, ambiguity: null },
     raw, NOW, 'model',
   );
+  // Разбор теперь всегда даёт туду, но в базе лежат и старые записи других типов:
+  // карта журнала обязана читать и их.
+  classification.primaryType = type;
   if (tags.length) classification.tags = tags;
   if (priority) classification.priority = priority;
   return createLedger(db, { userId, raw, classification, provider: 'manual' }).captureId;
@@ -118,22 +120,23 @@ test('словарь журнала отдаёт написания проект
   assert.deepEqual(known.tags, ['релиз']);
 });
 
-test('снимок журнала называет счётчики, проекты и сегодняшнее', () => {
-  const briefing = voiceBriefing(journalOverview(seeded(), { now: NOW }));
-  assert.match(briefing, /Записей 5, открыто 3, просрочено 1/);
-  assert.match(briefing, /Hub — 3 открытых, 1 просрочено/);
-  assert.match(briefing, /11:00 Созвон по Hub с Даниилом/);
-  assert.match(briefing, /Просрочено: «Допинать бот-детектор по Hub» — 5 дн\./);
+test('карта журнала называет счётчики, проекты и сегодняшнее', () => {
+  const map = journalOverview(seeded(), { now: NOW });
+  assert.equal(map.totals.entries, 5);
+  assert.equal(map.totals.open, 3);
+  assert.equal(map.totals.overdue, 1);
+  const hub = map.projects.find(project => project.name === 'Hub');
+  assert.equal(hub.open, 3);
+  assert.equal(hub.overdue, 1);
+  assert.equal(map.horizon.today.length, 1);
+  assert.deepEqual(map.overdue.map(item => item.daysLate), [5]);
 });
 
-test('голос берёт карту и выборку теми же инструментами', () => {
+test('выборка по проекту и статусу отдаёт открытое и знает общее число', () => {
   const db = seeded();
-  const map = runVoiceTool(db, 'journal_overview', {}, { now: at });
-  assert.equal(map.totals.open, 3);
-  const found = runVoiceTool(db, 'list_entries', { project: 'Hub', status: 'open', limit: 2 }, { now: at });
+  const found = listJournal(db, { now: NOW, project: 'Hub', status: 'open', limit: 2 });
   assert.equal(found.total, 3);
   assert.equal(found.items.length, 2);
-  assert.match(runVoiceTool(db, 'list_entries', { type: 'нечто' }, { now: at }).error, /Неизвестный тип/);
 });
 
 test('карта журнала отдаётся по сети и только своя', async () => {

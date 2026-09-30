@@ -3,15 +3,19 @@ import { normalizeRepeat, validRepeat, scheduleDisplay } from './repeat.js';
 export const primaryTypes=['meeting_event','task','note','outcome_decision','idea_question'];
 export const claimSchema=z.object({field:z.string(),value:z.unknown(),kind:z.enum(['fact','inference','assumption','unknown']),confidence:z.number().min(0).max(1),provenance:z.object({source:z.enum(['raw','rule','model']),evidence:z.string().max(300).optional()}),essential:z.boolean()});
 export const classificationSchema=z.object({
-  primaryType:z.enum(primaryTypes),
+  // Тип в разборе больше не спрашивается: любая запись — туду. Поле оставлено
+  // для старых провайдеров и сохранённых ответов, значение по умолчанию — task.
+  primaryType:z.enum(primaryTypes).optional().default('task'),
   entities:z.object({
     projects:z.array(z.string()).max(6),
     people:z.array(z.string()).max(8),
     when:z.union([z.string().max(120),z.object({date:z.string().max(10).nullable(),time:z.string().max(5).nullable(),end:z.string().max(5).nullable().optional()}).passthrough()]).nullable(),
     followUp:z.string().max(500).nullable(),
   }),
-  additionalTypes:z.array(z.enum(primaryTypes)).max(3),
+  additionalTypes:z.array(z.enum(primaryTypes)).max(3).optional().default([]),
   summary:z.string().min(1).max(500),
+  // Описание туду: суть записи 1–3 предложениями. Ложится телом заметки.
+  details:z.string().max(1000).optional().default(''),
   proposedActions:z.array(z.object({type:z.string().max(60),title:z.string().max(300)})).max(5),
   // Оба поля добавлены к контракту модели; старые провайдеры их не присылают,
   // поэтому у них безопасные значения по умолчанию.
@@ -121,7 +125,7 @@ function groundedActions(actions,raw,{summary='',followUp=null}={}){
 // — дословная фраза человека, проекты наследуются от исходной (речь об одном),
 // люди и срок — нет: срок у намерения не назван, а участники встречи не
 // исполнители дела.
-export function actionClassification(title,parent){
+export function actionClassification(title,parent,now=new Date(),timeZone='Europe/Samara'){
   const projects=(parent?.entities?.projects||[]).slice(0,6);
   const claims=[
     claim('type','task',true,0.9,'inference','split'),
@@ -130,7 +134,7 @@ export function actionClassification(title,parent){
     claim('people',[],false,0,'unknown','split'),
     claim('followUp',null,false,0,'unknown','split'),
   ];
-  return {primaryType:'task',summary:title.slice(0,500),entities:{projects,people:[],schedule:null,followUp:null},additionalTypes:[],proposedActions:[],completed:false,ambiguity:null,claims,confidence:Object.fromEntries(claims.map(item=>[item.field,item.confidence])),conflicts:{projects:false,schedule:false}};
+  return toTodo({primaryType:'task',summary:title.slice(0,500),details:'',entities:{projects,people:[],schedule:null,followUp:null},additionalTypes:[],proposedActions:[],completed:false,ambiguity:null,claims,confidence:Object.fromEntries(claims.map(item=>[item.field,item.confidence])),conflicts:{projects:false,schedule:false}},now,timeZone);
 }
 
 function claim(field,value,essential,confidence,kind,source){
@@ -143,56 +147,55 @@ function claim(field,value,essential,confidence,kind,source){
 export function unclassifiedCapture(raw=''){
   const summary=String(raw).trim().slice(0,500)||'Запись без текста';
   const claims=[claim('type',null,true,0,'unknown','rule')];
-  return {primaryType:'note',entities:{projects:[],people:[],schedule:null,followUp:null},additionalTypes:[],summary,proposedActions:[],completed:false,unclassified:true,ambiguity:{field:'type',question:'Запись сохранена без разбора: укажите тип.'},claims,confidence:Object.fromEntries(claims.map(c=>[c.field,c.confidence])),conflicts:{projects:false,schedule:false}};
+  return {primaryType:'task',entities:{projects:[],people:[],schedule:null,followUp:null},additionalTypes:[],summary,details:'',proposedActions:[],completed:false,unclassified:true,ambiguity:{field:'type',question:'Запись сохранена без разбора: укажите тип.'},claims,confidence:Object.fromEntries(claims.map(c=>[c.field,c.confidence])),conflicts:{projects:false,schedule:false}};
 }
 export const classifyFallback=(raw='')=>unclassifiedCapture(raw);
 
-// Сделанное — это результат. Модель честно отмечала «Обсудили орг вопросы с
-// Даниилом» как состоявшееся, но оставляла тип «встреча», и запись лежала в
-// «Что делал» с кружком «Готово» и пометкой «без срока», хотя отмечать в ней
-// нечего: она уже завершилась. Правило одно на все входы — разбор моделью,
-// уточнение в карточке, поправка голосом: у сделанного нет ни встречи, ни дела.
-// Ни заметки с идеей: человек, отметивший заметку сделанной, назвал её итогом.
-const OPEN_TYPES=['task','meeting_event'];
-export const NOTE_TYPES=['note','idea_question'];
-export function settleCompleted(classification){
-  if(classification?.completed!==true)return classification;
-  const additional=classification.additionalTypes||[];
-  const settles=OPEN_TYPES.includes(classification.primaryType)||NOTE_TYPES.includes(classification.primaryType);
-  if(!settles&&!additional.some(type=>OPEN_TYPES.includes(type)))return classification;
-  const primaryType=settles?'outcome_decision':classification.primaryType;
-  const claims=(classification.claims||[]).map(item=>item.field==='type'?{...item,value:primaryType}:item);
-  return {...classification,primaryType,additionalTypes:additional.filter(type=>type!==primaryType&&!OPEN_TYPES.includes(type)),claims,confidence:Object.fromEntries(claims.map(item=>[item.field,item.confidence]))};
+// Одна сущность — туду. Что бы ни пришло из разбора, запись становится делом:
+// тип task, дополнительных типов нет, вопрос «это дело или заметка?» не
+// задаётся. Срок по умолчанию — сегодня: назван день («в пятницу») — остаётся
+// он, названо только время — оно ложится на сегодня, не назван никакой —
+// на сегодня целым днём. «Сделал X» (completed) срока не получает: у него
+// есть день, когда это было (doneOn), а кружок закрывается при записи в журнал.
+export function toTodo(classification,now=new Date(),timeZone='Europe/Samara'){
+  if(!classification)return classification;
+  const completed=classification.completed===true;
+  const entities={...classification.entities};
+  let defaulted=false;
+  if(!completed){
+    const current=entities.schedule;
+    if(!current||!current.date){
+      const schedule=scheduleFromModel({date:currentDate(now,timeZone),time:current?.time??null,end:current?.end??null},now,timeZone);
+      if(schedule){entities.schedule={...schedule,...(current?.remind!==undefined?{remind:current.remind}:{})};defaulted=true}
+    }
+  }
+  const claims=(classification.claims||[]).map(item=>item.field==='type'?{...item,value:'task',kind:'inference',confidence:0.9}:item.field==='schedule'&&defaulted?{...item,value:entities.schedule,kind:'inference',confidence:0.9,provenance:{source:'rule',evidence:'по умолчанию — сегодня'}}:item);
+  const ambiguity=classification.ambiguity?.field==='type'?null:(classification.ambiguity??null);
+  const {unclassified,...rest}=classification;
+  return {...rest,primaryType:'task',additionalTypes:[],details:classification.details||'',entities,completed,ambiguity,claims,confidence:Object.fromEntries(claims.map(item=>[item.field,item.confidence]))};
 }
-// У модели заметка и идея сделанными не бывают. Она путала справку с отчётом:
-// «Доступы Андрея с ГитЛабом» со ссылками легли в «Что делал» с галочкой
-// «Сделано». Назвала запись заметкой или идеей — верим типу и признак снимаем:
-// о сделанном модель говорит типом outcome_decision.
-export const modelCompleted=(primaryType,completed)=>completed===true&&!NOTE_TYPES.includes(primaryType);
 
 export function normalizeClassification(candidate,raw='',now=new Date(),source='model',timeZone='Europe/Samara'){
   const parsed=classificationSchema.parse(candidate);
-  const completed=modelCompleted(parsed.primaryType,parsed.completed);
-  const primaryType=completed&&OPEN_TYPES.includes(parsed.primaryType)?'outcome_decision':parsed.primaryType;
-  const scheduleRelevant=['meeting_event','task'].includes(primaryType)&&!completed;
+  const completed=parsed.completed===true;
+  const primaryType='task';
+  const scheduleRelevant=!completed;
   const schedule=scheduleRelevant?scheduleFromModel(parsed.entities.when,now,timeZone):null;
   const doneOn=completed?doneOnFromModel(parsed.entities.when,now,timeZone):null;
   const people=groundedValues(parsed.entities.people,raw,8);
   const projects=groundedValues(parsed.entities.projects,raw,6);
   const followUp=parsed.entities.followUp&&raw.toLowerCase().includes(parsed.entities.followUp.trim().toLowerCase().slice(0,Math.min(parsed.entities.followUp.trim().length,12)))?parsed.entities.followUp.trim().slice(0,500):null;
   const summary=(parsed.summary||'').trim().slice(0,500)||String(raw).trim().slice(0,500);
-  // Отчёт о сделанном не открывает дело; отдельная task-проекция допустима
-  // только при явно названном следующем действии.
-  const additionalTypes=completed?[]:[...new Set(parsed.additionalTypes.filter(type=>type!==primaryType&&(type!=='task'||followUp)))];
+  const additionalTypes=[];
   const ambiguity=parsed.ambiguity&&typeof parsed.ambiguity.field==='string'?{field:parsed.ambiguity.field,question:parsed.ambiguity.question||null}:null;
   const claims=[
     claim('type',primaryType,true,0.9,'inference',source),
     claim('projects',projects,projects.length===1,0.88,'fact',source),
-    claim('schedule',schedule,scheduleRelevant&&primaryType==='meeting_event',0.88,'inference',source),
+    claim('schedule',schedule,false,0.88,'inference',source),
     claim('people',people,false,0.88,'fact',source),
     claim('followUp',followUp,false,0.88,'inference',source),
   ];
-  const out={primaryType,summary,entities:{projects,people,schedule,followUp,...(doneOn?{doneOn}:{})},additionalTypes,proposedActions:groundedActions(parsed.proposedActions,raw,{summary,followUp}),completed,ambiguity,claims,confidence:Object.fromEntries(claims.map(c=>[c.field,c.confidence])),conflicts:{projects:ambiguity?.field==='projects',schedule:ambiguity?.field==='schedule'}};
+  const out={primaryType,summary,details:(parsed.details||'').trim().slice(0,1000),entities:{projects,people,schedule,followUp,...(doneOn?{doneOn}:{})},additionalTypes,proposedActions:groundedActions(parsed.proposedActions,raw,{summary,followUp}),completed,ambiguity,claims,confidence:Object.fromEntries(claims.map(c=>[c.field,c.confidence])),conflicts:{projects:ambiguity?.field==='projects',schedule:ambiguity?.field==='schedule'}};
   return out;
 }
 
@@ -209,18 +212,11 @@ export function gateClassification(c){
   return {level:'high',question:null,field:null};
 }
 
-// Ручные параметры записи из карточки ввода. UI говорит на языке трёх типов
-// (todo / outcome / note) — на внутренние типы журнала они отображаются здесь.
-// Срок и важность имеют смысл только у ТУДУ; теги общие для всех типов.
-// Тип, названный человеком: из поля ввода приходят todo, outcome и note, голос
-// называет ещё встречу и идею.
-const userTypeMap={todo:'task',meeting:'meeting_event',outcome:'outcome_decision',note:'note',idea:'idea_question'};
+// Ручные параметры записи из карточки ввода. Запись всегда туду, поэтому
+// primaryType из запроса игнорируется (старые клиенты и бот его ещё шлют);
+// срок, важность и теги работают у любой записи.
 export function parseCaptureOverrides(body,now=new Date(),timeZone='Europe/Samara'){
   const src=body||{};const out={};
-  if(src.primaryType!==undefined&&src.primaryType!==null){
-    if(!Object.hasOwn(userTypeMap,src.primaryType))return{error:'invalid_type'};
-    out.primaryType=userTypeMap[src.primaryType];
-  }
   if(src.due!==undefined&&src.due!==null){
     if(typeof src.due!=='object'||Array.isArray(src.due))return{error:'invalid_due'};
     const date=src.due.date,time=src.due.time??null;
@@ -248,14 +244,11 @@ export function parseCaptureOverrides(body,now=new Date(),timeZone='Europe/Samar
     }
     if(tags.length)out.tags=tags;
   }
-  // Срок бывает у дела и у встречи, важность — только у дела.
-  if((out.due&&!['task','meeting_event'].includes(out.primaryType))||(out.priority&&out.primaryType!=='task'))return{error:'overrides_require_todo'};
   return{overrides:Object.keys(out).length?out:null};
 }
 
 // Наложение ручных параметров на классификацию (модельную или fallback).
-// Заданное человеком — факт с уверенностью 1; ambiguity по этому полю снята,
-// признак unclassified при заданном типе больше не действует.
+// Заданное человеком — факт с уверенностью 1; ambiguity по этому полю снята.
 export function applyUserOverrides(classification,overrides,now=new Date(),timeZone='Europe/Samara'){
   if(!overrides)return classification;
   const out={...classification,entities:{...classification.entities},claims:(classification.claims||[]).map(item=>({...item})),conflicts:{...(classification.conflicts||{})}};
@@ -265,26 +258,16 @@ export function applyUserOverrides(classification,overrides,now=new Date(),timeZ
     if(index>=0)out.claims[index]=next;else out.claims.push(next);
   };
   const clearAmbiguity=field=>{if(out.ambiguity?.field===field)out.ambiguity=null};
-  if(overrides.primaryType){
-    out.primaryType=overrides.primaryType;
-    delete out.unclassified;
-    out.additionalTypes=(out.additionalTypes||[]).filter(type=>type!==overrides.primaryType);
-    setClaim('type',overrides.primaryType,true);
-    clearAmbiguity('type');
-    // Тип выбран человеком: «результат» — это уже сделанное и идёт в «Что
-    // делал», остальные типы — нет. Без этого запись с ручным «результатом»
-    // оседала в заметках: признак «сделано» ставит только модель.
-    out.completed=overrides.primaryType==='outcome_decision';
-    // Срок у результата — это день, когда это было: «закинь результат —
-    // в пятницу доработал X» не должен оставлять результат со сроком.
-    if(out.completed&&out.entities.schedule){
-      const doneOn=doneOnFromModel(out.entities.schedule,now,timeZone);
-      out.entities={...out.entities,schedule:null,...(doneOn?{doneOn}:{})};
-      const scheduleIndex=out.claims.findIndex(item=>item.field==='schedule');
-      if(scheduleIndex>=0)out.claims[scheduleIndex]={...out.claims[scheduleIndex],value:null,kind:'unknown',confidence:0};
-    }
+  // Внутренний путь (итог к делу): запись уже сделана. Срок становится днём,
+  // когда это было, — как при «как результат» в тексте.
+  if(overrides.completed===true&&out.completed!==true){
+    const doneOn=out.entities.schedule?doneOnFromModel(out.entities.schedule,now,timeZone):null;
+    out.completed=true;
+    out.entities={...out.entities,schedule:null,...(doneOn?{doneOn}:{})};
+    const scheduleIndex=out.claims.findIndex(item=>item.field==='schedule');
+    if(scheduleIndex>=0)out.claims[scheduleIndex]={...out.claims[scheduleIndex],value:null,kind:'unknown',confidence:0};
   }
-  const scheduleAllowed=['task','meeting_event'].includes(out.primaryType)&&!out.completed;
+  const scheduleAllowed=!out.completed;
   if(overrides.due&&scheduleAllowed){
     const schedule=scheduleFromModel(overrides.due,now,timeZone);
     if(schedule){
@@ -295,42 +278,37 @@ export function applyUserOverrides(classification,overrides,now=new Date(),timeZ
       clearAmbiguity('schedule');
     }
   }
-  if(overrides.priority&&out.primaryType==='task')out.priority=overrides.priority;
+  if(overrides.priority)out.priority=overrides.priority;
   if(overrides.tags?.length)out.tags=overrides.tags;
   out.confidence=Object.fromEntries(out.claims.map(item=>[item.field,item.confidence]));
   return out;
 }
 
-// Тип, названный самим человеком в начале записи: «закинь заметку — …»,
-// «запиши задачу: …», «Итог: …». Модель таких слов не знает: 24.09 «закинь
-// заметку» с пересланной перепиской о ботах она разобрала как результат —
-// текст был в прошедшем времени. У голоса свои слова ловились всегда
-// (voice.js), у текста и Telegram — нет. Правило узкое: только команда или
-// слово-тип с двоеточием в самом начале; «дело в том, что…» или «заметка
-// оказалась полезной» типом не считаются.
-const EXPLICIT_TYPE_WORDS={note:'заметк\\p{L}*',task:'задач\\p{L}*|дел[оа]|туду|тудушк\\p{L}*',outcome_decision:'итог\\p{L}*|результат\\p{L}*|отч[её]т\\p{L}*',idea_question:'иде[яюи]|мысл[ьи]|вопрос\\p{L}*',meeting_event:'встреч\\p{L}*|созвон\\p{L}*'};
+// «Сделано», названное самим человеком: «Итог: …», «оформи как результат»,
+// «Доработал TCAM — только поставь это на пятницу как результат». Типов у
+// записи больше нет, но эта просьба значит «уже сделано»: модель её иногда
+// пропускает, и запись должна закрыться сразу. Слова «заметка», «идея»,
+// «задача», «встреча» ничего не меняют — всё равно туду. Правило узкое: только
+// команда или слово с двоеточием в самом начале и «как <слово>» в хвосте.
+const EXPLICIT_DONE_WORDS='итог\\p{L}*|результат\\p{L}*|отч[её]т\\p{L}*';
 const EXPLICIT_VERBS='закинь|кинь|запиши|добавь|создай|сохрани|положи|занеси|оформи|заведи|сделай';
 const EXPLICIT_HEAD=80;
-// Просьба помощнику бывает и в конце записи: «Доработал TCAM — только поставь
-// это на пятницу как результат», «оформи это как задачу». Ловится команда с
-// «как/в» перед словом-типом в любом месте и «как <тип>» в самом хвосте.
-// Просто «в заметку» в хвосте («закинул ссылку в заметку») типом не считается.
 const EXPLICIT_TAIL=60;
 const EXPLICIT_TAIL_VERBS=`${EXPLICIT_VERBS}|поставь|отметь|запиши|занеси`;
-const explicitPatterns=Object.entries(EXPLICIT_TYPE_WORDS).map(([type,words])=>({type,command:new RegExp(`^[^\\p{L}]*(?:${EXPLICIT_VERBS})\\s+(?:(?:в|как|это|мне|себе)\\s+)*(?:${words})(?![\\p{L}])`,'iu'),label:new RegExp(`^[^\\p{L}]*(?:${words})\\s*[:—–-]`,'iu'),ask:new RegExp(`(?:^|[^\\p{L}])(?:${EXPLICIT_TAIL_VERBS})\\s+(?:(?:это|мне|себе|его|её|их)\\s+)*(?:как|в)\\s+(?:${words})(?![\\p{L}])`,'iu'),tail:new RegExp(`(?:^|[^\\p{L}])как\\s+(?:${words})[^\\p{L}]*$`,'iu')}));
+const explicitDone={command:new RegExp(`^[^\\p{L}]*(?:${EXPLICIT_VERBS})\\s+(?:(?:в|как|это|мне|себе)\\s+)*(?:${EXPLICIT_DONE_WORDS})(?![\\p{L}])`,'iu'),label:new RegExp(`^[^\\p{L}]*(?:${EXPLICIT_DONE_WORDS})\\s*[:—–-]`,'iu'),ask:new RegExp(`(?:^|[^\\p{L}])(?:${EXPLICIT_TAIL_VERBS})\\s+(?:(?:это|мне|себе|его|её|их)\\s+)*(?:как|в)\\s+(?:${EXPLICIT_DONE_WORDS})(?![\\p{L}])`,'iu'),tail:new RegExp(`(?:^|[^\\p{L}])как\\s+(?:${EXPLICIT_DONE_WORDS})[^\\p{L}]*$`,'iu')};
 export function explicitType(raw){
   const text=String(raw||'');
   const head=text.slice(0,EXPLICIT_HEAD),tail=text.trimEnd().slice(-EXPLICIT_TAIL);
-  for(const {type,command,label} of explicitPatterns)if(command.test(head)||label.test(head))return type;
-  for(const {type,ask,tail:tailPattern} of explicitPatterns)if(ask.test(text)||tailPattern.test(tail))return type;
-  return null;
+  return explicitDone.command.test(head)||explicitDone.label.test(head)||explicitDone.ask.test(text)||explicitDone.tail.test(tail)?'outcome_decision':null;
 }
-// Названный тип ложится поверх разбора как ручной override: факт с уверенностью
-// 1, «сделано» только у результата, неразобранность и вопрос о типе сняты.
+// Просьба «как результат» закрывает запись: completed, срок превращается в
+// день, когда это было (будущее отбрасывается), туду остаётся туду.
 export function applyExplicitType(classification,raw,now=new Date(),timeZone='Europe/Samara'){
-  const type=explicitType(raw);
-  if(!type||!classification||(classification.primaryType===type&&!classification.unclassified))return classification;
-  return applyUserOverrides(classification,{primaryType:type},now,timeZone);
+  if(!classification||classification.completed===true||!explicitType(raw))return classification;
+  const doneOn=classification.entities?.schedule?doneOnFromModel(classification.entities.schedule,now,timeZone):null;
+  const entities={...classification.entities,schedule:null,...(doneOn?{doneOn}:{})};
+  const claims=(classification.claims||[]).map(item=>item.field==='schedule'?{...item,value:null,kind:'unknown',confidence:0}:item);
+  return {...classification,completed:true,entities,claims,confidence:Object.fromEntries(claims.map(item=>[item.field,item.confidence]))};
 }
 
 export function shouldMaterializeProjections(c){return primaryTypes.includes(c.primaryType)&&!c.unclassified&&!c.conflicts?.schedule&&!c.conflicts?.projects}

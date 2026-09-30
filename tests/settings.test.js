@@ -18,8 +18,14 @@ function app(overrides = {}) {
 test('settings come back without secrets and with sensible defaults', async () => {
   const api = authed(app());
   const body = (await api.get('/api/settings').expect(200)).body;
-  assert.equal(body.settings.sleepAfterSeconds, '25');
-  assert.equal(body.settings.wakeWord, 'кизуна');
+  assert.equal(body.settings.remindDefault, '15');
+  assert.equal(body.settings.remindHour, '09:00');
+  assert.equal(body.settings.theme, 'system');
+  // Голоса в приложении нет: и его настроек нет.
+  for (const gone of ['wakeWord', 'sleepAfterSeconds', 'voiceProvider', 'voiceName', 'systemPrompt', 'voiceInterrupt', 'voicePause', 'voiceEnabled'])
+    assert.equal(Object.hasOwn(body.settings, gone), false, gone);
+  assert.equal(Object.hasOwn(body, 'voice'), false);
+  assert.equal(Object.hasOwn(body, 'quota'), false);
   // Ключ описывается признаком, а не значением.
   assert.deepEqual(Object.keys(body.settings.openaiKey).sort(), ['configured', 'fromEnvironment', 'hint']);
   assert.equal(typeof body.settings.openaiKey.configured, 'boolean');
@@ -73,113 +79,57 @@ test('nonsense settings are refused by name and by value', async () => {
 
   for (const patch of [
     { timeZone: 'Не/Зона' },
-    { sleepAfterSeconds: '5000' },
-    { sleepAfterSeconds: 'скоро' },
-    { wakeWord: 'к' },
-    { voiceProvider: 'кто-нибудь' },
+    { remindDefault: '99999999' },
+    { remindDefault: 'скоро' },
+    { remindHour: '25:00' },
+    { theme: 'ярко' },
     { aiProvider: 'выдуманный' },
-    { voiceName: 'голос с пробелом и (скобками)' },
-    { voiceInterrupt: 'никогда' },
-    { voicePause: '1500' },
   ]) {
     const refused = await api.put('/api/settings').send(patch).expect(400);
     assert.equal(refused.body.error.code, 'invalid_setting', JSON.stringify(patch));
   }
   // Отказ ничего не сохранил.
-  assert.equal((await api.get('/api/settings').expect(200)).body.settings.sleepAfterSeconds, '25');
+  assert.equal((await api.get('/api/settings').expect(200)).body.settings.remindDefault, '15');
+  // Настройки голоса убраны вместе с голосом: имя больше не известно.
+  for (const gone of ['wakeWord', 'voiceProvider', 'systemPrompt', 'voiceInterrupt'])
+    assert.equal((await api.put('/api/settings').send({ [gone]: 'x' }).expect(400)).body.error.code, 'unknown_setting', gone);
 });
 
-// Очерёдность разговора — про человека, а не про установку: каждый правит
-// свою и не трогает соседскую.
-test('turn settings are personal: normal by default, changed by anyone for themselves', async () => {
+// Напоминания — про человека, а не про установку: каждый правит свои и не
+// трогает соседские.
+test('reminder settings are personal: defaults for everyone, changed by anyone for themselves', async () => {
   const instance = app();
   const admin = authed(instance);
   const user = authed(instance, { email: 'user@kizuna.test', role: 'user' });
   const before = (await user.get('/api/settings').expect(200)).body;
-  assert.equal(before.settings.voiceInterrupt, 'normal');
-  assert.equal(before.settings.voicePause, 'normal');
-  assert.ok(before.editable.includes('voiceInterrupt') && before.editable.includes('voicePause'), 'не только администратору');
+  assert.equal(before.settings.remindDefault, '15');
+  assert.equal(before.settings.remindHour, '09:00');
+  assert.ok(before.editable.includes('remindDefault') && before.editable.includes('remindHour'), 'не только администратору');
 
-  await user.put('/api/settings').send({ voiceInterrupt: 'loud', voicePause: 'think' }).expect(200);
+  await user.put('/api/settings').send({ remindDefault: 'off', remindHour: '18:00' }).expect(200);
   const mine = (await user.get('/api/settings').expect(200)).body.settings;
-  assert.equal(mine.voiceInterrupt, 'loud');
-  assert.equal(mine.voicePause, 'think');
+  assert.equal(mine.remindDefault, 'off');
+  assert.equal(mine.remindHour, '18:00');
   const theirs = (await admin.get('/api/settings').expect(200)).body.settings;
-  assert.equal(theirs.voiceInterrupt, 'normal');
-  assert.equal(theirs.voicePause, 'normal');
+  assert.equal(theirs.remindDefault, '15');
+  assert.equal(theirs.remindHour, '09:00');
 });
 
 test('settings survive a data reset and stay out of the export', async () => {
   const api = authed(app());
-  await api.put('/api/settings').send({ wakeWord: 'журнал', sleepAfterSeconds: '60' }).expect(200);
+  await api.put('/api/settings').send({ remindHour: '07:45', remindDefault: '60' }).expect(200);
   await api.post('/api/captures').send({ raw: 'Нужно проверить настройки' }).expect(201);
 
   const exported = (await api.get('/api/export').expect(200)).body;
-  assert.equal(JSON.stringify(exported).includes('журнал'), false, 'настройки не уходят в экспорт');
+  assert.equal(JSON.stringify(exported).includes('07:45'), false, 'настройки не уходят в экспорт');
 
   // «Очистить данные» — про записи, а не про конфигурацию: иначе сброс отбирал
   // бы у человека ключи и он остался бы без модели.
   await api.post('/api/reset').send({ confirmation: 'СБРОСИТЬ КИЗУНА' }).expect(200);
   const after = (await api.get('/api/settings').expect(200)).body.settings;
-  assert.equal(after.wakeWord, 'журнал');
-  assert.equal(after.sleepAfterSeconds, '60');
+  assert.equal(after.remindHour, '07:45');
+  assert.equal(after.remindDefault, '60');
   assert.equal((await api.get('/api/entries').expect(200)).body.entries.length, 0);
-});
-
-// Род голоса и добавка к промпту: модель должна говорить о себе так же, каким
-// голосом звучит, а человек — уметь дописать своё правило, не отменяя базовых.
-test('the chosen voice sets the gender the model speaks in, and the addition is appended', async () => {
-  const api = authed(app());
-  const base = (await api.get('/api/voice/status').expect(200)).body;
-  assert.ok(base.instructions.includes('Кизуна'), 'основной промпт на месте');
-  assert.ok(base.voices.gemini.some((voice) => voice.id === 'Puck'), 'каталог голосов отдаётся');
-  assert.ok(base.voices.openai.some((voice) => voice.id === 'cedar'));
-
-  // Пока человек не написал своего промпта, действует характер Кизуны по
-  // умолчанию — мягкий японский акцент.
-  assert.match(base.instructions, /От человека: Говори с лёгким японским акцентом/);
-
-  // Ключ кладём через сами настройки: без ключа выбор Gemini-провайдера не
-  // вступает в силу, а тест не должен зависеть от .env машины, на которой идёт.
-  await api.put('/api/settings').send({ geminiKey: 'тестовый-ключ-для-рода' }).expect(200);
-
-  // Мужской голос — мужской род.
-  await api.put('/api/settings').send({ voiceProvider: 'gemini', geminiVoiceName: 'Charon' }).expect(200);
-  const male = (await api.get('/api/voice/status').expect(200)).body;
-  assert.match(male.instructions, /мужским голосом/);
-  assert.match(male.instructions, /«записал»/);
-
-  // Женский — женский, и это именно смена, а не дописывание второй строки.
-  await api.put('/api/settings').send({ geminiVoiceName: 'Kore' }).expect(200);
-  const female = (await api.get('/api/voice/status').expect(200)).body;
-  assert.match(female.instructions, /женским голосом/);
-  assert.equal(female.instructions.includes('мужским голосом'), false);
-
-  // Добавка дописывается к основному промпту, а не заменяет его.
-  await api.put('/api/settings').send({ systemPrompt: 'Обращайся ко мне на «ты».' }).expect(200);
-  const custom = (await api.get('/api/voice/status').expect(200)).body;
-  assert.ok(custom.instructions.includes('Кизуна'), 'основные правила остались');
-  assert.ok(custom.instructions.includes('женским голосом'), 'род остался');
-  assert.match(custom.instructions, /От человека: Обращайся ко мне на «ты»\./);
-  assert.equal(custom.instructions.includes('японским акцентом'), false, 'свой промпт заменяет характер по умолчанию');
-  // И то же самое уходит в сессию, а не только в статус.
-  const session = await api.post('/api/voice/session').send({});
-  if (session.status === 200) assert.match(session.body.instructions, /От человека:/);
-
-  // Пустая строка — «вернуть как было»: характер по умолчанию, а не тишина.
-  await api.put('/api/settings').send({ systemPrompt: '' }).expect(200);
-  const restored = (await api.get('/api/voice/status').expect(200)).body;
-  assert.match(restored.instructions, /От человека: Говори с лёгким японским акцентом/);
-});
-
-test('a voice outside the catalogue is refused, because gender rides on it', async () => {
-  const api = authed(app());
-  await api.put('/api/settings').send({ geminiVoiceName: 'Выдуманный' }).expect(400);
-  await api.put('/api/settings').send({ voiceName: 'nova' }).expect(400);
-  await api.put('/api/settings').send({ voiceName: 'cedar' }).expect(200);
-  assert.equal((await api.get('/api/settings').expect(200)).body.settings.voiceName, 'cedar');
-  // Слишком длинная добавка тоже отвергается.
-  await api.put('/api/settings').send({ systemPrompt: 'а'.repeat(2001) }).expect(400);
 });
 
 // Расходы: сколько ушло токенов и денег. Токены берём у провайдера, деньги — по

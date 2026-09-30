@@ -1,6 +1,6 @@
 // Доска: канбан по открытым делам — задачам и встречам, не закрытым чекбоксом.
-// Колонки заводит человек (как разделы в Todoist); дело без колонки живёт во
-// «Входящих». Раскладка — отдельная таблица поверх записей: сама запись ничего
+// Колонки заводит человек (как разделы в Todoist); дело без колонки живёт в
+// первой колонке — «Входящих» больше нет. Раскладка — отдельная таблица поверх записей: сама запись ничего
 // о доске не знает, удаление колонки не трогает дела, а закрытое дело просто
 // уходит с доски (и возвращается на своё место, если его вернуть в работу).
 import crypto from 'node:crypto';
@@ -26,8 +26,9 @@ export function completionEvents(db) {
 export const CLOSED_LIMIT = 50;
 
 // Дела пользователя: записи с активной завершаемой проекцией. Открытые — не все
-// проекции закрыты; закрытые — все закрыты чекбоксом. Отчётная работа
-// (completed в классификации) — не дело, а дневник, её нет ни там, ни там.
+// проекции закрыты; закрытые — все закрыты чекбоксом (в том числе сразу при
+// записи: «сделал X» — это туду, закрытая с рождения). Старые отчёты о сделанном
+// без завершаемой проекции — дневник, их нет ни там, ни там.
 // Взятое чужое дело живёт на доске рядом со своими: человек взял его на себя,
 // и спрашивать «чьё оно» каждый раз, глядя на список, незачем. Сама запись
 // при этом остаётся у автора — сюда приходит только её идентификатор.
@@ -49,7 +50,6 @@ function deedCards(db, userId, timeZone, now = new Date(), borrowed = []) {
     const completable = byCapture.get(row.id) || [];
     if (!completable.length) continue;
     const classification = JSON.parse(row.classification_json);
-    if (classification.completed === true) continue;
     const events = completable.map(projection => completion.get(projection.id));
     const isClosed = events.every(event => event?.type === 'completed');
     const closedAt = isClosed ? events.map(event => event.at).sort().at(-1) : null;
@@ -97,25 +97,36 @@ function sortBucket(bucket, today) {
   return bucket.map(item => item.card);
 }
 
+export const DEFAULT_COLUMN = 'Дела';
+// У человека всегда есть хотя бы одна колонка: новое падает в первую. Заводим
+// лениво, один раз — на первом обращении к доске или при удалении последней.
+function ensureColumn(db, userId) {
+  const first = db.prepare('SELECT id, name, position, color FROM board_columns WHERE user_id IS ? ORDER BY position, created_at LIMIT 1').get(userId);
+  if (first) return first;
+  const column = { id: crypto.randomUUID(), name: DEFAULT_COLUMN, position: 0, color: null };
+  db.prepare('INSERT INTO board_columns(id, user_id, name, position, created_at) VALUES(?,?,?,?,?)').run(column.id, userId, column.name, column.position, now());
+  return column;
+}
+
 export function boardView(db, { userId, timeZone = 'Europe/Samara', now: at = new Date(), borrowed = [] } = {}) {
   const today = dateInZone(at, timeZone);
+  ensureColumn(db, userId);
   const columns = db.prepare('SELECT id, name, position, color FROM board_columns WHERE user_id IS ? ORDER BY position, created_at').all(userId);
   const placements = new Map(db.prepare('SELECT capture_id, column_id, position FROM board_placements WHERE user_id IS ?').all(userId).map(row => [row.capture_id, row]));
   const known = new Set(columns.map(column => column.id));
-  const buckets = new Map([[null, []], ...columns.map(column => [column.id, []])]);
+  const firstId = columns[0].id;
+  const buckets = new Map(columns.map(column => [column.id, []]));
   const { open, closed } = deedCards(db, userId, timeZone, at, borrowed);
   for (const card of open) {
     const placement = placements.get(card.captureId);
-    const columnId = placement && placement.column_id !== null && known.has(placement.column_id) ? placement.column_id : null;
-    const placed = Boolean(placement && (placement.column_id === null || known.has(placement.column_id)));
-    buckets.get(columnId).push({ card, placed, position: placement?.position ?? 0 });
+    // Без размещения, с потерянной колонкой и со старым «Входящие» (column_id
+    // NULL) карточка лежит в первой колонке; порядок внутри — по умолчанию.
+    const inKnown = Boolean(placement && placement.column_id !== null && known.has(placement.column_id));
+    buckets.get(inKnown ? placement.column_id : firstId).push({ card, placed: inKnown, position: placement?.position ?? 0 });
   }
   return {
     today,
-    columns: [
-      { id: null, name: 'Входящие', cards: sortBucket(buckets.get(null), today) },
-      ...columns.map(column => ({ id: column.id, name: column.name, color: column.color || null, cards: sortBucket(buckets.get(column.id), today) })),
-    ],
+    columns: columns.map(column => ({ id: column.id, name: column.name, color: column.color || null, cards: sortBucket(buckets.get(column.id), today) })),
     closed,
   };
 }
@@ -126,6 +137,8 @@ function ownColumn(db, userId, id) { const column = db.prepare('SELECT id FROM b
 export function createColumn(db, { userId, name }) {
   const trimmed = validName(name);
   if (!trimmed) return { error: 'invalid_name' };
+  // Первая колонка всегда «Дела»: своя встаёт после неё, а не вместо неё.
+  ensureColumn(db, userId);
   const count = db.prepare('SELECT COUNT(*) n FROM board_columns WHERE user_id IS ?').get(userId).n;
   if (count >= COLUMNS_LIMIT) return { error: 'columns_limit' };
   const position = (db.prepare('SELECT COALESCE(MAX(position), -1) p FROM board_columns WHERE user_id IS ?').get(userId).p) + 1;
@@ -162,22 +175,34 @@ export function moveColumn(db, { userId, id, index }) {
 
 export function deleteColumn(db, { userId, id }) {
   if (!ownColumn(db, userId, id)) return { error: 'column_not_found' };
-  // Дела не пропадают: раскладка колонки переезжает в конец «Входящих»,
-  // сохраняя свой порядок.
-  const base = (db.prepare('SELECT COALESCE(MAX(position), -1) p FROM board_placements WHERE user_id IS ? AND column_id IS NULL').get(userId).p) + 1;
-  const moved = db.prepare('SELECT capture_id FROM board_placements WHERE user_id IS ? AND column_id=? ORDER BY position').all(userId, id);
-  const update = db.prepare('UPDATE board_placements SET column_id=NULL, position=?, updated_at=? WHERE capture_id=?');
+  // Дела не пропадают: раскладка колонки переезжает в конец первой из
+  // оставшихся колонок, сохраняя свой порядок. Удаляют последнюю — сначала
+  // заводится «Дела», и дела уходят в неё.
   const apply = db.transaction(() => {
-    moved.forEach((row, offset) => update.run(base + offset, now(), row.capture_id));
+    let target = db.prepare('SELECT id FROM board_columns WHERE user_id IS ? AND id != ? ORDER BY position, created_at LIMIT 1').get(userId, id);
+    if (!target) target = ensureColumnAfter(db, userId);
+    const base = (db.prepare('SELECT COALESCE(MAX(position), -1) p FROM board_placements WHERE user_id IS ? AND column_id IS ?').get(userId, target.id).p) + 1;
+    const moved = db.prepare('SELECT capture_id FROM board_placements WHERE user_id IS ? AND column_id=? ORDER BY position').all(userId, id);
+    const update = db.prepare('UPDATE board_placements SET column_id=?, position=?, updated_at=? WHERE capture_id=?');
+    moved.forEach((row, offset) => update.run(target.id, base + offset, now(), row.capture_id));
     db.prepare('DELETE FROM board_columns WHERE id=?').run(id);
+    return moved.length;
   });
-  apply();
-  return { movedToInbox: moved.length };
+  const moved = apply();
+  return { moved, movedToInbox: moved };
+}
+// Последняя колонка удаляется: новая «Дела» встаёт на её место до удаления.
+function ensureColumnAfter(db, userId) {
+  const column = { id: crypto.randomUUID(), name: DEFAULT_COLUMN, position: 0, color: null };
+  db.prepare('INSERT INTO board_columns(id, user_id, name, position, created_at) VALUES(?,?,?,?,?)').run(column.id, userId, column.name, column.position, now());
+  return column;
 }
 
 export function moveCard(db, { userId, captureId, columnId = null, index }) {
   if (!Number.isInteger(index) || index < 0) return { error: 'invalid_index' };
-  if (columnId !== null && !ownColumn(db, userId, columnId)) return { error: 'column_not_found' };
+  // Колонки «Входящие» нет: у карточки всегда есть настоящая колонка.
+  if (columnId === null || columnId === undefined) return { error: 'invalid_column_id' };
+  if (!ownColumn(db, userId, columnId)) return { error: 'column_not_found' };
   const view = boardView(db, { userId });
   const hasCard = view.columns.some(column => column.cards.some(card => card.captureId === captureId));
   if (!hasCard) return { error: 'card_not_found' };

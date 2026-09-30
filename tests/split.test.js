@@ -56,9 +56,8 @@ test('запись с двумя намерениями рождает два д
   assert.equal(child.parentId, created.body.entry.id);
   assert.equal(child.projections.length, 1);
   assert.equal(child.projections[0].type, 'task');
-  // Срок намерения не назван — выдумывать его нельзя; проект наследуется, речь
-  // об одном и том же.
-  assert.equal(child.interpretation.classification.entities.schedule, null);
+  // Срок намерения не назван — оно ложится на сегодня, как любое туду.
+  assert.equal(child.interpretation.classification.entities.schedule.date, new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Samara' }).format(new Date()));
 
   const full = (await api.get(`/api/captures/${child.id}`).expect(200)).body.entry;
   assert.equal(full.parent.id, created.body.entry.id);

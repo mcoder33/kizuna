@@ -20,7 +20,7 @@ import { notify } from './notifications.js';
 import {
   createUser, findUserByEmail, findUserById, countUsers, listUsers, updateUser, adoptOrphanRecords,
   createSession, findSessionUser, touchSession, deleteSession, deleteUserSessions, purgeExpiredSessions, countUserSessions,
-  logAuthEvent, listAuthEvents, listVoiceSessions, voiceSpend, userActivity,
+  logAuthEvent, listAuthEvents, userActivity,
 } from './db.js';
 
 // Наружу о человеке уходит только это. Хеш пароля, секрет второго фактора и
@@ -357,10 +357,6 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
         .map(row => ({ id: row.id, userId: row.user_id, email: row.email, event: row.event, result: row.result, detail: row.detail, createdAt: row.created_at })),
     }));
 
-    app.get('/api/admin/voice-sessions', requireAdmin, (req, res) => res.json({
-      sessions: listVoiceSessions(db, { limit: req.query.limit }).map(row => ({ id: row.id, userId: row.user_id, provider: row.provider, model: row.model, startedAt: row.started_at, endedAt: row.ended_at, seconds: row.seconds, costUsd: row.cost_usd, closedBy: row.closed_by })),
-      spend: { day: voiceSpend(db, { userId: undefined, window: 'day', at: now() }), month: voiceSpend(db, { userId: undefined, window: 'month', at: now() }), total: voiceSpend(db, { userId: undefined, window: 'total', at: now() }) },
-    }));
 
     // Одна дверь для всех действий над чужой учётной записью: так проще
     // удержать правило «последнего администратора не разжаловать и не закрыть».

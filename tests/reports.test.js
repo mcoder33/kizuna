@@ -18,10 +18,17 @@ test('period report counts by captures: counters, tails, projects and discipline
   await api.post(`/api/captures/${idea.id}/corrections`).send({patch:{people:['Мастер']}}).expect(200);
   // Прошедшую встречу словами не создать («вчера созвон» не даёт даты), поэтому
   // дата встречи сдвигается в прошлое прямо в классификации — отчёт читает её.
+  // Новые записи все туду, поэтому «встречи» и «вопросы» отчёта проверяются на
+  // старых записях: их тип переписывается прямо в классификации, как в базе.
   const db=app.database;
+  for(const [capture,type] of [[idea,'idea_question']]){
+    const row=db.prepare("SELECT id,classification_json FROM interpretations WHERE capture_id=? AND status='active'").get(capture.id);
+    db.prepare('UPDATE interpretations SET classification_json=? WHERE id=?').run(JSON.stringify({...JSON.parse(row.classification_json),primaryType:type}),row.id);
+  }
   for(const capture of [hubMeeting,silent]){
     const row=db.prepare("SELECT id,classification_json FROM interpretations WHERE capture_id=? AND status='active'").get(capture.id);
     const classification=JSON.parse(row.classification_json);
+    classification.primaryType='meeting_event';
     classification.entities.schedule={...(classification.entities.schedule||{}),state:'ok',date:yesterday,time:'11:00',sortAt:`${yesterday}T11:00:00`};
     db.prepare('UPDATE interpretations SET classification_json=? WHERE id=?').run(JSON.stringify(classification),row.id);
   }

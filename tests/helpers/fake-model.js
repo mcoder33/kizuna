@@ -1,4 +1,4 @@
-import { normalizeClassification } from '../../server/classifier.js';
+import { normalizeClassification, applyExplicitType, toTodo } from '../../server/classifier.js';
 
 // Детерминированный фейковый провайдер для тестов. В продакшне разбор делает
 // только модель, поэтому правила разбора русского текста живут здесь, а не в
@@ -114,10 +114,8 @@ export function fakeModelCandidate(raw, now = new Date(), timeZone = 'Europe/Sam
   // форме — это дело, даже если слова «нужно» в записи нет.
   const addressedTask = /^\s*[А-ЯЁ][а-яё-]{1,30}\s*[—–-]\s+\p{L}+(?:ть|ти|чь)(?=$|\s|,|\.)/u.test(text);
   const task = addressedTask || /(?:^|\s)(надо|нужно|сделать|проверить|отправить|подготовить|напомни)(?=$|\s|,|\.)/i.test(text);
-  const idea = /\?|идея|как (?:сделать|лучше)|что если/i.test(text);
-  // Отчёт о сделанном — результат, а не заметка: тот же контракт, что в промпте.
-  const primaryType = completed ? 'outcome_decision' : meeting ? 'meeting_event' : outcome ? 'outcome_decision' : task ? 'task' : idea ? 'idea_question' : 'note';
-  const scheduleRelevant = (meeting || task) && !completed;
+  // Типов у записей нет: срок ищется в любой записи, как это делает модель.
+  const scheduleRelevant = !completed;
 
   // Повтор снимается с текста до разбора дат: иначе «до 31.12» стало бы
   // вторым сроком, а «понедельник» из «каждый понедельник» — разовой датой.
@@ -153,10 +151,9 @@ export function fakeModelCandidate(raw, now = new Date(), timeZone = 'Europe/Sam
       : (anchor || times.size ? { date: anchor, time: times.size ? [...times][0] : null, ...(repeat && anchor ? { repeat: repeat.rule } : {}) } : null);
 
   return {
-    primaryType,
     entities: { projects, people: people(text), when, followUp: followUpMatch ? followUpMatch[1].trim().slice(0, 500) : null },
-    additionalTypes: !completed && outcome && task ? ['task'] : [],
     summary: text.slice(0, 500),
+    details: '',
     // Нумерованный список в записи — отдельные дела: «что решили: 1. …, 2. …».
     // Настоящая модель выделяет их смыслом, заглушке хватает разметки.
     proposedActions: text.split(/\r?\n/).map(line => line.match(/^\s*\d{1,2}[.)]\s+(.{8,300})$/)).filter(Boolean).map(match => ({ type:'task', title: match[1].trim() })).slice(0, 5),
@@ -166,7 +163,8 @@ export function fakeModelCandidate(raw, now = new Date(), timeZone = 'Europe/Sam
 }
 
 export function fakeModelClassification(raw, now = new Date(), timeZone = 'Europe/Samara') {
-  return normalizeClassification(fakeModelCandidate(raw, now, timeZone), raw, now, 'model', timeZone);
+  // Как в server/ai.js: разбор, просьба «как результат», затем туду со сроком по умолчанию.
+  return toTodo(applyExplicitType(normalizeClassification(fakeModelCandidate(raw, now, timeZone), raw, now, 'model', timeZone), raw, now, timeZone), now, timeZone);
 }
 
 export function fakeModelService({ now = () => new Date(), timeZone = 'Europe/Samara', provider = 'openrouter', model = 'fake/model' } = {}) {

@@ -70,7 +70,7 @@ export function loadEntries(db, userId) {
     const completable = byCapture.get(row.id) || [];
     const closed = completable.length > 0 && completable.every(projection => completion.get(projection.id)?.event_type === 'completed');
     const closedAt = closed ? completable.map(projection => completion.get(projection.id).occurred_at).sort().at(-1) : null;
-    return { id: row.id, createdAt: row.created_at, occurredAt: row.occurred_at, classification, closed, closedAt };
+    return { id: row.id, createdAt: row.created_at, occurredAt: row.occurred_at, classification, closed, closedAt, hasCompletable: completable.length > 0 };
   });
 }
 
@@ -223,7 +223,6 @@ export function periodReport(db, { period, now, timeZone, userId }) {
 function serviceReport(db, { fromAt, toAt, userId }) {
   const from = fromAt.toISOString(), to = toAt.toISOString();
   const usageRows = db.prepare(`SELECT provider, model, COUNT(*) calls, SUM(COALESCE(cost_usd,0)) cost, SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END) unpriced FROM usage_events WHERE created_at >= ? AND created_at < ? AND user_id IS ? GROUP BY provider, model ORDER BY cost DESC, calls DESC`).all(from, to, userId);
-  const voice = db.prepare('SELECT COUNT(*) sessions, COALESCE(SUM(seconds),0) seconds, COALESCE(SUM(cost_usd),0) cost FROM voice_sessions WHERE started_at >= ? AND started_at < ? AND user_id IS ?').get(from, to, userId);
   const corrections = db.prepare('SELECT co.correction_json FROM corrections co JOIN captures c ON c.id = co.capture_id WHERE co.created_at >= ? AND co.created_at < ? AND c.user_id IS ?').all(from, to, userId);
   const fields = new Map();
   for (const row of corrections)
@@ -247,7 +246,6 @@ function serviceReport(db, { fromAt, toAt, userId }) {
       unpriced: usageRows.reduce((total, row) => total + row.unpriced, 0),
       rows: usageRows.map(row => ({ provider: row.provider, model: row.model, calls: row.calls, costUsd: row.cost })).slice(0, 6),
     },
-    voice: { sessions: voice.sessions, seconds: voice.seconds, costUsd: voice.cost },
     quality: {
       corrections: corrections.length,
       topField: topField ? { field: topField[0], count: topField[1] } : null,
@@ -268,7 +266,9 @@ export function dayReport(db, { date, now, timeZone, userId }) {
   // делал»: classification.completed === true. Снятая галочкой задача — это уход
   // из TODO, а не запись в дневник, поэтому сюда не попадает (живёт в журнале TODO).
   const done = entries
-    .filter(entry => entry.classification.completed === true && inRange(stampOf(entry), startAt, endAt))
+    // Новая «сделал X» — туду, закрытая при записи: раскрытая заново кружком она
+    // из дневника уходит, как и любая снятая галочкой задача.
+    .filter(entry => entry.classification.completed === true && (entry.closed || !entry.hasCompletable) && inRange(stampOf(entry), startAt, endAt))
     .map(entry => ({ captureId: entry.id, title: summaryOf(entry), type: entry.classification.primaryType, at: stampOf(entry) }))
     .sort((a, b) => (a.at < b.at ? -1 : 1));
   // Не успел: срок был в этот день, к концу дня не закрыто. Если закрыли позже —

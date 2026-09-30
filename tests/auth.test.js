@@ -241,8 +241,8 @@ test('обычный пользователь не управляет людьм
 
   const refused = await gost.put('/api/settings').send({ openaiKey: 'sk-подмена' }).expect(403);
   assert.equal(refused.body.error.code, 'forbidden');
-  // Своё — пожалуйста: тема и привычки разговора у каждого свои.
-  await gost.put('/api/settings').send({ theme: 'dark', wakeWord: 'алиса' }).expect(200);
+  // Своё — пожалуйста: тема и час напоминаний у каждого свои.
+  await gost.put('/api/settings').send({ theme: 'dark', remindHour: '10:00' }).expect(200);
   const settings = (await gost.get('/api/settings').expect(200)).body;
   assert.equal(settings.settings.theme, 'dark');
   assert.equal(settings.editable.includes('openaiKey'), false, 'интерфейс не показывает того, что вернёт отказ');
@@ -252,10 +252,10 @@ test('личные настройки не пересекаются между �
   const application = app();
   const admin = authed(application, { email: 'admin@example.com' });
   const gost = authed(application, { email: 'gost@example.com', role: 'user' });
-  await admin.put('/api/settings').send({ wakeWord: 'кизуна' }).expect(200);
-  await gost.put('/api/settings').send({ wakeWord: 'подруга' }).expect(200);
-  assert.equal((await admin.get('/api/settings')).body.settings.wakeWord, 'кизуна');
-  assert.equal((await gost.get('/api/settings')).body.settings.wakeWord, 'подруга');
+  await admin.put('/api/settings').send({ remindHour: '08:00' }).expect(200);
+  await gost.put('/api/settings').send({ remindHour: '18:30' }).expect(200);
+  assert.equal((await admin.get('/api/settings')).body.settings.remindHour, '08:00');
+  assert.equal((await gost.get('/api/settings')).body.settings.remindHour, '18:30');
 });
 
 test('последнего администратора не разжаловать и не заблокировать', async () => {
@@ -333,7 +333,7 @@ test('расход считается на каждого отдельно', asy
 
 test('без входа не открывается ничего, кроме страницы входа', async () => {
   const api = request(app());
-  for (const path of ['/api/entries', '/api/day', '/api/settings', '/api/usage', '/api/export', '/api/tags', '/api/voice/status', '/api/events'])
+  for (const path of ['/api/entries', '/api/day', '/api/settings', '/api/usage', '/api/export', '/api/tags', '/api/events'])
     assert.equal((await api.get(path)).status, 401, `${path} должен быть закрыт`);
   await api.post('/api/captures').send({ raw: 'без спроса' }).expect(401);
   // Корень гостю показывает, что это за приложение; журнала в нём нет.
@@ -344,8 +344,8 @@ test('без входа не открывается ничего, кроме с�
   await api.get('/api/auth/state').expect(200);
 });
 
-// Пробовать надо на всём приложении: новому человеку открыт и разбор моделью,
-// и разговор, но с потолком в доллар на месяц.
+// Пробовать надо на всём приложении: новому человеку открыт разбор моделью, но
+// с потолком в доллар на месяц.
 test('новому человеку открыто всё, но с потолком в доллар', async () => {
   const application = app();
   const admin = authed(application, { email: 'admin@example.com' });
@@ -358,9 +358,10 @@ test('новому человеку открыто всё, но с потолк�
   // Потолок виден администратору рядом с расходом — доллар, а не «общий».
   const listed = (await admin.get('/api/admin/users')).body.users.find(user => user.email === 'gost@example.com');
   assert.equal(listed.monthlyLimitUsd, 1);
-  // Разговор не закрыт: отказ, если и будет, то по расходу, а не по запрету.
-  const status = (await api.get('/api/voice/status').set('Cookie', cookie).expect(200)).body;
-  assert.notEqual(status.quota?.reason, 'voice_blocked_for_user');
+  // Человек вошёл и видит свой расход: запретов нет, есть только потолок.
+  const spend = (await api.get('/api/usage').set('Cookie', cookie).expect(200)).body.spend;
+  assert.equal(spend.limitUsd, 1);
+  assert.equal(spend.allowed, true);
   // Хозяину дома потолок не ставится: платит он.
   assert.equal(admin.user.monthly_limit_usd, null);
 });
@@ -458,9 +459,6 @@ test('за потолком запись сохраняется, но разби
   // правилами нельзя, хороший разбор затёрся бы худшим.
   const refused = await gost.post(`/api/captures/${created.body.entry.id}/classify`).send({ provider: 'openrouter' }).expect(429);
   assert.equal(refused.body.error.code, 'spend_limit');
-  // Разговор тоже закрыт.
-  const voice = await gost.post('/api/voice/session').send({}).expect(429);
-  assert.equal(voice.body.error.code, 'spend_limit');
 
   // У соседа потолка нет — у него всё по-прежнему.
   const mine = await admin.post('/api/captures').send({ raw: 'запись администратора', provider: 'openrouter' }).expect(201);

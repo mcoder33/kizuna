@@ -5,14 +5,27 @@ import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server/index.js';
 import { authed } from './helpers/auth.js';
-import { fakeModelService } from './helpers/fake-model.js';
+import { fakeModelService, fakeModelClassification } from './helpers/fake-model.js';
+import { createLedger } from '../server/db.js';
+import { afterCapture } from '../server/notes-tree.js';
 
+let lastApp = null;
 function app() {
   const databasePath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pagent-pages-')), 'test.sqlite');
-  return createApp({ aiService: fakeModelService(), databasePath });
+  lastApp = createApp({ aiService: fakeModelService(), databasePath });
+  return lastApp;
 }
 async function capture(api, raw) {
   return (await api.post('/api/captures').send({ raw }).expect(201)).body.entry;
+}
+// Новые записи всегда туду и в дерево страниц не попадают. Страницами остаются
+// созданные в разделе и старые заметки: такую заметку кладём в журнал напрямую,
+// как её хранит база, и место по тексту определяется тем же кодом, что и раньше.
+async function oldNote(api, raw) {
+  const db = lastApp.database;
+  const ids = createLedger(db, { raw, classification: { ...fakeModelClassification(raw), primaryType: 'note', completed: false }, provider: 'openrouter', userId: api.user.id });
+  afterCapture(db, { captureId: ids.captureId, userId: api.user.id });
+  return { id: ids.captureId };
 }
 async function page(api, title, parent) {
   return (await api.post('/api/pages').send(parent === undefined ? { title } : { title, parent }).expect(201)).body.page;
@@ -33,15 +46,15 @@ async function waitFor(check, { timeout = 4000 } = {}) {
 
 test('a note finds its place: inbox without a project, under the project with one, root when made in the section', async () => {
   const api = authed(app());
-  const loose = await capture(api, 'Мысли про интерфейс заметок');
-  const hub = await capture(api, 'Архитектура Hub на листке');
+  const loose = await oldNote(api, 'Мысли про интерфейс заметок');
+  const hub = await oldNote(api, 'Архитектура Hub на листке');
   const made = await page(api, 'Кизуна');
   const data = await overview(api);
   assert.equal(listed(data, loose.id).parentKey, 'inbox');
   assert.equal(listed(data, hub.id).parentKey, 'project:Hub');
   assert.equal(made.parentKey, null, 'страница из раздела лежит в корне, а не во «Входящих»');
   assert.deepEqual(data.projects, [{ name: 'Hub', count: 1 }]);
-  // Дела в дерево не попадают: страницы — только заметки и идеи.
+  // Туду в дерево не попадают: страницы — только созданные в разделе и старые заметки, а всё новое из поля записи — туду.
   const deed = await capture(api, 'Нужно проверить Hub');
   assert.equal(listed(await overview(api), deed.id), undefined);
 });
@@ -70,7 +83,7 @@ test('pages nest, move and refuse to go inside themselves', async () => {
   assert.equal(inner.project, 'Hub');
 
   // Без места по правилу: заметка из «Входящих» кладётся руками и возвращается.
-  const loose = await capture(api, 'Просто мысль вслух');
+  const loose = await oldNote(api, 'Просто мысль вслух');
   await api.put(`/api/pages/${loose.id}/place`).send({ parent: parent.id }).expect(200);
   assert.equal(listed(await overview(api), loose.id).parentKey, parent.id);
   await api.put(`/api/pages/${loose.id}/place`).send({ parent: 'auto' }).expect(200);
@@ -117,15 +130,15 @@ test('links show who points at a page, survive a rename and mentions become link
 test('a capture names its own place: [[page]] or «в странице: …»', async () => {
   const api = authed(app());
   const ideas = await page(api, 'Идеи по голосу');
-  const byPhrase = await capture(api, 'в идеи по голосу: диктовать сразу в страницу');
-  const byLink = await capture(api, '[[Идеи по голосу]] шёпот вместо кнопки');
-  const unrelated = await capture(api, 'в пятницу: погода будет хорошей');
+  const byPhrase = await oldNote(api, 'в идеи по голосу: диктовать сразу в страницу');
+  const byLink = await oldNote(api, '[[Идеи по голосу]] шёпот вместо кнопки');
+  const unrelated = await oldNote(api, 'в пятницу: погода будет хорошей');
   const data = await overview(api);
   assert.equal(listed(data, byPhrase.id).parentKey, ideas.id);
   assert.equal(listed(data, byLink.id).parentKey, ideas.id);
   assert.equal(listed(data, unrelated.id).parentKey, 'inbox');
   // Во «Входящих» — подсказка места по названию страницы в тексте.
-  const hint = await capture(api, 'Ещё про идеи по голосу и шум');
+  const hint = await oldNote(api, 'Ещё про идеи по голосу и шум');
   await api.put(`/api/pages/${hint.id}/place`).send({ parent: 'auto' }).expect(200);
   const hinted = listed(await overview(api), hint.id);
   assert.equal(hinted.parentKey, 'inbox');

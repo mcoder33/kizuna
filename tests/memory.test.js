@@ -6,7 +6,6 @@ import path from 'node:path';
 import { openDatabase, createLedger } from '../server/db.js';
 import { normalizeClassification } from '../server/classifier.js';
 import { rememberFact, forgetFact, listFacts, recallFacts, memoryDigest, assistantMemoryPrompt, learnFromCorrection, learnQuietly } from '../server/memory.js';
-import { runVoiceTool } from '../server/voice.js';
 import { createApp } from '../server/index.js';
 import { authed } from './helpers/auth.js';
 import { fakeModelService } from './helpers/fake-model.js';
@@ -82,16 +81,15 @@ test('общая память забирается только правом н�
 test('поправка становится правилом, а не повторным вопросом', () => {
   const db = database();
   const before = classificationOf('Релизил хаб');
-  const after = classificationOf('Релизил хаб', { primaryType: 'outcome_decision', completed: true, entities: { projects: ['хаб'], people: [], when: null, followUp: null } });
+  const after = classificationOf('Релизил хаб', { completed: true, entities: { projects: ['хаб'], people: [], when: null, followUp: null } });
   const learned = learnFromCorrection(db, { userId: 'u1', raw: 'Релизил хаб', before, after });
   const bodies = learned.map(item => item.body);
-  assert.equal(bodies.length, 3, 'тип, проект и признак «сделано»');
-  assert.match(bodies[0], /это результат, а не задача/);
-  assert.match(bodies[1], /проект «хаб»/);
-  assert.match(bodies[2], /уже сделанное/);
+  assert.equal(bodies.length, 2, 'проект и признак «сделано»: типа у записи больше нет, урока про тип не бывает');
+  assert.match(bodies[0], /проект «хаб»/);
+  assert.match(bodies[1], /уже сделанное/);
   // Та же поправка второй раз ничего не добавляет — только подтверждает.
   learnFromCorrection(db, { userId: 'u1', raw: 'Релизил хаб', before, after });
-  assert.equal(listFacts(db, { userId: 'u1' }).length, 3);
+  assert.equal(listFacts(db, { userId: 'u1' }).length, 2);
   assert.deepEqual(learnFromCorrection(db, { userId: 'u1', raw: 'Релизил хаб', before, after: before }), [], 'ничего не менялось — учиться нечему');
   assert.deepEqual(learnQuietly(db, { userId: 'u1', raw: 'Релизил хаб', before: null, after }), []);
 });
@@ -101,13 +99,13 @@ test('поправка становится правилом, а не повто
 test('урок поправки берёт слова человека до тире или ссылки', () => {
   const db = database();
   const raw = 'закинь заметку - доработака ботдетектора войс опс - ❯ https://ai-pomogi.ru/#/call/13008?back=x Боту смс отправили\n  https://ai-pomogi.ru/#/call/13108 еще бот';
-  const before = classificationOf(raw, { primaryType: 'outcome_decision', completed: true });
-  const after = classificationOf(raw, { primaryType: 'note', completed: false });
+  const before = classificationOf(raw, { completed: true });
+  const after = classificationOf(raw, { completed: false });
   const bodies = learnFromCorrection(db, { userId: 'u1', raw, before, after }).map(item => item.body);
-  assert.deepEqual(bodies, ['«закинь заметку» — это заметка, а не результат.', '«закинь заметку» — ещё предстоит, а не сделанное.']);
+  assert.deepEqual(bodies, ['«закинь заметку» — ещё предстоит, а не сделанное.']);
   // Запись, начатая ссылкой, своих слов не имеет — пример берётся из заголовка.
-  const linked = learnFromCorrection(db, { userId: 'u1', raw: 'https://ai-pomogi.ru/#/call/13008 разобрать', before: classificationOf('x', { summary: 'Разбор звонка 13008', primaryType: 'note' }), after: classificationOf('x', { summary: 'Разбор звонка 13008', primaryType: 'task' }) });
-  assert.match(linked[0].body, /^«Разбор звонка 13008» — это задача, а не заметка/);
+  const linked = learnFromCorrection(db, { userId: 'u1', raw: 'https://ai-pomogi.ru/#/call/13008 разобрать', before: classificationOf('x', { summary: 'Разбор звонка 13008' }), after: classificationOf('Хаб', { summary: 'Разбор звонка 13008', entities: { projects: ['Хаб'], people: [], when: null, followUp: null } }) });
+  assert.match(linked[0].body, /^«Разбор звонка 13008» — проект «Хаб»/);
 });
 
 test('подсказка разбора несёт словарь журнала и решённое', () => {
@@ -122,36 +120,16 @@ test('подсказка разбора несёт словарь журнала
   assert.equal(assistantMemoryPrompt(database(), {}), '', 'помнить нечего — и подсказки нет');
 });
 
-test('голос помнит, вспоминает и забывает по просьбе', () => {
-  const db = database();
-  const saved = runVoiceTool(db, 'remember', { text: 'Созвоны с подрядчиком — это встречи', subject: 'созвон' }, { now: at, userId: 'u1' });
-  assert.equal(saved.remembered, true);
-  const found = runVoiceTool(db, 'recall', { query: 'созвон' }, { now: at, userId: 'u1' });
-  assert.equal(found.found, 1);
-  assert.equal(found.memories[0].scope, 'личное');
-  assert.equal(runVoiceTool(db, 'recall', { query: 'созвон' }, { now: at, userId: 'u2' }).found, 0, 'чужая память недоступна');
-  assert.equal(runVoiceTool(db, 'forget', { memoryId: saved.memoryId }, { now: at, userId: 'u2' }).error, 'Такого правила не помню.');
-  assert.equal(runVoiceTool(db, 'forget', { memoryId: saved.memoryId }, { now: at, userId: 'u1' }).forgotten, true);
-  assert.equal(runVoiceTool(db, 'remember', { text: '  ' }, { now: at, userId: 'u1' }).error, 'Нужно, что запомнить.');
-});
-
-test('поправка голосом учит так же, как поправка в карточке', () => {
-  const db = database();
-  const captureId = createLedger(db, { raw: 'Релизил хаб', classification: classificationOf('Релизил хаб'), provider: 'manual' }).captureId;
-  runVoiceTool(db, 'update_capture', { captureId, type: 'outcome' }, { now: at });
-  assert.match(listFacts(db, {}).map(fact => fact.body).join(' '), /«Релизил хаб» — это результат/);
-});
-
 test('поправка в карточке доезжает до следующего разбора', async () => {
   const ai = recordingAi();
   const app = appWith(ai.service);
   const api = authed(app);
   const created = await api.post('/api/captures').send({ raw: 'Допинать бот-детектор' }).expect(201);
-  assert.equal(created.body.entry.interpretation.classification.primaryType, 'note');
-  await api.post(`/api/captures/${created.body.entry.id}/corrections`).send({ patch: { primaryType: 'task' } }).expect(200);
+  assert.equal(created.body.entry.interpretation.classification.primaryType, 'task');
+  await api.post(`/api/captures/${created.body.entry.id}/corrections`).send({ patch: { completed: true } }).expect(200);
   await api.post('/api/captures').send({ raw: 'Ещё одна запись' }).expect(201);
   const last = ai.calls.at(-1).memory;
-  assert.match(last, /«Допинать бот-детектор» — это задача, а не заметка/);
+  assert.match(last, /«Допинать бот-детектор» — уже сделанное, а не предстоящее/);
   assert.equal(ai.calls[0].memory, '', 'до первой поправки помнить нечего');
 });
 
@@ -173,18 +151,6 @@ test('память видна человеку, правится им и не т
   await stranger.delete(`/api/agent/memory/${mine.id}`).expect(404);
   await admin.delete(`/api/agent/memory/${mine.id}`).expect(200);
   assert.equal((await admin.get('/api/agent/memory')).body.memories.filter(fact => fact.scope === 'user').length, 0);
-});
-
-test('разговор открывается с картой журнала и памятью в голове', async () => {
-  const app = appWith(fakeModelService());
-  const api = authed(app);
-  await api.post('/api/captures').send({ raw: 'Завтра в 11 созвон по Hub' }).expect(201);
-  await api.post('/api/agent/memory').send({ text: 'Созвоны с подрядчиком — это встречи' }).expect(201);
-  const status = await api.get('/api/voice/status').expect(200);
-  assert.match(status.body.instructions, /Снимок журнала на начало разговора/);
-  assert.match(status.body.instructions, /Проекты: Hub/);
-  assert.match(status.body.instructions, /Созвоны с подрядчиком — это встречи/);
-  assert.ok(status.body.tools.some(tool => tool.name === 'journal_overview'));
 });
 
 test('полный сброс уносит личную память и оставляет общую', async () => {

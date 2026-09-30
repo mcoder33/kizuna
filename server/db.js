@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { makeProjections, gateClassification, shouldMaterializeProjections, actionClassification, settleCompleted, NOTE_TYPES, doneOccurredAt } from './classifier.js';
+import { makeProjections, gateClassification, shouldMaterializeProjections, actionClassification, doneOccurredAt } from './classifier.js';
 import { occursOn, nextOccurrence } from './repeat.js';
 import { migrateNotifications } from './notifications.js';
 import { migrateNotesTree } from './notes-schema.js';
@@ -15,7 +15,6 @@ export function openDatabase(filename) {
   migrate(db);
   migrateNotifications(db);
   migrateNotesTree(db);
-  settleCompletedRecords(db);
   repairMissingProjections(db);
   return db;
 }
@@ -774,20 +773,40 @@ export function activeNote(db, captureId) {
   return db.prepare("SELECT id,version,body,created_at FROM capture_notes WHERE capture_id=? AND status='active'").get(captureId) || null;
 }
 
+function insertNote(db, captureId, body, createdAt) {
+  const previous = db.prepare("SELECT id,version FROM capture_notes WHERE capture_id=? AND status='active'").get(captureId);
+  if (previous) db.prepare("UPDATE capture_notes SET status='superseded' WHERE id=?").run(previous.id);
+  const trimmed = String(body).slice(0, NOTE_BODY_LIMIT);
+  const noteId = id();
+  db.prepare('INSERT INTO capture_notes(id,capture_id,version,status,body,created_at,supersedes_id) VALUES(?,?,?,?,?,?,?)')
+    .run(noteId, captureId, (previous?.version || 0) + 1, 'active', trimmed, createdAt, previous?.id || null);
+  insertLedgerEvent(db, 'note_saved', captureId, null, createdAt);
+}
 export function saveNote(db, captureId, body) {
   const createdAt = now();
   return withImmediateTransaction(db, () => {
     const capture = db.prepare('SELECT id FROM captures WHERE id=? AND deleted_at IS NULL').get(captureId);
     if (!capture) return { notFound: true };
-    const previous = db.prepare("SELECT id,version FROM capture_notes WHERE capture_id=? AND status='active'").get(captureId);
-    if (previous) db.prepare("UPDATE capture_notes SET status='superseded' WHERE id=?").run(previous.id);
-    const trimmed = String(body).slice(0, NOTE_BODY_LIMIT);
-    const noteId = id();
-    db.prepare('INSERT INTO capture_notes(id,capture_id,version,status,body,created_at,supersedes_id) VALUES(?,?,?,?,?,?,?)')
-      .run(noteId, captureId, (previous?.version || 0) + 1, 'active', trimmed, createdAt, previous?.id || null);
-    insertLedgerEvent(db, 'note_saved', captureId, null, createdAt);
+    insertNote(db, captureId, body, createdAt);
     return { note: activeNote(db, captureId) };
   });
+}
+// Разбор записи присылает описание туду (details): оно ложится первой версией
+// заметки — это и есть «Описание» в карточке. Пустое описание заметку не
+// создаёт, и на карточке остаётся исходный текст.
+function saveDetails(db, captureId, classification, createdAt) {
+  const details = typeof classification?.details === 'string' ? classification.details.trim() : '';
+  if (details) insertNote(db, captureId, details, createdAt);
+}
+// «Сделал X»: туду закрывается в тот же момент, что и создаётся, событием
+// completed в леджере. «Что делал» и «Сделано» читают одно и то же — леджер.
+// Момент — день, названный в записи (occurred_at уже сдвинут settleOccurredAt),
+// иначе время создания.
+function closeIfCompleted(db, captureId, interpretationId, classification, createdAt) {
+  if (classification?.completed !== true) return;
+  const at = classification.entities?.doneOn?.date ? (db.prepare('SELECT occurred_at FROM captures WHERE id=?').get(captureId)?.occurred_at || createdAt) : createdAt;
+  for (const row of db.prepare("SELECT id FROM projections WHERE interpretation_id=? AND status='active' AND projection_type='task'").all(interpretationId))
+    if (!completionState(db, row.id).completed) insertLedgerEvent(db, 'completed', captureId, null, createdAt, { projectionId: row.id, interpretationId, actor: 'user', occurredAt: at });
 }
 
 // Миграция 5: провайдер openrouter в CHECK-ограничениях и выбранная модель у
@@ -926,12 +945,12 @@ const INSERT_CAPTURE = 'INSERT INTO captures(id,raw,modality,occurred_at,created
 // абзац, в котором дела приходится вычитывать глазами. Заголовок дочерней —
 // дословная фраза человека, ссылка назад держит происхождение, отменить их
 // можно одним движением из уведомления о записи.
-function splitOffActions(db, { parentId, classification, provider, model = null, userId = null, at }) {
+function splitOffActions(db, { parentId, classification, provider, model = null, userId = null, at, timeZone = 'Europe/Samara' }) {
   const actions = (classification?.proposedActions || []).filter(action => action?.type === 'task' && typeof action.title === 'string');
   const parts = [];
   for (const action of actions) {
     const childId = id(), interpretationId = id(), undoGroupId = id();
-    const childClassification = actionClassification(action.title, classification);
+    const childClassification = actionClassification(action.title, classification, new Date(at), timeZone);
     db.prepare('INSERT INTO captures(id,raw,modality,occurred_at,created_at,privacy_scope,deleted_at,user_id,parent_capture_id) VALUES(?,?,?,?,?,?,NULL,?,?)')
       .run(childId, action.title, 'text', at, at, 'private', userId, parentId);
     db.prepare('INSERT INTO interpretations VALUES(?,?,?,?,?,?,?,?,?,NULL)')
@@ -960,9 +979,10 @@ export function createLedger(db, { raw, occurredAt, classification, provider, mo
     db.prepare(INSERT_CAPTURE).run(captureId, raw, 'text', occurredAt || createdAt, createdAt, 'private', userId);
     settleOccurredAt(db, captureId, classification, timeZone);
     db.prepare('INSERT INTO interpretations VALUES(?,?,?,?,?,?,?,?,?,NULL)').run(interpretationId, captureId, 1, 'active', provider, model, JSON.stringify(classification), JSON.stringify(classification.confidence || {}), createdAt);
-    if(createProjections) insertProjections(db, interpretationId, makeProjections(captureId, classification, undoGroupId), createdAt);
+    if(createProjections) { insertProjections(db, interpretationId, makeProjections(captureId, classification, undoGroupId), createdAt); closeIfCompleted(db, captureId, interpretationId, classification, createdAt); }
     db.prepare('INSERT INTO activity_events VALUES(?,?,?,?)').run(id(), 'capture_created', JSON.stringify({ captureId, undoGroupId }), createdAt);
-    parts = splitOffActions(db, { parentId: captureId, classification, provider, model, userId, at: createdAt });
+    if (createProjections) saveDetails(db, captureId, classification, createdAt);
+    parts = splitOffActions(db, { parentId: captureId, classification, provider, model, userId, at: createdAt, timeZone });
   });
   write(); return { captureId, interpretationId, undoGroupId, parts };
 }
@@ -1029,14 +1049,18 @@ export function completeCaptureJob(db, claim, { classification, provider, model 
     const interpretationId = id(), undoGroupId = id();
     settleOccurredAt(db, claim.capture_id, classification, timeZone);
     db.prepare('INSERT INTO interpretations VALUES(?,?,?,?,?,?,?,?,?,NULL)').run(interpretationId, claim.capture_id, 1, 'active', provider, model, JSON.stringify(classification), JSON.stringify(classification.confidence || {}), completedAt);
-    if (shouldMaterializeProjections(classification)) insertProjections(db, interpretationId, makeProjections(claim.capture_id, classification, undoGroupId), completedAt);
+    if (shouldMaterializeProjections(classification)) {
+      insertProjections(db, interpretationId, makeProjections(claim.capture_id, classification, undoGroupId), completedAt);
+      closeIfCompleted(db, claim.capture_id, interpretationId, classification, completedAt);
+      saveDetails(db, claim.capture_id, classification, completedAt);
+    }
     // Задача «успешна» и с откатом на заглушку — но причина отката остаётся
     // в error_code: без неё после факта не понять, почему запись без разбора.
     db.prepare(`UPDATE capture_jobs SET state='succeeded',stage='complete',retryable=0,used_provider=?,model=?,error_code=?,lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,finished_at=?
       WHERE id=? AND state='running' AND lease_owner=? AND lease_token=? AND lease_fence=?`).run(provider, model, provider === 'fallback' ? (fallbackReason || null) : null, completedAt, claim.id, claim.lease_owner, claim.lease_token, claim.lease_fence);
     insertJobEvent(db, claim.id, 'succeeded', completedAt);
     insertLedgerEvent(db, 'capture_classified', claim.capture_id, claim.id, completedAt);
-    const parts = splitOffActions(db, { parentId: claim.capture_id, classification, provider, model, userId: claim.user_id, at: completedAt });
+    const parts = splitOffActions(db, { parentId: claim.capture_id, classification, provider, model, userId: claim.user_id, at: completedAt, timeZone });
     return { interpretationId, undoGroupId, parts };
   });
 }
@@ -1126,30 +1150,6 @@ function repairMissingProjections(db) {
     }
   });
 }
-// Сделанное — результат (settleCompleted в classifier.js). Записи, разобранные
-// раньше этого правила, остались «встречей» или «делом» с отметкой «сделано» и
-// лежат в «Что делал» с кружком, который нечего отмечать. Заметки и идеи с
-// отметкой «сделано» туда же попали по ошибке модели. Они получают новую
-// версию разбора от того же провайдера — прежняя остаётся в истории, как при
-// любой замене. Выборка пустеет после первого прохода.
-function settleCompletedRecords(db) {
-  const rows = db.prepare(`SELECT i.capture_id,i.provider,i.model,i.classification_json
-    FROM interpretations i JOIN captures c ON c.id=i.capture_id
-    WHERE i.status='active' AND c.deleted_at IS NULL AND json_extract(i.classification_json,'$.completed')=1
-      AND (json_extract(i.classification_json,'$.primaryType') IN ('task','meeting_event','note','idea_question')
-        OR EXISTS (SELECT 1 FROM json_each(i.classification_json,'$.additionalTypes') WHERE value IN ('task','meeting_event')))`).all();
-  for (const row of rows) {
-    let classification;
-    try { classification = JSON.parse(row.classification_json); }
-    catch { continue; }
-    // Сделанной заметку называла модель — верим типу и снимаем признак, как в
-    // modelCompleted. Отмеченное рукой — итог, как у дела и встречи.
-    const settled = row.provider !== 'manual' && NOTE_TYPES.includes(classification.primaryType)
-      ? { ...classification, completed: false }
-      : settleCompleted(classification);
-    if (settled !== classification) replaceInterpretation(db, row.capture_id, settled, row.provider, null, shouldMaterializeProjections(settled), row.model);
-  }
-}
 export function replaceInterpretation(db, captureId, classification, provider, correction = null, createProjections = true, model = null, { timeZone = 'Europe/Samara' } = {}) {
   return withImmediateTransaction(db,()=>{
     settleOccurredAt(db, captureId, classification, timeZone);
@@ -1170,9 +1170,13 @@ export function replaceInterpretation(db, captureId, classification, provider, c
     db.prepare("UPDATE projections SET status='reverted', reverted_at=? WHERE interpretation_id=? AND status='active'").run(createdAt, previous.id);
     db.prepare('INSERT INTO interpretations VALUES(?,?,?,?,?,?,?,?,?,?)').run(interpretationId, captureId, previous.version + 1, 'active', provider, provider === 'manual' ? null : model, JSON.stringify(classification), JSON.stringify(classification.confidence || {}), createdAt, previous.id);
     if(createProjections) insertProjections(db, interpretationId, makeProjections(captureId, classification, undoGroupId), createdAt);
-    if (createProjections && closedTypes.size)
+    // Признак «сделано» в поправке — это кружок: снят — дело возвращается в
+    // работу, поставлен — закрывается (тем же событием, что и кружок).
+    const wasCompleted = JSON.parse(previous.classification_json)?.completed === true, isCompleted = classification.completed === true;
+    if (createProjections && closedTypes.size && !(wasCompleted && !isCompleted))
       for (const row of db.prepare("SELECT id, projection_type FROM projections WHERE interpretation_id=? AND status='active'").all(interpretationId))
         if (closedTypes.has(row.projection_type)) insertLedgerEvent(db, 'completed', captureId, null, createdAt, { projectionId: row.id, interpretationId, actor: 'user', occurredAt: closedTypes.get(row.projection_type) });
+    if (createProjections && isCompleted && !wasCompleted) closeIfCompleted(db, captureId, interpretationId, classification, createdAt);
     if (correction) db.prepare('INSERT INTO corrections(id,capture_id,interpretation_id,correction_json,note,created_at,operation_key,request_fingerprint) VALUES(?,?,?,?,?,?,?,?)').run(id(), captureId, interpretationId, JSON.stringify(correction.patch||correction), correction.note || null, createdAt, correction.operationKey||null, correction.requestFingerprint||null);
     db.prepare('INSERT INTO activity_events VALUES(?,?,?,?)').run(id(), 'interpretation_replaced', JSON.stringify({ captureId, undoGroupId }), createdAt);
     return { interpretationId, undoGroupId };
@@ -1252,7 +1256,7 @@ function dailyContent(db, date, userId=null) {
   const done = doneRows.map(row => ({ item:dailyItem(`done-${row.ledger_id}`,row.raw,{captureId:row.capture_id}), sources:[dailySource('doneYesterday',`done-${row.ledger_id}`,'ledger_event',row.ledger_id,row),dailySource('doneYesterday',`done-${row.ledger_id}`,'capture',row.capture_id,row),dailySource('doneYesterday',`done-${row.ledger_id}`,'projection',row.projection_id,row)] }));
   sections.push({ key:'doneYesterday', label:dailySectionLabels.doneYesterday, empty:'Нет подтверждённых завершений за вчера.', items:done });
   const decisionRows = db.prepare(`SELECT c.id,c.raw,i.id interpretation_id FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active'
-    WHERE c.deleted_at IS NULL AND c.user_id IS ? AND i.classification_json LIKE '%"primaryType":"outcome_decision"%' AND c.occurred_at>=? AND c.occurred_at<? ORDER BY c.occurred_at LIMIT 200`).all(userId,start,end).filter(row=>isExplicitDecision(row.raw)).slice(0,100);
+    WHERE c.deleted_at IS NULL AND c.user_id IS ? AND c.occurred_at>=? AND c.occurred_at<? ORDER BY c.occurred_at LIMIT 200`).all(userId,start,end).filter(row=>isExplicitDecision(row.raw)).slice(0,100);
   const decisions = decisionRows.map(row => ({ item:dailyItem(`decision-${row.id}`,row.raw,{captureId:row.id}), sources:[dailySource('decisions',`decision-${row.id}`,'capture',row.id,row),dailySource('decisions',`decision-${row.id}`,'interpretation',row.interpretation_id,row)] }));
   sections.push({ key:'decisions', label:dailySectionLabels.decisions, empty:'Нет зафиксированных решений.', items:decisions });
   const carriedRows = db.prepare(`SELECT p.id projection_id,p.capture_id,p.interpretation_id,p.payload_json,c.raw FROM projections p JOIN captures c ON c.id=p.capture_id JOIN interpretations i ON i.id=p.interpretation_id
