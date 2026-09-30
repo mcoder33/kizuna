@@ -30,6 +30,10 @@ test("настройки напоминаний личные, push предла�
   await expect(card).toBeVisible();
   await card.getByText("встретить курьера у подъезда").first().click();
   await expect(page.locator("#review-dialog")).toBeVisible();
+  // «Напомнить» лежит в панели «Параметры», а она в карточке по умолчанию свёрнута.
+  const propsBar = page.locator("#review-dialog .props-bar");
+  await propsBar.click();
+  await expect(propsBar).toHaveAttribute("aria-expanded", "true");
   const remind = page.locator("#review-remind");
   await expect(remind).toBeVisible();
   await expect(remind.locator("option").first()).toHaveText("как в настройках (за час)");

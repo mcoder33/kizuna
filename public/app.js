@@ -1084,12 +1084,15 @@ function pickTodayTab(key) {
 function showUnfinished() {
   pickTodayTab("day");
   const ids = new Set(unfinishedTasks().map((entry) => entry.id));
-  const rows = [...$("#todo").querySelectorAll(".entry[data-capture-id]")].filter((row) => ids.has(row.dataset.captureId));
+  const rowsNow = () => [...$("#todo").querySelectorAll(".entry[data-capture-id]")].filter((row) => ids.has(row.dataset.captureId));
   const shelf = $("#todo .day-group.late") || $("#todo .day-group.today");
-  (shelf?.closest(".day-head") || shelf || rows[0])?.scrollIntoView({ block: "start", behavior: motionAllowed() ? "smooth" : "auto" });
-  // Класс встаёт на следующем кадре, чтобы фон успел проявиться плавно, а не появился сразу.
-  requestAnimationFrame(() => { for (const row of rows) row.classList.add("flash"); });
-  setTimeout(() => { for (const row of rows) row.classList.remove("flash"); }, 1400);
+  (shelf?.closest(".day-head") || shelf || rowsNow()[0])?.scrollIntoView({ block: "start", behavior: motionAllowed() ? "smooth" : "auto" });
+  // Фон вспыхивает, когда полка уже на месте, а не пока к ней едет прокрутка, и
+  // гаснет плавно: класс ставится и снимается, а переходом занимается CSS. Строки
+  // ищутся заново в момент вспышки — список могли перерисовать, пока ехала прокрутка.
+  const delay = motionAllowed() ? 350 : 0;
+  setTimeout(() => { for (const row of rowsNow()) row.classList.add("flash"); }, delay);
+  setTimeout(() => { for (const row of rowsNow()) row.classList.remove("flash"); }, delay + 1300);
 }
 // Перенос группы дел на завтра одним нажатием — из вечерней фразы обложки и с
 // полок «просрочено» и «на сегодня». Двигаются только те, что можно (canPostpone):
@@ -1308,6 +1311,9 @@ function appendMore(container, hidden) {
   if (hidden <= 0) return;
   const more = node("a", `Ещё ${hidden} — весь список →`, "preview-more");
   more.href = "#board";
+  // Весь список — это доска без фильтра: с умолчанием «сегодня» на ней не оказалось
+  // бы как раз тех дел, о которых говорит ссылка.
+  more.addEventListener("click", () => { boardState.filter = []; boardRememberFilter(); });
   container.append(more);
 }
 // ── круги на «Сегодня» ──

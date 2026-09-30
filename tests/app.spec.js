@@ -1458,10 +1458,14 @@ test("future-dated todos stay in their days while the tail counts them", async (
   await expect(tail).toHaveText("Ещё 3 — весь список →", { timeout: 15000 });
   await expect(tail).toHaveAttribute("href", "#board");
   expect(await page.locator("#todo .entry").count()).toBe(0);
-  // Полный список — доска, открывается этой же ссылкой.
+  // Полный список — доска, открывается этой же ссылкой. В первый заход доска фильтрует по
+  // «сегодня» и этих дел не показала бы, поэтому ссылка «весь список» снимает фильтр.
+  await page.evaluate(() => localStorage.removeItem("kizuna-board-filter"));
   await tail.click();
   await expect(page.locator("#board")).toBeVisible();
   await expect(page.locator("#board-columns .board-card").filter({ hasText: /первое|второе|третье/ })).toHaveCount(3);
+  await expect(page.locator("#board-filter-toggle")).toHaveText("Фильтр");
+  expect(await page.evaluate(() => localStorage.getItem("kizuna-board-filter"))).toBe("[]");
   await page.locator('nav a[href="#today"]').click();
   await openTab(page, /^Сделано/);
   // Семь «Обсудили …» — закрытые сразу туду: «Сделано» показывает все.
@@ -1678,11 +1682,19 @@ test("вечером во фразе обложки «3 дела» и «пере
   expect(await color(brief.locator("button.linkish").first())).toBe(await color(page.locator("#today-date .today-phase")));
 
   // «3 дела» открывает «День», ведёт к полке «просрочено» и подсвечивает строки, которые не закрыты.
+  // Подсветка живёт секунду — за ней следит наблюдатель, а не опрос: под нагрузкой опрос её пропускает.
+  await page.evaluate(() => {
+    window.flashed = new Set();
+    new MutationObserver((records) => {
+      for (const record of records) if (record.target.classList.contains("flash")) window.flashed.add(record.target.dataset.captureId);
+    }).observe(document.querySelector("#todo"), { attributes: true, attributeFilter: ["class"], subtree: true });
+  });
   await brief.getByRole("button", { name: "3 дела" }).click();
   await expect(page.getByRole("tab", { name: /^День/ })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator("#todo .day-group.late")).toBeInViewport();
-  await expect(page.locator("#todo .entry.flash")).toHaveCount(3);
-  await expect(page.locator("#todo .entry.flash").filter({ hasText: "Ежедневное" })).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.flashed.size)).toBe(3);
+  const flashed = await page.evaluate(() => [...window.flashed]);
+  expect(flashed.sort()).toEqual([ids.late, ids.lateTimed, ids.today].sort());
   // Подсветка гаснет сама, строки на месте.
   await expect(page.locator("#todo .entry.flash")).toHaveCount(0, { timeout: 4000 });
   await expect(page.locator("#todo .entry").filter({ hasText: "Просроченный отчёт" })).toBeVisible();
