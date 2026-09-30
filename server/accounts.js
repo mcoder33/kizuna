@@ -35,12 +35,8 @@ export function publicUser(row) {
     twoFactorEnabled: Boolean(row.totp_enabled),
     createdAt: row.created_at, approvedAt: row.approved_at, lastLoginAt: row.last_login_at,
     blockedAt: row.blocked_at, blockedReason: row.blocked_reason,
-    voiceBlocked: Boolean(row.voice_blocked),
-    voiceLimitUsd: row.voice_limit_usd ?? null,
-    voiceLimitMinutes: row.voice_limit_minutes ?? null,
-    voiceLimitWindow: row.voice_limit_window ?? null,
     monthlyLimitUsd: row.monthly_limit_usd ?? null,
-    ...(row.capture_count === undefined ? {} : { captureCount: row.capture_count, voiceCostUsd: row.voice_cost_usd, voiceSeconds: row.voice_seconds }),
+    ...(row.capture_count === undefined ? {} : { captureCount: row.capture_count }),
   };
 }
 
@@ -445,18 +441,12 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
       if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1e6) return { error: `Некорректное значение: ${name}.` };
       return parsed;
     };
-    for (const [field, key, name] of [['voice_limit_usd', 'voiceLimitUsd', 'предел разговора в долларах'], ['voice_limit_minutes', 'voiceLimitMinutes', 'предел разговора в минутах'], ['monthly_limit_usd', 'monthlyLimitUsd', 'потолок расходов на месяц']]) {
+    for (const [field, key, name] of [['monthly_limit_usd', 'monthlyLimitUsd', 'потолок расходов на месяц']]) {
       if (!Object.hasOwn(body || {}, key)) continue;
       const parsed = number(body[key], name);
       if (parsed && parsed.error) return { error: parsed.error };
       patch[field] = parsed;
     }
-    if (Object.hasOwn(body || {}, 'voiceLimitWindow')) {
-      const window = body.voiceLimitWindow;
-      if (window !== null && window !== '' && !['day','week','month','total'].includes(window)) return { error: 'Некорректный период предела.' };
-      patch.voice_limit_window = window || null;
-    }
-    if (Object.hasOwn(body || {}, 'voiceBlocked')) patch.voice_blocked = body.voiceBlocked ? 1 : 0;
     return { patch };
   }
 

@@ -5,6 +5,7 @@
 // должен задваивать цифры), хвосты важнее графиков, пороги названы явно.
 
 import { occursOn } from './repeat.js';
+import { occurrencesByCapture } from './occurrences.js';
 
 const COMPLETABLE = new Set(['task', 'meeting_event']);
 const DAY_MS = 86400000;
@@ -56,6 +57,7 @@ function completionEvents(db) {
 // завершения. Закрыто — когда закрыты все завершаемые проекции записи
 // (правило то же, что у карточек и TODO-буфера).
 export function loadEntries(db, userId) {
+  const occurrences = occurrencesByCapture(db, userId);
   const rows = db.prepare(`SELECT c.id, c.created_at, c.occurred_at, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND c.user_id IS ? ORDER BY c.created_at`).all(userId);
   const projections = db.prepare(`SELECT p.id, p.capture_id, p.projection_type FROM projections p JOIN captures c ON c.id=p.capture_id WHERE p.status='active' AND c.deleted_at IS NULL AND c.user_id IS ?`).all(userId);
   const completion = completionEvents(db);
@@ -70,7 +72,8 @@ export function loadEntries(db, userId) {
     const completable = byCapture.get(row.id) || [];
     const closed = completable.length > 0 && completable.every(projection => completion.get(projection.id)?.event_type === 'completed');
     const closedAt = closed ? completable.map(projection => completion.get(projection.id).occurred_at).sort().at(-1) : null;
-    return { id: row.id, createdAt: row.created_at, occurredAt: row.occurred_at, classification, closed, closedAt, hasCompletable: completable.length > 0 };
+    const closedDays = [...(occurrences.get(row.id) || [])].map(([date, completedAt]) => ({ date, completedAt }));
+    return { id: row.id, createdAt: row.created_at, occurredAt: row.occurred_at, classification, closed, closedAt, hasCompletable: completable.length > 0, projectionId: completable[0]?.id || null, occurrences: closedDays };
   });
 }
 
@@ -269,8 +272,10 @@ export function dayReport(db, { date, now, timeZone, userId }) {
     // Новая «сделал X» — туду, закрытая при записи: раскрытая заново кружком она
     // из дневника уходит, как и любая снятая галочкой задача.
     .filter(entry => entry.classification.completed === true && (entry.closed || !entry.hasCompletable) && inRange(stampOf(entry), startAt, endAt))
-    .map(entry => ({ captureId: entry.id, title: summaryOf(entry), type: entry.classification.primaryType, at: stampOf(entry) }))
-    .sort((a, b) => (a.at < b.at ? -1 : 1));
+    .map(entry => ({ captureId: entry.id, title: summaryOf(entry), type: entry.classification.primaryType, at: stampOf(entry) }));
+  // Экземпляр повтора, закрытый кружком в этот день, — тоже сделанное.
+  for (const entry of entries) for (const item of entry.occurrences) if (inRange(item.completedAt, startAt, endAt)) done.push({ captureId: entry.id, title: summaryOf(entry), type: entry.classification.primaryType, at: item.completedAt, occurrence: item.date });
+  done.sort((a, b) => (a.at < b.at ? -1 : 1));
   // Не успел: срок был в этот день, к концу дня не закрыто. Если закрыли позже —
   // так и говорим, это честнее, чем молча убрать строку из прошлого дня.
   const missed = entries

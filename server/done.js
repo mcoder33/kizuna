@@ -34,9 +34,10 @@ function meetingsOf(calendar, { userId, from, to, today, nowTime }) {
   for (const item of view?.external || []) {
     if (item.allDay || item.me?.status === 'declined' || item.title === 'Занято' || !item.date) continue;
     const endDate = item.endDate || item.date;
-    const endTime = item.end || item.time || '23:59';
+    const endTime = (endDate !== item.date && item.endTime) || item.end || item.time || '23:59';
     if (endDate > today || (endDate === today && endTime > nowTime)) continue;
-    out.push({ id: item.id, title: item.title || 'Встреча', date: item.date, time: endTime });
+    // Встреча через полночь закрывается в день и час конца, а не начала.
+    out.push({ id: item.id, title: item.title || 'Встреча', date: endDate, time: endTime });
   }
   return out;
 }
@@ -52,12 +53,17 @@ export function doneView(db, { userId, from, to, now = new Date(), timeZone = 'E
     if (entry.closed && entry.closedAt) {
       const at = new Date(entry.closedAt);
       const date = dateInZone(at, timeZone);
-      if (inRange(date)) items.push({ id: entry.id, title, date, time: timeInZone(at, timeZone), kind: meeting ? 'meeting' : 'todo', column: meeting ? MEETINGS_COLUMN : columnOf(entry.id), auto: false });
+      if (inRange(date)) items.push({ id: entry.id, title, date, time: timeInZone(at, timeZone), kind: meeting ? 'meeting' : 'todo', column: meeting ? MEETINGS_COLUMN : columnOf(entry.id), auto: false, projectionId: entry.projectionId });
     } else if (entry.classification.completed === true && !entry.hasCompletable) {
       // Старый отчёт о сделанном: без проекции-дела, его день — occurred_at.
       const at = new Date(entry.occurredAt || entry.createdAt);
       const date = dateInZone(at, timeZone);
-      if (inRange(date)) items.push({ id: entry.id, title, date, time: timeInZone(at, timeZone), kind: 'todo', column: OTHER_COLUMN, auto: false });
+      if (inRange(date)) items.push({ id: entry.id, title, date, time: timeInZone(at, timeZone), kind: 'todo', column: OTHER_COLUMN, auto: false, legacy: true });
+    }
+    // Экземпляр повтора, закрытый кружком, — сделанное в тот день; сама запись открыта.
+    for (const item of entry.occurrences) {
+      const at = new Date(item.completedAt), date = dateInZone(at, timeZone);
+      if (inRange(date)) items.push({ id: entry.id, title, date, time: timeInZone(at, timeZone), kind: 'todo', column: columnOf(entry.id), auto: false, projectionId: entry.projectionId, occurrence: item.date });
     }
   }
   for (const meeting of meetingsOf(calendar, { userId, from, to, today, nowTime: timeInZone(now, timeZone) }))

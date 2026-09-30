@@ -326,7 +326,12 @@ test('the reply after parsing says what the main page says', () => {
     state: 'succeeded',
     classification: { primaryType: 'task', summary: 'Отправить счёт', entities: { schedule: { date: '2026-09-24', time: null }, projects: [] }, ambiguity: { field: 'people', question: 'Кому отправить?' } },
     parts: [{ title: 'Позвонить в банк' }],
-  }, { today }), '📌 Легло 2 туду на сегодня:\n• «Отправить счёт»\n• «Позвонить в банк»\n❓ Кому отправить?');
+  }, { today }), '📌 Легло 1 туду на сегодня:\n• «Позвонить в банк»\n❓ Кому отправить?', 'родитель при пачке дел — не туду, в ответе только отделившиеся дела');
+  assert.equal(resultText({
+    state: 'succeeded',
+    classification: { primaryType: 'task', summary: 'Пачка', entities: { schedule: { date: '2026-09-24', time: null }, projects: [] } },
+    parts: [{ title: 'Отправить счёт' }, { title: 'Позвонить в банк' }],
+  }, { today }), '📌 Легло 2 туду на сегодня:\n• «Отправить счёт»\n• «Позвонить в банк»');
   assert.equal(resultText({ state: 'succeeded', classification: { primaryType: 'task', summary: 'Идеи к отпуску', entities: { schedule: { date: today, time: '15:00' }, projects: [] } } }, { today }), '📌 Легло на сегодня: «Идеи к отпуску» — в 15:00');
   assert.equal(resultText({ state: 'succeeded', classification: { primaryType: 'task', summary: 'Квартальный отчёт', entities: { schedule: { date: '2026-09-25', time: null }, projects: [] } } }, { today }), '📌 Легло: «Квартальный отчёт» — завтра');
   assert.equal(resultText({ state: 'succeeded', classification: { primaryType: 'task', completed: true, summary: 'Ревью по Hub', entities: { schedule: null, doneOn: { date: '2026-09-23', time: null }, projects: [] } } }, { today }), '🏁 Записано как сделанное: «Ревью по Hub» — вчера');

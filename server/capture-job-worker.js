@@ -84,7 +84,7 @@ export class CaptureJobWorker {
         // «сделай отчёт» переслали себе, не должен получить эту просьбу от вас.
         const foreign = claim.origin === 'telegram_forward';
         let assigned = null;
-        if (!foreign) try { assigned = autoAssign(this.db, { captureId:claim.capture_id, userId:claim.user_id ?? null, classification:result.classification }); } catch {}
+        if (!foreign) try { assigned = autoAssign(this.db, { captureId:claim.capture_id, userId:claim.user_id ?? null, classification:result.classification, raw:claim.raw }); } catch {}
         // «@Аня» в самой записи — тоже призыв: Аня её видит и знает о ней.
         if (!foreign) try { callFromText(this.db, { captureId:claim.capture_id, authorId:claim.user_id ?? null, raw:claim.raw, assigneeId:assigned?.assignee?.id || null }); } catch {}
         // Разобрано в фоне, а человек мог уже уйти: неясная запись ждёт его за колокольчиком.

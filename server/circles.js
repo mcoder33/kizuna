@@ -853,12 +853,23 @@ export function callFromText(db, { captureId, authorId, raw = '', assigneeId = n
 // Дело уходит человеку тем же одним полем. Приложение не изобретает намерение:
 // исполнителем становится тот участник круга, которого назвал сам разбор, и
 // только если он один — угадывать, кому досталось дело, нельзя.
-export function autoAssign(db, { captureId, userId, classification }) {
+export function autoAssign(db, { captureId, userId, classification, raw = '' }) {
   if (!classification || classification.primaryType !== 'task') return null;
+  // «Сделал X» и любая личная запись человеку не уходит: поручение — только явное.
+  if (classification.completed === true) return null;
+  const lead = addresseeOf(raw);
+  if (!lead) return null;
   if (db.prepare('SELECT 1 FROM assignments WHERE capture_id=? AND cancelled_at IS NULL').get(captureId)) return null;
-  const match = matchAssignee(db, userId, classification.entities?.people);
+  const match = matchAssignee(db, userId, [lead]);
   if (!match) return null;
   return assign(db, { captureId, assigneeId: match.id, assignerId: userId, circleId: match.circleId }).assignment || null;
+}
+
+// Явное обращение в начале записи: «Ане — …», «Ане: …», «Лёше — поднять стенд».
+// Одно слово с большой буквы и тире (с пробелами) или двоеточие. Остальное — не просьба.
+export function addresseeOf(raw) {
+  const match = /^\s*@?(\p{Lu}[\p{L}-]{1,29})\s*(?::|[—–]|\s-)\s*\S/u.exec(String(raw || ''));
+  return match ? match[1] : null;
 }
 
 // Взятые дела — ссылки, а не копии: запись живёт у автора, а в чужом дне стоит

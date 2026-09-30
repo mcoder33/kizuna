@@ -38,6 +38,8 @@ function wallOf(date, time) {
 // час», а не «за столько-то».
 export function remindMoment(schedule, { timeZone, defaults = {} }) {
   if (!schedule?.date) return null;
+  // Срок «сегодня», который поставили мы сами, а не человек, не повод для push.
+  if (schedule.defaulted && !schedule.time) return null;
   const explicit = validRemind(schedule.remind) ? schedule.remind : undefined;
   if (explicit === 'off') return null;
   if (schedule.time) {

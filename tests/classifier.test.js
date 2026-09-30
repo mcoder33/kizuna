@@ -64,10 +64,16 @@ test('the old question «is it a task or a note?» is never asked, other questio
   assert.equal(shouldMaterializeProjections(schedule), false);
 });
 
-test('proposed actions are kept and grounded; a child action is a todo for today too', () => {
-  const result = normalize('созвонились с Аней. Решили допинать бот детектор и карусель', { proposedActions: [{ type: 'task', title: 'допинать бот детектор' }, { type: 'task', title: 'выдуманное дело' }] });
-  assert.deepEqual(result.proposedActions, [{ type: 'task', title: 'допинать бот детектор' }]);
-  const child = actionClassification('допинать бот детектор', result, now, zone);
+test('proposed actions are kept in the model words, people are grounded; a child action is a todo for today too', () => {
+  const result = normalize('созвонились с Аней. Решили допинать бот детектор и карусель', { proposedActions: [
+    { type: 'task', title: 'Допинать бот-детектор', details: 'Довести до релиза.', people: ['Аней', 'Выдуманный'] },
+    { type: 'task', title: 'допинать бот-детектор' },
+    { type: 'task', title: 'мало' },
+  ] });
+  assert.deepEqual(result.proposedActions, [{ type: 'task', title: 'Допинать бот-детектор', details: 'Довести до релиза.', people: ['Аней'] }]);
+  const child = actionClassification('Допинать бот-детектор', result, now, zone, { details: 'Довести до релиза.', people: ['Аней'] });
+  assert.equal(child.details, 'Довести до релиза.');
+  assert.deepEqual(child.entities.people, ['Аней']);
   assert.equal(child.primaryType, 'task');
   assert.equal(child.entities.schedule.date, '2026-08-21');
   assert.equal(child.completed, false);

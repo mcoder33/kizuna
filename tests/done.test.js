@@ -90,6 +90,7 @@ test('done: old finished reports stay in history, other people do not see them, 
   createLedger(app.database, { raw: 'Сделал релиз хаба', classification: { ...fakeModelClassification('Сделал релиз хаба'), primaryType: 'outcome_decision', completed: true }, provider: 'manual', userId: api.user.id });
   const done = (await api.get(`/api/done?from=${today()}&to=${today()}`).expect(200)).body;
   assert.deepEqual(done.days[0].items.map(item => [item.title, item.column]), [['Сделал релиз хаба', 'Без колонки']]);
+  assert.equal(done.days[0].items[0].legacy, true, 'старая запись — по флагу, а не по имени колонки');
 
   const stranger = authed(app, { email: 'other@kizuna.test', role: 'user' });
   assert.deepEqual((await stranger.get(`/api/done?from=${today()}&to=${today()}`).expect(200)).body.days, []);
@@ -100,4 +101,36 @@ test('done: old finished reports stay in history, other people do not see them, 
   await api.get(`/api/done?from=${today()}&to=${shiftDate(today(), -1)}`).expect(400);
   await api.get(`/api/done?from=${shiftDate(today(), -400)}&to=${today()}`).expect(400);
   await request(app).get('/api/done').expect(401);
+});
+
+test('done: an occurrence of a repeat closed by the circle counts on its day, the record itself stays open; undo takes it back', async () => {
+  const app = freshApp(), api = authed(app);
+  const entry = await post(api, 'Нужно проверить бэкапы каждый день');
+  const task = taskOf(entry);
+  await api.post(`/api/projections/${task.id}/complete`).send({ occurrence: today() }).expect(200);
+  const range = `from=${shiftDate(today(), -6)}&to=${today()}`;
+  let done = (await api.get(`/api/done?${range}`).expect(200)).body;
+  assert.equal(done.counts.today, 1);
+  assert.deepEqual(done.days[0].items.map(item => [item.title, item.kind, item.occurrence]), [[entry.interpretation.classification.summary, 'todo', today()]]);
+  assert.ok(done.days[0].items[0].projectionId, 'по строке можно вернуть');
+  const report = (await api.get(`/api/reports/day?date=${today()}`)).body;
+  if (report.done) assert.equal(report.done.filter(item => item.captureId === entry.id).length, 1);
+  await api.post(`/api/projections/${done.days[0].items[0].projectionId}/undo-complete`).send({ occurrence: today() }).expect(200);
+  done = (await api.get(`/api/done?${range}`).expect(200)).body;
+  assert.equal(done.counts.today, 0);
+});
+
+test('done: the range is capped at 62 days and old reports carry the legacy flag', async () => {
+  const app = freshApp(), api = authed(app);
+  await api.get(`/api/done?from=${shiftDate(today(), -62)}&to=${today()}`).expect(200);
+  await api.get(`/api/done?from=${shiftDate(today(), -63)}&to=${today()}`).expect(400);
+});
+
+test('done: a meeting across midnight closes on the day and hour of its end, not of its start', async () => {
+  const app = freshApp(), api = authed(app);
+  const dayBefore = shiftDate(today(), -2), yesterday = shiftDate(today(), -1);
+  // 23:00 позавчера – 00:30 вчера по Самаре (UTC+4).
+  externalEvent(app, api.user.id, { id: 'night', title: 'Ночной релиз', start: `${dayBefore}T19:00:00.000Z`, end: `${dayBefore}T20:30:00.000Z` });
+  const done = (await api.get(`/api/done?from=${dayBefore}&to=${yesterday}`).expect(200)).body;
+  assert.deepEqual(done.days.map(day => [day.date, day.items.map(item => [item.title, item.time])]), [[yesterday, [['Ночной релиз', '00:30']]]]);
 });

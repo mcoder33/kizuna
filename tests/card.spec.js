@@ -123,21 +123,26 @@ test("markdown notes save, render and survive reopening without touching the raw
   expect(entry.note.body).toContain("## План");
 });
 
-test("the note body starts from the original capture without creating a note", async ({ page }) => {
-  const raw = "Нужно проверить заготовку тела из оригинала";
+test("the description starts empty with a placeholder, the original text is not copied into it, saving writes only what was typed", async ({ page }) => {
+  const raw = "Нужно проверить пустое описание без копии оригинала";
   await page.goto("/");
   await capture(page, raw);
   await openCard(page, "#todo", raw);
 
-  await expect(page.locator(".card-markdown")).toContainText(raw);
+  await expect(page.locator("#card-body-editor")).toHaveAttribute("data-placeholder", "Описание");
+  await expect(page.locator("#card-body-editor")).toHaveText("");
   await expect(page.locator(".card-body .prop-section")).toHaveText("Описание");
 
   const entries = await (await page.request.get("/api/entries?limit=100")).json();
   expect(entries.entries.find((item) => item.raw === raw).note).toBeNull();
 
+  // Уйти с пустым полем — заметка не создаётся, raw в неё не попадает.
   await page.locator(".card-markdown").click();
-  await expect(page.locator("#card-body-editor")).toHaveText(raw);
-  await page.locator("#card-body-editor").fill(`${raw}\n\n- дописал пункт`);
+  await page.locator("#card-body-editor").blur();
+  const untouched = await (await page.request.get("/api/entries?limit=100")).json();
+  expect(untouched.entries.find((item) => item.raw === raw).note).toBeNull();
+
+  await page.locator("#card-body-editor").fill("- дописал пункт");
   await page.locator("#card-body-editor").press("ControlOrMeta+Enter");
   await expect(page.locator(".card-markdown .md-bullet")).toBeVisible();
   await expect(page.locator(".card-markdown")).toContainText("дописал пункт");
@@ -145,7 +150,7 @@ test("the note body starts from the original capture without creating a note", a
   const after = await (await page.request.get("/api/entries?limit=100")).json();
   const entry = after.entries.find((item) => item.raw === raw);
   expect(entry.raw).toBe(raw);
-  expect(entry.note.body).toContain("дописал пункт");
+  expect(entry.note.body).toBe("- дописал пункт");
 });
 
 test("reopening a card without edits does not create a note version", async ({ page }) => {
@@ -325,8 +330,9 @@ test("markdown is decorated inside the capture field as it is typed", async ({ p
   // В карточке — то же живое поле: печатаем и разметка оформляется на месте.
   const noteField = page.locator("#card-body-editor");
   await noteField.click();
-  await page.keyboard.press("ControlOrMeta+End");
-  await page.keyboard.type(" --правка-- в **карточке**");
+  await page.keyboard.type("--старт-- описания");
+  await page.keyboard.press("Shift+Enter");
+  await page.keyboard.type("--правка-- в **карточке**");
   await expect(noteField.locator("del").last()).toHaveText("правка");
   await expect(noteField.locator("strong").last()).toHaveText("карточке");
   // Чистовик: маркеры раскрыты только на строке с кареткой, остальные строки
@@ -375,14 +381,13 @@ test("obsidian markup works end to end: typed in the field, rendered in the card
   await expect(card).toBeVisible();
   await card.locator(".entry-title").click();
 
-  // Пока описание — копия записи, «Исходный текст» не дублирует её.
-  await expect(page.locator(".card-source")).toHaveCount(0);
+  // Описание пустое, а исходный текст лежит свёрнутым под ним — запись готовым видом.
+  await expect(page.locator("#card-body-editor")).toHaveText("");
+  await expect(page.locator(".card-source")).toHaveCount(1);
 
-  // После правки описания под ним появляется «Исходный текст» — запись готовым видом.
   const body = page.locator("#card-body-editor");
   await body.click();
-  await page.keyboard.press("ControlOrMeta+End");
-  await page.keyboard.type(" правка");
+  await page.keyboard.type("правка");
   const saved = page.waitForResponse(
     (response) => response.url().includes("/notes") && response.request().method() === "POST",
   );
@@ -461,6 +466,9 @@ test("the card body is the same live field as the capture card, and the title st
   // Тело карточки ведёт себя ровно как поле ввода: живая разметка,
   // продолжение списка по Enter и кликабельный чекбокс.
   const body = page.locator("#card-body-editor");
+  await expect(body).toHaveText("");
+  await body.click();
+  await page.keyboard.insertText(raw);
   await expect(body.locator(".md-heading")).toHaveText("Разбор недели");
   await expect(body.locator(".md-checkbox")).toHaveCount(1);
   await body.locator(".md-line").nth(1).click();

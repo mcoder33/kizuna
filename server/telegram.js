@@ -257,10 +257,10 @@ export function resultText({ state, classification = null, parts = [], captureGo
     const onToday = !classification.entities?.schedule?.date || classification.entities.schedule.date === today;
     if (!partTitles.length) lines.push(`📌 Легло${onToday ? ' на сегодня' : ''}: ${title}${due ? ` — ${due}` : ''}`);
     else {
-      const count = partTitles.length + 1;
-      lines.push(`📌 Легло ${count} ${plural(count, ['туду', 'туду', 'туду'])}${onToday ? ' на сегодня' : ''}:`);
-      lines.push(`• ${title}${due ? ` — ${due}` : ''}`);
-      for (const item of partTitles) lines.push(`• ${item}${onToday ? '' : ' — сегодня'}`);
+      // Родитель при пачке дел не туду: перечисляются только отделившиеся дела.
+      const count = partTitles.length;
+      lines.push(`📌 Легло ${count} ${plural(count, ['туду', 'туду', 'туду'])} на сегодня:`);
+      for (const item of partTitles) lines.push(`• ${item}`);
     }
   }
   const projects = (classification.entities?.projects || []).filter(Boolean);

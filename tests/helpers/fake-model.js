@@ -156,7 +156,7 @@ export function fakeModelCandidate(raw, now = new Date(), timeZone = 'Europe/Sam
     details: '',
     // Нумерованный список в записи — отдельные дела: «что решили: 1. …, 2. …».
     // Настоящая модель выделяет их смыслом, заглушке хватает разметки.
-    proposedActions: text.split(/\r?\n/).map(line => line.match(/^\s*\d{1,2}[.)]\s+(.{8,300})$/)).filter(Boolean).map(match => ({ type:'task', title: match[1].trim() })).slice(0, 5),
+    proposedActions: text.split(/\r?\n/).map(line => line.match(/^\s*\d{1,2}[.)]\s+(.{8,300})$/)).filter(Boolean).map(match => { const [title, ...rest] = match[1].split(/\s+[—–]\s+/); return { type:'task', title: title.trim(), details: rest.join('. ').trim(), people: people(title) }; }).slice(0, 5),
     completed,
     ambiguity,
   };

@@ -303,3 +303,12 @@ test('призыв «@» в записи открывает её человек�
   assert.equal(hers.filter(item=>item.kind==='call').length,1,'нового призыва нет');
   assert.equal(hers.filter(item=>item.kind==='request').length,1,'просьба пришла одна');
 });
+
+test('личная запись с именем участника круга человеку не уходит, явное обращение — уходит',async()=>{
+  const {sasha,circle}=await pair();
+  for(const raw of ['Созвонились с Аней, она жалуется на режимы','Завтра в 11 созвон с Аней','сделал отчёт для Ани','Ане']) await ask(sasha,raw);
+  const deedsOf=async()=>(await sasha.get(`/api/circles/${circle.id}`).expect(200)).body.circle.members.find(member=>member.name==='Аня').deeds;
+  assert.equal((await deedsOf()).length,0,'личные записи не превращаются в просьбы');
+  await ask(sasha,'Ане: проверить режимы');
+  assert.equal((await deedsOf()).length,1,'«Ане: …» — явное обращение');
+});

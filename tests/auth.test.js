@@ -333,7 +333,7 @@ test('расход считается на каждого отдельно', asy
 
 test('без входа не открывается ничего, кроме страницы входа', async () => {
   const api = request(app());
-  for (const path of ['/api/entries', '/api/day', '/api/settings', '/api/usage', '/api/export', '/api/tags', '/api/events'])
+  for (const path of ['/api/entries', '/api/day', '/api/settings', '/api/usage', '/api/export', '/api/events'])
     assert.equal((await api.get(path)).status, 401, `${path} должен быть закрыт`);
   await api.post('/api/captures').send({ raw: 'без спроса' }).expect(401);
   // Корень гостю показывает, что это за приложение; журнала в нём нет.

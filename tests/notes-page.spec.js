@@ -213,7 +213,7 @@ test("в карточке записи «[[» подсказывает стра�
   const field = page.locator("#card-body-editor");
   await field.click();
   await page.keyboard.press("End");
-  await page.keyboard.type(" [[рел");
+  await page.keyboard.type("Мысль про интерфейс [[рел");
   const suggest = page.locator(".link-menu:not([hidden])");
   await expect(suggest.locator(".link-option").first()).toContainText("Релиз 1.4");
   await page.keyboard.press("Enter");

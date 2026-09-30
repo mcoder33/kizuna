@@ -87,3 +87,53 @@ test("заголовок колонки «Сделано» на доске от�
   await expect(page.locator("#done")).toBeVisible();
   await expect(page.locator("#board")).toBeHidden();
 });
+
+// Пачка сообщений: из текста получаются отдельные туду, а «родителя» в списках нет.
+test("пачка из трёх сообщений — две туду в «Сегодня», без родителя, и тост называет их", async ({ page, request }) => {
+  await reset(request);
+  await page.goto("/");
+  const field = page.getByLabel("Новая запись");
+  await field.click();
+  await page.keyboard.insertText(["Привет!", "1. Отправить Ане смету по Хабу — до вечера", "2. Напомнить Лёше про доступы к репе"].join("\n"));
+  await page.getByRole("button", { name: "Сохранить запись" }).click();
+  await expect(page.locator("#todo .entry")).toHaveCount(2, { timeout: 15000 });
+  await expect(page.locator("#todo .entry").filter({ hasText: "Отправить Ане смету по Хабу" })).toBeVisible();
+  await expect(page.locator("#todo .entry").filter({ hasText: "Напомнить Лёше про доступы к репе" })).toBeVisible();
+  await expect(page.locator("#todo .entry").filter({ hasText: "Привет" })).toHaveCount(0);
+  await expect(page.locator("#today-count")).toHaveText("2");
+  await expect(page.locator("#toast")).toContainText("Легло: 2 туду");
+  // В карточке дела исходный текст — вся пачка, описание — из разбора.
+  await page.locator("#todo .entry").filter({ hasText: "Отправить Ане смету по Хабу" }).locator(".entry-title").click();
+  await expect(page.locator("#card-body-editor")).toHaveText("до вечера");
+  await page.locator(".card-source summary").click();
+  await expect(page.locator(".card-source-body")).toContainText("Привет!");
+});
+
+// «Сделал X» закрыто при записи, «Вернуть» из «Что делал» ставит его в «Сегодня».
+test("закрыл → Вернуть → снова в «Сегодня», а из «Что делал» ушло", async ({ page, request }) => {
+  await reset(request);
+  await request.post("/api/captures", { data: { raw: "Сделал отчёт для Игоря" } });
+  await page.goto("/");
+  const done = page.locator("#journal .entry").filter({ hasText: "отчёт для Игоря" });
+  await expect(done).toBeVisible({ timeout: 15000 });
+  await expect(page.locator("#todo .entry").filter({ hasText: "отчёт для Игоря" })).toHaveCount(0);
+  await done.locator(".completion-button").click();
+  await expect(page.locator("#todo .entry").filter({ hasText: "отчёт для Игоря" })).toBeVisible({ timeout: 15000 });
+  await expect(page.locator("#journal .entry").filter({ hasText: "отчёт для Игоря" })).toHaveCount(0);
+  // Закрыть снова и вернуть кружком строки «Сегодня» — тот же круг.
+  await page.locator("#todo .entry").filter({ hasText: "отчёт для Игоря" }).locator(".completion-button").click();
+  await expect(page.locator("#journal .entry").filter({ hasText: "отчёт для Игоря" })).toBeVisible({ timeout: 15000 });
+});
+
+// У закрытой туду в карточке — зелёный отмеченный кружок «Вернуть в работу»,
+// и у «сделал X», закрытого при записи, тоже.
+test("карточка закрытого дела и закрытого при записи «сделал X» несёт зелёный кружок", async ({ page, request }) => {
+  await reset(request);
+  await request.post("/api/captures", { data: { raw: "Сделал сверку по смете" } });
+  await page.goto("/");
+  await page.locator("#journal .entry").filter({ hasText: "сверку по смете" }).locator(".entry-title").click();
+  const tick = page.locator("#review-dialog .card-head .card-tick");
+  await expect(tick).toBeVisible();
+  await expect(tick).toHaveClass(/is-done/);
+  await expect(tick).toHaveAttribute("aria-label", /Вернуть в работу/);
+});

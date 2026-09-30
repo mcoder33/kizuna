@@ -102,7 +102,7 @@ test('асинхронный разбор отделяет дела так же,
   }
 });
 
-test('выдуманное действие отбрасывается: в журнал уходит только сказанное', () => {
+test('название дела модель пишет своими словами: дословность не требуется, а выдуманные люди отбрасываются', () => {
   const raw = 'Созванивались по ВойсОпс, решили допинать бот детектор';
   const candidate = {
     primaryType: 'outcome_decision',
@@ -111,14 +111,17 @@ test('выдуманное действие отбрасывается: в жу�
     summary: 'Итоги созвона по ВойсОпс',
     proposedActions: [
       { type: 'task', title: 'допинать бот детектор' },
-      { type: 'task', title: 'Заодно переписать биллинг и уволить всех' },
+      { type: 'task', title: 'Довести бот-детектор', details: 'До релиза.', people: ['Выдуманный'] },
       { type: 'task', title: 'мало' },
     ],
     completed: true,
     ambiguity: null,
   };
   const classification = normalizeClassification(candidate, raw);
-  assert.deepEqual(classification.proposedActions, [{ type: 'task', title: 'допинать бот детектор' }]);
+  assert.deepEqual(classification.proposedActions, [
+    { type: 'task', title: 'допинать бот детектор', details: '', people: [] },
+    { type: 'task', title: 'Довести бот-детектор', details: 'До релиза.', people: [] },
+  ]);
 });
 
 test('пересказ записи делом не становится: действие, повторяющее заголовок, отбрасывается', () => {
@@ -129,4 +132,32 @@ test('пересказ записи делом не становится: дей
   return api.post('/api/captures').send({ raw }).expect(201).then(created => {
     assert.equal(created.body.parts.length, 0, 'обычное дело не дробится само на себя');
   });
+});
+
+const BATCH = ['Привет!', '1. Отправить Ане смету по Хабу — до вечера', '2. Напомнить Лёше про доступы к репе'].join('\n');
+test('пачка дел: родитель не туду, а контейнер; у детей название, описание и исходный текст родителя', async () => {
+  const api = authed(app());
+  const created = await api.post('/api/captures').send({ raw: BATCH }).expect(201);
+  assert.deepEqual(created.body.parts.map(part => part.title), ['Отправить Ане смету по Хабу', 'Напомнить Лёше про доступы к репе']);
+  assert.deepEqual(created.body.entry.projections, [], 'у родителя нет туду');
+  const day = (await api.get('/api/day').expect(200)).body;
+  const titles = day.attention.concat(day.day, day.upcoming).map(entry => entry.interpretation.classification.summary);
+  assert.deepEqual([...new Set(titles)].sort(), ['Напомнить Лёше про доступы к репе', 'Отправить Ане смету по Хабу'], 'в дне только дети, без родителя');
+  const child = (await api.get('/api/entries?limit=20').expect(200)).body.entries.find(entry => entry.raw === 'Отправить Ане смету по Хабу');
+  const full = (await api.get(`/api/captures/${child.id}`).expect(200)).body.entry;
+  assert.equal(full.note.body, 'до вечера', 'описание ребёнка — заметкой');
+  assert.equal(full.parent.raw, BATCH, 'карточка ребёнка знает исходный текст родителя');
+});
+
+test('пачка дел из очереди: родитель без туду, дети готовы, задача отдаёт названия', async () => {
+  const application = app();
+  const api = authed(application);
+  application.captureJobWorker.start();
+  try {
+    const queued = await api.post('/api/captures').set('Prefer', 'respond-async').send({ raw: BATCH }).expect(202);
+    const job = await eventually(async () => { const body = (await api.get(queued.body.statusUrl).expect(200)).body; assert.equal(body.state, 'succeeded'); return body; });
+    assert.deepEqual((job.parts || []).map(part => part.title), ['Отправить Ане смету по Хабу', 'Напомнить Лёше про доступы к репе']);
+    const parent = (await api.get(`/api/captures/${queued.body.captureId}`).expect(200)).body.entry;
+    assert.deepEqual(parent.projections, []);
+  } finally { await application.captureJobWorker.stop(); }
 });

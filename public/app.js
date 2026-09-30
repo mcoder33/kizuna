@@ -285,8 +285,11 @@ function projectionOfType(entry, type) {
 // Две разные вещи, которые раньше смешивались в одном признаке:
 // «записал как сделанное» — это отчёт о работе и содержимое дневника,
 // «закрыл задачу чекбоксом» — это просто уход из TODO, а не запись в дневник.
+// «Сделал X» теперь туду, закрытая при записи: открыта она или закрыта, говорит
+// кружок (леджер), а не признак разбора. Признак completed решает только для
+// старых записей без дела внутри — им закрывать и возвращать нечего.
 function isReportedWork(entry) {
-  return entry.interpretation.classification.completed === true;
+  return entry.interpretation.classification.completed === true && completableProjections(entry).length === 0;
 }
 function isClosed(entry) {
   const projections = completableProjections(entry);
@@ -609,7 +612,7 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
       // Строка зачёркивается и гаснет сразу, а не после ответа сервера: отклик
       // на нажатие должен быть под пальцем.
       if (!completed) card.classList.add("completing");
-      if (occurrence) { complete.disabled = true; skipOccurrence({ id: entry.id, ...scheduleTarget(c.entities.schedule) }, occurrence).finally(() => { complete.disabled = false; }); return; }
+      if (occurrence) { complete.disabled = true; doneOccurrence({ id: entry.id, projectionId: projectionOfType(entry, "task")?.id || null }, occurrence).finally(() => { complete.disabled = false; }); return; }
       updateCompletion(projections, !completed, complete);
     });
     card.append(complete);
@@ -682,7 +685,8 @@ const todayState = {
   cover: null,
   calendar: null,     // /api/calendar на сегодня и завтра
   entries: [],
-  done: [],
+  done: [],     // строки «Что делал» из /api/done на сегодня
+  doneStale: true,
   todo: [],
   // Общее: полоса «к вам», взятые чужие дела, круги и метки для строк.
   inbox: [],
@@ -738,6 +742,17 @@ async function refreshTodayCalendar() {
   catch { todayState.calendar = todayState.calendar || null; }
   finally { todayState.calendarLoading = false; }
   todayState.calendarStale = false;
+  renderToday();
+}
+async function refreshTodayDone() {
+  if (todayState.doneLoading || !currentDayDate) return;
+  todayState.doneLoading = true;
+  try {
+    const closed = await request(`/api/done?from=${currentDayDate}&to=${currentDayDate}`);
+    todayState.done = (closed?.days || []).flatMap((group) => group.items).filter((item) => !item.auto);
+  } catch { /* список остаётся прежним */ }
+  finally { todayState.doneLoading = false; }
+  todayState.doneStale = false;
   renderToday();
 }
 const scheduleOf = (entry) => entry.interpretation.classification.entities.schedule || null;
@@ -799,6 +814,29 @@ async function skipOccurrence(target, date, { announce = true } = {}) {
     } });
   } catch (error) { toast(error.message); }
 }
+// Кружок у повтора: экземпляр закрывается одним запросом. Сервер пишет событие
+// «экземпляр закрыт» (оно попадает в «Что делал» и «Сделано») и убирает день из
+// серии, остальные повторы живут дальше. «Вернуть» снимает событие и возвращает день.
+async function doneOccurrence(target, date, { announce = true } = {}) {
+  let { id, projectionId = null } = target;
+  try {
+    if (!projectionId) {
+      const { entry } = await request(`/api/captures/${id}`);
+      projectionId = projectionOfType(entry, "task")?.id || null;
+    }
+    if (!projectionId) throw new Error("У записи нет дела");
+    await request(`/api/projections/${projectionId}/complete`, { method: "POST", body: JSON.stringify({ occurrence: date }) });
+    await refreshAfterSkip();
+    if (announce) toast(`Готово на ${calHuman(date)}, серия осталась`, { label: "Вернуть", run: async () => {
+      try {
+        const { entry } = await request(`/api/captures/${id}`);
+        await request(`/api/projections/${projectionOfType(entry, "task")?.id || projectionId}/undo-complete`, { method: "POST", body: JSON.stringify({ occurrence: date }) });
+        await refreshAfterSkip();
+        toast("Повтор возвращён");
+      } catch (error) { toast(error.message); }
+    } });
+  } catch (error) { toast(error.message); }
+}
 async function refreshAfterSkip() {
   await load();
   if (!$("#calendar")?.hidden) await loadCalendar();
@@ -840,20 +878,6 @@ function tomorrowInfo() {
   ].sort((a, b) => a.start - b.start);
   return { count: timed.length, first: timed[0] || null };
 }
-// Когда запись закрыта сегодня: минуты от полуночи по последней закрытой
-// проекции или null, если сегодня её никто не закрывал. Источник один — журнал
-// событий, поэтому «Что делал» и «Сделано» считают одно и то же.
-function closedMomentToday(entry, today = currentDayDate) {
-  let latest = null;
-  for (const projection of completableProjections(entry)) {
-    const at = projection.completion?.completed ? projection.completion.completedAt : null;
-    if (!at) continue;
-    const moment = new Date(at);
-    if (Number.isNaN(moment.getTime()) || zoneDate(moment) !== today) continue;
-    if (latest === null || moment > latest) latest = moment;
-  }
-  return latest ? zoneMinutes(latest) : null;
-}
 function render(data) {
   currentDayDate = data.date;
   // Взятое чужое дело живёт в дне как своё: оно и есть своё — человек его взял.
@@ -872,9 +896,6 @@ function render(data) {
     .filter((entry) => !muted.has((entry.circle || data.circleMarks?.[entry.id])?.id))
     .sort((left, right) => (right.createdAt || "").localeCompare(left.createdAt || ""));
   todayState.entries = all;
-  // «Что делал»: то, что закрыто сегодня кружком, и старые записи-отчёты о
-  // сделанном с сегодняшней датой. Одно дело не выводится дважды.
-  todayState.done = all.filter((entry) => closedMomentToday(entry, data.date) !== null || (isReportedWork(entry) && entryDate(entry) === data.date));
   // «Сегодня»: открытое, срок которого сегодня или раньше, и без срока. Дела на
   // будущие дни лежат на доске и вернутся в список, когда придёт их день.
   todayState.todo = all
@@ -891,6 +912,7 @@ function renderToday() {
   const active = document.activeElement;
   const keep = active?.dataset?.captureId && active.closest(".today-lists") ? { id: active.dataset.captureId, list: active.closest(".day-list")?.id } : null;
   if (todayState.calendarStale && !$("#today")?.hidden) refreshTodayCalendar();
+  if (todayState.doneStale && !$("#today")?.hidden) refreshTodayDone();
   const minutes = nowMinutes();
   const phase = phaseOf({ minutes, weekend: isWeekend(currentDayDate) });
   const cover = coverFor({
@@ -898,7 +920,7 @@ function renderToday() {
     minutes,
     meetings: todayMeetings(),
     tasks: todayTasks(),
-    doneCount: todayState.done.length,
+    doneCount: doneRows().length,
     tomorrow: tomorrowInfo(),
     calendar: calendarConnected(),
   });
@@ -1283,10 +1305,46 @@ function paintDayList() {
 // Порядок — по времени закрытия, свежее сверху. Пересчёт раз в минуту.
 function doneRows() {
   const today = currentDayDate, minutes = nowMinutes();
-  const rows = todayState.done.map((entry) => ({ entry, at: closedMomentToday(entry, today) ?? zoneMinutes(new Date(entry.occurredAt || entry.createdAt)) }));
+  const rows = todayState.done.map((item) => ({ done: item, at: minutesOf(item.time) ?? 0 }));
   for (const item of todayState.calendar?.external || [])
     if (item.date === today && eventEnded(item, minutes)) rows.push({ item, at: eventFinish(item) });
   return rows.sort((a, b) => b.at - a.at);
+}
+// Строка «Что делал» из /api/done: зелёный кружок «Вернуть в работу» (у
+// экземпляра повтора он снимает только этот день), название и час закрытия.
+// Старая запись без дела внутри возвращать нечем — у неё немой кружок.
+function doneItemRow(item) {
+  const row = node("div", undefined, `entry dense completed${item.projectionId ? " completable" : ""}`);
+  row.dataset.captureId = item.id;
+  if (item.projectionId) {
+    const button = node("button", undefined, "completion-button");
+    button.type = "button";
+    button.title = "Вернуть в работу";
+    button.setAttribute("aria-label", "Вернуть в работу");
+    button.setAttribute("aria-pressed", "true");
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await request(`/api/projections/${item.projectionId}/undo-complete`, { method: "POST", body: JSON.stringify(item.occurrence ? { occurrence: item.occurrence } : {}) });
+        toast("Возвращено в работу");
+        await load();
+        refreshOtherViews();
+      } catch (error) { toast(error.message); button.disabled = false; }
+    });
+    row.append(button);
+  } else {
+    const mark = node("span", undefined, "completion-button static");
+    mark.setAttribute("aria-pressed", "true");
+    row.append(mark);
+  }
+  const title = markdownNode("button", item.title, "entry-title", { inline: true, links: false, firstLine: true });
+  title.type = "button";
+  title.addEventListener("click", () => openCaptureById(item.id));
+  const meta = node("div", undefined, "entry-meta");
+  if (item.occurrence) meta.append(node("span", "повтор", "tag due"));
+  meta.append(node("span", item.time, "tag time"));
+  row.append(title, meta);
+  return row;
 }
 function autoDoneRow(item, at) {
   const row = node("div", undefined, "entry completed auto-done");
@@ -1308,7 +1366,7 @@ function paintJournal() {
   if (!rows.length) { container.append(node("p", "Пока ничего. Первый кружок — сюда.", "empty")); return; }
   const list = node("div", undefined, "day-rows");
   for (const row of rows)
-    list.append(row.entry ? entryCard(row.entry, { doneAt: row.at }) : autoDoneRow(row.item, row.at));
+    list.append(row.done ? doneItemRow(row.done) : autoDoneRow(row.item, row.at));
   container.append(list);
 }
 // Раз в минуту обложка и строка «сейчас» пересчитываются — но не под руками:
@@ -1345,18 +1403,20 @@ async function load() {
     request("/api/day"),
     request("/api/entries?limit=100"),
     onToday ? request(`/api/calendar?from=${todayGuess}&to=${shiftDate(todayGuess, 1)}`).catch(() => null) : Promise.resolve(undefined),
-    request(`/api/done?from=${todayGuess}&to=${todayGuess}`).catch(() => null),
+    // «Что делал» рисуется прямо из /api/done: старое дело, закрытое сегодня, не
+    // попадает в последние сто записей, и добирать его карточкой не нужно. Звать
+    // только пока открыта «Сегодня»; на других страницах список ждёт возвращения.
+    onToday ? request(`/api/done?from=${todayGuess}&to=${todayGuess}`).catch(() => null) : Promise.resolve(undefined),
   ]);
-  // Старое дело, закрытое сегодня, не попадает в последние сто записей, а в
-  // «Что делал» ему место: недостающие добираются по одной.
-  const loaded = new Set(entries.entries.map((entry) => entry.id));
-  const missing = [...new Set((closed?.days || []).flatMap((group) => group.items).filter((item) => !item.auto && !loaded.has(item.id)).map((item) => item.id))].slice(0, 20);
-  const extra = (await Promise.all(missing.map((id) => request(`/api/captures/${id}`).then((result) => result.entry).catch(() => null)))).filter(Boolean);
+  if (closed !== undefined && todayGuess === day.date) {
+    todayState.done = (closed?.days || []).flatMap((group) => group.items).filter((item) => !item.auto);
+    todayState.doneStale = false;
+  } else todayState.doneStale = true;
   if (calendar !== undefined && todayGuess === day.date) {
     todayState.calendar = pruneRemovedExternal(calendar);
     todayState.calendarStale = false;
   } else todayState.calendarStale = true;
-  render({ ...day, entries: [...entries.entries, ...extra] });
+  render({ ...day, entries: entries.entries });
   // Доска и «Обзор» живут своими запросами: правка в карточке или доразбор
   // записи должны быть видны сразу там, откуда карточку открыли, а не после
   // ухода на другую страницу и обратно. Перечитываются только уже собранные —
@@ -2204,11 +2264,10 @@ function cardBody(entry) {
   const wrap = node("section", undefined, "card-body"),
     hint = node("p", "Markdown оформляется прямо в тексте · ⌘/Ctrl + Enter — сохранить · закроете карточку — сохранится само", "card-body-hint"),
     label = node("p", "Описание", "prop-section");
-  // Описание пишет разбор из текста записи и кладёт первой версией заметки. Пока
-  // заметки нет (записи не с чем было разобраться), тело начинается с текста
-  // записи: дописывать проще, чем набирать заново. Сам raw остаётся неизменным
-  // и виден под описанием как «Исходный текст».
-  let body = entry.note?.body ?? (entry.raw || "");
+  // Описание пишет разбор из текста записи и кладёт первой версией заметки. Нет
+  // заметки — поле пустое, с подсказкой «Описание»: копия исходного текста тут
+  // только дублировала бы то, что лежит в свёрнутом «Исходном тексте» ниже.
+  let body = entry.note?.body ?? "";
   // Тело — то же живое поле, что и в карточке ввода: разметка оформляется
   // прямо в тексте, поэтому отдельный режим просмотра и предпросмотр больше
   // не нужны — читать и править можно в одном месте.
@@ -2523,11 +2582,8 @@ function cardDoneWords(state) {
 async function setCardDone(entry, state, completing) {
   if (state.occurrence) {
     // Повтор: отметка — про показанный день, серия живёт дальше.
-    const { entry: current } = await request(`/api/captures/${entry.id}`);
-    const target = scheduleTarget(scheduleOf(current));
-    const skip = (target.skip || []).filter((day) => day !== state.occurrence);
-    const body = { patch: { schedule: { date: target.baseDate, time: target.time, ...(target.time && target.end ? { end: target.end } : {}), skip: completing ? [...skip, state.occurrence] : skip } }, at: Date.now() };
-    await request(`/api/captures/${entry.id}/corrections`, { method: "POST", body: JSON.stringify(body) });
+    const projectionId = state.projections.find((item) => item.type === "task")?.id || completableProjections(entry)[0]?.id;
+    await request(`/api/projections/${projectionId}/${completing ? "complete" : "undo-complete"}`, { method: "POST", body: JSON.stringify({ occurrence: state.occurrence }) });
     return;
   }
   const { entry: current } = await request(`/api/captures/${entry.id}`);
@@ -2902,13 +2958,15 @@ function showReview(entry, review, undoGroupId, provenance) {
   // Enter в поле свойства раньше отправлял форму; отправлять больше нечего.
   form.addEventListener("submit", (event) => event.preventDefault());
   main.append(cardBody(entry));
-  // Исходный текст — под описанием, свёрнутый: показывается, когда описание
-  // не копия записи (разбор его переписал или человек поправил).
-  const noteBody = entry.note?.body ?? (entry.raw || "");
-  if ((entry.raw || "").trim() && noteBody.trim() !== (entry.raw || "").trim()) {
+  // Исходный текст — под описанием, свёрнутый: всегда, когда он не совпадает с
+  // названием. У дела, отделённого от пачки, это текст всей пачки.
+  const sourceText = ((entry.parent?.raw ?? entry.raw) || "").trim();
+  // Однострочный текст, совпавший с названием, повторять незачем; многострочный
+  // в названии виден только первой строкой, остальное живёт лишь здесь.
+  if (sourceText && (sourceText !== (c.summary || "").trim() || sourceText.includes("\n"))) {
     const source = node("details", undefined, "card-source");
     source.append(node("summary", "Исходный текст"));
-    source.append(markdownNode("div", entry.raw, "card-source-body"));
+    source.append(markdownNode("div", sourceText, "card-source-body"));
     main.append(source);
   }
   main.append(attachmentsBlock(entry));
@@ -3278,10 +3336,15 @@ function scheduleCapturePoll(record) {
 function layToast(record, job) {
   const entry = todayState.entries.find((candidate) => candidate.id === (record.captureId || job.captureId));
   const classification = entry?.interpretation.classification;
-  const count = 1 + (job.parts?.length || 0);
+  const parts = job.parts || [];
+  const clip = (text) => `«${String(text || "").slice(0, 60)}»`;
+  // «Сделал X, надо Y»: отчёт закрыт, дела из него — на сегодня; считаем раздельно.
+  if (classification?.completed === true && parts.length) return `Легло: 1 сделано, ${parts.length} на сегодня — ${parts.map((part) => clip(part.title)).join(", ")}`;
+  // Пачка дел: родитель не туду, в списках только отделившиеся дела.
+  if (parts.length) return `Легло: ${plural(parts.length, ["туду", "туду", "туду"])} · ${scheduleLabel(classification?.entities.schedule) || "сегодня"} — ${parts.map((part) => clip(part.title)).join(", ")}`;
   const when = classification?.completed === true ? "сделано" : scheduleLabel(classification?.entities.schedule) || "сегодня";
   const title = (classification?.summary || record.raw || "").split("\n")[0].slice(0, 80);
-  return count > 1 || !title ? `Легло: ${plural(count, ["туду", "туду", "туду"])} · ${when}` : `Легло: «${title}» · ${when}`;
+  return !title ? `Легло: 1 туду · ${when}` : `Легло: «${title}» · ${when}`;
 }
 async function pollCapture(record) {
   if (!activeCapture(record)) return;
@@ -6453,7 +6516,7 @@ async function completeBoardCard(card, element, button) {
   // Повтор: «готово» убирает ближайший экземпляр, серия остаётся на доске.
   if (card.due?.repeat) {
     if (button) button.disabled = true;
-    try { await skipOccurrence({ id: card.captureId }, card.due.date); } finally { if (button) button.disabled = false; }
+    try { await doneOccurrence({ id: card.captureId }, card.due.date); } finally { if (button) button.disabled = false; }
     return;
   }
   if (button) button.disabled = true;
@@ -6485,6 +6548,7 @@ async function reopenBoardCard(card, button) {
       await request(`/api/projections/${projectionId}/undo-complete`, { method: "POST", body: "{}" });
     toast("Возвращено в работу");
     loadBoard();
+    load().catch(() => {});
   } catch (error) {
     toast(error.message);
     button.disabled = false;
@@ -6530,7 +6594,7 @@ function boardCardEl(card, column, { closed = false } = {}) {
   element.draggable = !closed;
   element.dataset.captureId = card.captureId;
   if (card.due?.repeat && card.due.date) element.dataset.occurrence = card.due.date;
-  const done = node("button", undefined, `board-done${closed ? " is-done" : ""}${card.type === "meeting_event" ? " meeting" : ""}`);
+  const done = node("button", undefined, `board-done${closed ? " is-done" : ""}${card.type === "meeting_event" && !closed ? " meeting" : ""}`);
   done.type = "button";
   if (card.type === "meeting_event" && !closed) done.innerHTML = BOARD_CLOCK;
   done.title = closed ? "Вернуть в работу" : "Готово";
@@ -7007,6 +7071,14 @@ function doneRangeWords(from, to) {
 async function reopenDoneItem(item, button) {
   button.disabled = true;
   try {
+    if (item.occurrence && item.projectionId) {
+      // Закрыт один день повтора: возвращается он, а не вся запись.
+      await request(`/api/projections/${item.projectionId}/undo-complete`, { method: "POST", body: JSON.stringify({ occurrence: item.occurrence }) });
+      toast("Возвращено в работу");
+      load().catch(() => {});
+      await loadDone();
+      return;
+    }
     const { entry } = await request(`/api/captures/${encodeURIComponent(item.id)}`);
     const closed = completableProjections(entry).filter((projection) => projection.completion?.completed);
     if (!closed.length) throw new Error("Это старая запись о сделанном: возвращать в работу нечего");
@@ -7021,7 +7093,7 @@ async function reopenDoneItem(item, button) {
 }
 function doneRowEl(item) {
   const row = node("div", undefined, `entry dense completed${item.auto ? " auto-done" : ""}`);
-  const old = !item.auto && item.column === "Без колонки";
+  const old = Boolean(item.legacy);
   if (!item.auto) row.dataset.captureId = item.id;
   const mark = node(item.auto || old ? "span" : "button", undefined, `completion-button${item.auto ? " auto" : old ? " static" : ""}`);
   mark.setAttribute("aria-pressed", "true");
@@ -7939,7 +8011,7 @@ function openCalendarQuickAdd(target, event) {
 function calSnap(minutes) { return Math.max(CAL_H0 * 60, Math.min(CAL_H1 * 60 - CAL_STEP, Math.round(minutes / CAL_STEP) * CAL_STEP)); }
 async function toggleCalendarDone(item) {
   // Экземпляр своей серии: «готово» убирает его из серии, остальные остаются.
-  if (item.recurring) { await skipOccurrence({ id: item.id, baseDate: item.baseDate, time: item.time, end: item.end, skip: item.skip || [] }, item.date); return; }
+  if (item.recurring) { await doneOccurrence({ id: item.id, projectionId: item.projectionIds?.[0] || null }, item.date); return; }
   const ids = item.projectionIds || [];
   if (!ids.length) return;
   try {
@@ -8537,7 +8609,7 @@ async function completeFromNotification(item) {
   const schedule = scheduleOf(entry);
   const projections = completableProjections(entry).filter((projection) => !projection.completion?.completed);
   if (schedule?.repeat && item.data?.date && scheduledOn(entry, item.data.date)) {
-    await skipOccurrence({ id: entry.id, ...scheduleTarget(schedule) }, item.data.date);
+    await doneOccurrence({ id: entry.id, projectionId: projectionOfType(entry, "task")?.id || null }, item.data.date);
     dismissNotifications([item.id]);
     return;
   }

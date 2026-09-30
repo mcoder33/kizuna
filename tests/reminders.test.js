@@ -176,3 +176,22 @@ test('повтор напоминает по экземплярам, убран�
   clock = new Date('2026-09-17T06:45:30.000Z');
   assert.equal((await app.reminders.tick()).length, 1);
 });
+
+test('срок «сегодня», поставленный самим приложением, не напоминает; названный человеком — напоминает', async () => {
+  let clock = new Date('2026-09-15T05:30:00.000Z');
+  const push = fakePush();
+  const app = freshApp({ now: () => clock, pushTransport: push, timeZone: TZ });
+  const api = authed(app);
+  await api.post('/api/push/subscriptions').send({ subscription: subscription('https://push.example/one') }).expect(201);
+  const plain = (await api.post('/api/captures').send({ raw: 'Разобрать письма по смете' }).expect(201)).body.entry;
+  const named = (await api.post('/api/captures').send({ raw: 'Отправить смету в пятницу в 15:00' }).expect(201)).body.entry;
+  assert.equal(plain.interpretation.classification.entities.schedule.defaulted, true);
+  assert.deepEqual((await api.get('/api/reminders/upcoming').expect(200)).body.reminders.map(item => item.captureId), [named.id]);
+  clock = new Date('2026-09-15T08:00:00.000Z');
+  assert.deepEqual(await app.reminders.tick(), []);
+  // Человек назвал день в карточке — флаг пропадает, срок настоящий.
+  await api.post(`/api/captures/${plain.id}/corrections`).send({ patch: { schedule: { date: '2026-09-16', time: '12:00' } } }).expect(200);
+  const fixed = (await api.get(`/api/captures/${plain.id}`).expect(200)).body.entry.interpretation.classification.entities.schedule;
+  assert.equal(fixed.defaulted, undefined);
+  assert.equal((await api.get('/api/reminders/upcoming').expect(200)).body.reminders.length, 2);
+});

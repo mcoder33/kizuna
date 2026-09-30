@@ -410,7 +410,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
         continue;
       }
       const start = localDateTime(new Date(row.start_at), zone), end = localDateTime(new Date(row.end_at), zone);
-      out.push({ ...base, date: start.date, time: start.time, end: end.date === start.date ? end.time : '23:59', endDate: end.date, allDay: false });
+      out.push({ ...base, date: start.date, time: start.time, end: end.date === start.date ? end.time : '23:59', endDate: end.date, endTime: end.time, allDay: false });
     }
     return out;
   }

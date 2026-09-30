@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { makeProjections, gateClassification, shouldMaterializeProjections, actionClassification, doneOccurredAt } from './classifier.js';
-import { occursOn, nextOccurrence } from './repeat.js';
+import { occursOn, nextOccurrence, normalizeSkip } from './repeat.js';
+import { occurrencesOf } from './occurrences.js';
 import { migrateNotifications } from './notifications.js';
 import { migrateNotesTree } from './notes-schema.js';
 
@@ -105,6 +106,8 @@ function migrate(db) {
     const ledgerColumns = new Set(db.prepare('PRAGMA table_info(ledger_events)').all().map(column => column.name));
     for (const [name, definition] of [['projection_id','TEXT REFERENCES projections(id)'],['interpretation_id','TEXT REFERENCES interpretations(id)'],['actor','TEXT'],['occurred_at','TEXT']]) if (!ledgerColumns.has(name)) db.exec(`ALTER TABLE ledger_events ADD COLUMN ${name} ${definition}`);
     migrateLedgerEventProvenance(db);
+    // Экземпляр повтора, закрытый кружком, пишется событием с {date} в payload.
+    if (!new Set(db.prepare('PRAGMA table_info(ledger_events)').all().map(column => column.name)).has('payload')) db.exec('ALTER TABLE ledger_events ADD COLUMN payload TEXT');
     createLedgerEventGuards(db);
     const interpretationSql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='interpretations'").get()?.sql || '';
     if (!interpretationSql.includes("'codex-cli'")) {
@@ -945,17 +948,23 @@ const INSERT_CAPTURE = 'INSERT INTO captures(id,raw,modality,occurred_at,created
 // абзац, в котором дела приходится вычитывать глазами. Заголовок дочерней —
 // дословная фраза человека, ссылка назад держит происхождение, отменить их
 // можно одним движением из уведомления о записи.
+// Запись, из которой отделились дела и у которой нет своего туду: контейнер с исходным текстом.
+export const isSplitContainer = entry => entry.projections.length === 0 && isContainer(entry.interpretation?.classification);
+const splitActionsOf = classification => (classification?.proposedActions || []).filter(action => action?.type === 'task' && typeof action.title === 'string');
+// Пачка дел делает родителя контейнером; отчёт «сделал X, надо Y» остаётся закрытым туду.
+const isContainer = classification => classification?.completed !== true && splitActionsOf(classification).length > 0;
 function splitOffActions(db, { parentId, classification, provider, model = null, userId = null, at, timeZone = 'Europe/Samara' }) {
-  const actions = (classification?.proposedActions || []).filter(action => action?.type === 'task' && typeof action.title === 'string');
+  const actions = splitActionsOf(classification);
   const parts = [];
   for (const action of actions) {
     const childId = id(), interpretationId = id(), undoGroupId = id();
-    const childClassification = actionClassification(action.title, classification, new Date(at), timeZone);
+    const childClassification = actionClassification(action.title, classification, new Date(at), timeZone, { details: action.details, people: action.people });
     db.prepare('INSERT INTO captures(id,raw,modality,occurred_at,created_at,privacy_scope,deleted_at,user_id,parent_capture_id) VALUES(?,?,?,?,?,?,NULL,?,?)')
       .run(childId, action.title, 'text', at, at, 'private', userId, parentId);
     db.prepare('INSERT INTO interpretations VALUES(?,?,?,?,?,?,?,?,?,NULL)')
       .run(interpretationId, childId, 1, 'active', provider, model, JSON.stringify(childClassification), JSON.stringify(childClassification.confidence || {}), at);
     insertProjections(db, interpretationId, makeProjections(childId, childClassification, undoGroupId), at);
+    saveDetails(db, childId, childClassification, at);
     db.prepare('INSERT INTO activity_events VALUES(?,?,?,?)').run(id(), 'capture_split', JSON.stringify({ captureId: childId, parentId }), at);
     parts.push({ id: childId, title: action.title });
   }
@@ -979,9 +988,11 @@ export function createLedger(db, { raw, occurredAt, classification, provider, mo
     db.prepare(INSERT_CAPTURE).run(captureId, raw, 'text', occurredAt || createdAt, createdAt, 'private', userId);
     settleOccurredAt(db, captureId, classification, timeZone);
     db.prepare('INSERT INTO interpretations VALUES(?,?,?,?,?,?,?,?,?,NULL)').run(interpretationId, captureId, 1, 'active', provider, model, JSON.stringify(classification), JSON.stringify(classification.confidence || {}), createdAt);
-    if(createProjections) { insertProjections(db, interpretationId, makeProjections(captureId, classification, undoGroupId), createdAt); closeIfCompleted(db, captureId, interpretationId, classification, createdAt); }
+    // Пачка дел: родитель остаётся контейнером с исходным текстом, а не туду.
+    const container = isContainer(classification);
+    if(createProjections && !container) { insertProjections(db, interpretationId, makeProjections(captureId, classification, undoGroupId), createdAt); closeIfCompleted(db, captureId, interpretationId, classification, createdAt); }
     db.prepare('INSERT INTO activity_events VALUES(?,?,?,?)').run(id(), 'capture_created', JSON.stringify({ captureId, undoGroupId }), createdAt);
-    if (createProjections) saveDetails(db, captureId, classification, createdAt);
+    if (createProjections && !container) saveDetails(db, captureId, classification, createdAt);
     parts = splitOffActions(db, { parentId: captureId, classification, provider, model, userId, at: createdAt, timeZone });
   });
   write(); return { captureId, interpretationId, undoGroupId, parts };
@@ -997,8 +1008,8 @@ function insertJobEvent(db, jobId, eventType, createdAt) {
   db.prepare('INSERT INTO capture_job_events(id,job_id,event_type,created_at) VALUES(?,?,?,?)').run(id(), jobId, eventType, createdAt);
 }
 
-function insertLedgerEvent(db, eventType, captureId, jobId, createdAt, { projectionId = null, interpretationId = null, actor = null, occurredAt = null } = {}) {
-  db.prepare('INSERT INTO ledger_events(id,event_type,capture_id,job_id,projection_id,interpretation_id,actor,occurred_at,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(id(), eventType, captureId, jobId, projectionId, interpretationId, actor, occurredAt, createdAt);
+function insertLedgerEvent(db, eventType, captureId, jobId, createdAt, { projectionId = null, interpretationId = null, actor = null, occurredAt = null, payload = null } = {}) {
+  db.prepare('INSERT INTO ledger_events(id,event_type,capture_id,job_id,projection_id,interpretation_id,actor,occurred_at,created_at,payload) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id(), eventType, captureId, jobId, projectionId, interpretationId, actor, occurredAt, createdAt, payload ? JSON.stringify(payload) : null);
 }
 
 export function enqueueCaptureJob(db, { raw, occurredAt, selectedProvider, selectedModel = null, idempotencyKey = null, requestFingerprint = null, overrides = null, userId = null, origin = null }) {
@@ -1049,7 +1060,7 @@ export function completeCaptureJob(db, claim, { classification, provider, model 
     const interpretationId = id(), undoGroupId = id();
     settleOccurredAt(db, claim.capture_id, classification, timeZone);
     db.prepare('INSERT INTO interpretations VALUES(?,?,?,?,?,?,?,?,?,NULL)').run(interpretationId, claim.capture_id, 1, 'active', provider, model, JSON.stringify(classification), JSON.stringify(classification.confidence || {}), completedAt);
-    if (shouldMaterializeProjections(classification)) {
+    if (shouldMaterializeProjections(classification) && !isContainer(classification)) {
       insertProjections(db, interpretationId, makeProjections(claim.capture_id, classification, undoGroupId), completedAt);
       closeIfCompleted(db, claim.capture_id, interpretationId, classification, completedAt);
       saveDetails(db, claim.capture_id, classification, completedAt);
@@ -1156,6 +1167,9 @@ export function replaceInterpretation(db, captureId, classification, provider, c
     if(correction?.operationKey){const existing=db.prepare('SELECT interpretation_id,request_fingerprint FROM corrections WHERE capture_id=? AND operation_key=?').get(captureId,correction.operationKey);if(existing){if(existing.request_fingerprint!==correction.requestFingerprint)return { conflict:true };const projection=db.prepare('SELECT undo_group_id FROM projections WHERE interpretation_id=? ORDER BY created_at LIMIT 1').get(existing.interpretation_id);return { interpretationId:existing.interpretation_id,undoGroupId:projection?.undo_group_id||null,replayed:true };}}
     const previous = db.prepare("SELECT * FROM interpretations WHERE capture_id=? AND status='active'").get(captureId);
     if (!previous) return null;
+    // Запись, из которой отделились дела, — контейнер с исходным текстом: туду
+    // из неё не пересобирается, что бы ни поправили.
+    if (createProjections && isContainer(classification)) createProjections = false;
     const interpretationId = id(), undoGroupId = id(), createdAt = now();
     db.prepare("UPDATE interpretations SET status='superseded' WHERE id=?").run(previous.id);
     // Закрытое дело остаётся закрытым, когда его поправили: перенос срока или
@@ -1173,7 +1187,8 @@ export function replaceInterpretation(db, captureId, classification, provider, c
     // Признак «сделано» в поправке — это кружок: снят — дело возвращается в
     // работу, поставлен — закрывается (тем же событием, что и кружок).
     const wasCompleted = JSON.parse(previous.classification_json)?.completed === true, isCompleted = classification.completed === true;
-    if (createProjections && closedTypes.size && !(wasCompleted && !isCompleted))
+    const reopened = correction?.patch?.completed === false || (wasCompleted && !isCompleted);
+    if (createProjections && closedTypes.size && !reopened)
       for (const row of db.prepare("SELECT id, projection_type FROM projections WHERE interpretation_id=? AND status='active'").all(interpretationId))
         if (closedTypes.has(row.projection_type)) insertLedgerEvent(db, 'completed', captureId, null, createdAt, { projectionId: row.id, interpretationId, actor: 'user', occurredAt: closedTypes.get(row.projection_type) });
     if (createProjections && isCompleted && !wasCompleted) closeIfCompleted(db, captureId, interpretationId, classification, createdAt);
@@ -1218,6 +1233,47 @@ export function undoProjectionCompletion(db, projectionId) {
     return { projection:target.projection, completion:{ completed:false, completedAt:null, actor:null }, changed:true };
   });
 }
+// Кружок у повтора закрывает один день серии, а не запись. День ложится в
+// «сделано» событием occurrence_completed и уходит из серии (schedule.skip),
+// чтобы не висеть в «Сегодня» открытым. «Вернуть» делает обратное.
+function occurrenceTarget(db, projectionId, date) {
+  if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error:'invalid_occurrence' };
+  const found = db.prepare('SELECT capture_id FROM projections WHERE id=?').get(projectionId);
+  if (!found) return { error:'not_found' };
+  const active = getAggregate(db, found.capture_id);
+  const deleted = db.prepare('SELECT deleted_at FROM captures WHERE id=?').get(found.capture_id)?.deleted_at;
+  if (!active || deleted) return { error:'inactive' };
+  const classification = JSON.parse(active.classification_json);
+  const schedule = classification.entities?.schedule;
+  if (!schedule?.repeat) return { error:'not_repeating' };
+  return { captureId: found.capture_id, classification, schedule, active };
+}
+function withSkip(classification, skip) {
+  const schedule = { ...classification.entities.schedule };
+  if (skip.length) schedule.skip = skip; else delete schedule.skip;
+  return { ...classification, entities:{ ...classification.entities, schedule } };
+}
+export function completeOccurrence(db, projectionId, date, { timeZone = 'Europe/Samara' } = {}) {
+  const target = occurrenceTarget(db, projectionId, date);
+  if (target.error) return target;
+  const already = occurrencesOf(db, target.captureId).find(item => item.date === date);
+  if (already) return { captureId: target.captureId, occurrence: already, changed:false };
+  const at = now();
+  withImmediateTransaction(db, () => insertLedgerEvent(db, 'occurrence_completed', target.captureId, null, at, { projectionId, actor:'user', occurredAt:at, payload:{ date } }));
+  const skip = normalizeSkip([...(target.schedule.skip || []), date]);
+  replaceInterpretation(db, target.captureId, withSkip(target.classification, skip), 'manual', null, true, null, { timeZone });
+  return { captureId: target.captureId, occurrence:{ date, completedAt:at }, changed:true };
+}
+export function undoOccurrence(db, projectionId, date, { timeZone = 'Europe/Samara' } = {}) {
+  const target = occurrenceTarget(db, projectionId, date);
+  if (target.error) return target;
+  if (!occurrencesOf(db, target.captureId).some(item => item.date === date)) return { captureId: target.captureId, occurrence:null, changed:false };
+  const at = now();
+  withImmediateTransaction(db, () => insertLedgerEvent(db, 'occurrence_undone', target.captureId, null, at, { projectionId, actor:'user', occurredAt:at, payload:{ date } }));
+  const skip = normalizeSkip(target.schedule.skip || []).filter(day => day !== date);
+  replaceInterpretation(db, target.captureId, withSkip(target.classification, skip), 'manual', null, true, null, { timeZone });
+  return { captureId: target.captureId, occurrence:null, changed:true };
+}
 export function listEntries(db, { cursor, limit = 40, userId }) {
   const rows = db.prepare(`SELECT c.*, i.id interpretation_id, i.version, i.provider, i.model, i.classification_json, i.field_confidence_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND c.user_id IS ? ${cursor ? 'AND c.created_at < ?' : ''} ORDER BY c.created_at DESC LIMIT ?`).all(...(cursor ? [userId, cursor, limit] : [userId, limit]));
   return { entries: rows.map(row => fullEntry(db, row)), nextCursor: rows.length === limit ? rows.at(-1).created_at : null };
@@ -1230,17 +1286,17 @@ export function splitPartsOf(db, captureId) {
   return db.prepare("SELECT c.id, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.parent_capture_id=? AND c.deleted_at IS NULL ORDER BY c.created_at")
     .all(captureId).map(part => { const classification = JSON.parse(part.classification_json); return { id: part.id, title: classification.summary, type: classification.primaryType }; });
 }
-export function fullEntry(db, row) { const entry = serializeEntry(row); entry.note = activeNote(db, row.id); entry.attachments = attachmentsFor(db, row.id); entry.projections = db.prepare("SELECT * FROM projections WHERE capture_id=? AND status='active' ORDER BY created_at").all(row.id).map(p => ({ id:p.id,type:p.projection_type,payload:JSON.parse(p.payload_json),undoGroupId:p.undo_group_id,completion:completionState(db,p.id),completionCandidate:null }));
+export function fullEntry(db, row) { const entry = serializeEntry(row); entry.note = activeNote(db, row.id); entry.attachments = attachmentsFor(db, row.id); entry.projections = db.prepare("SELECT * FROM projections WHERE capture_id=? AND status='active' ORDER BY created_at").all(row.id).map(p => ({ id:p.id,type:p.projection_type,payload:JSON.parse(p.payload_json),undoGroupId:p.undo_group_id,completion:completionState(db,p.id),occurrences:p.projection_type==='task'?occurrencesOf(db,row.id):[],completionCandidate:null }));
   // Что отделилось от этой записи и откуда отделилась она сама: карточка
   // показывает происхождение, иначе дело «допинать бот-детектор» висело бы
   // ничьим, а у отчёта о встрече не было бы следа, что дела из него завели.
   entry.parts = splitPartsOf(db, row.id);
   // Откуда запись пришла (поле, Telegram, заметки): в карточке это строка «Откуда».
   entry.origin = db.prepare('SELECT origin FROM capture_jobs WHERE capture_id=? ORDER BY created_at LIMIT 1').get(row.id)?.origin || null;
-  if (entry.parentId) { const parent = db.prepare("SELECT c.id, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.id=? AND c.deleted_at IS NULL").get(entry.parentId); entry.parent = parent ? { id: parent.id, title: JSON.parse(parent.classification_json).summary, type: JSON.parse(parent.classification_json).primaryType } : null; }
+  if (entry.parentId) { const parent = db.prepare("SELECT c.id, c.raw, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.id=? AND c.deleted_at IS NULL").get(entry.parentId); entry.parent = parent ? { id: parent.id, raw: parent.raw, title: JSON.parse(parent.classification_json).summary, type: JSON.parse(parent.classification_json).primaryType } : null; }
   return entry; }
 export function day(db, userId) { const rows = db.prepare(`SELECT c.*, i.id interpretation_id, i.version, i.provider, i.model, i.classification_json, i.field_confidence_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND c.user_id IS ? ORDER BY c.created_at DESC LIMIT 100`).all(userId); return rows.map(row=>fullEntry(db,row)); }
-export function dayView(db, date, now=new Date(), userId=null) { const entries=day(db,userId); const scheduled=entry=>entry.interpretation.classification.entities.schedule; const onDay=s=>Boolean(s?.date)&&(s.date===date||occursOn(s,date)); const sortAtOf=s=>{if(!s?.sortAt)return null;if(!s.repeat)return s.sortAt;const next=nextOccurrence(s,date);return next?`${next}T${s.time||'23:59'}:00`:null;}; const completable=entry=>entry.projections.find(projection=>['task','meeting_event'].includes(projection.type)); const dayEntries=entries.filter(entry=>onDay(scheduled(entry))); const horizon=new Date(now.getTime()+48*60*60*1000); const upcoming=entries.filter(entry=>{const c=entry.interpretation.classification,s=scheduled(entry),projection=completable(entry);return !projection?.completion.completed&&['meeting_event','task'].includes(c.primaryType)&&sortAtOf(s)&&new Date(sortAtOf(s))>=now&&new Date(sortAtOf(s))<=horizon}).sort((a,b)=>new Date(sortAtOf(scheduled(a)))-new Date(sortAtOf(scheduled(b)))); const attention=entries.filter(entry=>{const c=entry.interpretation.classification,projection=completable(entry);return !projection?.completion.completed&&!c.completed&&((c.primaryType==='task'&&!scheduled(entry)?.date)||c.entities.followUp||c.primaryType==='outcome_decision')}); return {day:dayEntries,upcoming,attention}; }
+export function dayView(db, date, now=new Date(), userId=null) { const entries=day(db,userId).filter(entry=>!isSplitContainer(entry)); const scheduled=entry=>entry.interpretation.classification.entities.schedule; const onDay=s=>Boolean(s?.date)&&(s.date===date||occursOn(s,date)); const sortAtOf=s=>{if(!s?.sortAt)return null;if(!s.repeat)return s.sortAt;const next=nextOccurrence(s,date);return next?`${next}T${s.time||'23:59'}:00`:null;}; const completable=entry=>entry.projections.find(projection=>['task','meeting_event'].includes(projection.type)); const dayEntries=entries.filter(entry=>onDay(scheduled(entry))); const horizon=new Date(now.getTime()+48*60*60*1000); const upcoming=entries.filter(entry=>{const c=entry.interpretation.classification,s=scheduled(entry),projection=completable(entry);return !projection?.completion.completed&&['meeting_event','task'].includes(c.primaryType)&&sortAtOf(s)&&new Date(sortAtOf(s))>=now&&new Date(sortAtOf(s))<=horizon}).sort((a,b)=>new Date(sortAtOf(scheduled(a)))-new Date(sortAtOf(scheduled(b)))); const attention=entries.filter(entry=>{const c=entry.interpretation.classification,projection=completable(entry);return !projection?.completion.completed&&!c.completed&&((c.primaryType==='task'&&!scheduled(entry)?.date)||c.entities.followUp||c.primaryType==='outcome_decision')}); return {day:dayEntries,upcoming,attention}; }
 
 const dailySectionLabels = { doneYesterday:'Сделано вчера', decisions:'Решения', carried:'Перенесённое', blockers:'Блокеры', today:'Сегодня' };
 function samaraBounds(date) { const start = new Date(`${date}T00:00:00+04:00`); return { start:start.toISOString(), end:new Date(start.getTime()+86400000).toISOString() }; }
@@ -1458,9 +1514,7 @@ export function listUsers(db) {
   // Расход показывается рядом с человеком: без него список пользователей не
   // отвечает на вопрос, ради которого его и открывают.
   return db.prepare(`SELECT ${USER_COLUMNS},
-      (SELECT COUNT(*) FROM captures c WHERE c.user_id=users.id AND c.deleted_at IS NULL) AS capture_count,
-      (SELECT COALESCE(SUM(cost_usd),0) FROM voice_sessions v WHERE v.user_id=users.id) AS voice_cost_usd,
-      (SELECT COALESCE(SUM(seconds),0) FROM voice_sessions v WHERE v.user_id=users.id) AS voice_seconds
+      (SELECT COUNT(*) FROM captures c WHERE c.user_id=users.id AND c.deleted_at IS NULL) AS capture_count
     FROM users ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at`).all();
 }
 

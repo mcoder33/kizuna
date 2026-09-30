@@ -16,7 +16,7 @@ export const classificationSchema=z.object({
   summary:z.string().min(1).max(500),
   // Описание туду: суть записи 1–3 предложениями. Ложится телом заметки.
   details:z.string().max(1000).optional().default(''),
-  proposedActions:z.array(z.object({type:z.string().max(60),title:z.string().max(300)})).max(5),
+  proposedActions:z.array(z.object({type:z.string().max(60),title:z.string().max(300),details:z.string().max(1000).optional().default(''),people:z.array(z.string()).max(8).optional().default([])})).max(5),
   // Оба поля добавлены к контракту модели; старые провайдеры их не присылают,
   // поэтому у них безопасные значения по умолчанию.
   completed:z.boolean().optional().default(false),
@@ -107,16 +107,17 @@ function groundedValues(candidates,raw,max){
 // в неизменяемом журнале дороже пропущенного.
 const ACTION_MIN_LENGTH=8;
 function groundedActions(actions,raw,{summary='',followUp=null}={}){
-  const lower=String(raw).toLowerCase(),out=[];
+  const out=[];
   const taken=new Set([summary,followUp].filter(Boolean).map(value=>value.trim().toLowerCase()));
   for(const action of actions||[]){
     const title=typeof action?.title==='string'?action.title.trim().slice(0,300):'';
     if(title.length<ACTION_MIN_LENGTH)continue;
-    const stem=title.toLowerCase().slice(0,Math.min(title.length,12));
-    if(!lower.includes(stem))continue;
+    // Название дела модель пишет своими словами, как summary: дословности не
+    // требуем. Люди — по-прежнему только названные в тексте.
     if(taken.has(title.toLowerCase()))continue;
     taken.add(title.toLowerCase());
-    out.push({type:'task',title});
+    const details=typeof action?.details==='string'?action.details.trim().slice(0,1000):'';
+    out.push({type:'task',title,details,people:groundedValues(action?.people,raw,8)});
     if(out.length===5)break;
   }
   return out;
@@ -125,16 +126,16 @@ function groundedActions(actions,raw,{summary='',followUp=null}={}){
 // — дословная фраза человека, проекты наследуются от исходной (речь об одном),
 // люди и срок — нет: срок у намерения не назван, а участники встречи не
 // исполнители дела.
-export function actionClassification(title,parent,now=new Date(),timeZone='Europe/Samara'){
+export function actionClassification(title,parent,now=new Date(),timeZone='Europe/Samara',{details='',people=[]}={}){
   const projects=(parent?.entities?.projects||[]).slice(0,6);
   const claims=[
     claim('type','task',true,0.9,'inference','split'),
     claim('projects',projects,projects.length===1,0.8,'fact','split'),
     claim('schedule',null,false,0,'unknown','split'),
-    claim('people',[],false,0,'unknown','split'),
+    claim('people',people,false,0.8,'fact','split'),
     claim('followUp',null,false,0,'unknown','split'),
   ];
-  return toTodo({primaryType:'task',summary:title.slice(0,500),details:'',entities:{projects,people:[],schedule:null,followUp:null},additionalTypes:[],proposedActions:[],completed:false,ambiguity:null,claims,confidence:Object.fromEntries(claims.map(item=>[item.field,item.confidence])),conflicts:{projects:false,schedule:false}},now,timeZone);
+  return toTodo({primaryType:'task',summary:title.slice(0,500),details:String(details||'').slice(0,1000),entities:{projects,people:people.slice(0,8),schedule:null,followUp:null},additionalTypes:[],proposedActions:[],completed:false,ambiguity:null,claims,confidence:Object.fromEntries(claims.map(item=>[item.field,item.confidence])),conflicts:{projects:false,schedule:false}},now,timeZone);
 }
 
 function claim(field,value,essential,confidence,kind,source){
@@ -144,10 +145,14 @@ function claim(field,value,essential,confidence,kind,source){
 
 // Запись без разбора: модель недоступна, а угадывать тип по тексту больше нечем.
 // Проекции не создаются, запись честно помечается как требующая уточнения.
+// Без модели «сделал X» по-прежнему видно: запись, которая начинается с глагола
+// прошедшего времени совершенного вида, — отчёт о сделанном.
+const PAST_DONE=/^\s*(?:сделал(?:а|и)?|отправил(?:а|и)?|написал(?:а|и)?|закрыл(?:а|и)?|сходил(?:а|и)?|созвонил(?:ся|ась|ись)|обсудил(?:а|и)?|пров(?:ёл|ел|ела|ели)|выложил(?:а|и)?|починил(?:а|и)?|оплатил(?:а|и)?|купил(?:а|и)?)(?![\p{L}])/iu;
+export const startsWithDoneVerb=raw=>PAST_DONE.test(String(raw||''));
 export function unclassifiedCapture(raw=''){
   const summary=String(raw).trim().slice(0,500)||'Запись без текста';
   const claims=[claim('type',null,true,0,'unknown','rule')];
-  return {primaryType:'task',entities:{projects:[],people:[],schedule:null,followUp:null},additionalTypes:[],summary,details:'',proposedActions:[],completed:false,unclassified:true,ambiguity:{field:'type',question:'Запись сохранена без разбора: укажите тип.'},claims,confidence:Object.fromEntries(claims.map(c=>[c.field,c.confidence])),conflicts:{projects:false,schedule:false}};
+  return {primaryType:'task',entities:{projects:[],people:[],schedule:null,followUp:null},additionalTypes:[],summary,details:'',proposedActions:[],completed:startsWithDoneVerb(raw),unclassified:true,ambiguity:{field:'type',question:'Запись сохранена без разбора: укажите тип.'},claims,confidence:Object.fromEntries(claims.map(c=>[c.field,c.confidence])),conflicts:{projects:false,schedule:false}};
 }
 export const classifyFallback=(raw='')=>unclassifiedCapture(raw);
 
@@ -166,7 +171,7 @@ export function toTodo(classification,now=new Date(),timeZone='Europe/Samara'){
     const current=entities.schedule;
     if(!current||!current.date){
       const schedule=scheduleFromModel({date:currentDate(now,timeZone),time:current?.time??null,end:current?.end??null},now,timeZone);
-      if(schedule){entities.schedule={...schedule,...(current?.remind!==undefined?{remind:current.remind}:{})};defaulted=true}
+      if(schedule){entities.schedule={...schedule,defaulted:true,...(current?.remind!==undefined?{remind:current.remind}:{})};defaulted=true}
     }
   }
   const claims=(classification.claims||[]).map(item=>item.field==='type'?{...item,value:'task',kind:'inference',confidence:0.9}:item.field==='schedule'&&defaulted?{...item,value:entities.schedule,kind:'inference',confidence:0.9,provenance:{source:'rule',evidence:'по умолчанию — сегодня'}}:item);
