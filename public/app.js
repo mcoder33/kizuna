@@ -1614,12 +1614,19 @@ function paintJournal(date) {
   if (!rows) { container.append(node("p", "Загружаю…", "empty")); ensureDayData(date); return; }
   if (!rows.length) {
     container.append(node("p", date === currentDayDate ? "Пока нет зафиксированной работы за сегодня." : date < currentDayDate ? "В этот день ничего не записано." : "День ещё не наступил.", "empty"));
+    container.append(doneWeekLink());
     return;
   }
   const list = node("div", undefined, "day-rows");
   for (const row of rows)
     list.append(row.done ? doneItemRow(row.done) : row.record ? reportRecordNode(row.record) : autoDoneRow(row.item, row.at));
-  container.append(list);
+  container.append(list, doneWeekLink());
+}
+// Из «Что делал» одна дорога на страницу «Сделано»: неделя столбиками и по колонкам.
+function doneWeekLink() {
+  const link = node("a", "Сделано за неделю →", "preview-more");
+  link.href = "#done";
+  return link;
 }
 // Запись другого дня из отчёта «Обзора»: карточка, если запись ещё среди
 // загруженных, иначе строка с названием и временем.
