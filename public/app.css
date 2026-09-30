@@ -499,49 +499,207 @@ header {
   font-size: 18px;
   letter-spacing: -0.2px;
 }
-nav {
+/* Разделы — док, как в macOS: плавает внизу по центру, плитки-приложения с
+   цветной заливкой. Увеличение под курсором и подпрыгивание — только transform,
+   в потоке ничего не сдвигается. Ссылки остаются ссылками с текстом-названием:
+   подпись-пузырь — сам текст ссылки, визуально скрытый до наведения. */
+header > .header-tail {
+  margin-left: auto;
+}
+:root {
+  --dockbg: rgba(255, 255, 255, 0.72);
+  --dockline: rgba(0, 0, 0, 0.08);
+  --dock-badge: #ff3b30;
+  --dock-tip-bg: #222222;
+  --dock-tip-fg: #ffffff;
+  --dock-done-b: #e6f4ea; --dock-done-f: #2f8f4e;
+  --dock-today-b: #fff0da; --dock-today-f: #d9730d;
+  --dock-board-b: #e3eeff; --dock-board-f: #1c68d4;
+  --dock-calendar-b: #ffffff; --dock-calendar-f: #222222; --dock-cal-band: #e5483f;
+  --dock-notes-b: #fff4c2; --dock-notes-f: #a87f00;
+}
+:root[data-theme='dark'] {
+  --dockbg: rgba(24, 24, 24, 0.72);
+  --dockline: rgba(255, 255, 255, 0.1);
+  --dock-tip-bg: #eaeaea;
+  --dock-tip-fg: #181818;
+  --dock-done-b: #1c2e23; --dock-done-f: #64b69c;
+  --dock-today-b: #352718; --dock-today-f: #e0904a;
+  --dock-board-b: #14223a; --dock-board-f: #599fff;
+  --dock-calendar-b: #2a2a2a; --dock-calendar-f: #eaeaea; --dock-cal-band: #c7443c;
+  --dock-notes-b: #332c14; --dock-notes-f: #d9b84a;
+}
+header > nav {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 30;
   display: flex;
-  /* Воздух между пунктами теперь даёт поле капсулы (12px с каждой стороны), а не зазор. */
-  gap: 2px;
-  flex: 1;
-  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 13px;
+  border-radius: 22px;
+  background: var(--dockbg);
+  border: 1px solid var(--dockline);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.14);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  backdrop-filter: blur(18px) saturate(1.4);
 }
-/* На широком экране разделы стоят по центру окна, а не между логотипом и
-   правой группой: иначе они съезжали влево от содержимого страницы, у
-   которого центр — центр окна. */
-@media (min-width: 1024px) {
-  nav {
-    position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
-    flex: none;
-  }
-  header > .header-tail {
-    margin-left: auto;
-  }
+.dock-item {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  display: block;
 }
-nav > a {
-  font-size: 13px;
-  color: var(--n-63);
+.dock-item > a {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: var(--b);
+  color: var(--f);
   text-decoration: none;
-  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.05);
+  transform: translateX(var(--tx, 0)) scale(var(--s, 1));
+  transform-origin: 50% 100%;
+  transition: transform 0.15s ease, filter 0.15s ease;
 }
-/* Активный раздел — капсула, как у вкладок «День · Закрыто» на «Сегодня»: рамка у
-   неактивных прозрачная, чтобы пункты не сдвигались, а цвета — токены, в тёмной
-   теме они переворачиваются сами. */
-nav a {
-  font-size: 13px;
-  color: var(--n-63);
-  text-decoration: none;
-  padding: 6px 12px;
-  border: 1px solid transparent;
+:root[data-theme='dark'] .dock-item > a {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+.dock-item > a svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* Число дня в значке календаря — из data-day, псевдоэлементом: в текст ссылки оно не попадает. */
+.dock-item > a[data-day]::before {
+  content: attr(data-day);
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  margin-top: 1px;
+  text-align: center;
+  font: 700 8.6px/1 system-ui, sans-serif;
+  pointer-events: none;
+}
+.dock-item > a svg .band {
+  fill: var(--dock-cal-band);
+  stroke: none;
+}
+.dock-item[data-k='done'] { --b: var(--dock-done-b); --f: var(--dock-done-f); }
+.dock-item[data-k='today'] { --b: var(--dock-today-b); --f: var(--dock-today-f); }
+.dock-item[data-k='board'] { --b: var(--dock-board-b); --f: var(--dock-board-f); }
+.dock-item[data-k='calendar'] { --b: var(--dock-calendar-b); --f: var(--dock-calendar-f); }
+.dock-item[data-k='notes'] { --b: var(--dock-notes-b); --f: var(--dock-notes-f); }
+.dock-item > a.active {
+  filter: saturate(1.3) brightness(1.04);
+}
+.dock-item > a.active::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -9px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+.dock-item > a:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+.dock-item > a.bounce {
+  animation: dock-bounce 0.35s ease;
+}
+@keyframes dock-bounce {
+  0%, 100% { translate: 0 0; }
+  40% { translate: 0 -10px; }
+}
+/* Подпись-пузырь: текст ссылки, вынесенный над плиткой. */
+.dock-label {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  transform: translateX(-50%);
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--dock-tip-bg);
+  color: var(--dock-tip-fg);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.dock-label::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-left: -5px;
+  border: 5px solid transparent;
+  border-top-color: var(--dock-tip-bg);
+}
+.dock-item:hover .dock-label,
+.dock-item > a:focus-visible .dock-label {
+  opacity: 1;
+}
+.dock-item:hover > a .dock-label {
+  bottom: calc(100% + 10px);
+}
+.dock-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  z-index: 1;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
   border-radius: 99px;
+  background: var(--dock-badge);
+  color: #fff;
+  font: 700 10px/18px system-ui, sans-serif;
+  text-align: center;
+  pointer-events: none;
 }
-nav a.active {
-  background: var(--wash);
-  border-color: var(--n-92);
-  color: var(--ink);
-  font-weight: 700;
+/* Увеличение под курсором: плитка под мышью 1.35, соседи 1.15 и сдвиг. */
+@media (hover: hover) and (min-width: 601px) and (prefers-reduced-motion: no-preference) {
+  .dock-item:hover > a { --s: 1.35; }
+  .dock-item:has(+ .dock-item:hover) > a,
+  .dock-item:hover + .dock-item > a { --s: 1.15; }
+  .dock-item:has(+ .dock-item:hover) > a { --tx: -9px; }
+  .dock-item:hover + .dock-item > a { --tx: 9px; }
+  .dock-item:has(+ .dock-item + .dock-item:hover) > a { --tx: -4px; }
+  .dock-item:hover + .dock-item + .dock-item > a { --tx: 4px; }
+  .dock-item:hover .dock-label { bottom: calc(100% + 26px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dock-item > a { transition: none; }
+  .dock-item > a.bounce { animation: none; }
+  .dock-label { transition: none; }
+}
+@media (max-width: 600px) {
+  header > nav {
+    left: 6px;
+    right: 6px;
+    transform: none;
+    justify-content: space-around;
+    gap: 0;
+  }
+  .dock-item { width: 40px; height: 40px; }
+  .dock-item > a { border-radius: 10px; }
 }
 /* Шестерёнка вместо поповера: все настройки живут на своей странице, а в шапке
    остаётся только вход в неё и короткое имя текущей модели. */
@@ -596,7 +754,7 @@ nav a.active {
 main {
   max-width: 1120px;
   margin: auto;
-  padding: 66px 24px 90px;
+  padding: 66px 24px 110px;
 }
 .hero {
   text-align: center;
@@ -1897,27 +2055,12 @@ dialog form > div {
     min-height: 0;
     padding: 10px var(--header-gutter) 6px;
   }
-  /* Четыре раздела в строку с брендом и хвостом не влезают: первая строка —
-     знак слева и хвост справа, вторая — навигация во всю ширину. Без явного
-     порядка хвост вставал перед брендом. */
   .brand {
     order: 1;
   }
   .header-tail {
     order: 2;
     margin-left: auto;
-  }
-  header > nav {
-    order: 3;
-    flex-basis: 100%;
-    justify-content: space-between;
-    gap: 0;
-    padding-bottom: 0;
-  }
-  /* Пять разделов с капсулой должны помещаться в строку и на 360 px: поле капсулы
-     меньше, а то, что она добавила по высоте, забрано у зазоров шапки, — шапка не выросла. */
-  header > nav a {
-    padding: 4px;
   }
   .dashboard,
   .memory,
@@ -1932,7 +2075,7 @@ dialog form > div {
     grid-column: auto;
   }
   main {
-    padding: 40px 16px;
+    padding: 40px 16px 100px;
   }
   .capture-foot {
     flex-wrap: wrap;
@@ -2111,22 +2254,6 @@ dialog form > div {
   margin-top: 0;
 }
 @media (max-width: 760px) {
-  nav {
-    order: 2;
-    flex: 1 1 auto;
-    gap: 18px;
-    justify-content: flex-end;
-    overflow-x: auto;
-    padding-bottom: 2px;
-    white-space: nowrap;
-    scrollbar-width: none;
-  }
-  nav::-webkit-scrollbar {
-    display: none;
-  }
-  nav > a {
-    font-size: 13px;
-  }
   .today-page .md-field {
     min-height: 3.4em;
   }
@@ -6143,7 +6270,7 @@ main:has(> #board:not([hidden])) { max-width: none; padding-left: 0; padding-rig
 }
 .calendar-page .page-heading { margin-bottom: 8px; }
 /* Сетка встаёт по высоте окна — нижнее поле страницы отдаётся ей. */
-main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
+main:has(> #calendar:not([hidden])) { padding-bottom: 96px; }
 .calendar-controls { margin-right: 0; }
 .calendar-controls .cal-sources { padding: 0; border: 0; }
 /* Ссылка в настройки календарей — тихая, как «Свойства» на доске: это не
@@ -7656,7 +7783,7 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 
 /* Страница разговоров — во всю ширину окна и без полей у main: поля у неё —
    поля верхней строки, окно по высоте — это она. */
-main:has(> #circles:not([hidden])) { max-width: none; padding: 0; }
+main:has(> #circles:not([hidden])) { max-width: none; padding: 0 0 96px; }
 #circles-body { container: kc / inline-size; display: block; max-width: none; }
 
 .kc {

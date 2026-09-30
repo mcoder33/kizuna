@@ -72,6 +72,14 @@ test("async capture shows a short success notification and adds the entry to the
   // вернулся между «Доской» и «Заметками», а Круги, «?» и меню модели ушли.
   await expect(page.locator("header nav a")).toHaveText(["Сделано", "Сегодня", "Доска", "Календарь", "Заметки"]);
   await expect(page.locator("header nav a.active")).toHaveText("Сегодня");
+  // Разделы — док: nav стоит внизу окна по центру, а бейдж «Сегодня» показывает число дел на сегодня.
+  const dock = await page.locator("header nav").boundingBox();
+  const view = page.viewportSize();
+  expect(dock.y).toBeGreaterThan(view.height / 2);
+  expect(Math.abs(dock.x + dock.width / 2 - view.width / 2)).toBeLessThan(2);
+  await capture(page, "Проверить док");
+  await expect(page.locator("#dock-badge-today")).toBeVisible();
+  await expect(page.locator("#dock-badge-today")).toHaveText(/^[1-9]\d*$/);
   await expect(page.locator(".settings-link")).toHaveAttribute("href", "#settings");
   await expect(page.locator(".ai-menu, .help-link")).toHaveCount(0);
   await capture(page, "Завтра в 11 созвон по Hub");

@@ -198,11 +198,19 @@ function updatePageFromHash() {
   if (roomId) { params.delete("room"); history.replaceState(null, "", `#${activePage}${params.size ? `?${params}` : ""}`); openRoomFromInbox(roomId); }
   for (const section of document.querySelectorAll(".app-page"))
     section.hidden = section.id !== activePage;
-  for (const link of document.querySelectorAll("nav a"))
-    link.classList.toggle(
-      "active",
-      link.getAttribute("href") === `#${activePage}`,
-    );
+  for (const link of document.querySelectorAll("nav a")) {
+    const on = link.getAttribute("href") === `#${activePage}`;
+    // Док: подпрыгивание один раз, когда раздел только что выбрали.
+    if (on && !link.classList.contains("active") && link.closest(".dock-item")) {
+      link.classList.remove("bounce");
+      void link.offsetWidth;
+      link.classList.add("bounce");
+      setTimeout(() => link.classList.remove("bounce"), 400);
+    }
+    link.classList.toggle("active", on);
+    if (on) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
   if (activePage !== pageId) history.replaceState(null, "", "#today");
   // Вернулись на «Сегодня» — обложка и строка «сейчас» пересчитываются: пока
   // страница была скрыта, время шло.
@@ -1011,6 +1019,7 @@ function renderToday() {
   const viewDate = shiftDate(currentDayDate, todayState.view);
   const journalDate = shiftDate(currentDayDate, todayState.journalView);
   paintTabs(viewDate, journalDate);
+  paintDockBadges();
   paintJournal(journalDate);
   paintDayList(viewDate);
   if (keep && !active.isConnected) {
@@ -1245,6 +1254,20 @@ function dayCountNode(date) {
   parts.push(plural(own.filter((entry) => !isActiveMeeting(entry)).length, DEALS));
   wrap.append(document.createTextNode(parts.join(" · ")));
   return wrap;
+}
+// Бейджи дока — те же числа, что в вкладках «Сделано N / День N дел» на «Сегодня»:
+// сколько закрыто сегодня и сколько дел на сегодня. Ноль — бейдж скрыт.
+function paintDockBadges() {
+  const done = doneRows()?.length || 0;
+  const todays = todayState.todo.filter((entry) => !isActiveMeeting(entry) && todoOrder(entry, currentDayDate) > 0 && todoOrder(entry, currentDayDate) <= 2).length;
+  const day = document.querySelector('.dock-item > a[href="#calendar"]');
+  if (day && currentDayDate) day.dataset.day = String(Number(currentDayDate.slice(8, 10)));
+  for (const [id, count] of [["dock-badge-done", done], ["dock-badge-today", todays]]) {
+    const badge = document.getElementById(id);
+    if (!badge) continue;
+    badge.hidden = !count;
+    badge.textContent = count > 99 ? "99+" : String(count);
+  }
 }
 const DRAWER_PANELS = { journal: "journal", day: "todo" };
 function paintTabs(date, journalDate) {

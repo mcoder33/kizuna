@@ -132,7 +132,7 @@ test("настройки: раздел «Календари» с формами 
 // базу прогона: CalDAV-сервера у e2e нет, а плашка читает только кэш.
 test("плашка чужого события: участники с ответами, повтор, ссылки и мой ответ организатору", async ({ page, request }) => {
   const { default: Database } = await import("better-sqlite3");
-  const db = new Database("/tmp/pagent-e2e.sqlite");
+  const db = new Database((process.env.PAGENT_E2E_DB || "/tmp/pagent-e2e.sqlite"));
   // Именно e2e-учётка: другие спеки регистрируют ещё пользователей, и «первый
   // попавшийся» в полном прогоне оказывался чужим — события не показывались.
   const user = db.prepare("SELECT id FROM users WHERE email=?").get(E2E_EMAIL);
@@ -229,7 +229,7 @@ test("плашка чужого события: участники с ответ
 // событие уходит с сетки сразу, запрос летит следом. Ошибка возвращает событие.
 test("чужое событие уходит с сетки сразу, а удаление идёт в фоне", async ({ page, request }) => {
   const { default: Database } = await import("better-sqlite3");
-  const db = new Database("/tmp/pagent-e2e.sqlite");
+  const db = new Database((process.env.PAGENT_E2E_DB || "/tmp/pagent-e2e.sqlite"));
   const user = db.prepare("SELECT id FROM users WHERE email=?").get(E2E_EMAIL);
   db.prepare("DELETE FROM calendar_events").run();
   db.prepare("DELETE FROM calendar_accounts").run();
@@ -281,7 +281,7 @@ test("чужое событие уходит с сетки сразу, а уда
   await expect(pop).toHaveCount(0);
   await expect(page.locator("#toast")).not.toContainText("удалена");
   // CalDAV-сервера у прогона нет: строки убираем сами, как сделал бы провайдер.
-  const after = new Database("/tmp/pagent-e2e.sqlite");
+  const after = new Database((process.env.PAGENT_E2E_DB || "/tmp/pagent-e2e.sqlite"));
   after.prepare("DELETE FROM calendar_events WHERE uid='u2'").run();
   after.close();
   releaseOk();
