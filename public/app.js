@@ -6871,6 +6871,8 @@ const kc = {
   circle: null, chat: null, info: null, person: null, table: true, menu: false, talks: false, ctx: null,
   reply: null, share: null, newFrom: null, talk: null, modal: null, invite: null,
   fresh: false, focusField: false, deedFocus: false,
+  // Набранное в «Поручить дело» по кругу и человеку: страница перестраивается целиком.
+  deedDrafts: {},
 };
 const KC_REACTIONS = ["👍", "❤️", "🔥", "🙏", "👀", "✅"];
 // Тип записи — цвет и слово для строки обсуждения.
@@ -8121,6 +8123,13 @@ function kcDeedForm(circle, member) {
   field.type = "text";
   field.placeholder = "Что поручить";
   field.setAttribute("aria-label", `Дело для ${member.name}`);
+  // Страницу перестраивает любое событие журнала (в том числе «поток жив» сразу
+  // после открытия), а поле рождается заново пустым: без черновика обновление в
+  // фоне стирало набранное под пальцами.
+  const draftKey = `${circle.id}:${member.id}`;
+  field.dataset.draft = draftKey;
+  field.value = kc.deedDrafts[draftKey] || "";
+  field.addEventListener("input", () => { kc.deedDrafts[draftKey] = field.value; });
   const send = kcEl("button", "kc-btn sm primary", "Отдать");
   send.type = "submit";
   form.append(field, send);
@@ -8130,6 +8139,8 @@ function kcDeedForm(circle, member) {
     if (!raw || send.disabled) return;
     send.disabled = true;
     send.textContent = "Отдаю…";
+    // Уходит: страница, перестроенная посреди запроса, не должна вернуть его в поле.
+    kc.deedDrafts[draftKey] = "";
     try {
       const created = await request("/api/captures", { method: "POST", body: JSON.stringify({ raw, primaryType: "todo" }) });
       await request(`/api/captures/${created.entry.id}/assign`, { method: "POST", body: JSON.stringify({ assigneeId: member.id, circleId: circle.id }) });
@@ -8139,6 +8150,11 @@ function kcDeedForm(circle, member) {
       loadCircles();
       load();
     } catch (error) {
+      // Не ушло: набранное остаётся в черновике и в поле — в том, что успели
+      // перестроить, если оно всё ещё у этого человека.
+      kc.deedDrafts[draftKey] = raw;
+      const live = document.getElementById("kc-deed-field");
+      if (live?.dataset.draft === draftKey && !live.value) live.value = raw;
       toast(error.message || "Дело не ушло");
     } finally {
       send.disabled = false;
