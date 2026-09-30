@@ -3432,7 +3432,7 @@ const captureField = createMarkdownField({
   id: "capture-input",
   ariaLabel: "Новая запись",
   placeholder: "Что нужно сделать?",
-  submitOnEnter: true,
+  submitOnEnter: false,
   onSubmit: () => $("#capture-form").requestSubmit(),
 });
 $("#capture-form").prepend(captureField.element);
@@ -3440,6 +3440,114 @@ attachLinkMenu(captureField);
 // «@» прямо в записи: люди из ваших кругов, позванный увидит запись.
 attachMentionMenu(captureField);
 attachFormatToolbar(captureField, { prefs: window.pagentText });
+
+// Отправка — ⌘+Enter на Mac и Ctrl+Enter везде ещё; простой Enter переносит
+// строку, как в любом редакторе. Подпись и подсказка кнопки говорят то же.
+const CAPTURE_MOD = /Mac|iPhone|iPad/.test(navigator.platform || "") ? "⌘" : "Ctrl";
+$("#capture-hint").textContent = `${CAPTURE_MOD}+Enter — отправить, Enter — новая строка`;
+$("#capture-submit").title = `Сохранить запись — ${CAPTURE_MOD}+Enter`;
+
+// Лист: карточка выходит на передний план и вписывается в окно листом A4.
+// DOM не перестраивается — переключаются два класса, поэтому текст, каретка и
+// история отмены остаются на месте.
+const expandButton = $("#capture-expand");
+function captureLarge() {
+  return $("#capture-form").classList.contains("capture-large");
+}
+function setCaptureLarge(large) {
+  const form = $("#capture-form");
+  form.classList.toggle("capture-large", large);
+  document.body.classList.toggle("capture-large-open", large);
+  appear(form, { shift: large ? 12 : 6, base: large ? "translate(-50%, -50%)" : "" });
+  expandButton.setAttribute("aria-pressed", String(large));
+  const label = large ? "Свернуть поле — Esc" : "Увеличить поле";
+  expandButton.setAttribute("aria-label", label);
+  expandButton.title = label;
+  captureField.focus();
+}
+expandButton.addEventListener("click", () => setCaptureLarge(!captureLarge()));
+// Esc возвращает обычный размер.
+captureField.element.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && captureLarge()) {
+    event.preventDefault();
+    event.stopPropagation();
+    setCaptureLarge(false);
+  }
+});
+
+// Высота поля живёт в браузере и переживает перезагрузку; меняется нижним
+// краем карточки. Края тянутся, как у окна: нижний — высота, боковые — ширина,
+// углы — обе. Карточка стоит по центру, поэтому сдвиг бокового края удваивается.
+// Двойной клик по краю возвращает размер по умолчанию.
+const CAPTURE_HEIGHT = { min: 96, max: 480, key: "kizuna-capture-height" };
+const CAPTURE_WIDTH = { min: 480, key: "kizuna-capture-width" };
+function readCaptureSize(spec) {
+  try {
+    const value = Number(localStorage.getItem(spec.key));
+    return Number.isFinite(value) && value >= spec.min ? (spec.max ? Math.min(value, spec.max) : value) : null;
+  } catch {
+    return null;
+  }
+}
+function paintCaptureSize() {
+  const height = readCaptureSize(CAPTURE_HEIGHT);
+  const width = readCaptureSize(CAPTURE_WIDTH);
+  const form = $("#capture-form");
+  const page = $("#today");
+  if (height) form.style.setProperty("--capture-height", `${height}px`);
+  else form.style.removeProperty("--capture-height");
+  if (width) page.style.setProperty("--capture-width", `${width}px`);
+  else page.style.removeProperty("--capture-width");
+}
+paintCaptureSize();
+for (const grip of document.querySelectorAll("#capture-form .capture-resize")) {
+  const dir = grip.dataset.dir;
+  grip.addEventListener("dblclick", () => {
+    try {
+      if (/[ew]/.test(dir)) localStorage.removeItem(CAPTURE_WIDTH.key);
+      if (dir.includes("s")) localStorage.removeItem(CAPTURE_HEIGHT.key);
+    } catch {}
+    paintCaptureSize();
+  });
+  grip.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || captureLarge()) return;
+    const form = $("#capture-form");
+    const startX = event.clientX, startY = event.clientY;
+    const startWidth = form.getBoundingClientRect().width;
+    const startHeight = parseFloat(getComputedStyle(captureField.element).minHeight) || CAPTURE_HEIGHT.min;
+    const sx = dir.includes("e") ? 2 : dir.includes("w") ? -2 : 0;
+    const sy = dir.includes("s") ? 1 : 0;
+    const maxWidth = Math.min(1120, window.innerWidth) - 48;
+    let width = startWidth, height = startHeight;
+    grip.setPointerCapture(event.pointerId);
+    form.classList.add("resizing");
+    event.preventDefault();
+    const move = (e) => {
+      if (sx) {
+        width = Math.min(maxWidth, Math.max(CAPTURE_WIDTH.min, startWidth + sx * (e.clientX - startX)));
+        $("#today").style.setProperty("--capture-width", `${Math.round(width)}px`);
+      }
+      if (sy) {
+        height = Math.min(CAPTURE_HEIGHT.max, Math.max(CAPTURE_HEIGHT.min, startHeight + sy * (e.clientY - startY)));
+        form.style.setProperty("--capture-height", `${Math.round(height)}px`);
+      }
+    };
+    const stop = () => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", stop);
+      grip.removeEventListener("pointercancel", stop);
+      form.classList.remove("resizing");
+      try {
+        if (sx) localStorage.setItem(CAPTURE_WIDTH.key, String(Math.round(width)));
+        if (sy) localStorage.setItem(CAPTURE_HEIGHT.key, String(Math.round(height)));
+      } catch {}
+      paintCaptureSize();
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", stop);
+    grip.addEventListener("pointercancel", stop);
+  });
+}
 
 function idempotencyKey() {
   return `capture-${crypto.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`}`;
@@ -3467,6 +3575,7 @@ $("#capture-form").addEventListener("submit", async (event) => {
     if (result.response.status !== 202 || !safeCaptureEnvelope(result.data))
       throw new Error("Сервер не подтвердил асинхронное сохранение.");
     captureField.clear();
+    if (captureLarge()) setCaptureLarge(false);
     startCapturePolling({ ...result.data, raw, provider: provider || "fallback" });
     uploadPendingShots(result.data.captureId);
     // Потолок исчерпан — запись сохранится, но разберут её правила. Сказать об

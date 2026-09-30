@@ -608,6 +608,79 @@ main {
   padding: 14px;
   box-shadow: 0 18px 42px var(--n-25-a8);
   text-align: left;
+  position: relative;
+}
+/* Ручки: невидимые полосы вдоль краёв и квадраты в нижних углах; о том, что
+   край тянется, говорит только курсор. Размер живёт в браузере. */
+.capture-resize { position: absolute; z-index: 1; touch-action: none; user-select: none; }
+.capture-resize[data-dir="s"] { left: 14px; right: 14px; bottom: -4px; height: 9px; cursor: ns-resize; }
+.capture-resize[data-dir="e"] { top: 14px; bottom: 14px; right: -4px; width: 9px; cursor: ew-resize; }
+.capture-resize[data-dir="w"] { top: 14px; bottom: 14px; left: -4px; width: 9px; cursor: ew-resize; }
+.capture-resize[data-dir="se"] { right: -4px; bottom: -4px; width: 18px; height: 18px; cursor: nwse-resize; }
+.capture-resize[data-dir="sw"] { left: -4px; bottom: -4px; width: 18px; height: 18px; cursor: nesw-resize; }
+.capture.resizing, .capture.resizing * { cursor: inherit; }
+.capture.capture-large .capture-resize { display: none; }
+.capture-expand {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--n-82);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: color 0.15s, background 0.15s;
+}
+.capture-expand svg { width: 16px; height: 16px; }
+.capture-expand:hover { color: var(--muted); background: var(--hairline); }
+.capture-expand:active { transform: scale(0.92); }
+.capture-expand .ic-collapse { display: none; }
+.capture-large .capture-expand { color: var(--muted); }
+.capture-large .capture-expand .ic-expand { display: none; }
+.capture-large .capture-expand .ic-collapse { display: block; }
+/* ── лист: карточка выходит на передний план и вписывается в окно ── */
+body.capture-large-open { overflow: hidden; }
+body.capture-large-open::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 8;
+  background: var(--n-23-a28);
+  backdrop-filter: blur(2px);
+  animation: capture-backdrop 0.24s ease-out;
+}
+@keyframes capture-backdrop { from { opacity: 0; } }
+.capture.capture-large {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 9;
+  height: min(92vh, calc((100vw - 120px) * 1.3));
+  width: min(calc(92vh / 1.3), calc(100vw - 120px));
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 40px 90px var(--n-23-a22);
+  transform: translate(-50%, -50%);
+}
+.today-page .capture.capture-large .md-field {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  font-size: 16px;
+  line-height: 1.55;
+}
+@media (prefers-reduced-motion: reduce) { body.capture-large-open::before { animation: none; } }
+@media (max-width: 760px) {
+  .capture.capture-large { height: calc(100dvh - 32px); width: calc(100vw - 24px); }
+  .today-page .capture.capture-large .md-field { font-size: 17px; }
+}
+@media (max-width: 760px) {
+  .capture-resize[data-dir="e"], .capture-resize[data-dir="w"], .capture-resize[data-dir="se"], .capture-resize[data-dir="sw"] { display: none; }
 }
 /* ── поле ввода с живой разметкой ── */
 .md-field {
@@ -1979,7 +2052,7 @@ dialog form > div {
   display: none;
 }
 .today-page .hero {
-  max-width: 800px;
+  max-width: var(--capture-width, 800px);
   margin: 0 auto 56px;
 }
 .today-intro {
@@ -1998,8 +2071,8 @@ dialog form > div {
 /* Поле растёт вместе с текстом: две строки в покое, до сорока процентов
    высоты окна — дальше прокрутка внутри. */
 .today-page .md-field {
-  min-height: 3.4em;
-  max-height: 40vh;
+  min-height: var(--capture-height, 3.4em);
+  max-height: max(40vh, var(--capture-height, 0px));
   overflow-y: auto;
   font-size: 17px;
 }
@@ -5909,7 +5982,7 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
    Дата с фазой суток, бриф и вопрос в поле меняются утром, днём, вечером и
    ночью. Под полем — «Сегодня» (дела вместе с календарём) и «Что делал»
    (закрытое сегодня и прошедшие встречи). */
-.today-page .hero { max-width: 800px; margin: 0 auto 8px; }
+.today-page .hero { max-width: var(--capture-width, 800px); margin: 0 auto 8px; }
 .capture-hint { font-size: 11.5px; color: var(--n-66); }
 .capture-foot #capture-submit { margin-left: auto; }
 /* Заголовок полки: тихие капсы и тонкая линия до края. «Что делал» зелёный —
@@ -5942,7 +6015,7 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 .today-brief a { color: var(--red-66); font-weight: 650; text-decoration: none; border-bottom: 1px solid var(--red-83); }
 /* Ящики той же ширины, что карточка ввода: растянул или сузил карточку —
    списки под ней идут следом, и всё стоит одним столбцом. */
-.drawers { max-width: 800px; margin: 0 auto; }
+.drawers { max-width: var(--capture-width, 800px); margin: 0 auto; }
 .drawer { margin-top: 0; text-align: left; gap: 6px; }
 .drawer .entry, .drawer .entry:first-child { padding: 11px 12px; border-top: 0; border-radius: 12px; background: var(--n-98-4); font-size: 12px; }
 .drawer .entry-meta { font-size: 10px; }
