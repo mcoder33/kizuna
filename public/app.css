@@ -529,7 +529,7 @@ header > .header-tail {
   --dock-calendar-b: #2a2a2a; --dock-calendar-f: #eaeaea; --dock-cal-band: #c7443c;
   --dock-notes-b: #332c14; --dock-notes-f: #d9b84a;
 }
-header > nav {
+header > nav.dock {
   position: fixed;
   left: 50%;
   bottom: 14px;
@@ -691,7 +691,7 @@ header > nav {
   .dock-label { transition: none; }
 }
 @media (max-width: 600px) {
-  header > nav {
+  header > nav.dock {
     left: 6px;
     right: 6px;
     transform: none;

@@ -1,7 +1,7 @@
 // Гостевая главная: ролик «как это работает» в копии «Сегодня». Он идёт сам,
 // как видео: фраза печатается, запись раскладывается на встречу завтра и дело
-// на сегодня, дело закрывается кружком и уходит в «Сделано». Всё происходит
-// в копии: ни сети, ни личных данных.
+// на сегодня, дело закрывается кружком и уходит во вкладку «Закрыто», а число
+// на «Сделано» в доке растёт. Всё происходит в копии: ни сети, ни личных данных.
 //
 // Копия устроена по правилам настоящего «Дня»: дело со сроком сегодня лежит на
 // полке «на сегодня», встреча завтра — в «по часам» завтрашнего дня, закрытое
@@ -12,10 +12,15 @@
 import { longDate, shortDate, plural, DEALS, MEETINGS } from "./today-cover.js";
 
 const PHRASE = "Завтра в 11 созвон с Аней, а смету отправить сегодня";
-const PLACEHOLDER = "Запишите мысль, план, встречу или итог дня";
+const PLACEHOLDER = "Запишите и отпустите";
+const DOCK = [
+  ["done", '<circle cx="12" cy="12" r="9"/><path d="M7.9 12.4l2.9 2.9 5.4-5.8"/>'],
+  ["today", '<circle cx="12" cy="12" r="3.7"/><path d="M12 3.4v2M12 18.6v2M3.4 12h2M18.6 12h2M5.9 5.9l1.4 1.4M16.7 16.7l1.4 1.4M18.1 5.9l-1.4 1.4M7.3 16.7l-1.4 1.4"/>'],
+  ["board", '<rect x="3.6" y="4.5" width="4.8" height="15" rx="1.6"/><rect x="9.6" y="4.5" width="4.8" height="9.2" rx="1.6"/><rect x="15.6" y="4.5" width="4.8" height="11.6" rx="1.6"/>'],
+  ["calendar", '<path class="band" d="M3.5 8a3.5 3.5 0 0 1 3.5-3.5h10A3.5 3.5 0 0 1 20.5 8v2h-17z"/><rect x="3.5" y="4.5" width="17" height="16" rx="3.5"/><path d="M3.5 10h17"/>'],
+  ["notes", '<path d="M14 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5z"/><path d="M14 3.5v3.5a1.5 1.5 0 0 0 1.5 1.5H19M8.6 13h6.8M8.6 16.6h4.4"/>'],
+];
 const CURSOR = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 2v16.5l4.4-4.2 2.9 6.6 2.7-1.2-2.9-6.5H16z" fill="#1b1b1b" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/></svg>';
-const WAVE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" focusable="false"><path d="M3 9.5v5"/><path d="M7.5 7v10"/><path d="M12 4v16"/><path d="M16.5 7v10"/><path d="M21 9.5v5"/></svg>';
-const TYPES = [["auto", "Авто"], ["todo"], ["outcome"], ["note"]];
 
 const h = (tag, cls, ...kids) => {
   const el = document.createElement(tag);
@@ -69,23 +74,14 @@ function row(item, { done = false } = {}) {
 }
 function shelf(label, items, options) {
   if (!items.length) return [];
-  return [h("p", `hello-app-shelf${options?.today ? " is-today" : ""}`, label), h("div", "hello-app-rows", ...items.map((item) => row(item, options)))];
+  return [h("p", `hello-app-shelf${options?.today ? " is-today" : ""}`, label, options?.aside ? h("span", null, options.aside) : null), h("div", "hello-app-rows", ...items.map((item) => row(item, options)))];
 }
 function paint() {
   const s = state;
-  const today = isoDay(), shown = isoDay(s.view);
+  const shown = isoDay(s.view);
   const text = h("div", `hello-app-text${s.text ? "" : " is-empty"}`, s.text || PLACEHOLDER);
   if (s.typing) text.append(h("i", "hello-app-caret"));
-  const types = h("span", "hello-app-types");
-  for (const [key, label] of TYPES) {
-    const type = h("span", `hello-app-type${label ? " is-on" : ""}`, h("i"), label ? h("span", null, label) : null);
-    type.dataset.type = key;
-    types.append(type);
-  }
-  const voice = h("span", "hello-app-voice");
-  voice.innerHTML = WAVE;
   const send = h("span", "hello-app-send", "→");
-  send.hidden = !s.text;
   const tab = (key, label, count) => {
     const el = h("span", `hello-app-tab${s.tab === key ? " is-on" : ""}`, label, " ", h("b", null, count));
     el.dataset.tab = key;
@@ -102,17 +98,26 @@ function paint() {
   };
   const current = h("span", "hello-app-current", h("b", null, longDate(shown)), h("span", null, s.view ? "завтра" : "сегодня"));
   let list;
-  if (s.tab === "journal") list = shelf("сделано сегодня", s.done, { done: true });
+  if (s.tab === "journal") list = shelf("закрыто сегодня", s.done, { done: true });
   else if (s.view) list = shelf("по часам", s.tomorrow);
-  else list = [...shelf(`на сегодня · ${s.today.length}`, s.today, { today: true }), ...shelf(`без срока · ${s.stock.length}`, s.stock)];
-  const first = s.today.find((item) => item.id !== s.closing);
+  else list = [...shelf(`на сегодня · ${s.today.length}`, s.today, { today: true, aside: "перенести всё на завтра" }), ...shelf(`без срока · ${s.stock.length}`, s.stock)];
+  const dock = h("div", "hello-app-dock");
+  const badges = { done: s.done.length, today: s.today.length };
+  for (const [key, icon] of DOCK) {
+    const item = h("span", `hello-dock-item${key === "today" ? " is-on" : ""}`);
+    item.dataset.k = key;
+    const tile = h("span", "hello-dock-tile");
+    tile.innerHTML = `<svg viewBox="0 0 24 24" focusable="false">${icon}</svg>`;
+    item.append(tile);
+    if (badges[key]) item.append(h("b", null, String(badges[key])));
+    dock.append(item);
+  }
   const parts = [
-    h("p", "hello-app-date", `${longDate(today)} · `, h("span", "hello-app-phase", "день")),
-    h("p", "hello-app-brief", first ? `Встреч сегодня нет. На сегодня — ${first.title.toLowerCase()}.` : "Встреч сегодня нет. Дела на сегодня закрыты."),
-    h("div", "hello-app-capture", text, h("div", "hello-app-foot", types, h("span", "hello-app-sep"), h("span", "hello-app-tags", "#тег…"), voice, send)),
-    h("div", "hello-app-tabs", tab("journal", "Сделано", String(s.done.length)), tab("day", s.view ? `День ${shortDate(shown)}` : "День", dayCount), tab("notes", "Заметки", "2")),
+    h("div", "hello-app-capture", text, h("div", "hello-app-foot", h("span", "hello-app-hint", "⌘+Enter — отправить, Enter — новая строка"), send)),
+    h("div", "hello-app-tabs", tab("day", s.view ? `День ${shortDate(shown)}` : "День", dayCount), tab("journal", "Закрыто", String(s.done.length))),
     h("div", "hello-app-nav", step(-1), current, step(1)),
     ...list,
+    dock,
   ];
   if (s.toast) parts.push(h("p", "hello-app-toast", s.toast));
   app.replaceChildren(...parts);
@@ -246,7 +251,7 @@ async function play(token) {
     state.today = state.today.filter((item) => item.id !== "parcel");
     state.done = [parcel, ...state.done];
     state.closing = null;
-    state.toast = "Отмечено как готовое";
+    state.toast = "Дело закрыто — оно в «Закрыто»";
     paint();
     progress(0.82);
     await wait(2200, token);
