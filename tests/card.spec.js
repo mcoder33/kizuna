@@ -18,7 +18,7 @@ test.beforeEach(async ({ page }) => {
   await page.clock.install({ time: dayAt(13) });
 });
 
-// Под полем два ящика: открытое лежит в «Дне», закрытое — в «Сделано».
+// Под полем два ящика: открытое лежит в «Дне», закрытое — в «Закрыто».
 async function showTab(page, name) {
   const tab = page.getByRole("tab", { name });
   if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
@@ -43,13 +43,13 @@ async function todayEntry(page, text) {
     }, { timeout: 15000 })
     .toBe(true);
   const inJournal = page.locator("#journal .entry").filter({ hasText: text });
-  await showTab(page, (await inJournal.count()) ? /^Сделано/ : /^День/);
+  await showTab(page, (await inJournal.count()) ? /^Закрыто/ : /^День/);
   return rows.first();
 }
 
 async function openCard(page, listSelector, raw) {
   if (listSelector === "#todo") await showTab(page, /^День/);
-  if (listSelector === "#journal") await showTab(page, /^Сделано/);
+  if (listSelector === "#journal") await showTab(page, /^Закрыто/);
   const card = page.locator(`${listSelector} .entry`).filter({ hasText: raw }).first();
   await expect(card).toBeVisible();
   await card.locator(".entry-title").click();
@@ -205,7 +205,7 @@ test("closing a todo moves it from «Сегодня» to «Сделано»", as
   await card.getByRole("button", { name: "Готово" }).click();
 
   await expect(page.locator("#todo")).not.toContainText(raw);
-  // «Сделано» — итог дня: закрытое кружком туду встаёт туда со временем закрытия
+  // «Закрыто» — итог дня: закрытое кружком туду встаёт туда со временем закрытия
   await expect(page.locator("#journal")).toContainText(raw);
 
   // С открытых колонок доски оно тоже ушло, но лежит в «Сделано» — там же его
@@ -1068,7 +1068,7 @@ test("кружок в карточке закрывает дело и ведёт
   await dialog.locator(".card-finish-close").click();
 
   await expect(page.locator("#todo .day-rows .entry")).toHaveCount(0);
-  // Закрытое кружком лежит в «Сделано».
+  // Закрытое кружком лежит в «Закрыто».
   await expect(page.locator("#journal")).toContainText(titles[0]);
 });
 

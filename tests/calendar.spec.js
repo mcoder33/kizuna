@@ -369,9 +369,9 @@ test("«День»: повторяющееся дело видно сегодн�
   await expect(todo.locator(".entry", { hasText: "Проверить почту" }).locator(".tag.due")).toHaveText("каждый день");
 });
 // Встреча из календаря, чей конец прошёл: в «Дне» она остаётся с пометкой
-// «прошла» (без «Записать итог»), а в «Сделано» стоит строкой с пунктирным
+// «прошла» (без «Записать итог»), а в «Закрыто» стоит строкой с пунктирным
 // кружком «прошла по календарю» — руками её не вернуть. То же для вчерашнего дня.
-test("прошедшая встреча календаря: «прошла» в «Дне» и «прошла по календарю» в «Сделано»", async ({ page, request }) => {
+test("прошедшая встреча календаря: «прошла» в «Дне» и «прошла по календарю» в «Закрыто»", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   const today = (await (await request.get("/api/day")).json()).date;
   const yesterday = shift(today, -1);
@@ -400,7 +400,7 @@ test("прошедшая встреча календаря: «прошла» в 
   await expect(past.getByRole("button", { name: "Записать итог" })).toHaveCount(0);
   await expect(todo.locator(".day-row.external", { hasText: "Ретро спринта" })).not.toHaveClass(/past/);
 
-  await page.getByRole("tab", { name: /^Сделано/ }).click();
+  await page.getByRole("tab", { name: /^Закрыто/ }).click();
   const journal = page.locator("#journal");
   const auto = journal.locator(".entry.auto-done");
   await expect(auto).toHaveCount(1);
@@ -410,7 +410,7 @@ test("прошедшая встреча календаря: «прошла» в 
   await expect(journal).not.toContainText("Ретро спринта");
   await expect(page.locator("#tab-journal b")).toHaveText("1");
 
-  // Вчера прошедшая встреча стоит в «Сделано» того дня тем же образом.
+  // Вчера прошедшая встреча стоит в «Закрыто» того дня тем же образом.
   await journal.locator('.daynav [data-step="-1"]').click();
   await expect(journal.locator(".entry.auto-done")).toContainText("Вчерашний созвон");
 });

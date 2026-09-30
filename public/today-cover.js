@@ -98,7 +98,7 @@ export function coverFor({
       brief.push(...space(taskSentence()));
       tab = "day";
     } else {
-      brief.push(`День закончился${doneCount ? `: сделано ${doneCount}` : ""}.`);
+      brief.push(`День закончился${doneCount ? `: закрыто ${doneCount}` : ""}.`);
       if (calendar) {
         if (tomorrow?.count && tomorrow.first) brief.push(` Завтра ${plural(tomorrow.count, MEETINGS)}, первая в ${hm(tomorrow.first.start)} — `, { b: tomorrow.first.title }, ".");
         else brief.push(" Завтра встреч нет.");
@@ -115,7 +115,7 @@ export function coverFor({
     brief.push(...space(taskSentence()));
     placeholder = "С чего начнёте день?";
   } else if (phase === "evening") {
-    brief.push(`Сделано ${doneCount}${calendar ? `, встреч прошло ${past}` : ""}`);
+    brief.push(`Закрыто ${doneCount}${calendar ? `, встреч прошло ${past}` : ""}`);
     if (next) brief.push(`, ещё в ${hm(next.start)} `, { b: next.title });
     brief.push(".");
     // Вечером не закрыто всё со сроком сегодня и раньше (unfinished; без него —

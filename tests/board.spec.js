@@ -23,8 +23,14 @@ const settled = (page, quiet = 400) =>
     timer = setTimeout(done, ms);
   }), quiet);
 // Вид и группировка помнятся в браузере: тест ставит их и перечитывает страницу.
-const arrange = async (page, view, groups) => {
-  await page.evaluate(([v, g]) => { localStorage.setItem("kizuna-board-view", v); localStorage.setItem("kizuna-board-groups", JSON.stringify(g)); }, [view, groups]);
+// shown — колонки-группы, которые человек завёл сам, {"day": ["week"]}: пустые группы
+// на доске сами не появляются, тесты, которым они нужны, заводят их так же, как человек.
+const arrange = async (page, view, groups, shown = null) => {
+  await page.evaluate(([v, g, s]) => {
+    localStorage.setItem("kizuna-board-view", v);
+    localStorage.setItem("kizuna-board-groups", JSON.stringify(g));
+    if (s) localStorage.setItem("kizuna-board-shown", JSON.stringify(s));
+  }, [view, groups, shown]);
   await page.reload();
   await page.locator("#board-columns > :not(.empty), #board-flat > :not(.empty)").first().waitFor({ state: "attached" });
   await settled(page);
@@ -38,6 +44,15 @@ const addColumn = async (page, name) => {
   await page.keyboard.press("Enter");
   await expect(columnByName(page, name)).toBeVisible();
 };
+// Колонка-группа: группа, которую на доске ещё нет, выбирают в «+ Колонка» в конце ряда.
+const groupGhost = (page) => page.locator(".board-column.ghost.pick");
+const groupLaneNames = (page) => page.locator("#board-columns .board-column.group .board-col-name").allTextContents();
+const addGroupColumn = async (page, label) => {
+  const ghost = groupGhost(page);
+  if ((await ghost.locator(".board-add-button").getAttribute("aria-expanded")) !== "true") await ghost.locator(".board-add-button").click();
+  await ghost.locator(".board-pick-item", { hasText: new RegExp(`^${label}$`) }).click();
+  await expect(page.locator(".board-column.group .board-col-name", { hasText: new RegExp(`^${label}$`) })).toBeVisible();
+};
 
 // Фильтр и порядок колонок помнятся в браузере. Прогон стартует с пустого фильтра
 // (tests/fixtures/e2e-auth.setup.js): в первый заход доска показывала бы только
@@ -45,17 +60,26 @@ const addColumn = async (page, name) => {
 const stored = (page, key) => page.evaluate((name) => localStorage.getItem(name), key);
 const filterToggle = (page) => page.locator("#board-filter-toggle");
 const openFilter = async (page) => { if ((await filterToggle(page).getAttribute("aria-expanded")) !== "true") await filterToggle(page).click(); };
-// Условие набирается руками, как это делает человек: «+ условие», поле, оператор, значение.
-const addCondition = async (page, field, value, op = "=") => {
-  await openFilter(page);
-  await page.locator("#board-filter .board-cond-add").click();
-  const draft = page.locator("#board-filter .board-cond:has(select.is-empty)");
-  await draft.locator('[data-part="field"]').selectOption(field);
-  if (op !== "=") await draft.locator('[data-part="op"]').selectOption(op);
-  await draft.locator('[data-part="value"]').selectOption(value);
+const condition = (page, index) => page.locator("#board-filter .board-cond").nth(index);
+// Значения условия отмечают галочками в списке под кнопкой значений; «или» — это две галочки.
+const tickValues = async (page, index, values) => {
+  const chip = condition(page, index);
+  if ((await chip.locator(".board-vals-btn").getAttribute("aria-expanded")) !== "true") await chip.locator(".board-vals-btn").click();
+  for (const value of values) await chip.locator(`.board-vals-pop input[value="${value}"]`).setChecked(true);
+  await page.keyboard.press("Escape");
 };
-// Как плашки читаются глазами: «День = сегодня».
-const conditionsOf = (page) => page.locator("#board-filter .board-cond").evaluateAll((chips) => chips.map((chip) => [...chip.querySelectorAll("select")].map((select) => select.selectedOptions[0].textContent).join(" ")));
+// Условие набирается руками, как это делает человек: «+ условие», поле, оператор, значения.
+// Новое условие встаёт в конец строки; values — одно значение или несколько («или»).
+const addCondition = async (page, field, values, op = "=") => {
+  await openFilter(page);
+  const index = await page.locator("#board-filter .board-cond").count();
+  await page.locator("#board-filter .board-cond-add").click();
+  await condition(page, index).locator('[data-part="field"]').selectOption(field);
+  if (op !== "=") await condition(page, index).locator('[data-part="op"]').selectOption(op);
+  await tickValues(page, index, [].concat(values));
+};
+// Как плашки читаются глазами: «День = сегодня или просрочено».
+const conditionsOf = (page) => page.locator("#board-filter .board-cond").evaluateAll((chips) => chips.map((chip) => [...[...chip.querySelectorAll("select")].map((select) => select.selectedOptions[0].textContent), chip.querySelector(".board-vals-btn").textContent.replace(/\s+/g, " ").trim()].join(" ")));
 const closeDeed = async (request, id) => {
   const entry = (await (await request.get(`/api/captures/${id}`)).json()).entry;
   for (const projection of entry.projections.filter((item) => item.type === "task")) await request.post(`/api/projections/${projection.id}/complete`, { data: {} });
@@ -362,7 +386,7 @@ test("вид и группировка помнятся после переза�
   await reset(request);
 });
 
-test("по дню: группы идут по порядку, бросок в другой день меняет срок, в «просрочено» не принимается", async ({ page, request }) => {
+test("по дню: на доске только непустые группы и заведённые, бросок в другой день меняет срок, в «просрочено» не принимается", async ({ page, request }) => {
   await reset(request);
   const first = await deed(request, "Дело на сегодня", { due: day(0) });
   const second = await deed(request, "Дело на завтра", { due: day(1) });
@@ -372,11 +396,16 @@ test("по дню: группы идут по порядку, бросок в д
   await page.goto("/#board");
   await arrange(page, "board", ["day"]);
   const names = () => page.locator("#board-columns .board-column.group .board-col-name").allTextContents();
-  // Фиксированный порядок; пустые дни, куда можно бросить, стоят на месте.
+  // Пустые дни сами не появляются: стоят «просрочено», «сегодня» и «завтра» — там, где есть дела.
+  await expect.poll(names).toEqual(["просрочено", "сегодня", "завтра"]);
+  // Куда бросать, человек заводит сам: «+ Колонка» в конце ряда, и каждая новая встаёт последней.
+  for (const name of ["на неделе", "позже", "без срока"]) await addGroupColumn(page, name);
   await expect.poll(names).toEqual(["просрочено", "сегодня", "завтра", "на неделе", "позже", "без срока"]);
-  // Колонки-группы: меню и «+ Колонки» нет, а заголовок тянется, как у колонок человека;
-  // «Сделано» по умолчанию слева, перед всеми.
-  await expect(page.locator(".board-column.group .board-menu, .board-column.ghost")).toHaveCount(0);
+  // У колонок-групп есть меню («Убрать колонку»), заголовок тянется, как у колонок человека;
+  // «Сделано» по умолчанию слева, перед всеми. Все шесть дней на доске — добавлять больше нечего,
+  // и «+ Колонка» не показывается.
+  await expect(page.locator(".board-column.group .board-menu")).toHaveCount(6);
+  await expect(page.locator(".board-column.ghost.pick")).toHaveCount(0);
   await expect(page.locator(".board-column.group .board-col-head[draggable=true]")).toHaveCount(6);
   await expect(page.locator("#board-columns .board-column").first()).toHaveClass(/board-done-column/);
   await expect(page.locator(".board-done-column .board-col-name")).toHaveText("Сделано");
@@ -452,7 +481,7 @@ test("два уровня «Колонка → День» рисуют влож�
   await reset(request);
 });
 
-test("по человеку: группы по алфавиту, «Без человека» последней; карточки не тянутся, колонки без меню", async ({ page, request }) => {
+test("по человеку: группы по алфавиту, «Без человека» последней; карточки не тянутся, у колонок меню «Убрать колонку»", async ({ page, request }) => {
   await reset(request);
   await deed(request, "Дело для Бориса", { people: ["Борис"] });
   await deed(request, "Дело для Ани", { people: ["Аня"] });
@@ -466,7 +495,11 @@ test("по человеку: группы по алфавиту, «Без чел
   await expect(page.locator('.board-column.group[data-group="who:Аня"] .board-card')).toHaveCount(2);
   await expect(page.locator('.board-column.group[data-group="who:Борис"] .board-card')).toHaveCount(1);
   await expect(page.locator(".board-card[draggable=true]")).toHaveCount(0);
-  await expect(page.locator(".board-column.group .board-menu, .board-column.ghost")).toHaveCount(0);
+  // У колонок-групп меню с одним пунктом, а «+» добавить дело в шапке нет. Все, кто есть в делах, и
+  // «Без человека» уже на доске — выбирать в «+ Колонка» нечего, и её нет.
+  await expect(page.locator(".board-column.group .board-menu")).toHaveCount(3);
+  await expect(page.locator(".board-column.group .board-col-plus")).toHaveCount(0);
+  await expect(groupGhost(page)).toHaveCount(0);
   // Карточки тут не тянутся, а колонки — да: заголовок любой группы двигает саму колонку.
   await expect(page.locator(".board-column.group .board-col-head[draggable=true]")).toHaveCount(3);
   // Проект и «Откуда» ведут себя так же: «Без проекта» последней, откуда — «Поле».
@@ -665,25 +698,25 @@ test("колонки тянутся при любой группировке: п
   await arrange(page, "board", ["day"]);
   const names = () => page.locator("#board-columns .board-column:not(.ghost) .board-col-name").allTextContents();
   const lane = (key) => page.locator(`.board-column.group[data-group="day:${key}"]`);
-  // Пока порядка нет — естественный, «Сделано» первая; пустая «просрочено» не показана.
-  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра", "на неделе", "позже", "без срока"]);
+  // Пока порядка нет — естественный, «Сделано» первая; пустые дни не показаны — их никто не заводил.
+  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра"]);
   expect(await stored(page, "kizuna-board-order")).toBeNull();
 
   // «завтра» — за заголовок — перед «сегодня». Колонка переехала, а срок дела остался.
   await lane("tomorrow").locator(".board-col-head").dragTo(lane("today"), { targetPosition: { x: 10, y: 60 } });
-  await expect.poll(names).toEqual(["Сделано", "завтра", "сегодня", "на неделе", "позже", "без срока"]);
+  await expect.poll(names).toEqual(["Сделано", "завтра", "сегодня"]);
   expect(await dueOf(request, tomorrow)).toBe(day(1));
-  // В браузере лежит полный порядок — и скрытая «просрочено» тоже, на своём месте.
+  // В браузере лежит полный порядок — и скрытые «просрочено», «на неделе», … тоже, на своих местах.
   expect(JSON.parse(await stored(page, "kizuna-board-order"))).toEqual({ day: ["__done", "late", "tomorrow", "today", "week", "later", "none"] });
   await page.reload();
-  await expect.poll(names).toEqual(["Сделано", "завтра", "сегодня", "на неделе", "позже", "без срока"]);
+  await expect.poll(names).toEqual(["Сделано", "завтра", "сегодня"]);
   await expect(lane("tomorrow").locator(".board-card")).toContainText("Дело на завтра");
 
   // Порядок помнится по полю первого уровня: у другого поля он свой, естественный.
   await arrange(page, "board", ["src"]);
   await expect.poll(names).toEqual(["Сделано", "Поле"]);
   await arrange(page, "board", ["day"]);
-  await expect.poll(names).toEqual(["Сделано", "завтра", "сегодня", "на неделе", "позже", "без срока"]);
+  await expect.poll(names).toEqual(["Сделано", "завтра", "сегодня"]);
   await reset(request);
 });
 
@@ -701,14 +734,14 @@ test("«Сделано» — такая же колонка: её тянут н�
   const names = () => page.locator("#board-columns .board-column:not(.ghost) .board-col-name").allTextContents();
   const done = page.locator(".board-done-column");
   const lane = (key) => page.locator(`.board-column.group[data-group="day:${key}"]`);
-  await expect.poll(names).toEqual(["Сделано", "просрочено", "сегодня", "завтра", "на неделе", "позже", "без срока"]);
+  await expect.poll(names).toEqual(["Сделано", "просрочено", "сегодня"]);
 
   // «Сделано» встала правее «просрочено»: вторая по счёту, а не прибитая к краю.
   await done.locator(".board-col-head").dragTo(lane("late"), { targetPosition: { x: 260, y: 60 } });
-  await expect.poll(names).toEqual(["просрочено", "Сделано", "сегодня", "завтра", "на неделе", "позже", "без срока"]);
+  await expect.poll(names).toEqual(["просрочено", "Сделано", "сегодня"]);
   await expect(done.locator(".board-card.closed")).toContainText("Закрытое дело");
   await page.reload();
-  await expect.poll(names).toEqual(["просрочено", "Сделано", "сегодня", "завтра", "на неделе", "позже", "без срока"]);
+  await expect.poll(names).toEqual(["просрочено", "Сделано", "сегодня"]);
   expect(JSON.parse(await stored(page, "kizuna-board-order")).day.slice(0, 3)).toEqual(["late", "__done", "today"]);
   // Она обычная и в остальном: закрывает брошенное на неё дело.
   await lane("today").locator(".board-card").filter({ hasText: "Дело на сегодня" }).locator(".board-title").dragTo(page.locator(".board-done-column"));
@@ -754,9 +787,181 @@ test("по «Колонке» колонка человека тянется и 
   await reset(request);
 });
 
+// ── колонки-группы, которые человек заводит сам ──────────────────────────────
+
+test("колонки-группы заводит человек: «+ Колонка» добавляет «на неделе», она помнится, «Убрать колонку» прячет пустую, а с делами колонка остаётся", async ({ page, request }) => {
+  await reset(request);
+  await deed(request, "Дело на сегодня", { due: day(0) });
+  await deed(request, "Дело на завтра", { due: day(1) });
+  await page.setViewportSize({ width: 3000, height: 900 });
+  await page.goto("/#board");
+  await arrange(page, "board", ["day"]);
+  const names = () => page.locator("#board-columns .board-column:not(.ghost) .board-col-name").allTextContents();
+  const lane = (key) => page.locator(`.board-column.group[data-group="day:${key}"]`);
+
+  // Пустых дней на доске нет: стоят только те, где есть дела; ничего заведённого в браузере нет.
+  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра"]);
+  expect(await stored(page, "kizuna-board-shown")).toBeNull();
+  // «+ Колонка» — в конце ряда; дни на доске есть, поэтому подсказки про пустую доску нет.
+  const ghost = groupGhost(page);
+  await expect(ghost).toBeVisible();
+  await expect(page.locator("#board-columns .board-column").last()).toHaveClass(/ghost/);
+  await expect(ghost.locator(".board-lanes-hint")).toHaveCount(0);
+  await expect(ghost.locator(".board-pick-list")).toBeHidden();
+  // Она предлагает то, чего на доске ещё нет, — не «сегодня» и не «завтра». Escape закрывает выбор, ничего не добавив.
+  await ghost.locator(".board-add-button").click();
+  await expect(ghost.locator(".board-add-button")).toHaveAttribute("aria-expanded", "true");
+  await expect(ghost.locator(".board-pick-item")).toHaveText(["просрочено", "на неделе", "позже", "без срока"]);
+  await page.keyboard.press("Escape");
+  await expect(ghost.locator(".board-pick-list")).toBeHidden();
+  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра"]);
+  // Выбрали «на неделе» — колонка появилась пустой и последней в ряду, а «+ Колонка» встала за ней.
+  await ghost.locator(".board-add-button").click();
+  await ghost.locator(".board-pick-item", { hasText: /^на неделе$/ }).click();
+  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра", "на неделе"]);
+  await expect(lane("week").locator(".board-card")).toHaveCount(0);
+  await expect(lane("week").locator(".board-col-count")).toHaveText("0");
+  await expect(page.locator("#board-columns .board-column").last()).toHaveClass(/ghost/);
+  await expect(ghost.locator(".board-pick-list")).toBeHidden();
+  expect(JSON.parse(await stored(page, "kizuna-board-shown"))).toEqual({ day: ["week"] });
+  // Предложений стало меньше: «на неделе» уже на доске. А «просрочено» — первое по порядку дней — встаёт всё равно последним.
+  await ghost.locator(".board-add-button").click();
+  await expect(ghost.locator(".board-pick-item")).toHaveText(["просрочено", "позже", "без срока"]);
+  await ghost.locator(".board-pick-item", { hasText: /^просрочено$/ }).click();
+  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра", "на неделе", "просрочено"]);
+  expect(JSON.parse(await stored(page, "kizuna-board-shown"))).toEqual({ day: ["week", "late"] });
+  // Порядок лежит рядом, в своём ключе, прежнего формата — целиком, со скрытыми «позже» и «без срока» на местах.
+  expect(JSON.parse(await stored(page, "kizuna-board-order"))).toEqual({ day: ["__done", "today", "tomorrow", "week", "late", "later", "none"] });
+  // После перезагрузки колонки на месте: они заведены, хоть и пусты.
+  await page.reload();
+  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра", "на неделе", "просрочено"]);
+
+  // «Убрать колонку» прячет пустую: она уходит и не возвращается после перезагрузки.
+  await lane("week").hover();
+  const menu = lane("week").locator(".board-menu");
+  await menu.locator("summary").click();
+  await expect(menu.locator(".board-menu-popover button")).toHaveText(["Убрать колонку"]);
+  await expect(menu.locator(".board-menu-note")).toHaveText("Вернуть колонку можно через «+ Колонка».");
+  await menu.getByRole("button", { name: "Убрать колонку" }).click();
+  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра", "просрочено"]);
+  expect(JSON.parse(await stored(page, "kizuna-board-shown"))).toEqual({ day: ["late"] });
+  await page.reload();
+  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра", "просрочено"]);
+  // Убранную можно вернуть тем же «+ Колонка».
+  await addGroupColumn(page, "на неделе");
+  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра", "просрочено", "на неделе"]);
+
+  // С делами колонка остаётся: «Убрать» её только не держит — она уйдёт, когда дела закончатся. Сказано в меню и в тосте.
+  await lane("today").hover();
+  await lane("today").locator(".board-menu summary").click();
+  await expect(lane("today").locator(".board-menu-note")).toContainText("есть дела");
+  await lane("today").getByRole("button", { name: "Убрать колонку" }).click();
+  await expect(page.locator("#toast")).toContainText("Колонка «сегодня» уйдёт, когда в ней не останется дел");
+  await expect(lane("today")).toBeVisible();
+  await expect(lane("today").locator(".board-card")).toHaveCount(1);
+  // Закрыли единственное дело — колонка ушла сама: непустая колонка держится на делах, а не на выборе.
+  await lane("today").locator(".board-done").click();
+  await expect.poll(names).toEqual(["Сделано", "завтра", "просрочено", "на неделе"]);
+  await reset(request);
+});
+
+test("пустая доска по группе говорит, что делать: «Колонок по дню пока нет — добавьте нужные через «+ Колонка»»", async ({ page, request }) => {
+  await reset(request);
+  await page.goto("/#board");
+  await arrange(page, "board", ["day"]);
+  const hint = page.locator(".board-column.ghost.pick .board-lanes-hint");
+  await expect(page.locator("#board-columns .board-column.group")).toHaveCount(0);
+  await expect(hint).toHaveText("Колонок по дню пока нет — добавьте нужные через «+ Колонка»");
+  // Так же для других полей.
+  for (const [field, by] of [["who", "человеку"], ["proj", "проекту"], ["src", "источнику"]]) {
+    await page.locator("#board-grp select").selectOption(field);
+    await expect(hint).toHaveText(`Колонок по ${by} пока нет — добавьте нужные через «+ Колонка»`);
+  }
+  // Подсказка стоит там же, где кнопка: по ней и добавляют. Завели колонку — подсказка больше не нужна.
+  await page.locator("#board-grp select").selectOption("day");
+  await addGroupColumn(page, "сегодня");
+  await expect(hint).toHaveCount(0);
+  await expect(page.locator("#board-columns .board-column.group")).toHaveCount(1);
+  // Без группировки и по «Колонке» подсказки нет: там колонки не выбирают из значений поля.
+  await page.locator("#board-grp [data-remove]").first().click();
+  await expect(page.locator(".board-lanes-hint, .board-column.ghost.pick")).toHaveCount(0);
+  await reset(request);
+});
+
+test("«+ Колонка» у человека, проекта и «Откуда» предлагает значения из карточек; заведённая колонка пуста и принимает «+ Дело для …»", async ({ page, request }) => {
+  await reset(request);
+  await deed(request, "Дело для Ани", { people: ["Аня"] });
+  await deed(request, "Дело для Бориса", { people: ["Борис"] });
+  await deed(request, "Дело без людей");
+  await closeDeed(request, await deed(request, "Закрытое дело Игоря", { people: ["Игорь"] }));
+  const hub = await deed(request, "Дело проекта Hub");
+  await request.post(`/api/captures/${hub}/corrections`, { data: { at: Date.now(), patch: { project: "Hub" } } });
+  await page.setViewportSize({ width: 3000, height: 900 });
+  await page.goto("/#board");
+  const names = () => page.locator("#board-columns .board-column:not(.ghost) .board-col-name").allTextContents();
+
+  // Человек: стоят те, у кого есть открытые дела, и «Без человека»; Игорь — только в закрытом, его колонку заводят сами.
+  await arrange(page, "board", ["who"]);
+  await expect.poll(names).toEqual(["Сделано", "Аня", "Борис", "Без человека"]);
+  const ghost = groupGhost(page);
+  await ghost.locator(".board-add-button").click();
+  await expect(ghost.locator(".board-pick-item")).toHaveText(["Игорь"]);
+  await ghost.locator(".board-pick-item").click();
+  await expect.poll(names).toEqual(["Сделано", "Аня", "Борис", "Без человека", "Игорь"]);
+  expect(JSON.parse(await stored(page, "kizuna-board-shown"))).toEqual({ who: ["Игорь"] });
+  // Всё есть на доске — «+ Колонка» не нужна и не показывается.
+  await expect(groupGhost(page)).toHaveCount(0);
+  // Заведённая колонка пуста, и в ней стоит «+ Дело для Игоря»: новое дело ложится в неё.
+  const igor = page.locator('.board-column.group[data-group="who:Игорь"]');
+  await expect(igor.locator(".board-card")).toHaveCount(0);
+  await igor.hover();
+  await igor.locator(".board-add-button").click();
+  await expect(igor.locator(".board-add-button")).toBeHidden();
+  await igor.locator(".board-add input").fill("Позвонить Игорю");
+  await page.keyboard.press("Enter");
+  await expect(igor.locator(".board-card").filter({ hasText: "Позвонить Игорю" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  // Колонка человека пережила перезагрузку и держится на делах: «Убрать» её не уберёт, пока дело в ней.
+  await page.reload();
+  await expect.poll(names).toEqual(["Сделано", "Аня", "Борис", "Без человека", "Игорь"]);
+
+  // Проект: «Hub» и «Без проекта» уже на доске, предлагать нечего.
+  await arrange(page, "board", ["proj"]);
+  await expect.poll(names).toEqual(["Сделано", "Hub", "Без проекта"]);
+  await expect(groupGhost(page)).toHaveCount(0);
+  // «Откуда»: у всех дел «Поле»; Telegram и «Заметки» — выбор.
+  await arrange(page, "board", ["src"]);
+  await expect.poll(names).toEqual(["Сделано", "Поле"]);
+  await groupGhost(page).locator(".board-add-button").click();
+  await expect(groupGhost(page).locator(".board-pick-item")).toHaveText(["Telegram", "Заметки"]);
+  await groupGhost(page).locator(".board-pick-item", { hasText: /^Telegram$/ }).click();
+  await expect.poll(names).toEqual(["Сделано", "Поле", "Telegram"]);
+  await expect(page.locator('.board-column.group[data-group="src:telegram"] .board-card')).toHaveCount(0);
+  await reset(request);
+});
+
+test("на телефоне «+ Колонка» у групп — сегмент; выбор открывается в нём, новая колонка открыта", async ({ page, request }) => {
+  await reset(request);
+  await deed(request, "Дело на сегодня для телефона", { due: day(0) });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/#board");
+  await arrange(page, "board", ["day"]);
+  const segments = page.locator("#board-segments .board-segment");
+  await expect(segments).toContainText(["Сделано", "сегодня", "+ Колонка"]);
+  await segments.last().click();
+  await expect(page.locator("#board-columns .board-column.ghost.pick.is-active")).toBeVisible();
+  await groupGhost(page).locator(".board-add-button").click();
+  await groupGhost(page).locator(".board-pick-item", { hasText: /^завтра$/ }).click();
+  // Новая колонка — та, что открыта; сегмент её называет; страница не шире экрана.
+  await expect(page.locator("#board-columns .board-column.is-active .board-col-name")).toHaveText("завтра");
+  await expect(segments).toContainText(["Сделано", "сегодня", "завтра", "+ Колонка"]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await reset(request);
+});
+
 // ── наборный фильтр ──────────────────────────────────────────────────────────
 
-test("первый заход: фильтр «сегодня» — «День = сегодня» и «просрочено»; «Сбросить» показывает всё и помнится, «Сегодня» возвращает умолчание", async ({ page, request }) => {
+test("первый заход: фильтр «сегодня» — одна плашка «День = сегодня или просрочено»; «Сбросить» показывает всё и помнится, «Сегодня» возвращает умолчание", async ({ page, request }) => {
   await reset(request);
   await deed(request, "Дело на сегодня для фильтра", { due: day(0) });
   await deed(request, "Просроченное дело для фильтра", { due: day(-2) });
@@ -769,12 +974,14 @@ test("первый заход: фильтр «сегодня» — «День = 
   await expect(page.locator("#board-columns .board-card").first()).toBeVisible();
   await settled(page);
 
-  // Кнопка подсвечена и считает условия; строка открыта, обе плашки на виду.
-  await expect(filterToggle(page)).toHaveText("Фильтр · 2");
+  // Кнопка подсвечена и считает плашки; строка открыта, плашка одна: «или» стоит внутри неё,
+  // «и» между плашками не нужно.
+  await expect(filterToggle(page)).toHaveText("Фильтр · 1");
   await expect(filterToggle(page)).toHaveClass(/is-on/);
   await expect(page.locator("#board-filter")).toBeVisible();
-  expect(await conditionsOf(page)).toEqual(["День = сегодня", "День = просрочено"]);
-  await expect(page.locator("#board-filter .board-or")).toHaveText("или");
+  expect(await conditionsOf(page)).toEqual(["День = сегодня или просрочено"]);
+  await expect(page.locator("#board-filter .board-vals-btn .board-or")).toHaveText("или");
+  await expect(page.locator("#board-filter .board-and")).toHaveCount(0);
   await expect(page.locator("#board-filter .board-filter-today")).toHaveAttribute("aria-pressed", "true");
   // Дела на завтра и на потом спрятаны, сегодняшнее и просроченное — на месте.
   await expect.poll(() => openTitles(page)).toEqual(["Просроченное дело для фильтра", "Дело на сегодня для фильтра"]);
@@ -797,15 +1004,19 @@ test("первый заход: фильтр «сегодня» — «День = 
   await expect(page.locator("#board-filter .board-cond")).toHaveCount(0);
   await expect(page.locator("#board-filter .board-filter-today")).toHaveAttribute("aria-pressed", "false");
   await page.locator("#board-filter .board-filter-today").click();
-  await expect(filterToggle(page)).toHaveText("Фильтр · 2");
-  expect(await conditionsOf(page)).toEqual(["День = сегодня", "День = просрочено"]);
+  await expect(filterToggle(page)).toHaveText("Фильтр · 1");
+  expect(await conditionsOf(page)).toEqual(["День = сегодня или просрочено"]);
   await expect.poll(() => openTitles(page)).toEqual(["Просроченное дело для фильтра", "Дело на сегодня для фильтра"]);
+  // В браузер умолчание попадает новым форматом: одно условие, два значения.
+  expect(JSON.parse(await stored(page, "kizuna-board-filter"))).toEqual([{ field: "day", op: "=", values: ["today", "late"] }]);
   await page.reload();
-  await expect(filterToggle(page)).toHaveText("Фильтр · 2");
+  await expect(filterToggle(page)).toHaveText("Фильтр · 1");
   await expect.poll(() => openTitles(page)).toHaveLength(2);
 
-  // Вторую плашку можно убрать: остаётся «День = сегодня».
-  await page.locator('#board-filter [data-remove="1"]').click();
+  // Второе значение можно снять в списке: остаётся «День = сегодня».
+  await condition(page, 0).locator(".board-vals-btn").click();
+  await condition(page, 0).locator('.board-vals-pop input[value="late"]').uncheck();
+  await page.keyboard.press("Escape");
   expect(await conditionsOf(page)).toEqual(["День = сегодня"]);
   await expect.poll(() => openTitles(page)).toEqual(["Дело на сегодня для фильтра"]);
   await expect(page.locator("#board-filter .board-filter-today")).toHaveAttribute("aria-pressed", "false");
@@ -846,7 +1057,7 @@ test("фильтр «Человек = Аня» оставляет её дела 
   await expect(page.locator("#board-flat tr.board-row .board-title")).toHaveText(["Дело Ани для фильтра", "Общее дело для фильтра", "Закрытое дело Ани"]);
 
   // Выбор лежит в браузере и переживает перезагрузку — вместе с видом.
-  expect(JSON.parse(await stored(page, "kizuna-board-filter"))).toEqual([{ field: "who", op: "=", value: "Аня" }]);
+  expect(JSON.parse(await stored(page, "kizuna-board-filter"))).toEqual([{ field: "who", op: "=", values: ["Аня"] }]);
   await page.reload();
   await expect(filterToggle(page)).toHaveText("Фильтр · 1");
   await expect(page.locator("#board-filter")).toBeVisible();
@@ -888,7 +1099,11 @@ test("«Статус = открыто» прячет «Сделано» — ко
   await expect(page.locator("#board-flat tr.board-row.closed")).toHaveCount(0);
 
   // «Статус = сделано»: остаются только закрытые; колонки человека при группировке по «Колонке» стоят пустые — в них бросают.
-  await page.locator('#board-filter [data-part="value"]').selectOption("done");
+  await condition(page, 0).locator(".board-vals-btn").click();
+  await condition(page, 0).locator('.board-vals-pop input[value="done"]').check();
+  await condition(page, 0).locator('.board-vals-pop input[value="open"]').uncheck();
+  await page.keyboard.press("Escape");
+  expect(await conditionsOf(page)).toEqual(["Статус = сделано"]);
   await expect(page.locator("#board-flat tr.board-row .board-title")).toHaveText(["Закрытое дело статуса"]);
   await expect(page.locator("#board-flat tr.sec .g-sec")).toHaveText(["Дела · 0", "Сделано · 1"]);
   await page.locator('#board-view [data-view="board"]').click();
@@ -903,7 +1118,7 @@ test("«Статус = открыто» прячет «Сделано» — ко
   await reset(request);
 });
 
-test("условия: «=» на одном поле — «или», разные поля — «и», «≠» — исключает; у закрытого дела «День» — день закрытия", async ({ page, request }) => {
+test("условия: значения одной плашки — «или», плашки между собой — «и», «≠» — «ни одно из»; у закрытого дела «День» — день закрытия", async ({ page, request }) => {
   await reset(request);
   await deed(request, "Сегодняшнее дело Ани", { due: day(0), people: ["Аня"] });
   await deed(request, "Завтрашнее дело Ани", { due: day(1), people: ["Аня"] });
@@ -917,37 +1132,142 @@ test("условия: «=» на одном поле — «или», разны�
   const titles = () => openTitles(page).then((list) => list.sort());
 
   await addCondition(page, "day", "today");
+  expect(await conditionsOf(page)).toEqual(["День = сегодня"]);
   await expect.poll(titles).toEqual(["Сегодняшнее дело Ани", "Сегодняшнее дело Бориса"]);
   await expect.poll(() => doneTitles(page)).toEqual(["Закрытое сегодня досрочно"]);
-  // Второе «=» на том же поле — «или»: сегодняшнее и завтрашнее; между плашками стоит «или».
-  await addCondition(page, "day", "tomorrow");
-  expect(await conditionsOf(page)).toEqual(["День = сегодня", "День = завтра"]);
-  await expect(page.locator("#board-filter .board-or")).toHaveText(["или"]);
+  // Вторая галочка в той же плашке — «или»: сегодняшнее и завтрашнее. Плашка читается «сегодня или завтра»,
+  // а тихое «и» между плашками не нужно: плашка одна.
+  await tickValues(page, 0, ["tomorrow"]);
+  expect(await conditionsOf(page)).toEqual(["День = сегодня или завтра"]);
+  await expect(page.locator("#board-filter .board-vals-btn .board-or")).toHaveText(["или"]);
+  await expect(page.locator("#board-filter .board-and")).toHaveCount(0);
+  await expect(filterToggle(page)).toHaveText("Фильтр · 1");
   await expect.poll(titles).toEqual(["Завтрашнее дело Ани", "Сегодняшнее дело Ани", "Сегодняшнее дело Бориса"]);
-  // Другое поле — «и»: из этих — только дела Ани. Плашки одного поля стоят рядом.
+  // Другое поле — другая плашка, и между плашками стоит тихое «и»: из этих — только дела Ани.
   await addCondition(page, "who", "Аня");
-  expect(await conditionsOf(page)).toEqual(["День = сегодня", "День = завтра", "Человек = Аня"]);
+  expect(await conditionsOf(page)).toEqual(["День = сегодня или завтра", "Человек = Аня"]);
+  await expect(page.locator("#board-filter .board-and")).toHaveText(["и"]);
   await expect(page.locator("#board-filter .board-or")).toHaveCount(1);
   await expect.poll(titles).toEqual(["Завтрашнее дело Ани", "Сегодняшнее дело Ани"]);
   await expect.poll(() => doneTitles(page)).toEqual([]);
-  await expect(filterToggle(page)).toHaveText("Фильтр · 3");
+  await expect(filterToggle(page)).toHaveText("Фильтр · 2");
 
-  // «≠» исключает: все дни, кроме завтрашнего и далёкого, — для Бориса это сегодня и просрочено.
+  // Поле с тем же оператором второй плашкой не заводится: «День» в новой плашке — значения идут в
+  // стоящую, и её список открыт. Ничего не пропадает молча, а «или» остаётся внутри одной плашки.
+  await page.locator("#board-filter .board-cond-add").click();
+  await condition(page, 2).locator('[data-part="field"]').selectOption("day");
+  await expect(page.locator("#board-filter .board-cond")).toHaveCount(2);
+  await expect(condition(page, 0).locator(".board-vals-pop")).toBeVisible();
+  await tickValues(page, 0, ["late"]);
+  expect(await conditionsOf(page)).toEqual(["День = сегодня или завтра или просрочено", "Человек = Аня"]);
+
+  // «≠» — «ни одно из»: без Ани остаются дело Бориса и дело без человека; добавили Бориса — только без человека.
   await page.locator("#board-filter .board-filter-clear").click();
-  await addCondition(page, "who", "Борис");
-  await addCondition(page, "day", "tomorrow", "!=");
-  expect(await conditionsOf(page)).toEqual(["Человек = Борис", "День ≠ завтра"]);
-  await expect.poll(titles).toEqual(["Просроченное дело Бориса", "Сегодняшнее дело Бориса"]);
-  // «Пусто» у человека — дела, где никто не назван; «Аня» или «пусто» вместе — «или».
+  await addCondition(page, "who", "Аня", "!=");
+  expect(await conditionsOf(page)).toEqual(["Человек ≠ Аня"]);
+  await expect.poll(titles).toEqual(["Дело на потом", "Просроченное дело Бориса", "Сегодняшнее дело Бориса"]);
+  await tickValues(page, 0, ["Борис"]);
+  expect(await conditionsOf(page)).toEqual(["Человек ≠ Аня или Борис"]);
+  await expect.poll(titles).toEqual(["Дело на потом"]);
+  await condition(page, 0).locator(".board-vals-btn").click();
+  await expect(condition(page, 0).locator(".board-vals-cap")).toHaveText("Ни одно из отмеченных");
+  await page.keyboard.press("Escape");
+  // «Пусто» у человека — дела, где никто не назван; «пусто или Аня» — одна плашка с двумя значениями.
   await page.locator("#board-filter .board-filter-clear").click();
   await addCondition(page, "who", "__none");
   await expect.poll(titles).toEqual(["Дело на потом"]);
-  await addCondition(page, "who", "Аня");
+  await tickValues(page, 0, ["Аня"]);
+  expect(await conditionsOf(page)).toEqual(["Человек = пусто или Аня"]);
+  await expect(condition(page, 0).locator(".board-vals-btn .board-or")).toHaveCount(1);
   await expect.poll(titles).toEqual(["Дело на потом", "Завтрашнее дело Ани", "Сегодняшнее дело Ани"]);
+  // Выбор лежит в браузере новым форматом — значения списком, в том порядке, как выбраны.
+  expect(JSON.parse(await stored(page, "kizuna-board-filter"))).toEqual([{ field: "who", op: "=", values: ["__none", "Аня"] }]);
   await reset(request);
 });
 
-test("при фильтре пустые группы-колонки скрыты, а колонки человека остаются: в них можно бросать", async ({ page, request }) => {
+test("список значений плашки управляется с клавиатуры: Enter открывает, пробел отмечает, Escape, Tab и щелчок мимо закрывают", async ({ page, request }) => {
+  await reset(request);
+  await deed(request, "Сегодняшнее дело клавиатуры", { due: day(0) });
+  await deed(request, "Просроченное дело клавиатуры", { due: day(-1) });
+  await page.goto("/#board");
+  await arrange(page, "board", ["col"]);
+  await addCondition(page, "day", "today");
+  const chip = condition(page, 0);
+  const button = chip.locator(".board-vals-btn");
+  const pop = chip.locator(".board-vals-pop");
+  await expect(button).toHaveAttribute("aria-expanded", "false");
+  await expect(pop).toBeHidden();
+  // Enter на кнопке открывает список, Tab идёт в него: первая галочка — «просрочено».
+  await button.focus();
+  await page.keyboard.press("Enter");
+  await expect(button).toHaveAttribute("aria-expanded", "true");
+  await expect(pop).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(chip.locator('.board-vals-pop input[value="late"]')).toBeFocused();
+  // Пробел отмечает: плашка читается новым значением, дело подтянулось, список открыт, фокус на той же галочке.
+  await page.keyboard.press("Space");
+  expect(await conditionsOf(page)).toEqual(["День = сегодня или просрочено"]);
+  await expect.poll(() => openTitles(page)).toHaveLength(2);
+  await expect(chip.locator('.board-vals-pop input[value="late"]')).toBeFocused();
+  await expect(pop).toBeVisible();
+  // Escape закрывает список и возвращает фокус на кнопку.
+  await page.keyboard.press("Escape");
+  await expect(pop).toBeHidden();
+  await expect(button).toBeFocused();
+  // Shift+Tab уводит фокус из плашки — и список закрывается вместе с уходом.
+  await page.keyboard.press("Enter");
+  await expect(pop).toBeVisible();
+  await page.keyboard.press("Shift+Tab");
+  await expect(pop).toBeHidden();
+  // Щелчок мимо закрывает тоже; повторный щелчок по кнопке закрывает и открывает.
+  await button.click();
+  await expect(pop).toBeVisible();
+  await page.locator("#board .page-heading h2").click();
+  await expect(pop).toBeHidden();
+  await button.click();
+  await expect(pop).toBeVisible();
+  await button.click();
+  await expect(pop).toBeHidden();
+  // Список открыт только у одной плашки за раз.
+  await addCondition(page, "who", "__none");
+  await condition(page, 0).locator(".board-vals-btn").click();
+  await condition(page, 1).locator(".board-vals-btn").click();
+  await expect(condition(page, 0).locator(".board-vals-pop")).toBeHidden();
+  await expect(condition(page, 1).locator(".board-vals-pop")).toBeVisible();
+  await reset(request);
+});
+
+test("фильтр из прежних версий читается: два «День =» — одна плашка «сегодня или просрочено», два «≠» — «ни одно из»", async ({ page, request }) => {
+  await reset(request);
+  await deed(request, "Сегодняшнее дело прежнего фильтра", { due: day(0) });
+  await deed(request, "Просроченное дело прежнего фильтра", { due: day(-2) });
+  await deed(request, "Дело на завтра прежнего фильтра", { due: day(1) });
+  await page.goto("/#board");
+  // Так фильтр лежал в браузере раньше: по условию на значение.
+  await page.evaluate(() => localStorage.setItem("kizuna-board-filter", JSON.stringify([
+    { field: "day", op: "=", value: "today" },
+    { field: "day", op: "=", value: "late" },
+  ])));
+  await page.reload();
+  await expect(filterToggle(page)).toHaveText("Фильтр · 1");
+  expect(await conditionsOf(page)).toEqual(["День = сегодня или просрочено"]);
+  await expect.poll(() => openTitles(page)).toHaveLength(2);
+  // Первое же изменение кладёт фильтр в браузер новым форматом.
+  await tickValues(page, 0, ["tomorrow"]);
+  await expect.poll(() => openTitles(page)).toHaveLength(3);
+  expect(JSON.parse(await stored(page, "kizuna-board-filter"))).toEqual([{ field: "day", op: "=", values: ["today", "late", "tomorrow"] }]);
+
+  await page.evaluate(() => localStorage.setItem("kizuna-board-filter", JSON.stringify([
+    { field: "day", op: "!=", value: "late" },
+    { field: "day", op: "!=", value: "tomorrow" },
+  ])));
+  await page.reload();
+  expect(await conditionsOf(page)).toEqual(["День ≠ просрочено или завтра"]);
+  await expect.poll(() => openTitles(page)).toEqual(["Сегодняшнее дело прежнего фильтра"]);
+  await reset(request);
+});
+
+test("пустые группы на доске не появляются сами — ни без фильтра, ни с ним; колонки человека остаются, заведённые группы тоже", async ({ page, request }) => {
   await reset(request);
   await deed(request, "Сегодняшнее дело группы", { due: day(0) });
   await deed(request, "Завтрашнее дело группы", { due: day(1) });
@@ -956,10 +1276,14 @@ test("при фильтре пустые группы-колонки скрыт�
   await page.goto("/#board");
   await arrange(page, "board", ["day"]);
   const names = () => page.locator("#board-columns .board-column:not(.ghost) .board-col-name").allTextContents();
-  // Без фильтра пустые дни, куда можно бросить, на месте.
-  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра", "на неделе", "позже", "без срока"]);
+  // Без фильтра стоят только дни, где есть дела, — остальные человек заводит сам.
+  await expect.poll(names).toEqual(["Сделано", "сегодня", "завтра"]);
   await addCondition(page, "day", "today");
   await expect.poll(names).toEqual(["Сделано", "сегодня"]);
+  // Заведённая колонка остаётся и под фильтром, хотя дел в ней сейчас нет: она своя, а не автоматическая.
+  await addGroupColumn(page, "на неделе");
+  await expect.poll(names).toEqual(["Сделано", "сегодня", "на неделе"]);
+  await expect(page.locator('.board-column.group[data-group="day:week"] .board-card')).toHaveCount(0);
   // Список по человеку с тем же фильтром: пустых групп нет, остались те, где есть дело.
   await arrange(page, "board", ["who"]);
   await expect.poll(names).toEqual(["Сделано", "Без человека"]);
@@ -975,21 +1299,21 @@ test("плашка условия: значение, которого больш
   await deed(request, "Дело для испорченного фильтра");
   await page.goto("/#board");
   // Человека, которого нет среди дел, условие не подменяет молча: плашка на месте, дел под неё нет.
-  await page.evaluate(() => localStorage.setItem("kizuna-board-filter", JSON.stringify([{ field: "who", op: "=", value: "Ушедший" }, { field: "nope", op: "=", value: "x" }])));
+  await page.evaluate(() => localStorage.setItem("kizuna-board-filter", JSON.stringify([{ field: "who", op: "=", values: ["Ушедший", "Тоже ушёл"] }, { field: "nope", op: "=", values: ["x"] }])));
   await page.reload();
   await expect(filterToggle(page)).toHaveText("Фильтр · 1");
-  expect(await conditionsOf(page)).toEqual(["Человек = Ушедший"]);
+  expect(await conditionsOf(page)).toEqual(["Человек = Ушедший или Тоже ушёл"]);
   await expect.poll(() => openTitles(page)).toEqual([]);
   // Испорченное значение не ломает доску: как в первый заход, «сегодня».
   await page.evaluate(() => localStorage.setItem("kizuna-board-filter", "{oops"));
   await page.reload();
-  await expect(filterToggle(page)).toHaveText("Фильтр · 2");
-  expect(await conditionsOf(page)).toEqual(["День = сегодня", "День = просрочено"]);
+  await expect(filterToggle(page)).toHaveText("Фильтр · 1");
+  expect(await conditionsOf(page)).toEqual(["День = сегодня или просрочено"]);
   await expect.poll(() => openTitles(page)).toEqual(["Дело для испорченного фильтра"]);
-  // Черновик — «+ условие» без значения — ничего не отбирает и в браузер не уходит.
+  // Черновик — «+ условие» без значений — ничего не отбирает и в браузер не уходит.
   await page.locator("#board-filter .board-filter-clear").click();
   await page.locator("#board-filter .board-cond-add").click();
-  await expect(page.locator("#board-filter .board-cond select.is-empty")).toHaveCount(1);
+  await expect(page.locator("#board-filter .board-cond .board-vals-btn.is-empty")).toHaveCount(1);
   await expect(filterToggle(page)).toHaveText("Фильтр");
   await expect.poll(() => openTitles(page)).toEqual(["Дело для испорченного фильтра"]);
   expect(await stored(page, "kizuna-board-filter")).toBe("[]");
@@ -1053,8 +1377,9 @@ test("приглашение в группе: по дню — срок груп�
     await page.keyboard.press("Escape");
   };
 
-  // По дню: слова у каждой группы свои, а срок у созданного дела — срок группы.
-  await arrange(page, "board", ["day"]);
+  // По дню: слова у каждой группы свои, а срок у созданного дела — срок группы. Пустые дни —
+  // «завтра», «на неделе», «позже», «без срока» — человек завёл сам.
+  await arrange(page, "board", ["day"], { day: ["tomorrow", "week", "later", "none"] });
   const dayLane = (key) => page.locator(`.board-column.group[data-group="day:${key}"]`);
   await expect(dayLane("late").locator(".board-add-button")).toHaveCount(0);
   await expect(dayLane("none").locator(".board-add-button")).toHaveCount(0);
@@ -1093,8 +1418,8 @@ test("приглашение в группе: по дню — срок груп�
   const projects = async (raw) => (await (await request.get(`/api/captures/${await idByRaw(request, raw)}`)).json()).entry.interpretation.classification.entities.projects;
   expect(await projects("Собрать релиз")).toEqual(["Hub"]);
 
-  // «Откуда»: срок и источник так не назначить — приглашения нет.
+  // «Откуда»: срок и источник так не назначить — приглашения нет (а «+ Колонка» в конце ряда — другая кнопка).
   await arrange(page, "board", ["src"]);
-  await expect(page.locator(".board-column .board-add-button")).toHaveCount(0);
+  await expect(page.locator(".board-column:not(.ghost) .board-add-button")).toHaveCount(0);
   await reset(request);
 });

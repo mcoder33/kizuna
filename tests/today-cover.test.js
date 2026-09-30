@@ -47,12 +47,12 @@ test('утро здоровается, спрашивает, с чего нач�
 
 test('вечер подводит итог и спрашивает, чем закончился день', () => {
   const cover = coverFor({ phase: 'evening', minutes: 1110, meetings, tasks, doneCount: 4, calendar: true, tomorrow: { count: 3, first: { start: 600, title: 'Стендап Hub' } } });
-  assert.equal(text(cover.brief), 'Сделано 4, встреч прошло 5. Не закрыто 3 дела со сроком — перенести на завтра? Завтра первая встреча в 10:00.');
+  assert.equal(text(cover.brief), 'Закрыто 4, встреч прошло 5. Не закрыто 3 дела со сроком — перенести на завтра? Завтра первая встреча в 10:00.');
   // Без просроченного, но с открытым делом без срока вечер не говорит «всё закрыто».
   const open = coverFor({ phase: 'evening', minutes: 1110, meetings: [], tasks: { late: 0, open: 1 }, doneCount: 1, calendar: false });
-  assert.equal(text(open.brief), 'Сделано 1. Открыто 1 дело без срока.');
+  assert.equal(text(open.brief), 'Закрыто 1. Открыто 1 дело без срока.');
   const clear = coverFor({ phase: 'evening', minutes: 1110, meetings: [], tasks: { late: 0, open: 0 }, doneCount: 2, calendar: false });
-  assert.equal(text(clear.brief), 'Сделано 2. Все дела закрыты.');
+  assert.equal(text(clear.brief), 'Закрыто 2. Все дела закрыты.');
   assert.equal(cover.placeholder, 'Чем закончился день?');
   assert.equal(cover.tab, 'journal');
 });
@@ -62,7 +62,7 @@ test('вечером «N дела» и «перенести на завтра?»
   const buttons = cover.brief.filter(part => part.btn).map(part => part.btn);
   assert.deepEqual(buttons, [{ text: '3 дела', act: 'show' }, { text: 'перенести на завтра?', act: 'postpone' }]);
   // Слова вокруг кнопок остаются обычным текстом: фраза читается целиком.
-  assert.equal(text(cover.brief), 'Сделано 4, встреч прошло 5. Не закрыто 3 дела со сроком — перенести на завтра?');
+  assert.equal(text(cover.brief), 'Закрыто 4, встреч прошло 5. Не закрыто 3 дела со сроком — перенести на завтра?');
   // Считается то, что переносят: открытые дела со сроком сегодня и раньше, а не только просроченные.
   const today = coverFor({ phase: 'evening', minutes: 1110, meetings: [], tasks: { late: 1, unfinished: 4, open: 0 }, doneCount: 0, calendar: false });
   assert.match(text(today.brief), /Не закрыто 4 дела со сроком — перенести на завтра\?$/);
@@ -70,7 +70,7 @@ test('вечером «N дела» и «перенести на завтра?»
   // Дел нет — нет и кнопок: вечерняя фраза не предлагает то, что нечем сделать.
   const none = coverFor({ phase: 'evening', minutes: 1110, meetings: [], tasks: { late: 0, unfinished: 0, open: 2 }, doneCount: 1, calendar: false });
   assert.equal(none.brief.some(part => part.btn), false);
-  assert.equal(text(none.brief), 'Сделано 1. Открыто 2 дела без срока.');
+  assert.equal(text(none.brief), 'Закрыто 1. Открыто 2 дела без срока.');
   // Днём и утром бриф кнопок не несёт: перенос на завтра предлагает только вечер.
   for (const phase of ['morning', 'day', 'night', 'weekend'])
     assert.equal(coverFor({ phase, minutes: 822, meetings, tasks: { ...tasks, unfinished: 3 }, doneCount: 1, calendar: true }).brief.some(part => part.btn), false, phase);
@@ -78,7 +78,7 @@ test('вечером «N дела» и «перенести на завтра?»
 
 test('ночью страница говорит про завтра и просит записать и отпустить', () => {
   const cover = coverFor({ phase: 'night', minutes: 1380, meetings, tasks, doneCount: 4, calendar: true, tomorrow: { count: 3, first: { start: 600, title: 'Стендап Hub' } } });
-  assert.equal(text(cover.brief), 'День закончился: сделано 4. Завтра 3 встречи, первая в 10:00 — Стендап Hub.');
+  assert.equal(text(cover.brief), 'День закончился: закрыто 4. Завтра 3 встречи, первая в 10:00 — Стендап Hub.');
   assert.equal(cover.placeholder, 'Запишите и отпустите');
   assert.equal(cover.tab, 'journal');
   const early = coverFor({ phase: 'night', minutes: 420, meetings, tasks, calendar: true });
@@ -102,7 +102,7 @@ test('даты подписываются по-русски и не завися
   assert.equal(isWeekend('2026-09-14'), false);
 });
 
-test('обложка открывает только «День» или «Сделано»: ящика «Заметки» нет', () => {
+test('обложка открывает только «День» или «Закрыто»: ящика «Заметки» нет', () => {
   for (const phase of ['weekend', 'night', 'morning', 'day', 'evening'])
     for (const minutes of [420, 540, 822, 1110, 1380])
       for (const calendar of [true, false])

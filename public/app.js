@@ -7,7 +7,7 @@ import { attachFormatToolbar } from "./format-toolbar.js";
 import { openNotes, refreshNotes } from "./notes.js";
 import { mountGuide } from "./guide.js";
 import { phaseOf, coverFor, plural, hm, duration, minutesOf, longDate, shortDate, isWeekend, MEETINGS, DEALS, PHASE_NAMES } from "./today-cover.js";
-import { FILTER_FIELDS, FILTER_STATUSES, FILTER_NONE, DONE_LANE, defaultFilter, readFilter, tidyFilter, activeConditions, sameFilter, matchesFilter, statusAllowsDone, readOrder, orderKeys, moveKey } from "./board-model.js";
+import { FILTER_FIELDS, FILTER_STATUSES, FILTER_NONE, DONE_LANE, defaultFilter, readFilter, mergeConditions, activeConditions, toggleValue, sameFilter, matchesFilter, statusAllowsDone, readOrder, orderKeys, moveKey, placeLast, readShown } from "./board-model.js";
 
 const $ = (selector) => document.querySelector(selector);
 const typeNames = {
@@ -592,7 +592,7 @@ function sinceLabel(date) {
 }
 // Строка дела: кружок, название и справа тихие чипы — час или «со вчера»,
 // люди, круг, кому передано. Типа, проекта и тегов у неё нет: всё, что
-// записано, — дело. doneAt — минуты закрытия для строки «Сделано».
+// записано, — дело. doneAt — минуты закрытия для строки «Закрыто».
 function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt = null, takeToday = false } = {}) {
   const c = entry.interpretation.classification,
     projections = completableProjections(entry),
@@ -640,7 +640,7 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
     const review = reviewFromEntry(entry);
     cardOccurrence = c.entities.schedule?.repeat && on && scheduledOn(entry, on) ? on : null;
     const list = card.closest("#todo, #journal");
-    pendingCardList = list ? { label: list.id === "journal" ? "Сделано" : "День", items: rowsAsList([...list.querySelectorAll(".entry[data-capture-id]")]), id: entry.id, occurrence: card.dataset.occurrence || null } : null;
+    pendingCardList = list ? { label: list.id === "journal" ? "Закрыто" : "День", items: rowsAsList([...list.querySelectorAll(".entry[data-capture-id]")]), id: entry.id, occurrence: card.dataset.occurrence || null } : null;
     // Запись из круга открывается перечитанной: обсуждение и исполнитель
     // меняются у другого человека, и показывать вчерашний разговор нельзя.
     if (entry.foreign || circleOf(entry)) { openSharedCard(entry.id); return; }
@@ -681,7 +681,7 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
 // ── «Сегодня»: обложка по часам, полоса дней, два ящика ──────────────────────
 // Страница знает, который час: дата с фазой суток, бриф из двух-трёх фраз и
 // вопрос в поле меняются утром, днём, вечером и ночью. Под полем — два ящика
-// с вкладками и своей полосой дней: «Сделано» (закрытое кружком и прошедшие
+// с вкладками и своей полосой дней: «Закрыто» (закрытое кружком и прошедшие
 // встречи) и «День», где дела лежат вместе с календарём. Заметок здесь нет:
 // любая запись — туду, а старые заметки видны в «Обзоре» и в поиске.
 const TODAY_ZONE = "Europe/Samara";
@@ -694,14 +694,14 @@ const roomsRefresh = { running: false, again: false, edits: 0 };
 function kcEdited() { roomsRefresh.edits += 1; }
 const todayState = {
   view: 0,            // смещение дня, показанного в «Дне», от сегодняшнего
-  journalView: 0,     // то же для «Сделано»: у ящиков свои дни
+  journalView: 0,     // то же для «Закрыто»: у ящиков свои дни
   tab: null,          // открытый ящик: "journal" | "day" | null
   manual: false,      // ящик выбран рукой — фаза его не трогает
   phase: null,
   cover: null,
   calendar: null,     // /api/calendar на сегодня и завтра
   entries: [],
-  done: [],     // строки «Сделано» из /api/done на сегодня
+  done: [],     // строки «Закрыто» из /api/done на сегодня
   doneStale: true,
   todo: [],
   // Общее: полоса «к вам», взятые чужие дела, круги и метки для строк.
@@ -833,7 +833,7 @@ async function skipOccurrence(target, date, { announce = true } = {}) {
   } catch (error) { toast(error.message); }
 }
 // Кружок у повтора: экземпляр закрывается одним запросом. Сервер пишет событие
-// «экземпляр закрыт» (оно попадает в «Сделано» на «Сегодня» и на страницу «Сделано») и убирает день из
+// «экземпляр закрыт» (оно попадает в «Закрыто» на «Сегодня» и на страницу «Сделано») и убирает день из
 // серии, остальные повторы живут дальше. «Вернуть» снимает событие и возвращает день.
 async function doneOccurrence(target, date, { announce = true } = {}) {
   let { id, projectionId = null } = target;
@@ -1219,9 +1219,12 @@ function paintTabs(date, journalDate) {
   const today = date === currentDayDate, journalToday = journalDate === currentDayDate;
   const doneList = doneRows(journalDate);
   const doneCount = doneList ? String(doneList.length) : "…";
+  // «День · Закрыто»: день слева, закрытое справа. Внутри ящик по-прежнему journal
+  // (#tab-journal, #journal, journalView) — называется он «Закрыто», а «Сделано» —
+  // пункт шапки и страница недели.
   const tabs = [
-    ["journal", journalToday ? "Сделано" : `Сделано ${shortDate(journalDate)}`, node("b", doneCount)],
     ["day", today ? "День" : `День ${shortDate(date)}`, dayCountNode(date)],
+    ["journal", journalToday ? "Закрыто" : `Закрыто ${shortDate(journalDate)}`, node("b", doneCount)],
   ];
   for (const [key, label, count] of tabs) {
     const button = node("button", undefined, "drawer-tab");
@@ -1255,7 +1258,7 @@ function eventFinish(item) {
   return end ?? (start == null ? null : start + (todayState.calendar?.defaults?.meetingMinutes || 30));
 }
 // Встреча из календаря, которая уже прошла: в «Дне» она остаётся с пометкой
-// «прошла», а в «Сделано» появляется сама. Событие на весь день, занятость и
+// «прошла», а в «Закрыто» появляется сама. Событие на весь день, занятость и
 // отказ встречами не считаются.
 function eventEnded(item, minutes, date = currentDayDate) {
   if (item.allDay || !item.time || busyOnly(item) || item.me?.status === "declined") return false;
@@ -1632,7 +1635,7 @@ function paintOtherDayList(container, date, data) {
     container.append(rows);
   }
 }
-// «Сделано» на «Сегодня» — то же, что вечером назвали бы итогом дня: туду, закрытые
+// «Закрыто» на «Сегодня» — то же, что вечером назвали бы итогом дня: туду, закрытые
 // кружком (кружок возвращает в работу), и встречи из календаря, чей конец
 // прошёл (пунктирный кружок: закрылись сами, руками их не вернуть). Сегодня —
 // из /api/done и календаря; другой день — из отчёта «Обзора» и календаря того
@@ -1650,7 +1653,7 @@ function doneRows(date = currentDayDate) {
     if (eventEnded(item, minutes, date)) rows.push({ item, at: eventFinish(item) });
   return rows.sort((a, b) => b.at - a.at);
 }
-// Строка «Сделано» из /api/done: зелёный кружок «Вернуть в работу» (у
+// Строка «Закрыто» из /api/done: зелёный кружок «Вернуть в работу» (у
 // экземпляра повтора он снимает только этот день), название и час закрытия.
 // Старая запись без дела внутри возвращать нечем — у неё немой кружок.
 function doneItemRow(item) {
@@ -1780,7 +1783,7 @@ async function load() {
     request("/api/day"),
     request("/api/entries?limit=100"),
     onToday ? request(`/api/calendar?from=${todayGuess}&to=${shiftDate(todayGuess, 1)}`).catch(() => null) : Promise.resolve(undefined),
-    // «Сделано» рисуется прямо из /api/done: старое дело, закрытое сегодня, не
+    // «Закрыто» рисуется прямо из /api/done: старое дело, закрытое сегодня, не
     // попадает в последние сто записей, и добирать его карточкой не нужно. Звать
     // только пока открыта «Сегодня»; на других страницах список ждёт возвращения.
     onToday ? request(`/api/done?from=${todayGuess}&to=${todayGuess}`).catch(() => null) : Promise.resolve(undefined),
@@ -2842,7 +2845,7 @@ let cardAdvance = null;
 let cardArmedUntil = 0;
 let cardSnackTimer = null;
 const cardKeys = { toggle: null };
-const CARD_LIST_DONE = { "Сегодня": "На «Сегодня» всё отмечено", "Сделано": "В «Сделано» всё отмечено", "День": "В «Дне» всё отмечено", "Доска": "На «Доске» всё отмечено", "Календарь": "В календаре всё отмечено" };
+const CARD_LIST_DONE = { "Сегодня": "На «Сегодня» всё отмечено", "Сделано": "В «Сделано» всё отмечено", "Закрыто": "В «Закрыто» всё отмечено", "День": "В «Дне» всё отмечено", "Доска": "На «Доске» всё отмечено", "Календарь": "В календаре всё отмечено" };
 const CARD_TICK_ICON = '<svg class="card-tick-check" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.8 8.4l2.7 2.7 5.7-6.2"/></svg>';
 const CARD_CLOCK_ICON = '<svg class="card-tick-hands" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4.6V8l2.3 1.5"/></svg>';
 const CARD_REPEAT_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.2 7.2A4.6 4.6 0 0 1 11.6 5"/><path d="M12.8 8.8A4.6 4.6 0 0 1 4.4 11"/><path d="M11.8 2.4V5H9.2"/><path d="M4.2 13.6V11h2.6"/></svg>';
@@ -6104,7 +6107,7 @@ function renderReportsDay(area, data) {
   area.append(counters);
 
   const grid = node("div", undefined, "report-grid-2");
-  const doneCard = reportCard("Сделано", { right: String(data.done.length || ""), hint: "Зафиксированная работа за этот день — как во вкладке «Сделано»" });
+  const doneCard = reportCard("Сделано", { right: String(data.done.length || ""), hint: "Зафиксированная работа за этот день — как во вкладке «Закрыто»" });
   doneCard.append(reportItemList(data.done.map((row) => ({
     captureId: row.captureId, title: row.title, type: row.type,
     meta: reportTimeLabel(row.at, data.timeZone), metaCls: "ok",
@@ -6279,13 +6282,17 @@ async function uploadPendingShots(captureId) {
 // первого уровня (kizuna-board-order), а у колонок человека ещё и на сервере.
 // Над доской — наборный фильтр по полям дела (kizuna-board-filter): в первый
 // заход он «сегодня», дальше — что человек выбрал, в том числе пустой.
-// Логика фильтра и порядка — в public/board-model.js, здесь — хранение и рисунок.
+// Колонки-группы (день, человек, проект, откуда) заводит сам человек: на доске
+// стоят непустые группы и те, что он добавил через «+ Колонка» (kizuna-board-shown).
+// Логика фильтра, порядка и заведённых колонок — в public/board-model.js, здесь —
+// хранение и рисунок.
 const BOARD_FIELDS = Object.fromEntries(Object.entries(FILTER_FIELDS).filter(([key]) => key !== "status"));
 const BOARD_VIEWS = ["board", "list", "table"];
 const BOARD_VIEW_KEY = "kizuna-board-view";
 const BOARD_GROUPS_KEY = "kizuna-board-groups";
 const BOARD_FILTER_KEY = "kizuna-board-filter";
 const BOARD_ORDER_KEY = "kizuna-board-order";
+const BOARD_SHOWN_KEY = "kizuna-board-shown";
 // Порядок групп фиксированный: у дня и источника — свой, у человека и
 // проекта — по алфавиту, «без …» всегда последним.
 const BOARD_DAYS = [["late", "просрочено"], ["today", "сегодня"], ["tomorrow", "завтра"], ["week", "на неделе"], ["later", "позже"], ["none", "без срока"]];
@@ -6310,17 +6317,26 @@ function boardStoredFilter() {
 function boardStoredOrder() {
   try { return readOrder(localStorage.getItem(BOARD_ORDER_KEY)); } catch { return {}; }
 }
+function boardStoredShown() {
+  try { return readShown(localStorage.getItem(BOARD_SHOWN_KEY)); } catch { return {}; }
+}
 const boardState = {
   // stamp — ответ сервера (строкой), по которому нарисована доска: тот же ответ не перерисовывается.
   data: null, stamp: null, drag: null, openAdder: null,
   search: "",
   view: boardStoredView(),
   groups: boardStoredGroups(),
-  // Наборный фильтр: условия {field, op, value}. Строка под панелью открыта, пока фильтр что-то отбирает.
+  // Наборный фильтр: условия {field, op, values}. Строка под панелью открыта, пока фильтр что-то отбирает.
   filter: boardStoredFilter(),
   filterOpen: false,
+  // Список значений, открытый у условия (ключ — поле и оператор, «day=»), и выбор значения для новой
+  // колонки-группы: оба переживают перерисовку доски, пока человек не закрыл их сам.
+  valsOpen: null,
+  pickOpen: false,
   // Порядок колонок доски: { "<поле первого уровня>": ["__done", "<ключ группы>", …] }.
   order: boardStoredOrder(),
+  // Колонки-группы, которые человек завёл сам: { "<поле первого уровня>": ["<ключ группы>", …] }.
+  shown: boardStoredShown(),
   // На телефоне открывается первая своя колонка, а не «Сделано»; null — ещё не выбирали.
   mobileColumn: null,
 };
@@ -6337,6 +6353,9 @@ function boardRememberFilter() {
 }
 function boardRememberOrder() {
   try { localStorage.setItem(BOARD_ORDER_KEY, JSON.stringify(boardState.order)); } catch {}
+}
+function boardRememberShown() {
+  try { localStorage.setItem(BOARD_SHOWN_KEY, JSON.stringify(Object.fromEntries(Object.entries(boardState.shown).filter(([, keys]) => keys.length)))); } catch {}
 }
 const boardDropHint = (() => { const hint = document.createElement("div"); hint.className = "board-drop"; return hint; })();
 
@@ -8099,15 +8118,17 @@ function boardHeadEl(name, count) {
   head.append(pill, node("span", String(count), "board-col-count"));
   return head;
 }
-function boardHeadTools(element, { menu = null } = {}) {
+function boardHeadTools(element, { menu = null, plus = true } = {}) {
   const tools = node("div", undefined, "board-col-tools");
   if (menu) tools.append(menu);
-  const plus = node("button", "+", "board-col-plus");
-  plus.type = "button";
-  plus.title = "Добавить дело";
-  plus.setAttribute("aria-label", "Добавить дело в колонку");
-  plus.addEventListener("click", () => element.querySelector(".board-add-button")?.click());
-  tools.append(plus);
+  if (plus) {
+    const add = node("button", "+", "board-col-plus");
+    add.type = "button";
+    add.title = "Добавить дело";
+    add.setAttribute("aria-label", "Добавить дело в колонку");
+    add.addEventListener("click", () => element.querySelector(".board-add-button")?.click());
+    tools.append(add);
+  }
   return tools;
 }
 // Заголовок любой колонки доски тянется: бросок на другую колонку — слева от неё
@@ -8153,11 +8174,13 @@ function boardLaneDrag(element, head, field, key) {
   });
 }
 // Все колонки поля в естественном порядке — с «Сделано» впереди, включая
-// скрытые фильтром: порядок сохраняется целиком, а не по тому, что сейчас видно.
+// скрытые (пустые, не заведённые человеком, и спрятанные фильтром): порядок
+// сохраняется целиком, а не по тому, что сейчас видно. Заведённая колонка есть
+// здесь и тогда, когда открытых дел с этим человеком или проектом нет.
 function boardLaneKeys(field, data) {
   if (field === "all") return [DONE_LANE, "all"];
   const open = data.columns.flatMap((column) => column.cards);
-  return [DONE_LANE, ...boardGroups(open, field, data, true).map((group) => group.key ?? FILTER_NONE)];
+  return [DONE_LANE, ...boardGroups(open, field, data, true, boardState.shown[field] || []).map((group) => group.key ?? FILTER_NONE)];
 }
 // Колонки в порядке показа: сохранённый порядок, а незнакомые ему группы —
 // после известных, в своём естественном порядке.
@@ -8451,11 +8474,12 @@ function boardAnnotate(data) {
 }
 const boardFindCard = (captureId) => boardState.data?.columns.flatMap((column) => column.cards).find((card) => card.captureId === captureId) || null;
 // Группы одного уровня в фиксированном порядке. Пустые скрываются, кроме
-// колонок человека на первом уровне: пустую колонку на доске нужно видеть,
-// чтобы было куда бросить. Так же на доске, разложенной по дню, остаются пустые
-// дни, в которые карточку можно бросить (не «просрочено»): иначе срок нельзя
-// было бы назначить на день, где пока пусто. keepEmpty — true или условие.
-function boardGroups(items, field, data, keepEmpty = false) {
+// колонок человека на первом уровне (пустую колонку нужно видеть, чтобы было
+// куда бросить) и тех, что оставляет keepEmpty — true или условие: на доске это
+// колонки-группы, которые человек завёл сам через «+ Колонка». extra — ключи
+// групп, которые есть и без дел: заведённый человек или проект, которого ни у
+// одного открытого дела нет первым.
+function boardGroups(items, field, data, keepEmpty = false, extra = []) {
   let groups;
   if (field === "col") groups = data.columns.map((column) => ({ key: column.id, label: column.name, column, items: items.filter((card) => card.columnId === column.id) }));
   else if (field === "day") {
@@ -8465,7 +8489,7 @@ function boardGroups(items, field, data, keepEmpty = false) {
   else {
     // Человек и проект — первый из названных; кому и куда не названо — последней группой.
     const valueOf = (card) => (field === "who" ? card.people : card.projects)?.[0] || null;
-    const names = [...new Set(items.map(valueOf).filter(Boolean))].sort((left, right) => left.localeCompare(right, "ru"));
+    const names = [...new Set([...items.map(valueOf).filter(Boolean), ...extra.filter((key) => key !== FILTER_NONE)])].sort((left, right) => left.localeCompare(right, "ru"));
     groups = [...names, null].map((name) => ({ key: name, label: name ?? (field === "who" ? "Без человека" : "Без проекта"), items: items.filter((card) => valueOf(card) === name) }));
   }
   return groups.filter((group) => group.items.length || (typeof keepEmpty === "function" ? keepEmpty(group) : keepEmpty));
@@ -8485,15 +8509,120 @@ function boardBoxes(items, fields, data, { draggable = true } = {}) {
     return box;
   });
 }
-// Колонка-группа: первый уровень — не «Колонка». Заголовок не правится и без
-// меню, «+ Колонки» нет, зато он тянется, как у колонок человека; карточки
-// тянутся, только когда группа — день (срок меняется броском) или группировки
-// нет вовсе. Внизу — приглашение «+ Дело …», где оно осмысленно.
+// «по дню», «по человеку»… — для подсказки пустой доски: «Колонок по дню пока нет».
+const BOARD_BY = { day: "по дню", who: "по человеку", proj: "по проекту", src: "по источнику" };
+// Значения поля, которых на доске ещё нет колонкой, — из них человек выбирает в
+// «+ Колонка»: все дни и источники, люди и проекты из карточек, «Без человека» и
+// «Без проекта». Показанные (непустые и заведённые) не предлагаются.
+function boardGroupChoices(field, all, visible) {
+  let list;
+  if (field === "day") list = BOARD_DAYS.map(([key, label]) => ({ key, label }));
+  else if (field === "src") list = BOARD_SOURCES.map(([key, label]) => ({ key, label }));
+  else {
+    const cards = [...all.columns.flatMap((column) => column.cards), ...(all.closed || [])];
+    const names = [...new Set(cards.flatMap((card) => (field === "who" ? card.people : card.projects) || []))].sort((left, right) => left.localeCompare(right, "ru"));
+    list = [...names.map((name) => ({ key: name, label: name })), { key: FILTER_NONE, label: field === "who" ? "Без человека" : "Без проекта" }];
+  }
+  return list.filter((item) => !visible.includes(item.key));
+}
+// Выбор новой колонки открывается и закрывается на месте: состояние лежит в
+// boardState.pickOpen, чтобы перерисовка доски не закрывала его под рукой.
+function boardSetPick(open, { focus = false } = {}) {
+  boardState.pickOpen = open;
+  const ghost = $("#board-columns .board-column.ghost.pick");
+  if (!ghost) return;
+  ghost.classList.toggle("is-open", open);
+  ghost.querySelector(".board-pick-list").hidden = !open;
+  ghost.querySelector(".board-add-button").setAttribute("aria-expanded", String(open));
+  if (open && focus) ghost.querySelector(".board-pick-item")?.focus();
+}
+// «+ Колонка» у групп: не поле для названия, а выбор из значений, которых на
+// доске ещё нет (см. boardGroupChoices). Колонка, которую человек выбрал,
+// появляется пустой и остаётся, пока он сам её не уберёт. lonely — групп на
+// доске нет вовсе: «+ Колонка» говорит, что делать.
+function boardGroupGhostEl(field, choices, lonely) {
+  const element = node("section", undefined, `board-column ghost pick${lonely ? " lonely" : ""}${boardState.pickOpen ? " is-open" : ""}`);
+  if (lonely) element.append(node("p", `Колонок ${BOARD_BY[field]} пока нет — добавьте нужные через «+ Колонка»`, "board-lanes-hint"));
+  const button = node("button", "+ Колонка", "board-add-button");
+  button.type = "button";
+  button.setAttribute("aria-haspopup", "true");
+  button.setAttribute("aria-expanded", String(boardState.pickOpen));
+  button.addEventListener("click", () => boardSetPick(!boardState.pickOpen, { focus: true }));
+  const list = node("div", undefined, "board-pick-list");
+  list.hidden = !boardState.pickOpen;
+  list.setAttribute("role", "group");
+  list.setAttribute("aria-label", "Какую колонку добавить");
+  for (const { key, label } of choices) {
+    const item = node("button", label, "board-pick-item");
+    item.type = "button";
+    item.dataset.key = key;
+    item.addEventListener("click", () => boardAddGroup(field, key));
+    list.append(item);
+  }
+  element.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !boardState.pickOpen) return;
+    event.stopPropagation();
+    boardSetPick(false);
+    button.focus();
+  });
+  element.append(button, list);
+  return element;
+}
+// Колонку выбрали в «+ Колонка»: она запоминается и встаёт в конец ряда — после
+// последней из показанных; скрытые колонки стоят, где стояли.
+function boardAddGroup(field, key) {
+  const lanes = $("#board-columns");
+  const visible = [...lanes.querySelectorAll(".board-column[data-lane]")].map((lane) => lane.dataset.lane);
+  boardState.shown[field] = [...new Set([...(boardState.shown[field] || []), key])];
+  boardRememberShown();
+  boardState.order[field] = placeLast(orderKeys(boardState.order[field], boardLaneKeys(field, boardAnnotate(boardState.data))), key, visible);
+  boardRememberOrder();
+  boardState.pickOpen = false;
+  renderBoard(boardState.data);
+  // На телефоне колонка одна на экран: открыта новая. На широком экране лента доезжает до неё.
+  const added = [...lanes.querySelectorAll(".board-column[data-lane]")].find((lane) => lane.dataset.lane === key);
+  if (!added) return;
+  boardState.mobileColumn = [...lanes.querySelectorAll(".board-column")].indexOf(added);
+  paintBoardSegments([...lanes.querySelectorAll(".board-column")]);
+  added.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+// «Убрать колонку»: заведённая колонка скрывается, пока в ней пусто. Если в ней
+// есть дела, она остаётся, пока они в ней есть, — её просто больше не держат.
+function boardRemoveGroup(field, key, label, count) {
+  boardState.shown[field] = (boardState.shown[field] || []).filter((item) => item !== key);
+  boardRememberShown();
+  renderBoard(boardState.data);
+  if (count) toast(`Колонка «${label}» уйдёт, когда в ней не останется дел`);
+}
+// Меню колонки-группы: только «Убрать колонку» и сказанное словами, что будет с
+// колонкой, в которой есть дела.
+function boardGroupMenu(element, field, group) {
+  const menu = node("details", undefined, "board-menu");
+  const summary = node("summary", "⋯");
+  summary.setAttribute("aria-label", `Меню колонки ${group.label}`);
+  const popover = node("div", undefined, "board-menu-popover");
+  const remove = node("button", "Убрать колонку");
+  remove.type = "button";
+  remove.title = "Колонка скроется, пока в ней пусто. Если в ней есть дела, она останется, пока они в ней есть.";
+  remove.addEventListener("click", () => {
+    menu.removeAttribute("open");
+    boardRemoveGroup(field, group.key ?? FILTER_NONE, group.label, element.querySelectorAll(".board-card").length);
+  });
+  popover.append(remove, node("p", group.items.length ? "В колонке есть дела: она останется, пока они в ней." : "Вернуть колонку можно через «+ Колонка».", "board-menu-note"));
+  menu.append(summary, popover);
+  return menu;
+}
+// Колонка-группа: первый уровень — не «Колонка». Заголовок не правится, зато он
+// тянется, как у колонок человека; в меню — «Убрать колонку» (колонки-группы
+// заводит человек сам, «+ Колонка» стоит в конце ряда). Карточки тянутся, только
+// когда группа — день (срок меняется броском) или группировки нет вовсе. Внизу —
+// приглашение «+ Дело …», где оно осмысленно.
 function boardGroupColumnEl(group, field, rest, data) {
   const element = node("section", undefined, "board-column group");
   element.dataset.group = `${field || "all"}:${group.key ?? ""}`;
   const head = boardHeadEl(group.label, group.items.length);
   boardLaneDrag(element, head, field || "all", group.key ?? FILTER_NONE);
+  if (field) head.append(boardHeadTools(element, { menu: boardGroupMenu(element, field, group), plus: false }));
   const list = node("div", undefined, "board-cards");
   list.append(...boardBoxes(group.items, rest, data, { draggable: !field || field === "day" }));
   element.append(head, list);
@@ -8621,12 +8750,14 @@ function boardTableEl(open, closed, data) {
 }
 // ── наборный фильтр ──────────────────────────────────────────────────────────
 // Кнопка «Фильтр · N» над доской открывает строку под панелью: условия-плашки
-// («Человек = Аня ×», «День ≠ просрочено ×»), «+ условие», «Сегодня» и «Сбросить».
-// В плашке три списка — поле, «=» или «≠» и значение из того, что есть в
-// загруженных делах; цвет плашки — цвет поля, у «Статуса» нейтральный. «=» на
-// одном поле объединяются по «или» (между такими плашками стоит «или»), разные
-// поля — по «и», «≠» — всегда по «и». Условие без значения — черновик: он
-// ничего не отбирает и не сохраняется.
+// («День = сегодня или просрочено», «Человек ≠ Аня или Лёша»), «+ условие»,
+// «Сегодня» и «Сбросить». В плашке — поле, «=» или «≠» и значения: кнопка
+// со значениями открывает список с галочками из того, что есть в загруженных
+// делах. Внутри плашки значения складываются по «или» («=» — любое из них, «≠» —
+// ни одно), между плашками стоит тихое «и»; цвет плашки — цвет поля, у «Статуса»
+// нейтральный. Условие с тем же полем и оператором не заводится второй раз:
+// значения уходят в уже стоящее. Условие без значений — черновик: он ничего не
+// отбирает и не сохраняется.
 const BOARD_FILTER_OPS = [["=", "="], ["!=", "≠"]];
 const boardFilterTint = (field) => (field === "status" ? "var(--f-status)" : boardTint(field));
 // Значения условия по полю; у человека и проекта последним — «пусто».
@@ -8647,25 +8778,54 @@ function boardFilterSelect(part, label, options, value) {
   for (const [key, name] of options) { const option = new Option(name, key); option.selected = key === value; select.append(option); }
   return select;
 }
+// Условие на доске одно на поле и оператор, поэтому ими его и называют: список
+// значений открыт у того, чей ключ лежит в boardState.valsOpen («day=»).
+const boardCondKey = (condition) => `${condition.field}${condition.op}`;
 function boardCondEl(condition, index) {
   const chip = node("span", undefined, "board-cond");
   chip.dataset.index = String(index);
   chip.style.setProperty("--fc", boardFilterTint(condition.field));
-  const values = boardFilterValues(condition.field);
+  // Копия: значения по полю — общие константы, дописывать в них нельзя.
+  const options = [...boardFilterValues(condition.field)];
   // Значение, которого в загруженном уже нет (человек ушёл, колонку удалили), не
   // подменяется молча: остаётся в списке, и условие видно.
-  if (condition.value && !values.some(([key]) => key === condition.value))
-    values.push([condition.value, !boardState.data ? "…" : condition.field === "col" ? "колонка удалена" : condition.value]);
+  for (const value of condition.values)
+    if (!options.some(([key]) => key === value))
+      options.push([value, !boardState.data ? "…" : condition.field === "col" ? "колонка удалена" : value]);
+  const names = new Map(options);
   const nth = index + 1;
-  const value = boardFilterSelect("value", `Значение условия ${nth}`, values, condition.value);
-  if (!condition.value) {
-    const hint = new Option("значение", "");
-    hint.disabled = true;
-    hint.hidden = true;
-    hint.selected = true;
-    value.prepend(hint);
-    value.classList.add("is-empty");
+  const open = boardState.valsOpen === boardCondKey(condition);
+  // Значения читаются одной строкой: «сегодня или просрочено».
+  const button = node("button", undefined, `board-vals-btn${condition.values.length ? "" : " is-empty"}`);
+  button.type = "button";
+  button.dataset.part = "values";
+  button.title = "Выбрать значения";
+  button.setAttribute("aria-haspopup", "true");
+  button.setAttribute("aria-expanded", String(open));
+  button.setAttribute("aria-label", `Значения условия ${nth}: ${condition.values.map((value) => names.get(value)).join(" или ") || "не выбраны"}`);
+  if (!condition.values.length) button.append("значения");
+  condition.values.forEach((value, at) => {
+    if (at) button.append(" ", node("span", "или", "board-or"), " ");
+    button.append(names.get(value));
+  });
+  // Под кнопкой — список с галочками: отметили два значения — получили «или».
+  const pop = node("div", undefined, "board-vals-pop");
+  pop.hidden = !open;
+  pop.setAttribute("role", "group");
+  pop.setAttribute("aria-label", `Значения условия ${nth}`);
+  pop.append(node("p", condition.op === "!=" ? "Ни одно из отмеченных" : "Любое из отмеченных", "board-vals-cap"));
+  for (const [key, name] of options) {
+    const row = node("label", undefined, "board-val");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.value = key;
+    box.checked = condition.values.includes(key);
+    row.append(box, node("span", name));
+    pop.append(row);
   }
+  if (!options.length) pop.append(node("p", "Значений пока нет", "board-vals-none"));
+  const vals = node("span", undefined, "board-vals");
+  vals.append(button, pop);
   const remove = node("button", "×", "board-cond-x");
   remove.type = "button";
   remove.dataset.remove = String(index);
@@ -8674,10 +8834,28 @@ function boardCondEl(condition, index) {
   chip.append(
     boardFilterSelect("field", `Поле условия ${nth}`, Object.entries(FILTER_FIELDS), condition.field),
     boardFilterSelect("op", `Оператор условия ${nth}`, BOARD_FILTER_OPS, condition.op),
-    value,
+    vals,
     remove,
   );
   return chip;
+}
+// Список значений не должен уходить за край окна: у правого края он открывается влево.
+function boardPlaceVals() {
+  for (const pop of $("#board-filter").querySelectorAll(".board-vals-pop:not([hidden])")) {
+    pop.classList.remove("flip");
+    if (pop.getBoundingClientRect().right > document.documentElement.clientWidth - 8) pop.classList.add("flip");
+  }
+}
+// Открыть список значений у условия с этим ключом (null — закрыть все): по одному за раз.
+function boardSetVals(key) {
+  boardState.valsOpen = key;
+  for (const chip of $("#board-filter").querySelectorAll(".board-cond")) {
+    const condition = boardState.filter[Number(chip.dataset.index)];
+    const open = Boolean(condition) && key === boardCondKey(condition);
+    chip.querySelector(".board-vals-pop").hidden = !open;
+    chip.querySelector(".board-vals-btn").setAttribute("aria-expanded", String(open));
+  }
+  boardPlaceVals();
 }
 function paintBoardFilter() {
   const toggle = $("#board-filter-toggle"), row = $("#board-filter");
@@ -8697,8 +8875,7 @@ function paintBoardFilter() {
   clear(row);
   row.append(node("span", "Фильтр", "board-bar-label"));
   boardState.filter.forEach((condition, index) => {
-    const before = boardState.filter[index - 1];
-    if (before && before.field === condition.field && before.op === "=" && condition.op === "=") row.append(node("span", "или", "board-or"));
+    if (index) row.append(node("span", "и", "board-and"));
     row.append(boardCondEl(condition, index));
   });
   const add = node("button", "+ условие", "board-cond-add");
@@ -8717,18 +8894,31 @@ function paintBoardFilter() {
   const tail = node("span", undefined, "board-filter-tail");
   tail.append(today, clearAll);
   row.append(add, tail);
+  boardPlaceVals();
 }
-// Условие изменено: условия одного поля встают рядом, выбор запоминается, доска
-// перерисовывается по загруженному. Фокус возвращается на тот список, который
-// трогали, — плашка при перерисовке пересобрана.
+// Условие изменено: условия с одним полем и оператором сливаются в одно, выбор
+// запоминается, доска перерисовывается по загруженному. focus — {field, op, part,
+// value?}: условие находят по полю и оператору (плашка при перерисовке
+// пересобрана), и фокус возвращается на тот список или галочку, которые трогали.
+// Если условие слилось с уже стоящим, открывается список значений у него.
 function boardFilterChanged(focus = null) {
-  boardState.filter = tidyFilter(boardState.filter);
+  const before = boardState.filter.length;
+  boardState.filter = mergeConditions(boardState.filter);
+  if (focus && boardState.filter.length < before) {
+    focus = { ...focus, part: "values", value: undefined };
+    boardState.valsOpen = boardCondKey(focus);
+  }
   boardRememberFilter();
   if (boardState.data) renderBoard(boardState.data);
   else paintBoardBar();
   if (!focus) return;
-  const index = boardState.filter.indexOf(focus.condition);
-  $("#board-filter").querySelector(`.board-cond[data-index="${index}"] [data-part="${focus.part}"]`)?.focus();
+  const index = boardState.filter.findIndex((condition) => condition.field === focus.field && condition.op === focus.op);
+  const chip = $("#board-filter").querySelector(`.board-cond[data-index="${index}"]`);
+  if (!chip) return;
+  if (focus.part === "values") {
+    const box = focus.value === undefined ? null : [...chip.querySelectorAll(".board-vals-pop input")].find((item) => item.value === focus.value);
+    (box || chip.querySelector(".board-vals-btn"))?.focus();
+  } else chip.querySelector(`[data-part="${focus.part}"]`)?.focus();
 }
 
 // Панель над доской: вид, уровни группировки (у каждого поля свой цвет, номер
@@ -8775,6 +8965,8 @@ function boardChanged() {
   boardRemember();
   boardState.openAdder = null;
   boardState.adderDraft = null;
+  // Выбор новой колонки относился к прежнему полю — на новом он не открывается сам.
+  boardState.pickOpen = false;
   if (boardState.data) renderBoard(boardState.data);
   else paintBoardBar();
 }
@@ -8872,22 +9064,30 @@ function renderBoard(source) {
   }
   // Доска: колонка на группу первого уровня и «Сделано» — такая же колонка, по
   // умолчанию первая. Колонки человека — со всем, что у них есть (правятся,
-  // «+ Дело в …» и «+ Колонка»); любая другая группа — колонка без меню и без
-  // «+ Колонки». Заголовок тянется у всех, порядок помнится по полю первого уровня.
-  // Пока фильтр что-то отбирает, пустые группы скрыты (колонки человека остаются:
-  // в них бросают), а «Сделано» пропадает, только если статус исключает закрытое.
+  // «+ Дело в …» и «+ Колонка» с названием). Колонки-группы (день, человек,
+  // проект, откуда) заводит человек сам: стоят непустые группы и те, что он
+  // добавил через «+ Колонка» (выбор из значений, которых ещё нет на доске), —
+  // пустая добавленная остаётся, и под фильтром тоже, пока её не уберут из меню.
+  // Заголовок тянется у всех, порядок помнится по полю первого уровня. Пока фильтр
+  // что-то отбирает, пустые колонки человека остаются (в них бросают), а «Сделано»
+  // пропадает, только если статус исключает закрытое.
   const [first, ...rest] = boardState.groups;
   const field = first || "all";
-  const filtering = activeConditions(boardState.filter).length > 0;
   const shown = [];
   if (boardDoneShown()) shown.push({ key: DONE_LANE, element: boardDoneColumnEl(closed, field) });
   if (first === "col") for (const group of boardGroups(open, "col", data, true)) shown.push({ key: group.key, element: boardColumnEl(group.column, group.items, rest, data) });
-  else if (first) for (const group of boardGroups(open, first, data, first === "day" && !filtering && ((group) => group.key !== "late"))) shown.push({ key: group.key ?? FILTER_NONE, element: boardGroupColumnEl(group, first, rest, data) });
-  else shown.push({ key: "all", element: boardGroupColumnEl({ key: "all", label: "Все дела", items: open }, null, [], data) });
+  else if (first) {
+    const own = boardState.shown[first] || [];
+    for (const group of boardGroups(open, first, data, (group) => own.includes(group.key ?? FILTER_NONE), own)) shown.push({ key: group.key ?? FILTER_NONE, element: boardGroupColumnEl(group, first, rest, data) });
+  } else shown.push({ key: "all", element: boardGroupColumnEl({ key: "all", label: "Все дела", items: open }, null, [], data) });
   for (const lane of boardOrderedLanes(field, shown)) lanes.append(lane.element);
   if (first === "col") {
     lanes.append(boardGhostColumnEl(ghost));
     if (ghost?.focus) lanes.querySelector(".board-column.ghost input")?.focus();
+  } else if (first) {
+    const choices = boardGroupChoices(first, all, shown.map((lane) => lane.key));
+    if (choices.length) lanes.append(boardGroupGhostEl(first, choices, shown.every((lane) => lane.key === DONE_LANE)));
+    else boardState.pickOpen = false;
   }
   // Сегмент колонок нужен, когда на телефоне показана одна колонка.
   paintBoardSegments([...lanes.querySelectorAll(".board-column")]);
@@ -8929,41 +9129,76 @@ function renderBoard(source) {
   // в плашках, «+ условие», «Сегодня» (фильтр по умолчанию) и «Сбросить».
   $("#board-filter-toggle").addEventListener("click", () => {
     boardState.filterOpen = !boardState.filterOpen;
+    if (!boardState.filterOpen) boardSetVals(null);
     paintBoardFilter();
   });
   $("#board-filter").addEventListener("change", (event) => {
+    // Галочка в списке значений: значение встаёт в условие или уходит из него.
+    const box = event.target.closest(".board-vals-pop input");
+    if (box) {
+      const condition = boardState.filter[Number(box.closest(".board-cond")?.dataset.index)];
+      if (!condition) return;
+      condition.values = toggleValue(condition.values, box.value);
+      boardFilterChanged({ field: condition.field, op: condition.op, part: "values", value: box.value });
+      return;
+    }
     const select = event.target.closest("select[data-part]");
     const condition = boardState.filter[Number(select?.closest(".board-cond")?.dataset.index)];
     if (!condition) return;
     const part = select.dataset.part;
-    // Другое поле — другие значения: прежнее не подходит, условие снова черновик.
-    if (part === "field") { condition.field = select.value; condition.value = ""; }
-    else if (part === "op") condition.op = select.value;
-    else condition.value = select.value;
-    boardFilterChanged({ condition, part });
+    boardSetVals(null);
+    // Другое поле — другие значения: прежние не подходят, условие снова черновик.
+    if (part === "field") { condition.field = select.value; condition.values = []; }
+    else condition.op = select.value;
+    boardFilterChanged({ field: condition.field, op: condition.op, part });
   });
   $("#board-filter").addEventListener("click", (event) => {
     const row = $("#board-filter");
+    const button = event.target.closest(".board-vals-btn");
     const remove = event.target.closest("[data-remove]");
-    if (remove) {
+    if (button) {
+      const condition = boardState.filter[Number(button.closest(".board-cond")?.dataset.index)];
+      if (condition) boardSetVals(boardState.valsOpen === boardCondKey(condition) ? null : boardCondKey(condition));
+    } else if (remove) {
+      boardSetVals(null);
       boardState.filter.splice(Number(remove.dataset.remove), 1);
       boardFilterChanged();
       row.querySelector(".board-cond-add")?.focus();
     } else if (event.target.closest("[data-add]")) {
-      // Новое условие — на первом поле, которого ещё нет; значение выберут сами.
+      // Новое условие — на первом поле, которого ещё нет; значения выберут сами.
       const used = new Set(boardState.filter.map((condition) => condition.field));
-      const condition = { field: Object.keys(FILTER_FIELDS).find((field) => !used.has(field)) || "col", op: "=", value: "" };
+      const condition = { field: Object.keys(FILTER_FIELDS).find((field) => !used.has(field)) || "col", op: "=", values: [] };
+      boardSetVals(null);
       boardState.filter.push(condition);
-      boardFilterChanged({ condition, part: "field" });
+      boardFilterChanged({ field: condition.field, op: condition.op, part: "field" });
     } else if (event.target.closest("[data-today]")) {
+      boardSetVals(null);
       boardState.filter = defaultFilter();
       boardFilterChanged();
       row.querySelector(".board-filter-today")?.focus();
     } else if (event.target.closest("[data-clear]")) {
+      boardSetVals(null);
       boardState.filter = [];
       boardFilterChanged();
       row.querySelector(".board-cond-add")?.focus();
     }
+  });
+  // Список значений закрывается и когда фокус ушёл из него на другой элемент (Tab), как меню.
+  $("#board-filter").addEventListener("focusout", (event) => {
+    if (boardState.valsOpen && event.relatedTarget instanceof Element && !event.relatedTarget.closest(".board-vals")) boardSetVals(null);
+  });
+  // Список значений и выбор новой колонки закрываются щелчком мимо и Escape, как поповеры шапки.
+  document.addEventListener("pointerdown", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (boardState.valsOpen && !target.closest(".board-vals")) boardSetVals(null);
+    if (boardState.pickOpen && !target.closest(".board-column.ghost")) boardSetPick(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !boardState.valsOpen) return;
+    const open = $("#board-filter").querySelector(".board-vals-btn[aria-expanded='true']");
+    boardSetVals(null);
+    open?.focus();
   });
   $("#board-search").addEventListener("input", (event) => {
     boardState.search = event.target.value;
@@ -9069,7 +9304,7 @@ async function loadBoard({ force = false } = {}) {
 // ── «Сделано» ────────────────────────────────────────────────────────────────
 // Один экран. Вверху в две колонки: слева фраза про неделю, строка её семи
 // дней и чипы «куда ушла неделя» по колонкам доски, справа — ритм пяти недель
-// клетками. Ниже список по дням — тот же, что во вкладке «Сделано» на «Сегодня», только за неделю. Клик по
+// клетками. Ниже список по дням — тот же, что во вкладке «Закрыто» на «Сегодня», только за неделю. Клик по
 // клетке или по дню в строке недели показывает список этого дня, повторный клик
 // и «Все дни» возвращают неделю. Всё берётся из одного ответа GET /api/done —
 // с понедельника четыре недели назад по сегодня; фраза, строка и чипы считаются
