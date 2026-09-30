@@ -1228,8 +1228,13 @@ body.capture-large-open::before {
 }
 /* Пока карточка открыта, страница под ней не прокручивается: иначе палец
    на телефоне двигал бы список, а не заметку. */
-body:has(#review-dialog[open]) {
+body:has(#review-dialog[open]:not([data-mode="side"])) {
   overflow: hidden;
+}
+@media (max-width: 760px) {
+  body:has(#review-dialog[open]) {
+    overflow: hidden;
+  }
 }
 /* ── настройки приложения ────────────────────────────────────────────────── */
 .settings-form {
@@ -1803,6 +1808,7 @@ dialog form > div {
 }
 #toast {
   position: fixed;
+  z-index: 60;
   bottom: 20px;
   left: 50%;
   transform: translateX(-50%);
@@ -1972,7 +1978,7 @@ dialog form > div {
   position: fixed;
   top: 88px;
   right: 16px;
-  z-index: 10;
+  z-index: 35;
   display: grid;
   gap: 10px;
   width: min(280px, calc(100vw - 48px));
@@ -3677,11 +3683,11 @@ dialog form > div {
   --nt-callout-blue: rgb(231, 243, 248);
   /* Размер задают переменные: их правит перетаскивание за край карточки, а
      запомненное значение возвращается при следующем открытии. Окно всё равно
-     ограничивает: карточка не выходит за 24px от края экрана. */
+     ограничивает: карточка не выходит за 24px от боковых краёв экрана и за 40px
+     от верха и низа (см. «режимы показа карточки» в конце файла). */
   --card-w: 940px;
-  --card-h: 1024px;
   width: min(var(--card-w), calc(100vw - 48px));
-  height: min(var(--card-h), calc(100vh - 24px));
+  height: auto;
   max-width: none;
   max-height: none;
   /* auto по обеим осям: карточка любого размера остаётся по центру, а на
@@ -3765,7 +3771,15 @@ dialog form > div {
 
 }
 #review-dialog::backdrop {
-  background: rgba(15, 15, 15, 0.6);
+  background: rgba(31, 29, 27, 0.32);
+}
+:root[data-theme="dark"] #review-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) #review-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.55);
+  }
 }
 
 /* Колонка страницы: 708px по центру, снизу — воздух, как на пустой странице. */
@@ -6460,8 +6474,14 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 .daynav-today:hover { background: color-mix(in srgb, var(--coral) 10%, transparent); }
 /* Ящики стоят колонкой в 800px, а не за карточкой ввода: когда поле растягивают
    ручками (--capture-width у .hero), вместе с ним растёт только оно — вкладки,
-   полоса дней и списки под ним остаются, где были. */
-.drawers { max-width: 800px; margin: 0 auto; }
+   полоса дней и списки под ним остаются, где были. У колонки свои ручки по
+   боковым краям: ширина — --drawers-width на #today (kizuna-drawers-width),
+   двойной клик возвращает 800px. */
+.drawers { position: relative; max-width: var(--drawers-width, 800px); margin: 0 auto; }
+.drawers-resize { position: absolute; top: 14px; bottom: 14px; z-index: 1; width: 9px; cursor: ew-resize; touch-action: none; user-select: none; }
+.drawers-resize[data-dir="w"] { left: -5px; }
+.drawers-resize[data-dir="e"] { right: -5px; }
+@media (max-width: 760px) { .drawers-resize { display: none; } }
 .drawer-tabs { display: flex; justify-content: center; gap: 6px; margin: 10px 0 0; flex-wrap: wrap; }
 .drawer-tab { border: 1px solid transparent; background: none; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--n-52); padding: 7px 12px; border-radius: 99px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
 .drawer-tab b { color: var(--ink); font-weight: 700; }
@@ -8013,7 +8033,6 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0; }
    фиксированное, на телефоне — во весь экран, панель свойств под сутью. */
 #review-dialog {
   --card-w: 880px;
-  --card-h: 720px;
 }
 #review-dialog .review {
   display: block;
@@ -9319,9 +9338,8 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0; }
   }
 }
 
-/* Финальная композиция карточки: сбрасываем размеры старой двухколоночной версии. */
-#review-dialog { --card-h: 860px; }
-#review-dialog:has(#card-subtasks .subtask-empty) { --card-h: 680px; }
+/* Финальная композиция карточки: сбрасываем размеры старой двухколоночной версии.
+   Высоту окна теперь задаёт содержимое (см. «режимы показа карточки» ниже). */
 #review-dialog .card-main { padding: 0; overflow: hidden; }
 #review-dialog .review { display: flex; flex-direction: column; }
 #review-dialog .review h2.card-title:hover { background: transparent; }
@@ -9496,4 +9514,301 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0; }
 
 @media (max-width: 760px) {
   #review-dialog { --params-w: 100vw; }
+}
+
+/* ── режимы показа карточки ──────────────────────────────────────────────────
+   «По центру» — окно поверх затемнённой страницы: ширина 880px, высота по
+   содержимому, зазор в 40px от верха и низа. Выше экрана оно не вырастает:
+   прокручивается основная часть, а нижняя полоса с полем «Написать себе…»
+   остаётся прижатой к низу окна. «Сбоку» — во весь рост у правого края,
+   ширина 56% экрана; страница за ней видна и жива, окно не модальное.
+   «Во весь экран» — как страница: содержимое по центру шириной до 980px.
+   Размер по центру и ширина сбоку меняются ручками по краям и помнятся
+   (--card-w, --card-h, --card-sw; kizuna-card-size), высота поля обсуждения —
+   одна на все карточки (--talk-h; kizuna-card-talk-height). Ручки и режимы —
+   только для широких экранов: на телефоне все три режима — во весь экран,
+   как раньше. */
+#review-dialog .card-resize,
+#review-dialog .card-size-badge,
+#review-dialog .talk-resize {
+  display: none;
+}
+#review-dialog .card-modes {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+#review-dialog .card-mode-toggle {
+  display: grid;
+  place-items: center;
+  width: 29px;
+  height: 29px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--nt-secondary);
+  cursor: pointer;
+}
+#review-dialog .card-mode-toggle:hover {
+  background: var(--nt-hover);
+}
+#review-dialog .card-mode-toggle[aria-expanded="true"] {
+  background: var(--card-chip-bg);
+  color: var(--card-accent);
+}
+#review-dialog .card-mode-toggle svg {
+  display: block;
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+#review-dialog .card-mode-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: -4px;
+  z-index: 8;
+  display: grid;
+  gap: 2px;
+  width: 296px;
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--nt-bg);
+  box-shadow: 0 0 0 1px var(--nt-divider), 0 18px 42px rgba(15, 15, 15, 0.2);
+  font-size: 13px;
+  color: var(--nt-text);
+}
+#review-dialog .card-mode-menu[hidden] {
+  display: none;
+}
+#review-dialog .card-mode-menu > button {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+#review-dialog .card-mode-menu > button:hover,
+#review-dialog .card-mode-menu > button:focus-visible {
+  background: var(--nt-hover);
+}
+#review-dialog .card-mode-menu > button > svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: var(--nt-secondary);
+}
+#review-dialog .card-mode-text {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  line-height: 1.3;
+}
+#review-dialog .card-mode-text b {
+  font-size: 13px;
+  font-weight: 600;
+}
+#review-dialog .card-mode-text small {
+  font-size: 11.5px;
+  color: var(--nt-tertiary);
+}
+#review-dialog .card-mode-ok {
+  color: var(--card-accent);
+  font-weight: 700;
+  text-align: center;
+}
+#review-dialog .card-mode-menu > button[aria-checked="true"] .card-mode-ok::before {
+  content: "✓";
+}
+#review-dialog .card-mode-hint {
+  margin: 4px 0 0;
+  padding: 8px 8px 3px;
+  border-top: 1px solid var(--nt-divider);
+  font-size: 11px;
+  color: var(--nt-tertiary);
+}
+@media (max-width: 760px) {
+  #review-dialog .card-modes {
+    display: none;
+  }
+}
+
+@media (min-width: 760.02px) {
+  /* Окно — колонка «верхняя строка / дорожка»: у высоты по содержимому нет
+     другого способа остаться в зазорах, кроме как отдать место основной части. */
+  #review-dialog[open] {
+    display: flex;
+    flex-direction: column;
+  }
+  #review-dialog .card-shell {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+  }
+  #review-dialog .card-main {
+    height: auto;
+  }
+  /* По центру. Сверху — зазор, снизу окно растёт по содержимому не дальше
+     такого же зазора; своя высота, если её задали ручкой, тоже в этих пределах. */
+  #review-dialog {
+    inset: 40px 0 auto;
+    margin: 0 auto;
+    width: min(var(--card-w, 880px), calc(100vw - 48px));
+    height: var(--card-h, auto);
+    max-width: none;
+    max-height: calc(100vh - 80px);
+  }
+  #review-dialog.params-open {
+    width: min(calc(var(--card-w, 880px) + var(--params-w)), calc(100vw - 48px));
+  }
+  /* С открытым обсуждением короткой карточке нужно место под переписку. */
+  #review-dialog.talk-open {
+    min-height: min(520px, calc(100vh - 80px));
+  }
+  /* Сбоку. */
+  #review-dialog[data-mode="side"] {
+    inset: 0 0 0 auto;
+    z-index: 30;
+    margin: 0;
+    width: clamp(420px, var(--card-sw, 56%), calc(100vw - 200px));
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    border-radius: 0;
+    box-shadow: -1px 0 0 var(--nt-divider), -22px 0 60px rgba(15, 15, 15, 0.16);
+  }
+  :root[data-theme="dark"] #review-dialog[data-mode="side"] {
+    box-shadow: -1px 0 0 var(--nt-divider), -22px 0 60px rgba(0, 0, 0, 0.5);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) #review-dialog[data-mode="side"] {
+      box-shadow: -1px 0 0 var(--nt-divider), -22px 0 60px rgba(0, 0, 0, 0.5);
+    }
+  }
+  /* Во весь экран. */
+  #review-dialog[data-mode="full"] {
+    inset: 0;
+    margin: 0;
+    width: auto;
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  /* И сбоку, и во весь экран ширину окна держит режим, а колонка содержимого
+     берёт то, что осталось от панели «Параметры»: сжимается до 360px, потом
+     дорожка прокручивается к панели. */
+  #review-dialog:is([data-mode="side"], [data-mode="full"]) .card-main {
+    flex: 1 1 0;
+    width: auto;
+    min-width: min(360px, 100%);
+  }
+  /* Колонка содержимого — до 980px по центру; верхняя строка тянется на всё окно. */
+  #review-dialog .review {
+    padding-inline: max(46px, calc((100% - 980px) / 2));
+  }
+  #review-dialog .talk-dock {
+    right: 0;
+    padding-inline: max(46px, calc((100% - 980px) / 2));
+  }
+  /* Ручки: невидимые полосы по краям внутри окна; о них говорит курсор. */
+  #review-dialog .card-resize {
+    position: absolute;
+    z-index: 3;
+    display: block;
+    touch-action: none;
+    user-select: none;
+  }
+  #review-dialog .card-resize[data-dir="e"] { top: 14px; right: 0; bottom: 14px; width: 8px; cursor: ew-resize; }
+  #review-dialog .card-resize[data-dir="w"] { top: 14px; bottom: 14px; left: 0; width: 8px; cursor: ew-resize; }
+  #review-dialog .card-resize[data-dir="s"] { right: 14px; bottom: 0; left: 14px; height: 8px; cursor: ns-resize; }
+  #review-dialog .card-resize[data-dir="se"] { right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; }
+  #review-dialog .card-resize[data-dir="sw"] { bottom: 0; left: 0; width: 16px; height: 16px; cursor: nesw-resize; }
+  #review-dialog[data-mode="side"] .card-resize:not([data-dir="w"]),
+  #review-dialog[data-mode="full"] .card-resize {
+    display: none;
+  }
+  #review-dialog[data-mode="side"] .card-resize[data-dir="w"] {
+    top: 0;
+    bottom: 0;
+  }
+  #review-dialog .card-size-badge {
+    position: absolute;
+    left: 50%;
+    bottom: 1px;
+    z-index: 7;
+    display: block;
+    padding: 0 9px;
+    border: 1px solid var(--nt-divider);
+    border-radius: 99px;
+    background: var(--nt-bg);
+    color: var(--nt-tertiary);
+    font-size: 10.5px;
+    line-height: 13px;
+    font-variant-numeric: tabular-nums;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(-50%);
+    transition: opacity 0.15s;
+  }
+  #review-dialog.resizing .card-size-badge,
+  #review-dialog.sized .card-size-badge {
+    opacity: 1;
+  }
+  #review-dialog.resizing {
+    user-select: none;
+  }
+  /* Смена режима и возврат размера по умолчанию — без перехода: ширина и
+     положение прыгают, а не ползут. */
+  #review-dialog.jump {
+    transition: none;
+  }
+  /* Поле обсуждения: высота одна на все карточки; тянется верхней кромкой. */
+  #review-dialog .thread-composer {
+    min-height: max(44px, var(--talk-h, 0px));
+  }
+  #review-dialog .thread-input {
+    min-height: max(36px, calc(var(--talk-h, 0px) - 8px));
+    max-height: max(200px, calc(var(--talk-h, 0px) - 8px));
+  }
+  #review-dialog .talk-resize {
+    position: absolute;
+    top: -5px;
+    right: 22px;
+    left: 22px;
+    z-index: 2;
+    display: block;
+    height: 10px;
+    cursor: ns-resize;
+    touch-action: none;
+    user-select: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #review-dialog .card-size-badge {
+    transition: none;
+  }
+}
+
+/* Сбоку видно, какая запись читается: её карточка на доске и строка в списке
+   обведены тем же синим кольцом, что и фокус с клавиатуры. */
+.card-is-open {
+  box-shadow: inset 0 0 0 2px var(--focus);
 }

@@ -37,7 +37,9 @@ test("короткая завершённая подзадача остаётс�
   const note = await card.locator(".card-body").boundingBox();
   const subtasks = await card.locator(".card-subtasks").boundingBox();
   const footer = await card.locator(".card-footer-row").boundingBox();
-  expect(Math.round(dialog.height)).toBe(680);
+  // Высоту по центру задаёт содержимое: короткая карточка заметно ниже потолка
+  // окна (экран 900 → 820) и не растягивается до него.
+  expect(Math.round(dialog.height)).toBeLessThan(720);
   expect(head.y - top.y - top.height).toBeLessThan(45);
   expect(subtasks.y - note.y - note.height).toBeLessThan(32);
   expect(footer.y + footer.height).toBeLessThan(dialog.y + dialog.height - 55);

@@ -1881,6 +1881,48 @@ function resetCardFocus() {
   cardDrafts.clear();
   setCardParams(false, { instant: true });
 }
+// Карточка сбоку — обычное окно, а не модальное: страница за ней жива, и по
+// другой записи на доске можно щёлкнуть, не закрывая эту. Чужое открытие
+// отличается от внутренней перерисовки — листания стрелками, подзадачи,
+// возврата к родителю, правки заголовка, — её помечает showCardInner.
+let cardInner = false;
+function showCardInner(entry, review) {
+  cardInner = true;
+  try { showCorrection(entry, review); } finally { cardInner = false; }
+}
+const cardOpenedFromPage = (dialog) => dialog.open && !cardInner && !dialog.matches(":modal") && cardEntryId !== null;
+// Сбоку страница за карточкой жива, и видно, какая запись читается: её строка или
+// карточка на доске обведена. Обводку ведёт showReview, закрытие и смена режима;
+// страница перерисовывается сама — за ней следит наблюдатель ниже.
+function markOpenCard() {
+  for (const element of document.querySelectorAll(".card-is-open")) element.classList.remove("card-is-open");
+  const dialog = $("#review-dialog");
+  if (!dialog.open || dialog.matches(":modal") || !cardEntryId) return;
+  for (const element of document.querySelectorAll(`[data-capture-id="${CSS.escape(cardEntryId)}"]`))
+    if (!dialog.contains(element)) element.classList.add("card-is-open");
+}
+let cardMarkFrame = 0;
+new MutationObserver(() => {
+  if (cardMarkFrame || !$("#review-dialog").open) return;
+  cardMarkFrame = requestAnimationFrame(() => { cardMarkFrame = 0; markOpenCard(); });
+}).observe($("main"), { childList: true, subtree: true });
+// Запись встаёт на место прежней: набранное в ней уходит на сервер, пока
+// разметка ещё на месте, стек подзадач и черновики обсуждения — прошлой записи.
+// Список, из которого открыли (pendingCardList), остаётся — его только что
+// назвал тот, кто открыл.
+function leaveCardForPage() {
+  const dialog = $("#review-dialog");
+  cardNavToken += 1;
+  clearTimeout(cardAdvance);
+  cardAdvance = null;
+  clearTimeout(cardSnackTimer);
+  dialog.querySelector(".card-snack")?.remove();
+  flushCard();
+  closeCardSlashMenu?.();
+  dropCardTalk();
+  cardStack = [];
+  cardDrafts.clear();
+}
 function closeCard() {
   const dialog = $("#review-dialog");
   cardOccurrence = null;
@@ -2708,6 +2750,11 @@ function cardDiscussion(entry) {
   });
   const pop = mentionPopup(field, callable, paintField, { lead: "Позванный увидит эту запись и разговор", keys: true });
   composer.append(field, at, send, pop);
+  // Верхняя кромка поля тянется: высота одна на все карточки (kizuna-card-talk-height).
+  const grip = node("div", undefined, "talk-resize");
+  grip.setAttribute("aria-hidden", "true");
+  attachTalkResize(grip, composer);
+  composer.append(grip);
 
   // Карточка перерисовывается после правки свойств — развёрнутый разговор
   // остаётся на месте, если это та же запись.
@@ -2716,7 +2763,15 @@ function cardDiscussion(entry) {
   dialog.dataset.talkFor = entry.id;
   (dialog.querySelector(".card-main") || dialog).append(dock);
   dialog.classList.add("has-talk");
-  cardTalkBaseObserver = new ResizeObserver(() => dialog.style.setProperty("--talk-base", `${Math.ceil(base.offsetHeight)}px`));
+  // Свёрнутый разговор стоит над полем пузырём, развёрнутый его прячет: окно по
+  // содержимому от этого не должно вздрагивать, поэтому место под пузырь
+  // остаётся в запасе, пока разговор развёрнут.
+  let peekRoom = 0;
+  cardTalkBaseObserver = new ResizeObserver(() => {
+    const open = dialog.classList.contains("talk-open");
+    if (!open && getComputedStyle(peek).display !== "none") peekRoom = peek.offsetHeight + 10;
+    dialog.style.setProperty("--talk-base", `${Math.ceil(base.offsetHeight + (open ? peekRoom : 0))}px`);
+  });
   cardTalkBaseObserver.observe(base);
   paint();
   if (!myId) accountKnown.then((user) => { if (!dock.isConnected || !user) return; myId = user.id; paint(); });
@@ -2820,6 +2875,9 @@ function cardBody(entry) {
       event.stopPropagation();
       showHint(false);
       field.element.blur();
+      // Модальную карточку закрывает сам Esc, минуя этот слушатель; у обычного
+      // окна («сбоку») он его не видит — закрываем по тем же слоям отсюда.
+      if (!$("#review-dialog").matches(":modal")) { event.preventDefault(); if (!cardEscape()) closeCard(); }
     }
   });
   field.element.addEventListener("blur", () => {
@@ -2921,10 +2979,22 @@ function paintCardNav({ finished = false, entry = null } = {}) {
 // Панель «Параметры» выезжает справа из той же карточки: ширина карточки
 // растёт, колонка содержимого остаётся прежней, и всё вместе снова встаёт по
 // центру. Закрытая панель не принимает фокус (inert) — Tab её не находит.
+// Закрытая панель не занимает места совсем (display: none): иначе её содержимое
+// тянуло бы высоту окна, которая теперь считается по содержимому. Она прячется
+// после ухода — когда ширина доехала до нуля.
+let cardParamsHide = 0;
 function setCardParams(open, { instant = false, focus = null } = {}) {
   const dialog = $("#review-dialog"), panel = $("#review-params"), toggle = $("#review-params-toggle");
   cardParamsOpen = Boolean(open);
-  dialog.classList.toggle("params-instant", instant || !motionAllowed());
+  const quick = instant || !motionAllowed();
+  clearTimeout(cardParamsHide);
+  dialog.classList.toggle("params-instant", quick);
+  if (cardParamsOpen) {
+    panel.hidden = false;
+    // Начальная ширина закрепляется до перехода, иначе панель появилась бы сразу.
+    void panel.offsetWidth;
+  } else if (quick) panel.hidden = true;
+  else cardParamsHide = setTimeout(() => { if (!cardParamsOpen) panel.hidden = true; }, 320);
   dialog.classList.toggle("params-open", cardParamsOpen);
   toggle.setAttribute("aria-expanded", String(cardParamsOpen));
   toggle.classList.toggle("open", cardParamsOpen);
@@ -3000,7 +3070,7 @@ async function renderCardEntry(id, adjustStack = () => {}) {
   cardOccurrence = null;
   adjustStack();
   const review = reviewFromEntry(entry);
-  showCorrection(entry, review.level === "high" ? undefined : review);
+  showCardInner(entry, review.level === "high" ? undefined : review);
   keepCardFocus();
   return entry;
 }
@@ -3068,7 +3138,7 @@ async function openCardFromList(index, { armed = false } = {}) {
     setTimeout(() => dialog.classList.remove("armed"), 350);
   }
   const review = reviewFromEntry(entry);
-  showCorrection(entry, review.level === "high" ? undefined : review);
+  showCardInner(entry, review.level === "high" ? undefined : review);
   const area = $("#review");
   area.scrollTop = 0;
   if (motionAllowed()) appear(area, { shift: 12 });
@@ -3174,7 +3244,7 @@ async function rerenderCard(entryId) {
   flushCard();
   closeCardSlashMenu?.();
   const review = reviewFromEntry(entry);
-  showCorrection(entry, review.level === "high" ? undefined : review);
+  showCardInner(entry, review.level === "high" ? undefined : review);
   keepCardFocus();
   return entry;
 }
@@ -3584,6 +3654,17 @@ function showReview(entry, review, undoGroupId, provenance) {
   const area = $("#review"),
     dialog = $("#review-dialog"),
     c = entry.interpretation.classification;
+  // Сбоку по записи щёлкнули, не закрыв карточку. По той же самой — набранное
+  // уходит на сервер, и она перечитывается на месте (запись пришла из списка,
+  // а в нём могло быть не всё). По другой — прежняя уступает место, а набранное
+  // в ней уходит на сервер, пока её разметка ещё на месте.
+  const fromPage = cardOpenedFromPage(dialog);
+  if (fromPage && cardEntryId === entry.id) {
+    pendingCardList = null;
+    flushCard().finally(() => rerenderCard(entry.id));
+    return;
+  }
+  if (fromPage) leaveCardForPage();
   clear(area);
   if (review.level === "high") {
     closeCard();
@@ -3592,7 +3673,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   // Список, из которого открыли карточку, едет с ней; кружок — у своего дела,
   // встречи и взятого у человека дела. Подзадача список не трогает: он
   // остаётся у корня и ждёт возвращения.
-  if (!cardStack.length) adoptCardList(entry, !dialog.open);
+  if (!cardStack.length) adoptCardList(entry, !dialog.open || fromPage);
   cardEntryId = entry.id;
   const doneState = cardDoneState(entry);
   const hasTick = cardHasTick(entry, doneState);
@@ -3641,7 +3722,7 @@ function showReview(entry, review, undoGroupId, provenance) {
           load();
           if (token !== cardNavToken || cardEntryId !== entry.id || !$("#review-dialog").open || !editor.isConnected) return;
           const review = reviewFromEntry(result.entry);
-          showCorrection(result.entry, review.level === "high" ? undefined : review);
+          showCardInner(result.entry, review.level === "high" ? undefined : review);
         } catch (error) {
           toast(error.message);
           if (editor.isConnected) editor.replaceWith(cardTitle);
@@ -4122,15 +4203,20 @@ function showReview(entry, review, undoGroupId, provenance) {
     // Прерванное закрытие могло оставить незавершённую анимацию: снимаем её,
     // иначе карточка откроется прозрачной.
     for (const animation of dialog.getAnimations()) animation.cancel();
-    dialog.showModal();
+    openCardDialog(dialog);
     syncCardViewport();
     // Только при открытии: после сохранения уточнения карточка
     // перерисовывается на месте, и проявлять её заново незачем.
-    appear(dialog);
+    appearCard(dialog);
     // Фокус на самой карточке: иначе он уходит на крестик или на селектор
     // типа, хотя карточку открывают ради заметок.
     dialog.focus();
+  } else if (fromPage) {
+    // Другая запись на месте прежней: читать её с начала, тихо проявившись.
+    area.scrollTop = 0;
+    if (motionAllowed()) appear(area, { shift: 12 });
   }
+  markOpenCard();
 }
 function cardFromWords(entry) {
   const from = { telegram: "Telegram", telegram_forward: "Telegram, пересланное", notes: "Заметки" }[entry.origin] || "Поле записи";
@@ -4640,6 +4726,64 @@ for (const grip of document.querySelectorAll("#capture-form .capture-resize")) {
   });
 }
 
+// Ящики под полем — «День · Закрыто», полоса дней и списки — тянутся в ширину
+// своими ручками, независимо от поля записи: поле растёт само, а колонка
+// списков остаётся, где была. Колонка стоит по центру, поэтому сдвиг края
+// удваивается. Ширина живёт в браузере и переживает перезагрузку; двойной
+// клик по краю возвращает 800px. На телефоне ручек нет.
+const DRAWERS_WIDTH = { min: 560, max: 1120 - 48, key: "kizuna-drawers-width" };
+const drawersLimit = () => Math.max(DRAWERS_WIDTH.min, Math.min(1120, window.innerWidth) - 48);
+function readDrawersWidth() {
+  try {
+    const value = Number(localStorage.getItem(DRAWERS_WIDTH.key));
+    return Number.isFinite(value) && value >= DRAWERS_WIDTH.min ? Math.min(value, DRAWERS_WIDTH.max) : null;
+  } catch {
+    return null;
+  }
+}
+function paintDrawersWidth() {
+  const width = readDrawersWidth();
+  const page = $("#today");
+  if (width) page.style.setProperty("--drawers-width", `${width}px`);
+  else page.style.removeProperty("--drawers-width");
+}
+paintDrawersWidth();
+for (const grip of document.querySelectorAll(".drawers .drawers-resize")) {
+  grip.addEventListener("dblclick", () => {
+    try { localStorage.removeItem(DRAWERS_WIDTH.key); } catch {}
+    paintDrawersWidth();
+  });
+  grip.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    const drawers = $(".drawers");
+    const startX = event.clientX;
+    const startWidth = drawers.getBoundingClientRect().width;
+    const sx = grip.dataset.dir === "e" ? 2 : -2;
+    const max = drawersLimit();
+    let width = startWidth;
+    let moved = false;
+    grip.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    const move = (e) => {
+      if (Math.abs(e.clientX - startX) < 2 && !moved) return;
+      moved = true;
+      width = Math.min(max, Math.max(DRAWERS_WIDTH.min, startWidth + sx * (e.clientX - startX)));
+      $("#today").style.setProperty("--drawers-width", `${Math.round(width)}px`);
+    };
+    const stop = () => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", stop);
+      grip.removeEventListener("pointercancel", stop);
+      if (!moved) return;
+      try { localStorage.setItem(DRAWERS_WIDTH.key, String(Math.round(width))); } catch {}
+      paintDrawersWidth();
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", stop);
+    grip.addEventListener("pointercancel", stop);
+  });
+}
+
 function idempotencyKey() {
   return `capture-${crypto.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`}`;
 }
@@ -5132,6 +5276,10 @@ $("#review-params-toggle").addEventListener("click", () => setCardParams(!cardPa
 $("#review-params-close").addEventListener("click", () => setCardParams(false));
 // Escape и клик по подложке закрывают карточку; что менялось — сохраняется.
 $("#review-dialog").addEventListener("close", () => {
+  // Смена режима закрывает окно и тут же открывает заново (reopenCardDialog):
+  // к приходу этого события оно уже открыто, и карточка остаётся на месте.
+  if ($("#review-dialog").open) return;
+  setCardModeMenu(false);
   // Esc закрывает диалог сам, мимо closeCard: правки забираем и меню разметки
   // убираем здесь же, пока поля ещё на месте — иначе меню осталось бы на
   // документе вместе со своим слушателем клавиш, а правки пропали бы.
@@ -5142,15 +5290,36 @@ $("#review-dialog").addEventListener("close", () => {
   resetCardFocus();
   clear($("#review"));
   syncCardViewport();
+  markOpenCard();
 });
-// Esc идёт по слоям: сначала закрывает панель «Параметры», потом сворачивает
-// разговор, у подзадачи возвращает к родителю — и только у корня закрывает
-// карточку.
-$("#review-dialog").addEventListener("cancel", (event) => {
+// Esc идёт по слоям: сначала закрывает меню режимов и панель «Параметры»,
+// потом сворачивает разговор, у подзадачи возвращает к родителю — и только у
+// корня закрывает карточку. Возвращает true, когда закрыл слой, а не карточку.
+function cardEscape() {
   const dialog = $("#review-dialog");
-  if (cardParamsOpen) { event.preventDefault(); setCardParams(false); return; }
-  if (dialog.classList.contains("talk-open")) { event.preventDefault(); dialog.querySelector(".talk-close")?.click(); return; }
-  if (cardStack.length) { event.preventDefault(); goBackCard(); }
+  if (cardModeMenuOpen()) { setCardModeMenu(false); $("#review-mode-toggle").focus({ preventScroll: true }); return true; }
+  if (cardParamsOpen) { setCardParams(false); return true; }
+  if (dialog.classList.contains("talk-open")) { dialog.querySelector(".talk-close")?.click(); return true; }
+  if (cardStack.length) { goBackCard(); return true; }
+  return false;
+}
+$("#review-dialog").addEventListener("cancel", (event) => {
+  if (cardEscape()) event.preventDefault();
+});
+// У обычного окна («сбоку») Esc сам ничего не делает — закрывает его этот
+// слушатель, по тем же слоям. Он висит на window, то есть после всех
+// слушателей страницы: у кого-то Esc уже занят (меню разметки, заголовок в
+// поле) — тот отменил его сам. Поле ввода страницы и её всплывающие списки
+// свой Esc оставляют себе.
+const CARD_PAGE_OWNS_ESCAPE = "input, textarea, select, [contenteditable='true'], .board-vals, .board-column.ghost, header details[open], .kc-menu, #capture-form";
+window.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
+  const dialog = $("#review-dialog");
+  if (!dialog.open || dialog.matches(":modal") || document.querySelector("dialog:modal")) return;
+  const target = event.target;
+  if (target instanceof Element && !dialog.contains(target) && target.closest(CARD_PAGE_OWNS_ESCAPE)) return;
+  event.preventDefault();
+  if (!cardEscape()) closeCard();
 });
 // На телефоне клавиатура сжимает видимую область, а не окно: Safari тогда
 // прокручивает документ, чтобы показать каретку, и уводит карточку за экран,
@@ -5173,92 +5342,288 @@ function syncCardViewport() {
 }
 window.visualViewport?.addEventListener("resize", syncCardViewport);
 window.visualViewport?.addEventListener("scroll", syncCardViewport);
-CARD_PHONE.addEventListener("change", syncCardViewport);
-$("#review-dialog").addEventListener("click", (event) => {
-  if (event.target === $("#review-dialog")) closeCard();
-});
-// Карточку можно растянуть или сжать мышкой за край или угол. Тянется
-// симметрично — она остаётся по центру, как и была, а край идёт за курсором.
-// Размер запоминается и возвращается при следующем открытии; двойной клик по
-// краю возвращает исходный.
-const cardSizeStorageKey = "pagent.focus-card-size";
-const CARD_MIN_WIDTH = 480;
-const CARD_MIN_HEIGHT = 360;
-function applyCardSize(size) {
+// Окно сбоку на телефоне — модальное и во весь экран: при переходе через
+// границу оно переоткрывается тем способом, который просит ширина.
+CARD_PHONE.addEventListener("change", () => {
   const dialog = $("#review-dialog");
-  if (!size) {
-    dialog.style.removeProperty("--card-w");
-    dialog.style.removeProperty("--card-h");
-    return;
-  }
-  dialog.style.setProperty("--card-w", `${Math.round(size.width)}px`);
-  dialog.style.setProperty("--card-h", `${Math.round(size.height)}px`);
-}
-function restoreCardSize() {
+  if (dialog.open && dialog.matches(":modal") !== cardNeedsModal()) reopenCardDialog(dialog);
+  syncCardViewport();
+});
+// Клик по подложке закрывает модальную карточку; у обычного окна («сбоку»)
+// подложки нет, а щелчок по странице его не закрывает. Щелчок, закрывший меню
+// режимов, карточку тоже не закрывает.
+$("#review-dialog").addEventListener("click", (event) => {
+  const dialog = $("#review-dialog");
+  if (event.target !== dialog || !dialog.matches(":modal")) return;
+  if (cardModeMenuDismissed) { cardModeMenuDismissed = false; return; }
+  closeCard();
+});
+
+// ── режимы показа карточки ───────────────────────────────────────────────────
+// Где открывать карточку, человек выбирает один раз, и выбор помнится для всех
+// карточек. «По центру» — окно поверх страницы с зазорами по краям, «сбоку» —
+// во весь рост справа, доска за ней видна и жива, «во весь экран» — как
+// страница. Окно по центру и во весь экран модальное (страница под ним
+// замирает), сбоку — обычное: щелчок по другой карточке доски меняет
+// содержимое открытой, а не открывает вторую. На телефоне все три режима — во
+// весь экран, и окно всегда модальное.
+const CARD_MODE_KEY = "kizuna-card-mode";
+const CARD_MODES = {
+  center: { words: "по центру", icon: '<rect x="3" y="4" width="18" height="16" rx="2"/><rect x="7" y="8" width="10" height="8" rx="1"/>' },
+  side: { words: "сбоку", icon: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M13 4v16"/>' },
+  full: { words: "во весь экран", icon: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 13h6"/>' },
+};
+function readCardMode() {
   try {
-    const stored = JSON.parse(localStorage.getItem(cardSizeStorageKey));
-    if (stored && Number.isFinite(stored.width) && Number.isFinite(stored.height)) applyCardSize(stored);
+    const value = localStorage.getItem(CARD_MODE_KEY);
+    return Object.hasOwn(CARD_MODES, value) ? value : "center";
   } catch {
-    localStorage.removeItem(cardSizeStorageKey);
+    return "center";
   }
 }
-restoreCardSize();
-for (const handle of document.querySelectorAll("#review-dialog .card-resize")) {
-  const dir = handle.dataset.dir;
-  handle.addEventListener("dblclick", () => {
-    applyCardSize(null);
-    localStorage.removeItem(cardSizeStorageKey);
+const cardNeedsModal = (mode = readCardMode()) => mode !== "side" || CARD_PHONE.matches;
+function paintCardMode() {
+  const mode = readCardMode();
+  $("#review-dialog").dataset.mode = mode;
+  $("#review-mode-icon").innerHTML = CARD_MODES[mode].icon;
+  for (const item of $("#review-mode-menu").querySelectorAll("[data-mode]"))
+    item.setAttribute("aria-checked", String(item.dataset.mode === mode));
+}
+paintCardMode();
+// Окно открывается тем способом, который просит режим.
+function openCardDialog(dialog) {
+  paintCardMode();
+  if (cardNeedsModal()) dialog.showModal();
+  else dialog.show();
+}
+// Сбоку карточка выезжает из-за правого края, в остальных режимах — тихо
+// проявляется на месте, как всегда.
+function appearCard(dialog) {
+  if (dialog.dataset.mode !== "side" || CARD_PHONE.matches) return appear(dialog);
+  if (!motionAllowed()) return null;
+  for (const animation of dialog.getAnimations()) animation.cancel();
+  return dialog.animate(
+    [{ opacity: 0.4, transform: "translateX(40px)" }, { opacity: 1, transform: "none" }],
+    { duration: 220, easing: APPEAR_EASING },
+  );
+}
+// Из модального окна в обычное и обратно без потери карточки: окно закрывается
+// и тут же открывается заново, содержимое стоит на месте. Закрытие стирает
+// прокрутку — возвращаем её.
+function reopenCardDialog(dialog) {
+  const focused = document.activeElement;
+  const scrolls = [...dialog.querySelectorAll(".review, .card-params-body, .thread-list")].map((element) => [element, element.scrollTop]);
+  for (const animation of dialog.getAnimations()) animation.cancel();
+  dialog.close();
+  openCardDialog(dialog);
+  syncCardViewport();
+  for (const [element, top] of scrolls) element.scrollTop = top;
+  (focused instanceof HTMLElement && dialog.contains(focused) ? focused : dialog).focus({ preventScroll: true });
+}
+// Окно меняет вид без перехода: ширина и положение прыгают, а не ползут.
+function jumpCardSize(change) {
+  const dialog = $("#review-dialog");
+  dialog.classList.add("jump");
+  change();
+  requestAnimationFrame(() => requestAnimationFrame(() => dialog.classList.remove("jump")));
+}
+function setCardMode(next) {
+  if (!Object.hasOwn(CARD_MODES, next)) return;
+  const dialog = $("#review-dialog"), prev = readCardMode();
+  try { localStorage.setItem(CARD_MODE_KEY, next); } catch {}
+  jumpCardSize(() => {
+    paintCardMode();
+    if (dialog.open && dialog.matches(":modal") !== cardNeedsModal(next)) reopenCardDialog(dialog);
+    markOpenCard();
   });
-  handle.addEventListener("pointerdown", (event) => {
+  if (dialog.open && next !== prev) cardSnack(`Карточки открываются ${CARD_MODES[next].words}`);
+}
+// Меню режимов: значок в верхней строке рядом с «Параметры». Закрывается
+// выбором, щелчком мимо, Esc и уходом фокуса; стрелки ходят по пунктам.
+const cardModes = $("#review-modes");
+const cardModeMenu = $("#review-mode-menu");
+const cardModeToggle = $("#review-mode-toggle");
+let cardModeMenuDismissed = false;
+const cardModeMenuOpen = () => !cardModeMenu.hidden;
+function setCardModeMenu(open, { focus = false } = {}) {
+  cardModeMenu.hidden = !open;
+  cardModeToggle.setAttribute("aria-expanded", String(open));
+  if (open && focus) (cardModeMenu.querySelector('[aria-checked="true"]') || cardModeMenu.querySelector("button"))?.focus({ preventScroll: true });
+}
+cardModeToggle.addEventListener("click", (event) => setCardModeMenu(!cardModeMenuOpen(), { focus: event.detail === 0 }));
+cardModeMenu.addEventListener("click", (event) => {
+  const item = event.target.closest("[data-mode]");
+  if (!item) return;
+  setCardModeMenu(false);
+  setCardMode(item.dataset.mode);
+  cardModeToggle.focus({ preventScroll: true });
+});
+cardModes.addEventListener("keydown", (event) => {
+  const items = [...cardModeMenu.querySelectorAll("[data-mode]")];
+  const index = items.indexOf(document.activeElement);
+  if (event.key === "Escape" && cardModeMenuOpen()) {
+    event.preventDefault();
+    event.stopPropagation();
+    setCardModeMenu(false);
+    cardModeToggle.focus({ preventScroll: true });
+  } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    if (!cardModeMenuOpen()) { setCardModeMenu(true, { focus: true }); return; }
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    items[(index + step + items.length) % items.length].focus({ preventScroll: true });
+  } else if (event.key === "Tab" && cardModeMenuOpen()) setCardModeMenu(false);
+});
+document.addEventListener("pointerdown", (event) => {
+  if (!cardModeMenuOpen() || event.target.closest?.("#review-modes")) return;
+  setCardModeMenu(false);
+  cardModeMenuDismissed = true;
+  setTimeout(() => { cardModeMenuDismissed = false; }, 400);
+});
+
+// ── размер окна ──────────────────────────────────────────────────────────────
+// Края окна тянутся, как у поля записи на «Сегодня»: боковые — ширина, нижний —
+// высота, нижние углы — обе. Окно по центру стоит посередине, поэтому сдвиг
+// бокового края удваивается, а верх остаётся на месте — растёт вниз. «Сбоку»
+// тянется только левый край. Размер помнится в kizuna-card-size = { w, h, sw }:
+// ширина и высота окна по центру, ширина панели сбоку. Двойной клик по краю
+// возвращает размер по умолчанию — высоту снова задаёт содержимое.
+const CARD_SIZE_KEY = "kizuna-card-size";
+const CARD_SIZE_MIN = { w: 560, h: 360, sw: 420 };
+const clampNumber = (value, min, max) => Math.min(Math.max(value, min), Math.max(min, max));
+function readCardSize() {
+  const pick = (value, min) => (Number.isFinite(value) && value >= min ? Math.round(value) : null);
+  try {
+    const stored = JSON.parse(localStorage.getItem(CARD_SIZE_KEY));
+    if (stored && typeof stored === "object") return { w: pick(stored.w, CARD_SIZE_MIN.w), h: pick(stored.h, CARD_SIZE_MIN.h), sw: pick(stored.sw, CARD_SIZE_MIN.sw) };
+  } catch {}
+  return { w: null, h: null, sw: null };
+}
+function writeCardSize(patch) {
+  const next = { ...readCardSize(), ...patch };
+  try {
+    if (next.w === null && next.h === null && next.sw === null) localStorage.removeItem(CARD_SIZE_KEY);
+    else localStorage.setItem(CARD_SIZE_KEY, JSON.stringify(next));
+  } catch {}
+}
+function paintCardSize() {
+  const dialog = $("#review-dialog"), size = readCardSize();
+  for (const [name, value] of [["--card-w", size.w], ["--card-h", size.h], ["--card-sw", size.sw]]) {
+    if (value) dialog.style.setProperty(name, `${value}px`);
+    else dialog.style.removeProperty(name);
+  }
+}
+paintCardSize();
+for (const grip of document.querySelectorAll("#review-dialog .card-resize")) {
+  const dir = grip.dataset.dir;
+  grip.addEventListener("dblclick", () => {
+    writeCardSize($("#review-dialog").dataset.mode === "side" ? { sw: null } : { w: null, h: null });
+    jumpCardSize(paintCardSize);
+    cardSnack("Размер по умолчанию");
+  });
+  grip.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
-    const dialog = $("#review-dialog");
-    // Ширина — у колонки содержимого: открытая панель «Параметры» в неё не входит.
-    const box = dialog.getBoundingClientRect(), main = dialog.querySelector(".card-main")?.getBoundingClientRect();
-    const start = { width: main ? main.width : box.width, height: box.height };
-    const startX = event.clientX,
-      startY = event.clientY;
-    // Знак: правый и нижний края растут вслед за курсором, левый и верхний —
-    // навстречу. Карточка центрирована, поэтому сдвиг края удваивается.
+    const dialog = $("#review-dialog"), badge = $("#review-size-badge");
+    const side = dialog.dataset.mode === "side";
+    const box = dialog.getBoundingClientRect();
+    const column = dialog.querySelector(".card-main").getBoundingClientRect();
+    // Ширина окна по центру — это ширина колонки содержимого: открытая панель
+    // «Параметры» в неё не входит, а место ей нужно.
+    const params = cardParamsOpen ? dialog.querySelector(".card-params").getBoundingClientRect().width : 0;
+    const start = { x: event.clientX, y: event.clientY, w: column.width, h: box.height, sw: box.width };
     const sx = dir.includes("e") ? 2 : dir.includes("w") ? -2 : 0;
-    const sy = dir.includes("s") ? 2 : dir.includes("n") ? -2 : 0;
-    let size = { width: start.width, height: start.height };
-    handle.setPointerCapture(event.pointerId);
-    dialog.classList.add("resizing");
+    const sy = dir.includes("s") ? 1 : 0;
+    let next = {};
+    let moved = false;
+    grip.setPointerCapture(event.pointerId);
     event.preventDefault();
     const move = (e) => {
-      size = {
-        width: Math.min(
-          window.innerWidth - 24,
-          Math.max(CARD_MIN_WIDTH, start.width + sx * (e.clientX - startX)),
-        ),
-        height: Math.min(
-          window.innerHeight - 24,
-          Math.max(CARD_MIN_HEIGHT, start.height + sy * (e.clientY - startY)),
-        ),
-      };
-      applyCardSize(size);
+      const dx = e.clientX - start.x, dy = e.clientY - start.y;
+      if (!moved && Math.hypot(dx, dy) < 3) return;
+      if (!moved) {
+        moved = true;
+        dialog.classList.add("resizing");
+      }
+      next = {};
+      if (side) next.sw = Math.round(clampNumber(start.sw - dx, CARD_SIZE_MIN.sw, window.innerWidth - 200));
+      else {
+        if (sx) next.w = Math.round(clampNumber(start.w + sx * dx, CARD_SIZE_MIN.w, window.innerWidth - 48 - params));
+        if (sy) next.h = Math.round(clampNumber(start.h + sy * dy, CARD_SIZE_MIN.h, window.innerHeight - 80));
+      }
+      for (const [name, value] of [["--card-w", next.w], ["--card-h", next.h], ["--card-sw", next.sw]])
+        if (value) dialog.style.setProperty(name, `${value}px`);
+      const now = dialog.getBoundingClientRect();
+      badge.textContent = `${Math.round(side ? now.width : dialog.querySelector(".card-main").getBoundingClientRect().width)} × ${Math.round(now.height)}`;
     };
     const stop = () => {
-      handle.removeEventListener("pointermove", move);
-      handle.removeEventListener("pointerup", stop);
-      handle.removeEventListener("pointercancel", stop);
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", stop);
+      grip.removeEventListener("pointercancel", stop);
       dialog.classList.remove("resizing");
-      localStorage.setItem(
-        cardSizeStorageKey,
-        JSON.stringify({ width: Math.round(size.width), height: Math.round(size.height) }),
-      );
+      if (!moved) return;
+      writeCardSize(next);
+      paintCardSize();
+      dialog.classList.add("sized");
+      setTimeout(() => dialog.classList.remove("sized"), 900);
     };
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", stop);
-    handle.addEventListener("pointercancel", stop);
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", stop);
+    grip.addEventListener("pointercancel", stop);
   });
 }
-window.visualViewport?.addEventListener("resize", syncCardViewport);
-window.visualViewport?.addEventListener("scroll", syncCardViewport);
-CARD_PHONE.addEventListener("change", syncCardViewport);
-$("#review-dialog").addEventListener("click", (event) => {
-  if (event.target === $("#review-dialog")) closeCard();
-});
+// Высота поля обсуждения внизу карточки — одна на все карточки и все режимы:
+// тянется верхней кромкой поля (полоса строится вместе с полем в cardDiscussion),
+// помнится в kizuna-card-talk-height, двойной клик возвращает прежнюю, по
+// содержимому. Растёт только поле: окно остаётся в своих зазорах, а основная
+// часть отдаёт ему место.
+const CARD_TALK_HEIGHT = { min: 44, max: 360, key: "kizuna-card-talk-height" };
+function readTalkHeight() {
+  try {
+    const value = Number(localStorage.getItem(CARD_TALK_HEIGHT.key));
+    return Number.isFinite(value) && value > CARD_TALK_HEIGHT.min ? Math.min(Math.round(value), CARD_TALK_HEIGHT.max) : null;
+  } catch {
+    return null;
+  }
+}
+function paintTalkHeight() {
+  const dialog = $("#review-dialog"), height = readTalkHeight();
+  if (height) dialog.style.setProperty("--talk-h", `${height}px`);
+  else dialog.style.removeProperty("--talk-h");
+}
+paintTalkHeight();
+function attachTalkResize(grip, composer) {
+  grip.addEventListener("dblclick", () => {
+    try { localStorage.removeItem(CARD_TALK_HEIGHT.key); } catch {}
+    paintTalkHeight();
+  });
+  grip.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    const dialog = $("#review-dialog");
+    const startY = event.clientY;
+    const startHeight = composer.getBoundingClientRect().height;
+    const max = Math.min(CARD_TALK_HEIGHT.max, window.innerHeight - 280);
+    let height = startHeight;
+    let moved = false;
+    grip.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    const move = (e) => {
+      if (!moved && Math.abs(e.clientY - startY) < 3) return;
+      moved = true;
+      height = clampNumber(startHeight - (e.clientY - startY), CARD_TALK_HEIGHT.min, max);
+      dialog.style.setProperty("--talk-h", `${Math.round(height)}px`);
+    };
+    const stop = () => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", stop);
+      grip.removeEventListener("pointercancel", stop);
+      if (!moved) return;
+      try { localStorage.setItem(CARD_TALK_HEIGHT.key, String(Math.round(height))); } catch {}
+      paintTalkHeight();
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", stop);
+    grip.addEventListener("pointercancel", stop);
+  });
+}
 window.addEventListener("pagehide", () => {
   for (const record of activeCaptures.values())
     if (record.timer) clearTimeout(record.timer);

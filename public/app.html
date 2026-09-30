@@ -149,6 +149,10 @@
         <!-- Под полем — два ящика: «День», где дела лежат вместе с календарём, и
              «Закрыто» (внутри по-прежнему #journal). В каждом свои стрелки по дням. -->
         <section class="drawers" aria-label="Дневная сводка">
+          <!-- Ширина ящиков — своя, не поля записи: боковые края тянутся,
+               двойной клик возвращает 800px (kizuna-drawers-width). -->
+          <div class="drawers-resize" data-dir="w" aria-hidden="true"></div>
+          <div class="drawers-resize" data-dir="e" aria-hidden="true"></div>
           <div class="drawer-tabs" id="today-tabs" role="tablist"></div>
           <div id="journal" class="stack drawer" role="tabpanel" aria-labelledby="tab-journal" hidden>
             <p class="empty">Пока нет зафиксированной работы за сегодня.</p>
@@ -802,12 +806,38 @@
             <div class="card-top-tools">
               <span class="card-top-nav" id="review-nav"></span>
               <button id="review-params-toggle" class="props-bar" type="button" aria-expanded="false" aria-controls="review-params">Параметры</button>
+              <!-- Как открывать карточку: по центру, сбоку или во весь экран.
+                   Выбор один на все карточки и помнится в браузере
+                   (kizuna-card-mode); значок на кнопке — текущий режим. -->
+              <span class="card-modes" id="review-modes">
+                <button id="review-mode-toggle" class="card-mode-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="review-mode-menu" aria-label="Как открывать карточку" title="Как открывать карточку">
+                  <svg id="review-mode-icon" viewBox="0 0 24 24" aria-hidden="true"></svg>
+                </button>
+                <div id="review-mode-menu" class="card-mode-menu" role="menu" aria-label="Как открывать карточку" hidden>
+                  <button type="button" role="menuitemradio" aria-checked="false" data-mode="center">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><rect x="7" y="8" width="10" height="8" rx="1"/></svg>
+                    <span class="card-mode-text"><b>По центру</b><small>окно поверх, зазоры по краям</small></span>
+                    <span class="card-mode-ok" aria-hidden="true"></span>
+                  </button>
+                  <button type="button" role="menuitemradio" aria-checked="false" data-mode="side">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M13 4v16"/></svg>
+                    <span class="card-mode-text"><b>Сбоку</b><small>во весь рост справа, доска видна</small></span>
+                    <span class="card-mode-ok" aria-hidden="true"></span>
+                  </button>
+                  <button type="button" role="menuitemradio" aria-checked="false" data-mode="full">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 13h6"/></svg>
+                    <span class="card-mode-text"><b>Во весь экран</b><small>как страница</small></span>
+                    <span class="card-mode-ok" aria-hidden="true"></span>
+                  </button>
+                  <p class="card-mode-hint">Выбор запоминается для всех карточек</p>
+                </div>
+              </span>
               <button id="review-close" class="dialog-close" type="button" aria-label="Закрыть карточку"></button>
             </div>
           </div>
           <section id="review" class="review" aria-live="polite"></section>
         </div>
-        <aside id="review-params" class="card-params" aria-label="Параметры записи" inert>
+        <aside id="review-params" class="card-params" aria-label="Параметры записи" inert hidden>
           <div class="card-params-inner">
             <div class="card-params-head">
               <h3>Параметры</h3>
@@ -817,14 +847,16 @@
           </div>
         </aside>
       </div>
-      <div class="card-resize" data-dir="n" aria-hidden="true"></div>
-      <div class="card-resize" data-dir="s" aria-hidden="true"></div>
+      <!-- Края окна тянутся, как у поля записи на «Сегодня»: боковые — ширина,
+           нижний — высота, нижние углы — обе; в режиме «сбоку» тянется только
+           левый край. Полосы невидимы, о них говорит курсор. Двойной клик по
+           любой возвращает размер по умолчанию. -->
       <div class="card-resize" data-dir="e" aria-hidden="true"></div>
       <div class="card-resize" data-dir="w" aria-hidden="true"></div>
-      <div class="card-resize" data-dir="ne" aria-hidden="true"></div>
-      <div class="card-resize" data-dir="nw" aria-hidden="true"></div>
+      <div class="card-resize" data-dir="s" aria-hidden="true"></div>
       <div class="card-resize" data-dir="se" aria-hidden="true"></div>
       <div class="card-resize" data-dir="sw" aria-hidden="true"></div>
+      <span class="card-size-badge" id="review-size-badge" aria-hidden="true"></span>
     </dialog>
     <dialog id="preview-dialog" aria-label="Просмотр вложения">
       <div class="preview-head">

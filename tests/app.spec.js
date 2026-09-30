@@ -259,6 +259,70 @@ test("карточка ввода тянется за края и помнит �
   expect(Math.round(await height())).toBe(Math.round(startHeight));
 });
 
+// Ящики под полем — вкладки, полоса дней и списки — тянутся в ширину своими
+// ручками по боковым краям, независимо от поля записи. Колонка стоит по центру,
+// поэтому край идёт за курсором, а ширина растёт на удвоенный сдвиг. Ширина
+// переживает перезагрузку (kizuna-drawers-width), двойной клик возвращает 800px.
+test("ящики под полем тянутся за боковые края и помнят ширину, а поле записи остаётся своей ширины", async ({ page }) => {
+  await page.goto("/");
+  const drawers = page.locator(".drawers");
+  const form = page.locator("#capture-form");
+  const width = async (locator) => Math.round((await locator.boundingBox()).width);
+  const grip = (dir) => page.locator(`.drawers .drawers-resize[data-dir="${dir}"]`);
+  const drag = async (locator, dx) => {
+    const box = await locator.boundingBox();
+    const x = box.x + box.width / 2, y = box.y + box.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + dx / 2, y);
+    await page.mouse.move(x + dx, y);
+    await page.mouse.up();
+  };
+  expect(await width(drawers)).toBe(800);
+  const formWidth = await width(form);
+  await expect(grip("e")).toHaveCSS("cursor", "ew-resize");
+  await expect(grip("w")).toHaveCSS("cursor", "ew-resize");
+
+  // Правый край на +60 — колонка шире на 120; поле записи свою ширину не меняет.
+  await drag(grip("e"), 60);
+  expect(await width(drawers)).toBe(920);
+  expect(await width(form)).toBe(formWidth);
+  expect(await page.locator("#today").evaluate((element) => element.style.getPropertyValue("--drawers-width"))).toBe("920px");
+  expect(await page.evaluate(() => localStorage.getItem("kizuna-drawers-width"))).toBe("920");
+  // Вкладки растут вместе с колонкой, а не остаются в прежних 800px.
+  expect(await width(page.locator("#today-tabs"))).toBe(920);
+  await page.reload();
+  expect(await width(drawers)).toBe(920);
+  expect(await width(form)).toBe(formWidth);
+
+  // Левый край тянет тоже, внутрь — уже; поле записи по-прежнему своё.
+  await drag(grip("w"), 30);
+  expect(await width(drawers)).toBe(860);
+  expect(await width(form)).toBe(formWidth);
+  // Пределы: не уже 560 и не шире min(1120, экран) − 48.
+  await drag(grip("e"), -500);
+  expect(await width(drawers)).toBe(560);
+  await drag(grip("e"), 280);
+  expect(await width(drawers)).toBe(1120 - 48);
+  // Простой щелчок по краю ничего не запоминает: хранится то, что выставили.
+  const stored = await page.evaluate(() => localStorage.getItem("kizuna-drawers-width"));
+  await grip("e").click();
+  expect(await page.evaluate(() => localStorage.getItem("kizuna-drawers-width"))).toBe(stored);
+
+  // Двойной клик возвращает 800, а ключ из браузера уходит.
+  await grip("e").dblclick();
+  expect(await width(drawers)).toBe(800);
+  expect(await page.evaluate(() => localStorage.getItem("kizuna-drawers-width"))).toBeNull();
+  expect(await width(form)).toBe(formWidth);
+});
+
+// На телефоне ручек у ящиков нет.
+test("у ящиков под полем на телефоне нет ручек ширины", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 800 });
+  await page.goto("/");
+  for (const dir of ["e", "w"]) await expect(page.locator(`.drawers .drawers-resize[data-dir="${dir}"]`)).toBeHidden();
+});
+
 // Подсказка под полем и подпись кнопки называют клавишу платформы: ⌘ на Mac и iOS,
 // Super на Linux (Android — не в счёт: ядро у него Linux, а рабочего стола нет),
 // Ctrl везде ещё. Сама отправка принимает и metaKey, и ctrlKey.

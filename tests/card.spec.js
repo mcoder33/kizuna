@@ -649,7 +649,8 @@ test("карточка тихо проявляется, а не летит че�
   expect(blockAnimations).toBe(0);
 });
 
-// Карточка сохраняет базовый размер и центрирует колонку описания.
+// Карточка по центру — 880px в ширину, высота по содержимому, зазор 40px сверху;
+// колонка описания стоит по центру.
 test("the entry card starts at 880px and centers its description", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -663,10 +664,13 @@ test("the entry card starts at 880px and centers its description", async ({ page
   await entry.locator(".entry-title").click();
   await page.waitForTimeout(760);
 
-  // Короткая карточка не растягивается на всю доступную высоту.
+  // Короткая карточка не растягивается на всю доступную высоту: её высоту
+  // задаёт содержимое, а верх стоит в зазоре 40px от края экрана.
   const card = await page.locator("#review-dialog").boundingBox();
   expect(Math.round(card.width)).toBe(880);
-  expect(Math.round(card.height)).toBe(680);
+  expect(card.height).toBeLessThan(720);
+  expect(card.height).toBeGreaterThan(360);
+  expect(Math.round(card.y)).toBe(40);
 
   // Контент собран в колонку страницы: сам #review — прокрутка во всю ширину,
   // колонку (788px карточки «Фокус») задают его поля, поэтому меряем заметки.
@@ -689,7 +693,8 @@ test("the focus card keeps its width when parameters open and after reopening", 
   await entry.locator(".entry-title").click();
   const dialog = page.locator("#review-dialog");
   const before = await dialog.locator(".card-main").boundingBox();
-  await expect(dialog.locator(".card-resize")).toHaveCount(8);
+  // Ручки размера: боковые края, нижний и нижние углы.
+  await expect(dialog.locator(".card-resize")).toHaveCount(5);
   await dialog.locator("#review-params-toggle").click();
   await expect(dialog.locator("#review-params")).toBeVisible();
   expect(Math.round((await dialog.locator(".card-main").boundingBox()).width)).toBe(Math.round(before.width));
@@ -1095,3 +1100,517 @@ test("карточка по ссылке остаётся на месте пос
   await expect(dialog.locator(".card-tick")).toHaveAttribute("aria-pressed", "false");
   await expect(dialog.locator(".card-done")).toHaveCount(0);
 });
+
+// ── режимы показа карточки ───────────────────────────────────────────────────
+// По центру — окно поверх с зазорами и высотой по содержимому, сбоку — во весь
+// рост справа, страница живая, во весь экран — как страница. Выбор один на все
+// карточки и помнится в браузере (kizuna-card-mode); края окна тянутся, размер
+// помнится (kizuna-card-size), поле обсуждения внизу тянется само
+// (kizuna-card-talk-height).
+const resetAll = (request) => request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+const makeDeed = async (request, raw) => (await (await request.post("/api/captures", { data: { raw, primaryType: "todo" } })).json()).entry;
+const makeStep = async (request, parentId, title) => (await (await request.post(`/api/captures/${parentId}/subtasks`, { data: { title } })).json()).entry;
+async function openByLink(page, id) {
+  await page.goto(`/#today?open=${id}`);
+  await expect(page.locator("#review-dialog")).toBeVisible();
+  await expect(page.locator("#review-dialog .card-title")).not.toBeEmpty();
+  // Проявление и смена ширины заканчиваются до замеров.
+  await settled(page);
+}
+const settled = (page) => page.locator("#review-dialog").evaluate((element) => Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => {}))));
+const isModal = (page) => page.locator("#review-dialog").evaluate((element) => element.matches(":modal"));
+const storedValue = (page, key) => page.evaluate((name) => localStorage.getItem(name), key);
+const startInMode = (page, mode) => page.addInitScript((value) => localStorage.setItem("kizuna-card-mode", value), mode);
+async function dragBy(page, locator, dx, dy) {
+  const box = await locator.boundingBox();
+  const x = box.x + box.width / 2, y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + dx / 2, y + dy / 2);
+  await page.mouse.move(x + dx, y + dy);
+  await page.mouse.up();
+}
+
+test("режимы карточки: меню с тремя пунктами, выбор «сбоку» помнится после перезагрузки, следующая карточка открывается сбоку", async ({ page, request }) => {
+  await resetAll(request);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const first = await makeDeed(request, "Первое дело для режимов");
+  const second = await makeDeed(request, "Второе дело для режимов");
+  await openByLink(page, first.id);
+  const dialog = page.locator("#review-dialog");
+  const toggle = dialog.locator("#review-mode-toggle");
+  const menu = dialog.locator("#review-mode-menu");
+  const items = menu.getByRole("menuitemradio");
+
+  // По умолчанию — по центру, окно модальное, значок — «окно поверх».
+  await expect(dialog).toHaveAttribute("data-mode", "center");
+  expect(await isModal(page)).toBe(true);
+  await expect(menu).toBeHidden();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await toggle.click();
+  await expect(menu).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(items).toHaveCount(3);
+  await expect(items.nth(0)).toContainText("По центру");
+  await expect(items.nth(0)).toContainText("окно поверх, зазоры по краям");
+  await expect(items.nth(1)).toContainText("Сбоку");
+  await expect(items.nth(1)).toContainText("во весь рост справа, доска видна");
+  await expect(items.nth(2)).toContainText("Во весь экран");
+  await expect(items.nth(2)).toContainText("как страница");
+  await expect(items.nth(0)).toHaveAttribute("aria-checked", "true");
+  await expect(items.nth(1)).toHaveAttribute("aria-checked", "false");
+  await expect(menu).toContainText("Выбор запоминается для всех карточек");
+  // Esc закрывает только меню, карточка остаётся.
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(dialog).toBeVisible();
+
+  await toggle.click();
+  await items.nth(1).click();
+  await expect(menu).toBeHidden();
+  await expect(dialog).toHaveAttribute("data-mode", "side");
+  await expect(dialog.locator(".card-snack")).toContainText("Карточки открываются сбоку");
+  expect(await storedValue(page, "kizuna-card-mode")).toBe("side");
+  // Карточка осталась той же, но окно стало обычным, а не модальным.
+  await expect(dialog.locator(".card-title")).toHaveText("Первое дело для режимов");
+  expect(await isModal(page)).toBe(false);
+  await settled(page);
+  let box = await dialog.boundingBox();
+  expect(Math.round(box.x + box.width)).toBe(1440);
+  expect(Math.round(box.y)).toBe(0);
+  expect(Math.round(box.height)).toBe(900);
+  expect(Math.round(box.width)).toBe(Math.round(1440 * 0.56));
+  await toggle.click();
+  await expect(items.nth(1)).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("Escape");
+
+  // После перезагрузки выбор на месте, и следующая карточка открывается сбоку.
+  await page.reload();
+  await openByLink(page, second.id);
+  await expect(dialog).toHaveAttribute("data-mode", "side");
+  await expect(dialog.locator(".card-title")).toHaveText("Второе дело для режимов");
+  expect(await isModal(page)).toBe(false);
+  box = await dialog.boundingBox();
+  expect(Math.round(box.x + box.width)).toBe(1440);
+  expect(Math.round(box.height)).toBe(900);
+
+  // Значок на кнопке показывает текущий режим; выбор «по центру» возвращает окно.
+  await expect(toggle.locator("path")).toHaveAttribute("d", "M13 4v16");
+  await toggle.click();
+  await items.nth(0).click();
+  await expect(dialog).toHaveAttribute("data-mode", "center");
+  await expect(dialog.locator(".card-snack")).toContainText("Карточки открываются по центру");
+  expect(await isModal(page)).toBe(true);
+  expect(await storedValue(page, "kizuna-card-mode")).toBe("center");
+});
+
+test("смена режима в открытой карточке не теряет её: название, заметка и панель «Параметры» на месте", async ({ page, request }) => {
+  await resetAll(request);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const deed = await makeDeed(request, "Дело, которое переезжает между режимами");
+  await openByLink(page, deed.id);
+  const dialog = page.locator("#review-dialog");
+  await dialog.locator("#review-params-toggle").click();
+  await expect(dialog.locator("#review-props")).toBeVisible();
+  await dialog.locator(".card-markdown").click();
+  await dialog.locator("#card-body-editor").fill("дописано до смены режима");
+  for (const [index, mode] of [[2, "full"], [1, "side"], [0, "center"]]) {
+    await dialog.locator("#review-mode-toggle").click();
+    await dialog.locator("#review-mode-menu").getByRole("menuitemradio").nth(index).click();
+    await expect(dialog).toHaveAttribute("data-mode", mode);
+    await expect(dialog.locator(".card-title")).toHaveText("Дело, которое переезжает между режимами");
+    await expect(dialog.locator("#review-params-toggle")).toHaveAttribute("aria-expanded", "true");
+    await expect(dialog.locator(".card-markdown")).toContainText("дописано до смены режима");
+    expect(await isModal(page)).toBe(mode !== "side");
+  }
+  // Заметка ушла на сервер при уходе фокуса в меню, а не пропала.
+  await expect.poll(async () => (await (await request.get(`/api/captures/${deed.id}`)).json()).entry.note?.body).toBe("дописано до смены режима");
+});
+
+test("сбоку страница жива: щелчок по другой карточке доски меняет открытую, а не открывает вторую", async ({ page, request }) => {
+  await resetAll(request);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await makeDeed(request, "Альфа дело режима");
+  await makeDeed(request, "Бета дело режима");
+  await makeDeed(request, "Гамма дело режима");
+  await startInMode(page, "side");
+  await page.goto("/#board");
+  const boardTitle = (text) => page.locator("#board-columns .board-card").filter({ hasText: text }).first().locator(".board-title");
+  const dialog = page.locator("#review-dialog");
+
+  await boardTitle("Альфа").click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator(".card-title")).toHaveText("Альфа дело режима");
+  // Окно не модальное, подложки нет: доска левее панели видна и не затемнена.
+  expect(await isModal(page)).toBe(false);
+  const panel = await dialog.boundingBox();
+  const beta = await boardTitle("Бета").boundingBox();
+  expect(beta.x + beta.width).toBeLessThan(panel.x);
+
+  // Открытая запись на доске за карточкой обведена: видно, какая из них читается.
+  const marked = page.locator("#board-columns .card-is-open");
+  await expect(marked).toHaveCount(1);
+  await expect(marked).toContainText("Альфа дело режима");
+
+  // Щелчок по другой карточке доски меняет содержимое открытой карточки.
+  await boardTitle("Бета").click();
+  await expect(dialog.locator(".card-title")).toHaveText("Бета дело режима");
+  await expect(dialog.locator(".card-nav-crumb")).toContainText("из 3");
+  expect(await page.evaluate(() => document.querySelectorAll("dialog[open]").length)).toBe(1);
+  await expect(marked).toHaveCount(1);
+  await expect(marked).toContainText("Бета дело режима");
+  await boardTitle("Гамма").click();
+  await expect(dialog.locator(".card-title")).toHaveText("Гамма дело режима");
+
+  // Щелчок по самой странице карточку не закрывает; стрелки листают соседние дела.
+  await page.locator("#board .page-heading h2").click({ position: { x: 20, y: 10 } });
+  await expect(dialog).toBeVisible();
+  const before = await dialog.locator(".card-title").innerText();
+  await dialog.locator(".card-nav-step:not([disabled])").first().click();
+  await expect(dialog.locator(".card-title")).not.toHaveText(before);
+
+  // Esc закрывает окно, у которого своего Esc нет, и обводка с доски уходит.
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(marked).toHaveCount(0);
+});
+
+test("сбоку набранное в карточке не пропадает, когда по доске открывают другую", async ({ page, request }) => {
+  await resetAll(request);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const alpha = await makeDeed(request, "Альфа дело с заметкой");
+  await makeDeed(request, "Бета дело без заметки");
+  await startInMode(page, "side");
+  await page.goto("/#board");
+  const boardTitle = (text) => page.locator("#board-columns .board-card").filter({ hasText: text }).first().locator(".board-title");
+  const dialog = page.locator("#review-dialog");
+  await boardTitle("Альфа").click();
+  await dialog.locator("#review-params-toggle").click();
+  await dialog.locator("#review-people").fill("Игорь Петров");
+  await dialog.locator(".card-markdown").click();
+  await dialog.locator("#card-body-editor").fill("набрано сбоку перед щелчком по доске");
+  await boardTitle("Бета").click();
+  await expect(dialog.locator(".card-title")).toHaveText("Бета дело без заметки");
+  // Панель «Параметры» одна на всю карточку: осталась открытой и у другой записи.
+  await expect(dialog.locator("#review-params-toggle")).toHaveAttribute("aria-expanded", "true");
+  await expect(dialog.locator("#review-people")).toHaveValue("");
+  await expect.poll(async () => (await (await request.get(`/api/captures/${alpha.id}`)).json()).entry.note?.body).toBe("набрано сбоку перед щелчком по доске");
+  await expect.poll(async () => (await (await request.get(`/api/captures/${alpha.id}`)).json()).entry.interpretation.classification.entities.people).toContain("Игорь Петров");
+});
+
+test("сбоку щелчок по уже открытой записи перечитывает её на месте, а щелчок по доске поверх подзадачи сбрасывает путь назад", async ({ page, request }) => {
+  await resetAll(request);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const parent = await makeDeed(request, "Родитель с шагом для режима");
+  await makeStep(request, parent.id, "Шаг родителя для режима");
+  await makeDeed(request, "Другое дело на доске режима");
+  await startInMode(page, "side");
+  await page.goto("/#board");
+  const boardTitle = (text) => page.locator("#board-columns .board-card").filter({ hasText: text }).first().locator(".board-title");
+  const dialog = page.locator("#review-dialog");
+  await boardTitle("Родитель с шагом").click();
+  await expect(dialog.locator(".card-title")).toHaveText("Родитель с шагом для режима");
+
+  // Та же запись ещё раз: набранное в панели не пропадает, карточка остаётся.
+  await dialog.locator("#review-params-toggle").click();
+  await dialog.locator("#review-people").fill("Игорь Петров");
+  await boardTitle("Родитель с шагом").click();
+  await expect(dialog.locator(".card-title")).toHaveText("Родитель с шагом для режима");
+  await expect(dialog.locator("#review-people")).toHaveValue("Игорь Петров");
+  await expect.poll(async () => (await (await request.get(`/api/captures/${parent.id}`)).json()).entry.interpretation.classification.entities.people).toContain("Игорь Петров");
+  await dialog.locator("#review-params-toggle").click();
+
+  // Подзадача открыта в той же карточке, путь назад — к родителю.
+  await dialog.locator("#card-subtask-list .subtask-open").first().click();
+  await expect(dialog.locator(".card-title")).toHaveText("Шаг родителя для режима");
+  await expect(dialog.locator(".card-return")).toBeVisible();
+  // Другая запись с доски встаёт на место подзадачи: пути назад больше нет.
+  await boardTitle("Другое дело").click();
+  await expect(dialog.locator(".card-title")).toHaveText("Другое дело на доске режима");
+  await expect(dialog.locator(".card-return")).toHaveCount(0);
+  await expect(dialog.locator(".card-nav-crumb")).toContainText("из");
+});
+
+test("сбоку Esc идёт по слоям: меню режимов, панель «Параметры», потом карточка", async ({ page, request }) => {
+  await resetAll(request);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const deed = await makeDeed(request, "Дело для слоёв Esc сбоку");
+  await startInMode(page, "side");
+  await openByLink(page, deed.id);
+  const dialog = page.locator("#review-dialog");
+  const menu = dialog.locator("#review-mode-menu");
+  await dialog.locator("#review-mode-toggle").click();
+  await expect(menu).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(dialog).toBeVisible();
+  await dialog.locator("#review-params-toggle").click();
+  await expect(dialog.locator("#review-params-toggle")).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press("Escape");
+  await expect(dialog.locator("#review-params-toggle")).toHaveAttribute("aria-expanded", "false");
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  // Esc в заметке: поле отпускает фокус, а карточка закрывается и сохраняет написанное.
+  await openByLink(page, deed.id);
+  await dialog.locator(".card-markdown").click();
+  await dialog.locator("#card-body-editor").fill("записано и закрыто Esc сбоку");
+  await page.locator("#card-body-editor").press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect.poll(async () => (await (await request.get(`/api/captures/${deed.id}`)).json()).entry.note?.body).toBe("записано и закрыто Esc сбоку");
+});
+
+test("во весь экран карточка занимает весь экран, содержимое и нижняя полоса стоят по центру колонкой до 980px", async ({ page, request }) => {
+  await resetAll(request);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const deed = await makeDeed(request, "Дело на весь экран");
+  await request.post(`/api/captures/${deed.id}/notes`, { data: { body: "Описание дела, которое читается как страница." } });
+  await startInMode(page, "full");
+  await openByLink(page, deed.id);
+  const dialog = page.locator("#review-dialog");
+  const box = await dialog.boundingBox();
+  expect([Math.round(box.x), Math.round(box.y), Math.round(box.width), Math.round(box.height)]).toEqual([0, 0, 1440, 900]);
+  expect(await isModal(page)).toBe(true);
+  // Без рамки и тени: как страница.
+  await expect(dialog).toHaveCSS("border-radius", "0px");
+  await expect(dialog).toHaveCSS("box-shadow", "none");
+  // Верхняя строка тянется на весь экран, содержимое — колонка до 980px по центру.
+  const top = await dialog.locator(".card-top").boundingBox();
+  expect(Math.round(top.width)).toBe(1440);
+  const body = await dialog.locator(".card-body").boundingBox();
+  expect(body.width).toBeLessThanOrEqual(980);
+  expect(Math.abs(body.x + body.width / 2 - 720)).toBeLessThan(2);
+  const field = await dialog.locator(".thread-composer").boundingBox();
+  expect(field.width).toBeLessThanOrEqual(980);
+  expect(Math.abs(field.x + field.width / 2 - 720)).toBeLessThan(2);
+  // Ручек размера у страницы нет.
+  for (const grip of await dialog.locator(".card-resize").all()) await expect(grip).toBeHidden();
+  // Параметры встают у правого края, колонка остаётся по центру оставшегося.
+  await dialog.locator("#review-params-toggle").click();
+  await expect(dialog.locator("#review-props")).toBeVisible();
+  await settled(page);
+  const panel = await dialog.locator("#review-params").boundingBox();
+  expect(Math.round(panel.x + panel.width)).toBe(1440);
+  // Esc и крестик закрывают.
+  await page.keyboard.press("Escape");
+  await expect(dialog.locator("#review-params-toggle")).toHaveAttribute("aria-expanded", "false");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await openByLink(page, deed.id);
+  await dialog.locator("#review-close").click();
+  await expect(dialog).toBeHidden();
+});
+
+test("по центру высота идёт за содержимым: длинная карточка выше короткой, обе в зазорах экрана, нижняя полоса прижата ко дну", async ({ page, request }) => {
+  await resetAll(request);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const short = await makeDeed(request, "Короткое дело без описания");
+  const long = await makeDeed(request, "Длинное дело с описанием и подзадачами");
+  await request.post(`/api/captures/${long.id}/notes`, {
+    data: { body: Array.from({ length: 8 }, (_, index) => `Абзац ${index + 1}: длинное описание дела, которое занимает несколько строк и не помещается в окно целиком.`).join("\n\n") },
+  });
+  for (const title of ["Найти блокнот", "Проверить страницы", "Положить в сумку", "Перечитать заметки", "Выписать вопросы", "Позвонить Ане"]) await makeStep(request, long.id, title);
+  const dialog = page.locator("#review-dialog");
+  const measure = async (id) => {
+    await openByLink(page, id);
+    await expect(dialog.locator(".thread-composer")).toBeVisible();
+    const result = { box: await dialog.boundingBox(), field: await dialog.locator(".thread-composer").boundingBox() };
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    return result;
+  };
+  const a = await measure(short.id);
+  const b = await measure(long.id);
+  expect(b.box.height).toBeGreaterThan(a.box.height + 100);
+  for (const { box, field } of [a, b]) {
+    // Зазор 40px сверху и снизу: выше экрана окно не вырастает.
+    expect(Math.round(box.y)).toBe(40);
+    expect(box.height).toBeLessThanOrEqual(900 - 80 + 0.5);
+    expect(box.y + box.height).toBeLessThanOrEqual(900 - 40 + 0.5);
+    // Полоса с полем «Написать себе…» прижата ко дну окна у короткой и у длинной.
+    expect(Math.abs(box.y + box.height - (field.y + field.height) - 16)).toBeLessThanOrEqual(3);
+  }
+  // Экран пониже — потолок ниже: окно по-прежнему в зазорах, а основная часть прокручивается.
+  await page.setViewportSize({ width: 1440, height: 640 });
+  await openByLink(page, long.id);
+  const low = await dialog.boundingBox();
+  expect(Math.round(low.height)).toBe(640 - 80);
+  expect(Math.round(low.y)).toBe(40);
+  expect(await dialog.locator("#review").evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  // Закрытая панель «Параметры» не занимает места и не тянет высоту окна.
+  await expect(dialog.locator("#review-params")).toBeHidden();
+  expect(await dialog.locator("#review-params").evaluate((element) => getComputedStyle(element).display)).toBe("none");
+});
+
+test("разговор разворачивается над полем и не меняет высоту окна по центру", async ({ page, request }) => {
+  await resetAll(request);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const deed = await makeDeed(request, "Дело с перепиской для высоты окна");
+  for (const body of ["Первое сообщение в разговоре", "Второе сообщение в разговоре"])
+    expect((await request.post(`/api/captures/${deed.id}/comments`, { data: { body } })).ok()).toBe(true);
+  await openByLink(page, deed.id);
+  const dialog = page.locator("#review-dialog");
+  const height = async () => Math.round((await dialog.boundingBox()).height);
+  // Свёрнутый разговор — пузырь над полем; окно стоит по содержимому.
+  await expect(dialog.locator(".talk-peek")).toBeVisible();
+  await expect(dialog.locator(".talk-panel")).toBeHidden();
+  const folded = await height();
+  await dialog.locator(".talk-peek").click();
+  await expect(dialog).toHaveClass(/talk-open/);
+  await expect(dialog.locator(".talk-panel")).toBeVisible();
+  await settled(page);
+  // Развёрнутый разговор встаёт поверх заметок, а окно остаётся того же роста.
+  expect(await height()).toBe(folded);
+  const box = await dialog.boundingBox();
+  expect(box.y + box.height).toBeLessThanOrEqual(900 - 40 + 0.5);
+  // Свернули — всё на месте.
+  await dialog.locator(".talk-close").click();
+  await expect(dialog.locator(".talk-panel")).toBeHidden();
+  expect(await height()).toBe(folded);
+});
+
+test("ручки размера: правый край тянет ширину, размер помнится после перезагрузки, двойной клик возвращает умолчание", async ({ page, request }) => {
+  await resetAll(request);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const deed = await makeDeed(request, "Дело для ручек размера");
+  await openByLink(page, deed.id);
+  const dialog = page.locator("#review-dialog");
+  const size = async () => { const box = await dialog.boundingBox(); return [Math.round(box.width), Math.round(box.height)]; };
+  const grip = (dir) => dialog.locator(`.card-resize[data-dir="${dir}"]`);
+  const [width0, height0] = await size();
+  expect(width0).toBe(880);
+  // Пять невидимых полос, о которых говорит только курсор.
+  const cursors = await dialog.locator(".card-resize").evaluateAll((elements) => Object.fromEntries(elements.map((element) => [element.dataset.dir, getComputedStyle(element).cursor])));
+  expect(cursors).toEqual({ e: "ew-resize", w: "ew-resize", s: "ns-resize", se: "nwse-resize", sw: "nesw-resize" });
+
+  // Окно по центру стоит посередине: край идёт за курсором, ширина растёт вдвое.
+  await dragBy(page, grip("e"), 60, 0);
+  expect(await size()).toEqual([1000, height0]);
+  // Маленькая подпись с размером остаётся на мгновение после отпускания.
+  await expect(dialog.locator("#review-size-badge")).toHaveText(`1000 × ${height0}`);
+  await expect(dialog.locator("#review-size-badge")).toHaveCSS("opacity", "1");
+  expect(JSON.parse(await storedValue(page, "kizuna-card-size"))).toEqual({ w: 1000, h: null, sw: null });
+  await page.reload();
+  await openByLink(page, deed.id);
+  expect(await size()).toEqual([1000, height0]);
+
+  // Нижний угол тянет и ширину, и высоту: верх остаётся на месте.
+  await dragBy(page, grip("se"), 40, 50);
+  expect(await size()).toEqual([1080, height0 + 50]);
+  expect(Math.round((await dialog.boundingBox()).y)).toBe(40);
+  expect(JSON.parse(await storedValue(page, "kizuna-card-size"))).toEqual({ w: 1080, h: height0 + 50, sw: null });
+  // Пределы: не уже 560 и не шире экрана без зазоров, не ниже 360 и не выше 820.
+  await dragBy(page, grip("e"), -700, 0);
+  expect((await size())[0]).toBe(560);
+  await dragBy(page, grip("e"), 430, 0);
+  expect((await size())[0]).toBe(1440 - 48);
+  await dragBy(page, grip("s"), 0, -700);
+  expect((await size())[1]).toBe(360);
+  await dragBy(page, grip("s"), 0, 480);
+  expect((await size())[1]).toBe(900 - 80);
+
+  // Двойной клик по ручке возвращает размер по умолчанию: 880 и высота по содержимому.
+  await grip("e").dblclick();
+  expect(await size()).toEqual([880, height0]);
+  expect(await storedValue(page, "kizuna-card-size")).toBeNull();
+  // Простой щелчок по краю размера не меняет и не запоминает.
+  await grip("s").click();
+  expect(await size()).toEqual([880, height0]);
+  expect(await storedValue(page, "kizuna-card-size")).toBeNull();
+});
+
+test("сбоку тянется только левый край, ширина панели помнится отдельно от размера окна по центру", async ({ page, request }) => {
+  await resetAll(request);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const deed = await makeDeed(request, "Дело для ширины панели");
+  await startInMode(page, "side");
+  await openByLink(page, deed.id);
+  const dialog = page.locator("#review-dialog");
+  const width = async () => Math.round((await dialog.boundingBox()).width);
+  expect(await width()).toBe(Math.round(1440 * 0.56));
+  // Из пяти ручек виден только левый край.
+  for (const dir of ["e", "s", "se", "sw"]) await expect(dialog.locator(`.card-resize[data-dir="${dir}"]`)).toBeHidden();
+  const left = dialog.locator('.card-resize[data-dir="w"]');
+  await expect(left).toBeVisible();
+  await dragBy(page, left, -100, 0);
+  expect(await width()).toBe(Math.round(1440 * 0.56) + 100);
+  expect(JSON.parse(await storedValue(page, "kizuna-card-size"))).toEqual({ w: null, h: null, sw: Math.round(1440 * 0.56) + 100 });
+  // Пределы: не уже 420 и оставляет доске 200px.
+  await dragBy(page, left, 800, 0);
+  expect(await width()).toBe(420);
+  await dragBy(page, left, -900, 0);
+  expect(await width()).toBe(1440 - 200);
+  await page.reload();
+  await openByLink(page, deed.id);
+  expect(await width()).toBe(1440 - 200);
+  // Двойной клик возвращает 56%.
+  await left.dblclick();
+  expect(await width()).toBe(Math.round(1440 * 0.56));
+  expect(await storedValue(page, "kizuna-card-size")).toBeNull();
+});
+
+test("высота поля обсуждения тянется верхней кромкой, помнится для всех карточек и режимов, двойной клик возвращает прежнюю", async ({ page, request }) => {
+  await resetAll(request);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const one = await makeDeed(request, "Первое дело для поля обсуждения");
+  const two = await makeDeed(request, "Второе дело для поля обсуждения");
+  await openByLink(page, one.id);
+  const dialog = page.locator("#review-dialog");
+  const composer = dialog.locator(".thread-composer");
+  const grip = dialog.locator(".talk-resize");
+  const height = async () => Math.round((await composer.boundingBox()).height);
+  const base = await height();
+  await expect(grip).toHaveCSS("cursor", "ns-resize");
+
+  // Потянули верхний край вверх на 80px — поле выросло на столько же.
+  await dragBy(page, grip, 0, -80);
+  expect(await height()).toBe(base + 80);
+  expect(await storedValue(page, "kizuna-card-talk-height")).toBe(String(base + 80));
+  // Окно остаётся в зазорах, нижняя полоса по-прежнему прижата ко дну.
+  const box = await dialog.boundingBox();
+  const field = await composer.boundingBox();
+  expect(box.y + box.height).toBeLessThanOrEqual(900 - 40 + 0.5);
+  expect(Math.abs(box.y + box.height - (field.y + field.height) - 16)).toBeLessThanOrEqual(3);
+  // Поле — это textarea во всю высоту, а не пустая рамка вокруг узкой строки.
+  expect(Math.round((await dialog.locator(".thread-input").boundingBox()).height)).toBe(base + 80 - 8);
+
+  // После перезагрузки и в другой карточке высота та же.
+  await page.reload();
+  await openByLink(page, two.id);
+  expect(await height()).toBe(base + 80);
+  // В другом режиме — тоже: высота одна на все карточки и все режимы.
+  await dialog.locator("#review-mode-toggle").click();
+  await dialog.locator("#review-mode-menu").getByRole("menuitemradio").nth(1).click();
+  await expect(dialog).toHaveAttribute("data-mode", "side");
+  expect(await height()).toBe(base + 80);
+  // Пределы: не ниже привычной строки и не выше 360px.
+  await dragBy(page, grip, 0, -500);
+  expect(await height()).toBe(360);
+  await dragBy(page, grip, 0, 350);
+  expect(await height()).toBe(base);
+  // Двойной клик по кромке возвращает прежнюю высоту — по содержимому.
+  await dragBy(page, grip, 0, -50);
+  expect(await height()).toBe(base + 50);
+  await grip.dblclick();
+  expect(await height()).toBe(base);
+  expect(await storedValue(page, "kizuna-card-talk-height")).toBeNull();
+});
+
+for (const mode of ["center", "side", "full"]) {
+  test(`на телефоне режим «${mode}» — карточка во весь экран, модальная, без меню режимов`, async ({ page, request }) => {
+    await resetAll(request);
+    await page.setViewportSize({ width: 390, height: 844 });
+    const deed = await makeDeed(request, "Дело для телефона в режимах");
+    await startInMode(page, mode);
+    await openByLink(page, deed.id);
+    const dialog = page.locator("#review-dialog");
+    const box = await dialog.boundingBox();
+    expect([Math.round(box.x), Math.round(box.y), Math.round(box.width), Math.round(box.height)]).toEqual([0, 0, 390, 844]);
+    expect(await isModal(page)).toBe(true);
+    await expect(dialog.locator("#review-modes")).toBeHidden();
+    for (const grip of await dialog.locator(".card-resize").all()) await expect(grip).toBeHidden();
+    expect(await page.evaluate(() => getComputedStyle(document.body).overflow)).toBe("hidden");
+    await dialog.locator("#review-close").click();
+    await expect(dialog).toBeHidden();
+  });
+}
