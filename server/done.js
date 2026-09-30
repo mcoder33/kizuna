@@ -43,7 +43,10 @@ function meetingsOf(calendar, { userId, from, to, today, nowTime }) {
   return out;
 }
 
-export function doneView(db, { userId, from, to, now = new Date(), timeZone = 'Europe/Samara', calendar = null } = {}) {
+// only: 'byDay' — клиенту нужен один счёт по дням (пилюля метрики дня смотрит на
+// тридцать дней назад), а строки дел за месяц ему ни к чему: ответ идёт без days
+// и byColumn, числа считаются тем же кодом и потому совпадают с обычным ответом.
+export function doneView(db, { userId, from, to, now = new Date(), timeZone = 'Europe/Samara', calendar = null, only = null } = {}) {
   const today = dateInZone(now, timeZone);
   const inRange = date => date >= from && date <= to;
   const columnOf = columnNames(db, userId);
@@ -79,16 +82,14 @@ export function doneView(db, { userId, from, to, now = new Date(), timeZone = 'E
     const { date, ...rest } = item;
     byDate.get(item.date).push(rest);
   }
+  const byDay = [];
+  for (let date = from; date <= to; date = shiftDate(date, 1)) byDay.push({ date, n: byDate.get(date)?.length || 0 });
+  const counts = { today: byDate.get(today)?.length || 0, period: items.length, meetings: items.filter(item => item.kind === 'meeting').length };
+  if (only === 'byDay') return { from, to, today, counts, byDay };
   const days = [...byDate.keys()].sort().reverse().map(date => ({ date, items: byDate.get(date).sort((left, right) => right.time.localeCompare(left.time)) }));
 
   const columns = new Map();
   for (const item of items) columns.set(item.column, (columns.get(item.column) || 0) + 1);
   const byColumn = [...columns].map(([name, n]) => ({ name, n })).sort((left, right) => right.n - left.n || left.name.localeCompare(right.name, 'ru'));
-  const byDay = [];
-  for (let date = from; date <= to; date = shiftDate(date, 1)) byDay.push({ date, n: byDate.get(date)?.length || 0 });
-  return {
-    from, to, today, days,
-    counts: { today: byDate.get(today)?.length || 0, period: items.length, meetings: items.filter(item => item.kind === 'meeting').length },
-    byColumn, byDay,
-  };
+  return { from, to, today, days, counts, byColumn, byDay };
 }

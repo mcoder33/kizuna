@@ -140,6 +140,36 @@ test('done: a meeting across midnight closes on the day and hour of its end, not
 const stepOf = async (api, parentId, title) => (await api.post(`/api/captures/${parentId}/subtasks`).send({ title }).expect(201)).body.entry;
 const closeTask = async (api, entry) => { for (const projection of entry.projections.filter(item => item.type === 'task')) await api.post(`/api/projections/${projection.id}/complete`).send({}).expect(200); };
 
+test('done: only=byDay answers with the per-day counts alone, the same numbers as the full answer', async () => {
+  const app = freshApp(), api = authed(app);
+  const yesterday = shiftDate(today(), -1);
+  externalEvent(app, api.user.id, { id: 'past', title: 'Планёрка', start: `${yesterday}T06:00:00.000Z`, end: `${yesterday}T07:00:00.000Z` });
+  const first = await post(api, 'Нужно проверить Hub');
+  const second = await post(api, 'Нужно позвонить в салон');
+  await post(api, 'Нужно остаться открытым');
+  await api.post(`/api/projections/${taskOf(first).id}/complete`).send({}).expect(200);
+  await api.post(`/api/projections/${taskOf(second).id}/complete`).send({}).expect(200);
+  const range = `from=${shiftDate(today(), -6)}&to=${today()}`;
+  const full = (await api.get(`/api/done?${range}`).expect(200)).body;
+  const slim = (await api.get(`/api/done?${range}&only=byDay`).expect(200)).body;
+  assert.equal(slim.byDay.length, 7, 'семь дней диапазона, по записи на день');
+  assert.deepEqual(slim.byDay, full.byDay, 'числа те же, что в обычном ответе');
+  assert.deepEqual(slim.byDay.slice(-2), [{ date: yesterday, n: 1 }, { date: today(), n: 2 }], 'встреча календаря входит в счёт своего дня, как и в обычном ответе');
+  assert.deepEqual(slim.counts, full.counts);
+  assert.deepEqual([slim.from, slim.to, slim.today], [full.from, full.to, full.today]);
+  assert.equal('days' in slim, false, 'строки дел клиенту не нужны');
+  assert.equal('byColumn' in slim, false);
+  assert.ok(full.days.length > 0 && full.byColumn.length > 0, 'обычный ответ по-прежнему с днями и колонками');
+  // окно в тридцать дней — как его зовёт страница
+  const month = (await api.get(`/api/done?from=${shiftDate(today(), -29)}&to=${today()}&only=byDay`).expect(200)).body;
+  assert.equal(month.byDay.length, 30);
+  assert.equal(month.byDay.at(-1).n, 2);
+  // чужое значение — ошибка, а не молчаливый полный ответ
+  await api.get(`/api/done?${range}&only=days`).expect(400);
+  await api.get(`/api/done?${range}&only=byDay&only=days`).expect(400);
+  await request(app).get(`/api/done?${range}&only=byDay`).expect(401);
+});
+
 test('done: a closed subtask is not a row of its own, the closed parent carries {done,total}', async () => {
   const app = freshApp(), api = authed(app);
   const range = `from=${shiftDate(today(), -6)}&to=${today()}`;
