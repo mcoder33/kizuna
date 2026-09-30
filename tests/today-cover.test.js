@@ -35,12 +35,14 @@ test('днём бриф говорит, что идёт, что дальше и 
   // Ссылка «присоединиться» ведёт на встречу, а не подставляется текстом.
   assert.equal(cover.brief.find(part => part.a).a.href, 'https://meet.example/2');
   assert.equal(cover.placeholder, 'Что нужно сделать?');
+  assert.equal(cover.tab, 'day');
 });
 
 test('утро здоровается, спрашивает, с чего начать, и открывает день', () => {
   const cover = coverFor({ phase: 'morning', minutes: 540, meetings, tasks, calendar: true });
   assert.equal(text(cover.brief), 'Доброе утро. Первая встреча в 09:30 — Стендап Hub, всего 5 встреч. 3 дела просрочены, на сегодня — ответить Кате по доступу к Метрике.');
   assert.equal(cover.placeholder, 'С чего начнёте день?');
+  assert.equal(cover.tab, 'day');
 });
 
 test('вечер подводит итог и спрашивает, чем закончился день', () => {
@@ -52,12 +54,14 @@ test('вечер подводит итог и спрашивает, чем за�
   const clear = coverFor({ phase: 'evening', minutes: 1110, meetings: [], tasks: { late: 0, open: 0 }, doneCount: 2, calendar: false });
   assert.equal(text(clear.brief), 'Сделано 2. Все дела закрыты.');
   assert.equal(cover.placeholder, 'Чем закончился день?');
+  assert.equal(cover.tab, 'journal');
 });
 
 test('ночью страница говорит про завтра и просит записать и отпустить', () => {
   const cover = coverFor({ phase: 'night', minutes: 1380, meetings, tasks, doneCount: 4, calendar: true, tomorrow: { count: 3, first: { start: 600, title: 'Стендап Hub' } } });
   assert.equal(text(cover.brief), 'День закончился: сделано 4. Завтра 3 встречи, первая в 10:00 — Стендап Hub.');
   assert.equal(cover.placeholder, 'Запишите и отпустите');
+  assert.equal(cover.tab, 'journal');
   const early = coverFor({ phase: 'night', minutes: 420, meetings, tasks, calendar: true });
   assert.match(text(early.brief), /^Рано\. Сегодня 5 встреч, первая в 09:30 — Стендап Hub\./);
 });

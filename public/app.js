@@ -584,7 +584,7 @@ function sinceLabel(date) {
 // Строка дела: кружок, название и справа тихие чипы — час или «со вчера»,
 // люди, круг, кому передано. Типа, проекта и тегов у неё нет: всё, что
 // записано, — дело. doneAt — минуты закрытия для строки «Что делал».
-function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt = null } = {}) {
+function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt = null, takeToday = false } = {}) {
   const c = entry.interpretation.classification,
     projections = completableProjections(entry),
     completed = isClosed(entry),
@@ -616,7 +616,7 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
       updateCompletion(projections, !completed, complete);
     });
     card.append(complete);
-    attachRowSwipe(card, { onRight: () => complete.click(), onLeft: overdue && !completed ? () => quickDue(entry, 0) : null });
+    attachRowSwipe(card, { onRight: () => complete.click(), onLeft: (overdue || takeToday) && !completed ? () => quickDue(entry, 0) : null });
   } else if (isReportedWork(entry)) {
     // Старая запись «сделал X» без дела внутри: закрывать и возвращать нечего.
     const mark = node("span", undefined, "completion-button static");
@@ -631,7 +631,7 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
     const review = reviewFromEntry(entry);
     cardOccurrence = c.entities.schedule?.repeat && on && scheduledOn(entry, on) ? on : null;
     const list = card.closest("#todo, #journal");
-    pendingCardList = list ? { label: list.id === "journal" ? "Что делал" : "Сегодня", items: rowsAsList([...list.querySelectorAll(".entry[data-capture-id]")]), id: entry.id, occurrence: card.dataset.occurrence || null } : null;
+    pendingCardList = list ? { label: list.id === "journal" ? "Что делал" : "День", items: rowsAsList([...list.querySelectorAll(".entry[data-capture-id]")]), id: entry.id, occurrence: card.dataset.occurrence || null } : null;
     // Запись из круга открывается перечитанной: обсуждение и исполнитель
     // меняются у другого человека, и показывать вчерашний разговор нельзя.
     if (entry.foreign || circleOf(entry)) { openSharedCard(entry.id); return; }
@@ -640,6 +640,8 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
   card.append(title);
   // Просроченное не переносят в карточке — оно решается прямо в строке.
   if (overdue && !c.entities.schedule?.repeat && !completed) card.append(quickDueEl(entry, [["сегодня", 0], ["завтра", 1]]));
+  // Дело из запаса берут на сегодня, не открывая карточку.
+  if (takeToday && !completed) card.append(quickDueEl(entry, [["на сегодня", 0]]));
   const mark = circleOf(entry);
   if (mark) meta.append(circleChip(mark, { small: true }));
   // Чьё это дело: взятое — «от Саши», отданное — «Аня · ждёт ответа». Второе и
@@ -669,9 +671,10 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
 }
 // ── «Сегодня»: обложка по часам, полоса дней, три ящика ──────────────────────
 // Страница знает, который час: дата с фазой суток, бриф из двух-трёх фраз и
-// вопрос в поле меняются утром, днём, вечером и ночью. Под полем — два списка:
-// «Сегодня» (открытые дела вместе со встречами из календаря) и «Что делал»
-// (закрытое кружком сегодня и встречи, чей конец уже прошёл).
+// вопрос в поле меняются утром, днём, вечером и ночью. Под полем — три ящика
+// с вкладками и своей полосой дней: «Что делал» (закрытое кружком и прошедшие
+// встречи), «День», где дела лежат вместе с календарём, и «Заметки» — старые
+// записи-заметки дня.
 const TODAY_ZONE = "Europe/Samara";
 const circlesState = { circles: [], me: null, loading: false, tab: "chat", discussions: [] };
 // Перечитывание разговоров (refreshRoomsQuietly): идёт ли, нужно ли ещё раз и
@@ -681,6 +684,11 @@ const circlesState = { circles: [], me: null, loading: false, tab: "chat", discu
 const roomsRefresh = { running: false, again: false, edits: 0 };
 function kcEdited() { roomsRefresh.edits += 1; }
 const todayState = {
+  view: 0,            // смещение дня, показанного в «Дне», от сегодняшнего
+  journalView: 0,     // то же для «Что делал»: у ящиков свои дни
+  notesView: 0,       // и для «Заметок»
+  tab: null,          // открытый ящик: "journal" | "day" | "notes" | null
+  manual: false,      // ящик выбран рукой — фаза его не трогает
   phase: null,
   cover: null,
   calendar: null,     // /api/calendar на сегодня и завтра
@@ -697,6 +705,8 @@ const todayState = {
   mutedCircles: [],
   circleMarks: {},
   assignments: {},
+  cache: new Map(),   // другие дни: date → { calendar, report }
+  loading: new Set(),
   placeholder: null,
   calendarStale: true,
   calendarLoading: false,
@@ -727,7 +737,7 @@ function pruneRemovedExternal(calendar) {
 // сервер ответил.
 function removeExternalFromView(match) {
   removingExternal.push(match);
-  for (const owner of [calState.data, todayState.calendar])
+  for (const owner of [calState.data, todayState.calendar, ...[...todayState.cache.values()].map((day) => day?.calendar)])
     if (owner?.external) owner.external = owner.external.filter((item) => !match(item));
   if (calState.data) renderCalendar();
   renderToday();
@@ -878,6 +888,21 @@ function tomorrowInfo() {
   ].sort((a, b) => a.start - b.start);
   return { count: timed.length, first: timed[0] || null };
 }
+// Ящик, выбранный рукой, держится до конца фазы этого дня.
+function rememberTab() {
+  try { localStorage.setItem("kizuna-today-tab", JSON.stringify({ date: currentDayDate, phase: todayState.phase, tab: todayState.tab })); } catch {}
+}
+function recallTab(phase) {
+  try {
+    const saved = JSON.parse(localStorage.getItem("kizuna-today-tab") || "null");
+    if (saved && saved.date === currentDayDate && saved.phase === phase && ["journal", "day", "notes", null].includes(saved.tab)) {
+      todayState.tab = saved.tab;
+      todayState.manual = true;
+      return true;
+    }
+  } catch {}
+  return false;
+}
 function render(data) {
   currentDayDate = data.date;
   // Взятое чужое дело живёт в дне как своё: оно и есть своё — человек его взял.
@@ -896,21 +921,18 @@ function render(data) {
     .filter((entry) => !muted.has((entry.circle || data.circleMarks?.[entry.id])?.id))
     .sort((left, right) => (right.createdAt || "").localeCompare(left.createdAt || ""));
   todayState.entries = all;
-  // «Сегодня»: открытое, срок которого сегодня или раньше, и без срока. Дела на
-  // будущие дни лежат на доске и вернутся в список, когда придёт их день.
   todayState.todo = all
     .filter((entry) => (isActiveTask(entry) || isActiveMeeting(entry) || needsClarification(entry)) && !isReportedWork(entry))
-    .filter((entry) => todoOrder(entry, data.date) <= 3)
     .sort((left, right) => todoOrder(left, data.date) - todoOrder(right, data.date));
   renderToday();
 }
 function renderToday() {
   if (!currentDayDate) return;
   // Перерисовка не сбивает фокус с записи: открыли её из брифа или дошли до неё
-  // клавиатурой — после живого обновления фокус на той же записи в том же
-  // списке, а не на странице целиком.
+  // клавиатурой — после живого обновления фокус на той же записи в том же ящике,
+  // а не на странице целиком.
   const active = document.activeElement;
-  const keep = active?.dataset?.captureId && active.closest(".today-lists") ? { id: active.dataset.captureId, list: active.closest(".day-list")?.id } : null;
+  const keep = active?.dataset?.captureId && active.closest(".drawers") ? { id: active.dataset.captureId, drawer: active.closest(".drawer")?.id } : null;
   if (todayState.calendarStale && !$("#today")?.hidden) refreshTodayCalendar();
   if (todayState.doneStale && !$("#today")?.hidden) refreshTodayDone();
   const minutes = nowMinutes();
@@ -925,14 +947,26 @@ function renderToday() {
     calendar: calendarConnected(),
   });
   todayState.cover = cover;
-  todayState.phase = phase;
+  // Новая фаза ставит свой ящик один раз; дальше — как решил человек.
+  if (todayState.phase !== phase) {
+    todayState.phase = phase;
+    if (!recallTab(phase)) {
+      todayState.manual = false;
+      if (todayState.view === 0) todayState.tab = cover.tab;
+    }
+  }
   applyCoverComposer(cover);
   paintCover(cover, currentDayDate);
-  paintDayList();
-  paintJournal();
+  const viewDate = shiftDate(currentDayDate, todayState.view);
+  const journalDate = shiftDate(currentDayDate, todayState.journalView);
+  const notesDate = shiftDate(currentDayDate, todayState.notesView);
+  paintTabs(viewDate, journalDate, notesDate);
+  paintJournal(journalDate);
+  paintDayList(viewDate);
+  paintNotes(notesDate);
   if (keep && !active.isConnected) {
     // Строку закрыли с клавиатуры — фокус встаёт на следующую, а не теряется.
-    const find = (id) => id && keep.list && document.querySelector(`#${keep.list} [data-capture-id="${CSS.escape(id)}"]`);
+    const find = (id) => id && keep.drawer && document.querySelector(`#${keep.drawer} [data-capture-id="${CSS.escape(id)}"]`);
     const again = find(keep.id) || (listKeys.after?.from === keep.id ? find(listKeys.after.to) : null);
     if (again) {
       if (!again.hasAttribute("tabindex")) again.tabIndex = -1;
@@ -987,10 +1021,16 @@ function applyCoverComposer(cover = todayState.cover) {
   captureField.setPlaceholder(cover.placeholder);
 }
 function paintCover(cover, date) {
+  // Обложка рассказывает про день, только пока все ящики закрыты. Раскрытый
+  // ящик говорит сам: дату — своей полосой дней, дела и встречи — списком, —
+  // и страница начинала повторяться. Место у даты и брифа при этом прежнее.
+  const covered = todayState.tab === null;
   const dateEl = $("#today-date");
+  dateEl.hidden = !covered;
   clear(dateEl);
   dateEl.append(document.createTextNode(`${longDate(date)} · `), node("span", PHASE_NAMES[cover.phase], `today-phase ${cover.phase}`));
   const brief = $("#today-brief");
+  brief.hidden = !covered;
   clear(brief);
   // Бриф собирается узлами, а не HTML: названия встреч и дел — чужой текст.
   for (const part of cover.brief) {
@@ -1004,6 +1044,124 @@ function paintCover(cover, date) {
       brief.append(link);
     }
   }
+}
+// Стрелки по дням живут внутри каждого ящика: слева предыдущий день, справа
+// следующий, по центру показанный. У каждого ящика свой день; обложка
+// всегда про сегодня. Ящик, открытый или закрытый рукой, сбрасывает все дни
+// на сегодняшний.
+function ownEntriesFor(date) {
+  return todayState.entries.filter((entry) =>
+    scheduledOn(entry, date) && !isReportedWork(entry)
+    && (isActiveTask(entry) || isActiveMeeting(entry) || needsClarification(entry) || isClosed(entry)),
+  );
+}
+function externalFor(date) {
+  const source = [todayState.calendar, todayState.cache.get(date)?.calendar].find((calendar) => calendar && date >= calendar.from && date <= calendar.to);
+  return (source?.external || []).filter((item) => item.date === date);
+}
+function setView(offset) {
+  todayState.view = offset;
+  todayState.tab = "day";
+  renderToday();
+}
+function setJournalView(offset) {
+  todayState.journalView = offset;
+  todayState.tab = "journal";
+  renderToday();
+}
+function setNotesView(offset) {
+  todayState.notesView = offset;
+  todayState.tab = "notes";
+  renderToday();
+}
+function dayNavNode(date, { view, onView }) {
+  const nav = node("div", undefined, "daynav");
+  const step = (delta) => {
+    const target = shiftDate(date, delta);
+    const button = node("button", undefined, `daynav-step ${delta < 0 ? "prev" : "next"}`);
+    button.type = "button";
+    button.dataset.step = String(delta);
+    button.title = longDate(target);
+    button.setAttribute("aria-label", `${delta < 0 ? "Предыдущий" : "Следующий"} день, ${longDate(target)}`);
+    const parts = [node("i", delta < 0 ? "‹" : "›", "daynav-arrow"), node("span", shortDate(target), "daynav-date")];
+    if (delta > 0) parts.reverse();
+    button.append(...parts);
+    button.addEventListener("click", () => onView(view + delta));
+    return button;
+  };
+  const current = node("div", undefined, "daynav-current");
+  current.append(node("b", longDate(date)));
+  if (date === currentDayDate) current.append(node("span", "сегодня", "daynav-mark"));
+  else {
+    const back = node("button", "сегодня", "daynav-today");
+    back.type = "button";
+    back.dataset.view = "0";
+    back.addEventListener("click", () => onView(0));
+    current.append(back);
+  }
+  nav.append(step(-1), current, step(1));
+  return nav;
+}
+// Счётчики в ящиках: сколько встреч и дел в показанном дне.
+function dayCountNode(date) {
+  const wrap = node("span", undefined, "drawer-count");
+  const parts = [];
+  if (date === currentDayDate) {
+    // Дела в шапке — сегодняшние, как в утренней сводке: со сроком сегодня и
+    // ждущие уточнения. Запас без срока считается у своей полки.
+    const todays = todayState.todo.filter((entry) => !isActiveMeeting(entry) && todoOrder(entry, date) > 0 && todoOrder(entry, date) <= 2);
+    const allDay = (todayState.calendar?.external || []).filter((item) => item.date === date && item.allDay).length;
+    const meetings = todayMeetings().length + allDay;
+    if (calendarConnected() || meetings) parts.push(plural(meetings, MEETINGS));
+    parts.push(plural(todays.length, DEALS));
+    const late = todayState.todo.filter((entry) => isOverdue(entry, date)).length;
+    wrap.append(document.createTextNode(parts.join(" · ")));
+    if (late) wrap.append(document.createTextNode(" · "), node("em", `${late} просрочено`));
+    return wrap;
+  }
+  const own = ownEntriesFor(date).filter((entry) => !isClosed(entry));
+  const meetings = externalFor(date).length + own.filter(isActiveMeeting).length;
+  if (calendarConnected() || meetings) parts.push(plural(meetings, MEETINGS));
+  parts.push(plural(own.filter((entry) => !isActiveMeeting(entry)).length, DEALS));
+  wrap.append(document.createTextNode(parts.join(" · ")));
+  return wrap;
+}
+const DRAWER_PANELS = { journal: "journal", day: "todo", notes: "today-notes" };
+function paintTabs(date, journalDate, notesDate) {
+  const host = $("#today-tabs");
+  clear(host);
+  const today = date === currentDayDate, journalToday = journalDate === currentDayDate, notesToday = notesDate === currentDayDate;
+  const doneList = doneRows(journalDate);
+  const doneCount = doneList ? String(doneList.length) : "…";
+  const notes = notesFor(notesDate);
+  const tabs = [
+    ["journal", journalToday ? "Что делал" : `Что делал ${shortDate(journalDate)}`, node("b", doneCount)],
+    ["day", today ? "День" : `День ${shortDate(date)}`, dayCountNode(date)],
+    ["notes", notesToday ? "Заметки" : `Заметки ${shortDate(notesDate)}`, node("b", notes ? String(notes.length) : "…")],
+  ];
+  for (const [key, label, count] of tabs) {
+    const button = node("button", undefined, "drawer-tab");
+    button.type = "button";
+    button.id = `tab-${key}`;
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-selected", String(todayState.tab === key));
+    button.setAttribute("aria-controls", DRAWER_PANELS[key]);
+    button.append(node("span", label, "drawer-tab-label"), count);
+    button.addEventListener("click", () => {
+      todayState.tab = todayState.tab === key ? null : key;
+      todayState.manual = true;
+      // Любое переключение ящика возвращает все дни на сегодня: день, куда
+      // человек ушёл стрелками, не тянется за ним в соседний ящик и не ждёт
+      // его в закрытом. Открывается всегда то, что сейчас.
+      todayState.view = 0;
+      todayState.journalView = 0;
+      todayState.notesView = 0;
+      rememberTab();
+      renderToday();
+    });
+    host.append(button);
+  }
+  for (const [key, panel] of Object.entries(DRAWER_PANELS)) $(`#${panel}`).hidden = todayState.tab !== key;
 }
 // Строка с временем слева: карточка записи или чужое событие.
 function rowWithTime(time, child, className = "") {
@@ -1022,14 +1180,17 @@ function eventFinish(item) {
   const start = minutesOf(item.time), end = minutesOf(item.end);
   return end ?? (start == null ? null : start + (todayState.calendar?.defaults?.meetingMinutes || 30));
 }
-// Встреча из календаря, которая уже прошла: из «Сегодня» она уезжает в «Что
-// делал» сама. Событие на весь день, занятость и отказ встречами не считаются.
-function eventEnded(item, minutes) {
+// Встреча из календаря, которая уже прошла: в «Дне» она остаётся с пометкой
+// «прошла», а в «Что делал» появляется сама. Событие на весь день, занятость и
+// отказ встречами не считаются.
+function eventEnded(item, minutes, date = currentDayDate) {
   if (item.allDay || !item.time || busyOnly(item) || item.me?.status === "declined") return false;
+  if (date < currentDayDate) return true;
+  if (date > currentDayDate) return false;
   const finish = eventFinish(item);
   return finish != null && minutes >= finish;
 }
-function eventRow(item, { minutes = null } = {}) {
+function eventRow(item, { minutes = null, today = false, pastDay = false } = {}) {
   const box = node("div", undefined, "day-event");
   const dot = node("i", undefined, "cal-dot");
   if (item.color) dot.style.background = item.color;
@@ -1039,11 +1200,12 @@ function eventRow(item, { minutes = null } = {}) {
   const finish = eventFinish(item);
   let className = "external";
   if (item.allDay) meta.append(node("span", "весь день", "tag"));
-  else if (start != null) {
+  else if (today && start != null) {
     const running = minutes >= start && minutes < finish;
     const soon = !running && start > minutes && start - minutes <= 10;
     if (running) { className += " now"; meta.append(node("span", `идёт · до ${hm(finish)}`, "tag now")); }
     else if (soon) meta.append(node("span", `через ${start - minutes} мин`, "tag soon"));
+    else if (minutes >= finish) { className += " past"; meta.append(node("span", "прошла", "tag")); }
     else meta.append(node("span", `через ${duration(start - minutes)}`, "tag"));
     if (item.joinUrl && (running || soon)) {
       const join = node("a", "Присоединиться", "day-join");
@@ -1052,8 +1214,11 @@ function eventRow(item, { minutes = null } = {}) {
       join.rel = "noopener";
       actions.append(join);
     }
+  } else if (pastDay) {
+    className += " past";
+    if (start != null) meta.append(node("span", "прошла", "tag"));
   } else if (item.end) meta.append(node("span", `до ${item.end}`, "tag"));
-  if (item.me?.status === "needs-action") {
+  if (item.me?.status === "needs-action" && !pastDay) {
     const rsvp = node("a", "ответить?", "tag warm");
     rsvp.href = "#calendar";
     meta.append(rsvp);
@@ -1067,6 +1232,12 @@ function nowRow(minutes, meetings) {
   const next = meetings.find((meeting) => meeting.start > minutes) || null;
   const text = next ? `сейчас · свободно ${duration(next.start - minutes)} — в ${hm(next.start)} ${next.title}` : "сейчас · встреч больше нет";
   return rowWithTime(hm(minutes), node("span", text, "day-now-text"), "now-mark");
+}
+function appendMore(container, hidden) {
+  if (hidden <= 0) return;
+  const more = node("a", `Ещё ${hidden} — весь список →`, "preview-more");
+  more.href = "#board";
+  container.append(more);
 }
 // ── круги на «Сегодня» ──
 // Общее приходит в тот же день, где человек и так стоит каждое утро: полоса
@@ -1248,66 +1419,144 @@ async function openSharedCard(captureId, { talk = false } = {}) {
     showCorrection(entry, reviewFromEntry(entry).level === "high" ? undefined : reviewFromEntry(entry));
   } catch (error) { toast(error.message || "Запись не открылась"); }
 }
-// «Сегодня» — один список. Порядок: просроченное (с чипом «со вчера»), потом
-// строки по часам — свои дела и встречи из календаря вперемешку, между
-// прошедшими и будущими строка «сейчас», — потом дела на сегодня без часа и,
-// в конце, без срока. Ничего не обрезается: длинный день прокручивается
-// страницей. Встреча, которая уже закончилась, здесь не стоит: она в «Что
-// делал».
-function paintDayList() {
+function paintDayList(date) {
   const container = $("#todo");
   clear(container);
+  container.append(dayNavNode(date, { view: todayState.view, onView: setView }));
+  if (date === currentDayDate) { paintTodayList(container); return; }
+  const data = todayState.cache.get(date);
+  if (!data) {
+    container.append(node("p", "Загружаю…", "empty"));
+    ensureDayData(date);
+    return;
+  }
+  paintOtherDayList(container, date, data);
+}
+// Сегодня: сверху «без времени» — просроченное, требующее уточнения, сегодняшнее
+// без часа и дела без срока, ниже «по часам» — свои дела и встречи со временем
+// вперемешку с чужими событиями, между прошедшими и будущими — строка «сейчас».
+// Это простой список: ничего не обрезается, и своей полосы прокрутки у ящика
+// нет — длинный день прокручивается страницей, как и всё остальное. Ящик с
+// собственной прокруткой оказался хуже обрезки: дела лежали в окошке высотой в
+// три строки, а «по часам» пряталось за его нижним краем. Дела на другие дни
+// живут в своих днях и в хвосте «Ещё N».
+function paintTodayList(container) {
   const today = currentDayDate, minutes = nowMinutes();
-  const open = todayState.todo;
   const timed = (entry) => scheduledOn(entry, today) && Boolean(scheduleOf(entry)?.time);
-  const late = open.filter((entry) => isOverdue(entry, today));
-  const flat = open.filter((entry) => !isOverdue(entry, today) && !timed(entry));
-  const external = (todayState.calendar?.external || []).filter((item) => item.date === today && !eventEnded(item, minutes));
+  const order = (entry) => todoOrder(entry, today);
+  const band = todayState.todo.filter((entry) => order(entry) <= 3 && !timed(entry));
+  const late = band.filter((entry) => isOverdue(entry, today));
+  const rest = band.filter((entry) => !isOverdue(entry, today));
+  const later = todayState.todo.filter((entry) => order(entry) === 4);
+  const hidden = later.length;
+  const external = (todayState.calendar?.external || []).filter((item) => item.date === today);
   const allDay = external.filter((item) => item.allDay);
   const hours = [
-    ...open.filter((entry) => !isOverdue(entry, today) && timed(entry)).map((entry) => ({ start: minutesOf(scheduleOf(entry).time), entry })),
+    ...todayState.todo.filter(timed).map((entry) => ({ start: minutesOf(scheduleOf(entry).time), entry })),
     ...external.filter((item) => !item.allDay && item.time).map((item) => ({ start: minutesOf(item.time), item })),
   ].filter((slot) => slot.start != null).sort((a, b) => a.start - b.start);
-  const count = late.length + allDay.length + hours.length + flat.length;
-  const counter = $("#today-count");
-  if (counter) counter.textContent = count ? String(count) : "";
   paintInbox(container);
-  if (!count) {
+  if (!band.length && !allDay.length && !hours.length) {
     // Пустому журналу «Открытых дел нет» ничего не объясняет: человек видит
     // поле и не знает, что в него писать. Место то же, слова другие.
     container.append(todayState.entries.length ? node("p", "Открытых дел нет.", "empty") : firstStepNode());
+    appendMore(container, hidden);
     paintCircleTail(container);
     return;
   }
-  const rows = node("div", undefined, "day-rows");
-  for (const entry of late)
-    rows.append(entryCard(entry, { overdue: true, on: today }));
-  // Событие на весь день стоит над часами: оно про весь день, а не про час.
-  for (const item of allDay) rows.append(eventRow(item, { minutes }));
-  const meetings = todayMeetings();
-  const running = meetings.some((meeting) => minutes >= meeting.start && minutes < meeting.end);
-  let nowPlaced = running;
-  for (const slot of hours) {
-    if (!nowPlaced && slot.start > minutes) { rows.append(nowRow(minutes, meetings)); nowPlaced = true; }
-    rows.append(slot.entry
-      ? rowWithTime(scheduleOf(slot.entry).time, entryCard(slot.entry, { atTime: true, on: today }))
-      : eventRow(slot.item, { minutes }));
+  // Часы идут первыми: день — это прежде всего встречи, к которым надо успеть.
+  // Пока они лежали под списком дел, до «что у меня в 12:30» человек добирался
+  // через двенадцать строк. Событие на весь день стоит над часами: оно про весь
+  // день, а не про какой-то из них.
+  if (hours.length || allDay.length) {
+    container.append(node("div", "по часам", "day-group"));
+    for (const item of allDay) container.append(eventRow(item, { minutes, today: true }));
+    const meetings = todayMeetings();
+    const running = meetings.some((meeting) => minutes >= meeting.start && minutes < meeting.end);
+    let nowPlaced = running;
+    for (const slot of hours) {
+      if (!nowPlaced && slot.start > minutes) { container.append(nowRow(minutes, meetings)); nowPlaced = true; }
+      container.append(slot.entry
+        ? rowWithTime(scheduleOf(slot.entry).time, entryCard(slot.entry, { atTime: true, on: today }))
+        : eventRow(slot.item, { minutes, today: true }));
+    }
+    if (!nowPlaced && hours.length) container.append(nowRow(minutes, meetings));
   }
-  if (!nowPlaced && hours.length) rows.append(nowRow(minutes, meetings));
-  for (const entry of flat)
-    rows.append(entryCard(entry, { on: today }));
-  container.append(rows);
+  // Просроченное — своей полосой сразу под часами, а не строкой в общем списке:
+  // под встречами оно иначе теряется, а это единственное, что горит.
+  if (late.length) {
+    container.append(node("div", `просрочено · ${late.length}`, "day-group late"));
+    const strip = node("div", undefined, "day-late");
+    for (const entry of late) strip.append(entryCard(entry, { overdue: true, on: today }));
+    container.append(strip);
+  }
+  // Сегодняшнее — своей полкой, запас без срока — своей: «3 дела на сегодня» из
+  // утренней сводки видно в «Дне» сразу, а не одной меткой среди двенадцати
+  // строк. Запись, ждущая уточнения, — на сегодняшней полке: решить её сегодня.
+  const shelf = rest.filter((entry) => order(entry) <= 2);
+  const stock = rest.filter((entry) => order(entry) === 3);
+  if (shelf.length || stock.length) {
+    container.append(node("div", shelf.length ? `на сегодня · ${shelf.length}` : "на сегодня", "day-group today"));
+    if (shelf.length) {
+      const rows = node("div", undefined, "day-rows");
+      for (const entry of shelf) rows.append(entryCard(entry, { on: today }));
+      container.append(rows);
+    } else container.append(node("p", "Без часа на сегодня ничего — возьмите дело из запаса.", "day-shelf-empty"));
+  }
+  if (stock.length) {
+    container.append(node("div", `без срока · ${stock.length}`, "day-group stock"));
+    const rows = node("div", undefined, "day-rows stock");
+    for (const entry of stock) rows.append(entryCard(entry, { on: today, takeToday: true }));
+    container.append(rows);
+  }
+  appendMore(container, hidden);
   paintCircleTail(container);
 }
+// Соседний день собран так же, как сегодняшний: сначала часы, потом дела. День
+// не должен менять устройство от того, каким его открыли.
+function paintOtherDayList(container, date, data) {
+  const pastDay = date < currentDayDate;
+  const own = ownEntriesFor(date);
+  const external = (data.calendar?.external || []).filter((item) => item.date === date);
+  const card = (entry, atTime = false) => entryCard(entry, { overdue: pastDay && !isClosed(entry) && !scheduleOf(entry)?.repeat, atTime, on: date });
+  const band = own.filter((entry) => !scheduleOf(entry)?.time);
+  const allDay = external.filter((item) => item.allDay);
+  const hours = [
+    ...own.filter((entry) => scheduleOf(entry)?.time).map((entry) => ({ start: minutesOf(scheduleOf(entry).time), entry })),
+    ...external.filter((item) => !item.allDay && item.time).map((item) => ({ start: minutesOf(item.time), item })),
+  ].filter((slot) => slot.start != null).sort((a, b) => a.start - b.start);
+  if (!band.length && !allDay.length && !hours.length) {
+    container.append(node("p", pastDay ? "Встреч и дел со сроком не было." : "Встреч и дел со сроком пока нет.", "empty"));
+    return;
+  }
+  if (hours.length || allDay.length) {
+    container.append(node("div", "по часам", "day-group"));
+    for (const item of allDay) container.append(eventRow(item, { pastDay }));
+    for (const slot of hours) container.append(slot.entry ? rowWithTime(scheduleOf(slot.entry).time, card(slot.entry, true)) : eventRow(slot.item, { pastDay }));
+  }
+  if (band.length) {
+    container.append(node("div", "дела", "day-group"));
+    const rows = node("div", undefined, "day-rows");
+    for (const entry of band) rows.append(card(entry));
+    container.append(rows);
+  }
+}
 // «Что делал» — то же, что вечером назвали бы итогом дня: туду, закрытые
-// сегодня кружком (кружок возвращает в работу), и встречи из календаря, чей
-// конец прошёл (пунктирный кружок: закрылись сами, руками их не вернуть).
-// Порядок — по времени закрытия, свежее сверху. Пересчёт раз в минуту.
-function doneRows() {
-  const today = currentDayDate, minutes = nowMinutes();
-  const rows = todayState.done.map((item) => ({ done: item, at: minutesOf(item.time) ?? 0 }));
-  for (const item of todayState.calendar?.external || [])
-    if (item.date === today && eventEnded(item, minutes)) rows.push({ item, at: eventFinish(item) });
+// кружком (кружок возвращает в работу), и встречи из календаря, чей конец
+// прошёл (пунктирный кружок: закрылись сами, руками их не вернуть). Сегодня —
+// из /api/done и календаря; другой день — из отчёта «Обзора» и календаря того
+// дня. Порядок — по времени, свежее сверху. null — день ещё не загружен.
+function doneRows(date = currentDayDate) {
+  const minutes = nowMinutes();
+  let rows;
+  if (date === currentDayDate) rows = todayState.done.map((item) => ({ done: item, at: minutesOf(item.time) ?? 0 }));
+  else {
+    const data = todayState.cache.get(date);
+    if (!data) return null;
+    rows = (data.report?.done || []).map((record) => ({ record, at: zoneMinutes(new Date(record.at)) }));
+  }
+  for (const item of externalFor(date))
+    if (eventEnded(item, minutes, date)) rows.push({ item, at: eventFinish(item) });
   return rows.sort((a, b) => b.at - a.at);
 }
 // Строка «Что делал» из /api/done: зелёный кружок «Вернуть в работу» (у
@@ -1357,17 +1606,81 @@ function autoDoneRow(item, at) {
   row.append(mark, title, meta);
   return row;
 }
-function paintJournal() {
+function paintJournal(date) {
   const container = $("#journal");
   clear(container);
-  const rows = doneRows();
-  const counter = $("#done-count");
-  if (counter) counter.textContent = rows.length ? String(rows.length) : "";
-  if (!rows.length) { container.append(node("p", "Пока ничего. Первый кружок — сюда.", "empty")); return; }
+  container.append(dayNavNode(date, { view: todayState.journalView, onView: setJournalView }));
+  const rows = doneRows(date);
+  if (!rows) { container.append(node("p", "Загружаю…", "empty")); ensureDayData(date); return; }
+  if (!rows.length) {
+    container.append(node("p", date === currentDayDate ? "Пока нет зафиксированной работы за сегодня." : date < currentDayDate ? "В этот день ничего не записано." : "День ещё не наступил.", "empty"));
+    return;
+  }
   const list = node("div", undefined, "day-rows");
   for (const row of rows)
-    list.append(row.done ? doneItemRow(row.done) : autoDoneRow(row.item, row.at));
+    list.append(row.done ? doneItemRow(row.done) : row.record ? reportRecordNode(row.record) : autoDoneRow(row.item, row.at));
   container.append(list);
+}
+// Запись другого дня из отчёта «Обзора»: карточка, если запись ещё среди
+// загруженных, иначе строка с названием и временем.
+function reportRecordNode(record, { done = true } = {}) {
+  const entry = todayState.entries.find((candidate) => candidate.id === record.captureId);
+  if (entry) return entryCard(entry, done ? { doneAt: zoneMinutes(new Date(record.at)) } : {});
+  const row = node("div", undefined, `entry dense${done ? " completed" : ""}`);
+  row.dataset.captureId = record.captureId;
+  if (done) {
+    const mark = node("span", undefined, "completion-button static");
+    mark.setAttribute("aria-pressed", "true");
+    row.append(mark);
+  }
+  const title = node("span", record.title, "entry-title");
+  const meta = node("div", undefined, "entry-meta");
+  meta.append(node("span", hm(zoneMinutes(new Date(record.at))), "tag time"));
+  row.append(title, meta);
+  return row;
+}
+// «Заметки» устроены как «Что делал»: свои стрелки по дням, сегодняшние — из
+// загруженных записей, другой день — из ленты отчёта «Обзора». Заметка здесь —
+// всё, что записано не делом, не встречей и не итогом: наблюдение, идея, вопрос.
+// Сделанной заметка не бывает: отмеченная «Сделано», она становится итогом и
+// уходит в «Что делал». null — день ещё не загружен.
+const NOTE_TYPES = ["note", "idea_question"];
+function notesFor(date) {
+  if (date === currentDayDate)
+    return todayState.entries.filter((entry) => NOTE_TYPES.includes(entry.interpretation.classification.primaryType) && entryDate(entry) === date);
+  const feed = todayState.cache.get(date)?.report?.feed;
+  if (!feed) return null;
+  return feed.filter((record) => NOTE_TYPES.includes(record.type)).sort((left, right) => String(right.at).localeCompare(String(left.at)));
+}
+function paintNotes(date) {
+  const container = $("#today-notes");
+  clear(container);
+  container.append(dayNavNode(date, { view: todayState.notesView, onView: setNotesView }));
+  const notes = notesFor(date);
+  if (!notes) { container.append(node("p", "Загружаю…", "empty")); ensureDayData(date); return; }
+  if (!notes.length) {
+    container.append(node("p", date === currentDayDate ? "Сегодня заметок нет." : date < currentDayDate ? "В этот день заметок не было." : "День ещё не наступил.", "empty"));
+    return;
+  }
+  for (const note of notes) container.append(date === currentDayDate ? entryCard(note, { compact: true }) : reportRecordNode(note, { done: false }));
+}
+// Другой день грузится, когда его открыли, и помнится до следующего изменения
+// журнала: чужие события — из календаря, сделанное — из отчёта «Обзора»;
+// свои дела берутся из уже загруженных записей.
+async function ensureDayData(date) {
+  if (todayState.cache.has(date) || todayState.loading.has(date)) return;
+  todayState.loading.add(date);
+  try {
+    const [calendar, report] = await Promise.all([
+      request(`/api/calendar?from=${date}&to=${date}`).catch(() => null),
+      request(`/api/reports/day?date=${date}`).catch(() => null),
+    ]);
+    todayState.cache.set(date, { calendar: pruneRemovedExternal(calendar), report });
+  } finally {
+    todayState.loading.delete(date);
+  }
+  if (!currentDayDate) return;
+  if ([todayState.view, todayState.journalView, todayState.notesView].some((offset) => shiftDate(currentDayDate, offset) === date)) renderToday();
 }
 // Раз в минуту обложка и строка «сейчас» пересчитываются — но не под руками:
 // с текстом в поле страница ждёт.
@@ -1408,6 +1721,7 @@ async function load() {
     // только пока открыта «Сегодня»; на других страницах список ждёт возвращения.
     onToday ? request(`/api/done?from=${todayGuess}&to=${todayGuess}`).catch(() => null) : Promise.resolve(undefined),
   ]);
+  todayState.cache.clear();
   if (closed !== undefined && todayGuess === day.date) {
     todayState.done = (closed?.days || []).flatMap((group) => group.items).filter((item) => !item.auto);
     todayState.doneStale = false;
@@ -8880,11 +9194,13 @@ function digestBody(item) {
       box.append(row);
     }
   }
-  const day = node("button", "Открыть «Сегодня» →", "bell-digest-link");
+  const day = node("button", "Открыть «День» →", "bell-digest-link");
   day.type = "button";
   day.addEventListener("click", (event) => {
     event.stopPropagation();
     $("#bell-menu")?.removeAttribute("open");
+    todayState.tab = "day";
+    todayState.view = 0;
     if (location.hash !== "#today") location.hash = "#today";
     else renderToday();
     setTimeout(() => $("#todo")?.scrollIntoView({ block: "start", behavior: motionAllowed() ? "smooth" : "auto" }), 80);

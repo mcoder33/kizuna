@@ -5978,10 +5978,10 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 .card-delete-ask button.danger { color: var(--red-50); }
 .card-delete-ask button:disabled { opacity: 0.5; cursor: default; }
 
-/* ── «Сегодня»: обложка по часам и два списка ────────────────────────────────
+/* ── «Сегодня»: обложка по часам и три ящика ────────────────────────────────
    Дата с фазой суток, бриф и вопрос в поле меняются утром, днём, вечером и
-   ночью. Под полем — «Сегодня» (дела вместе с календарём) и «Что делал»
-   (закрытое сегодня и прошедшие встречи). */
+   ночью. Под полем — вкладки «Что делал», «День» и «Заметки», у каждой своя
+   полоса дней. */
 .today-page .hero { max-width: var(--capture-width, 800px); margin: 0 auto 8px; }
 .capture-hint { font-size: 11.5px; color: var(--n-66); }
 .capture-foot #capture-submit { margin-left: auto; }
@@ -6013,10 +6013,25 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 24px; }
 .today-brief { margin: 0 auto 22px; max-width: 560px; font-size: 15px; line-height: 1.55; color: var(--n-52); text-wrap: balance; }
 .today-brief b { color: var(--ink); font-weight: 650; }
 .today-brief a { color: var(--red-66); font-weight: 650; text-decoration: none; border-bottom: 1px solid var(--red-83); }
+.daynav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; }
+.daynav-step { border: 0; background: none; font: inherit; font-size: 12px; font-weight: 600; color: var(--n-52); cursor: pointer; padding: 6px 8px; border-radius: 99px; display: inline-flex; align-items: center; gap: 6px; }
+.daynav-step:hover { background: var(--n-96); color: var(--ink); }
+.daynav-arrow { font-style: normal; font-size: 16px; line-height: 1; color: var(--n-72); }
+.daynav-date { text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; }
+.daynav-current { text-align: center; font-size: 13px; display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; }
+.daynav-current b { font-weight: 700; }
+.daynav-mark { font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--red-66); }
+.daynav-today { border: 0; background: none; font: inherit; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--red-66); cursor: pointer; padding: 2px 8px; border-radius: 99px; }
+.daynav-today:hover { background: var(--red-97); }
 /* Ящики той же ширины, что карточка ввода: растянул или сузил карточку —
    списки под ней идут следом, и всё стоит одним столбцом. */
 .drawers { max-width: var(--capture-width, 800px); margin: 0 auto; }
-.drawer { margin-top: 0; text-align: left; gap: 6px; }
+.drawer-tabs { display: flex; justify-content: center; gap: 6px; margin: 10px 0 0; flex-wrap: wrap; }
+.drawer-tab { border: 1px solid transparent; background: none; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--n-52); padding: 7px 12px; border-radius: 99px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.drawer-tab b { color: var(--ink); font-weight: 700; }
+.drawer-tab em { font-style: normal; color: var(--red-50); font-weight: 600; }
+.drawer-tab[aria-selected="true"] { border-color: var(--n-92); background: var(--n-100); color: var(--ink); }
+.drawer { margin-top: 16px; text-align: left; gap: 6px; }
 .drawer .entry, .drawer .entry:first-child { padding: 11px 12px; border-top: 0; border-radius: 12px; background: var(--n-98-4); font-size: 12px; }
 .drawer .entry-meta { font-size: 10px; }
 .drawer .entry-actions { gap: 7px; margin-top: 7px; }
@@ -7508,6 +7523,19 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0; }
    возвращается. Старая запись «сделал X» без дела внутри — кружок без нажатия. */
 .completion-button.auto { border-style: dashed; border-color: var(--green); background: var(--tint-done, transparent); cursor: default; }
 .completion-button.auto::before { color: var(--green); }
+/* «Ещё N» — честная граница превью: видно, что список длиннее, и куда идти. */
+.preview-more {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+  text-decoration: none;
+}
+.preview-more:hover {
+  color: var(--ink);
+}
+.drawer .preview-more { display: inline-block; margin-top: 6px; font-size: 12px; color: var(--muted); text-decoration: none; }
+.drawer .preview-more:hover { color: var(--ink); }
 .completion-button.static { cursor: default; }
 .entry.auto-done { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: 9px; padding: 6px 8px; font-size: 12.5px; }
 .entry.auto-done .entry-title { font-weight: 500; color: var(--n-62); text-decoration: line-through; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -76,7 +76,7 @@ export function coverFor({
   };
   const space = (parts) => (parts.length ? [" ", ...parts] : []);
 
-  let brief = [], placeholder = defaultPlaceholder;
+  let brief = [], placeholder = defaultPlaceholder, tab = "day";
   if (phase === "weekend") {
     brief.push("Выходной");
     if (calendar) {
@@ -94,12 +94,14 @@ export function coverFor({
       else if (next) brief.push(`Сегодня ${plural(sorted.length, MEETINGS)}, первая в ${hm(next.start)} — `, { b: next.title }, ".");
       else brief.push("Встреч сегодня нет.");
       brief.push(...space(taskSentence()));
+      tab = "day";
     } else {
       brief.push(`День закончился${doneCount ? `: сделано ${doneCount}` : ""}.`);
       if (calendar) {
         if (tomorrow?.count && tomorrow.first) brief.push(` Завтра ${plural(tomorrow.count, MEETINGS)}, первая в ${hm(tomorrow.first.start)} — `, { b: tomorrow.first.title }, ".");
         else brief.push(" Завтра встреч нет.");
       }
+      tab = "journal";
     }
     placeholder = "Запишите и отпустите";
   } else if (phase === "morning") {
@@ -120,6 +122,7 @@ export function coverFor({
     else brief.push(" Все дела закрыты.");
     if (calendar && tomorrow?.first) brief.push(` Завтра первая встреча в ${hm(tomorrow.first.start)}.`);
     placeholder = "Чем закончился день?";
+    tab = "journal";
   } else {
     if (!calendar) brief.push("Календарь не подключён — встреч не вижу.");
     else if (running) brief.push("Идёт ", { b: running.title }, `, до ${hm(running.end)}`, ...join(running), ".");
@@ -127,7 +130,7 @@ export function coverFor({
     if (calendar) brief.push(...(brief.length ? space(nextSentence()) : nextSentence()));
     brief.push(...(brief.length ? space(taskSentence()) : taskSentence()));
   }
-  return { phase, brief, placeholder, running, next: after };
+  return { phase, brief, placeholder, tab, running, next: after };
 }
 
 export const WEEKDAYS = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];

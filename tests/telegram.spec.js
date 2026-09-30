@@ -36,9 +36,11 @@ test("написанное боту Telegram ложится на «Сегодн�
     await expect(section.locator("#telegram-connect")).toBeHidden();
     await expect(section.getByRole("button", { name: "Отключить" })).toBeVisible();
 
-    // Написанное боту разбирается и встаёт в «Сегодня» обычным делом.
+    // Написанное боту разбирается и встаёт в «День» обычным делом.
     await request.post(`${FAKE}/__push`, { data: { text: "Нужно купить корм коту сегодня" } });
     await page.goto("/#today");
+    const dayTab = page.getByRole("tab", { name: /^День/ });
+    if ((await dayTab.getAttribute("aria-selected")) !== "true") await dayTab.click();
     await expect(page.locator("#todo .entry").filter({ hasText: "Нужно купить корм коту сегодня" })).toBeVisible({ timeout: 20000 });
 
     // Бот ответил на сообщение итогом разбора.

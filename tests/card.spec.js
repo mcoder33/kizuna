@@ -18,9 +18,13 @@ test.beforeEach(async ({ page }) => {
   await page.clock.install({ time: dayAt(13) });
 });
 
-// На «Сегодня» два списка: открытое лежит в «Сегодня», закрытое — в «Что делал».
+// Под полем три ящика: открытое лежит в «Дне», закрытое — в «Что делал».
+async function showTab(page, name) {
+  const tab = page.getByRole("tab", { name });
+  if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
+}
 // Запись, которой заглушка модели поставила срок «завтра» (она читает слово
-// даже из таблицы), с сегодняшнего списка уходит; тогда срок переносится на
+// даже из таблицы), из сегодняшнего «Дня» уходит; тогда срок переносится на
 // сегодня, чтобы открыть карточку отсюда: тест про карточку, а не про дату.
 async function todayEntry(page, text) {
   const rows = page.locator("#todo .entry, #journal .entry").filter({ hasText: text });
@@ -38,10 +42,14 @@ async function todayEntry(page, text) {
       return false;
     }, { timeout: 15000 })
     .toBe(true);
+  const inJournal = page.locator("#journal .entry").filter({ hasText: text });
+  await showTab(page, (await inJournal.count()) ? /Что делал/ : /^День/);
   return rows.first();
 }
 
 async function openCard(page, listSelector, raw) {
+  if (listSelector === "#todo") await showTab(page, /^День/);
+  if (listSelector === "#journal") await showTab(page, /Что делал/);
   const card = page.locator(`${listSelector} .entry`).filter({ hasText: raw }).first();
   await expect(card).toBeVisible();
   await card.locator(".entry-title").click();
@@ -1011,12 +1019,12 @@ test("кружок в карточке закрывает дело и ведёт
   const title = dialog.locator(".card-title");
   await expect(title).toHaveText(titles[0]);
   await expect(dialog.locator(".card-nav-col")).toHaveText("Дела");
-  await expect(dialog.locator(".card-nav-rest")).toHaveText("Сегодня · 1 из 3");
+  await expect(dialog.locator(".card-nav-rest")).toHaveText("День · 1 из 3");
   // Отметили — дело закрыто сразу, строка «Сделано» видна до перехода.
   await dialog.locator(".card-tick").click();
   await expect(dialog.locator(".card-done-ok")).toContainText("Сделано сегодня в");
   await expect(title).toHaveText(titles[1], { timeout: 5000 });
-  await expect(dialog.locator(".card-nav-rest")).toHaveText("Сегодня · 2 из 3");
+  await expect(dialog.locator(".card-nav-rest")).toHaveText("День · 2 из 3");
   const snack = dialog.locator(".card-snack");
   await expect(snack).toContainText(`Готово: «${titles[0].slice(0, 20)}`);
 
@@ -1039,7 +1047,7 @@ test("кружок в карточке закрывает дело и ведёт
   await expect(title).toHaveText(titles[1], { timeout: 5000 });
   await page.waitForTimeout(400);
   await dialog.locator(".card-tick").click();
-  await expect(dialog.locator(".card-finish-title")).toHaveText("На «Сегодня» всё отмечено", { timeout: 5000 });
+  await expect(dialog.locator(".card-finish-title")).toHaveText("В «Дне» всё отмечено", { timeout: 5000 });
   await dialog.locator(".card-finish-close").click();
 
   await expect(page.locator("#todo .day-rows .entry")).toHaveCount(0);

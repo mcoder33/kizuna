@@ -144,16 +144,18 @@
             <div class="capture-resize" data-dir="sw" aria-hidden="true"></div>
           </form>
         </section>
-        <!-- Под полем два списка: «Сегодня» — открытые дела вместе со встречами
-             из календаря, «Что делал» — закрытое сегодня и прошедшие встречи. -->
-        <section class="today-lists drawers" aria-label="Дневная сводка">
-          <h2 class="shelf-head" id="shelf-today">Сегодня <span class="shelf-n" id="today-count"></span></h2>
-          <div id="todo" class="stack drawer day-list">
+        <!-- Под полем — три ящика: «Что делал», «День», где дела лежат вместе
+             с календарём, и «Заметки» дня. В каждом свои стрелки по дням. -->
+        <section class="drawers" aria-label="Дневная сводка">
+          <div class="drawer-tabs" id="today-tabs" role="tablist"></div>
+          <div id="journal" class="stack drawer" role="tabpanel" aria-labelledby="tab-journal" hidden>
+            <p class="empty">Пока нет зафиксированной работы за сегодня.</p>
+          </div>
+          <div id="todo" class="stack drawer day-list" role="tabpanel" aria-labelledby="tab-day" hidden>
             <p class="empty">Открытых дел нет.</p>
           </div>
-          <h2 class="shelf-head done"><a href="#done">Что делал <span class="shelf-n" id="done-count"></span></a></h2>
-          <div id="journal" class="stack drawer day-list">
-            <p class="empty">Пока ничего. Первый кружок — сюда.</p>
+          <div id="today-notes" class="stack drawer" role="tabpanel" aria-labelledby="tab-notes" hidden>
+            <p class="empty">Сегодня заметок нет.</p>
           </div>
         </section>
       </section>
