@@ -1,14 +1,21 @@
 import { defineConfig } from '@playwright/test';
 import { E2E_STORAGE } from './tests/fixtures/e2e-account.js';
+import { E2E_PORT, E2E_FAKE_PORT, E2E_DB } from './tests/fixtures/e2e-env.js';
 
 // Разбор записей делает модель, поэтому e2e поднимает локальную заглушку
 // OpenRouter: сеть не используется, а классификация детерминирована.
-const fakeOpenRouterPort = 3099;
+// Порты и база — из окружения (E2E_PORT, E2E_FAKE_PORT, PAGENT_E2E_DB), чтобы
+// прогоны из разных worktree не мешали друг другу; умолчания — 3001, 3099 и
+// /tmp/pagent-e2e.sqlite.
+const fakeOpenRouterPort = E2E_FAKE_PORT;
+const appUrl = `http://127.0.0.1:${E2E_PORT}`;
+// Пути уходят в shell: в кавычках, чтобы пробел в каталоге не разорвал команду.
+const sh = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`;
 
 export default defineConfig({
   testDir: './tests',
   workers: 1,
-  use: { baseURL: 'http://127.0.0.1:3001', viewport: { width: 1440, height: 900 } },
+  use: { baseURL: appUrl, viewport: { width: 1440, height: 900 } },
   // Приложение закрыто учётной записью, поэтому прогон начинается со входа:
   // отдельный проект заводит администратора и сохраняет его куку, остальные
   // проверки стартуют уже внутри.
@@ -30,10 +37,10 @@ export default defineConfig({
     {
       command: [
         'chmod +x tests/fixtures/codex tests/fixtures/claude',
-        'rm -f /tmp/pagent-e2e.sqlite /tmp/pagent-e2e.sqlite-wal /tmp/pagent-e2e.sqlite-shm tests/fixtures/e2e-state.json',
+        `rm -f ${sh(E2E_DB)} ${sh(`${E2E_DB}-wal`)} ${sh(`${E2E_DB}-shm`)} ${sh(E2E_STORAGE)}`,
         [
-          'PORT=3001',
-          'PAGENT_DB_PATH=/tmp/pagent-e2e.sqlite',
+          `PORT=${E2E_PORT}`,
+          `PAGENT_DB_PATH=${sh(E2E_DB)}`,
           'PAGENT_AI_PROVIDER=openrouter',
           'OPENROUTER_API_KEY=e2e-test-key',
           `PAGENT_OPENROUTER_BASE_URL=http://127.0.0.1:${fakeOpenRouterPort}/api/v1`,
@@ -60,7 +67,7 @@ export default defineConfig({
       ].join(' && '),
       // Корень без входа отвечает переадресацией, поэтому готовность сервера
       // проверяется по самой странице входа.
-      url: 'http://127.0.0.1:3001/login',
+      url: `${appUrl}/login`,
       reuseExistingServer: false,
     },
   ],

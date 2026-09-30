@@ -201,6 +201,8 @@ npm run dev
 
 Откройте `http://127.0.0.1:3000`. Для проверок используются `npm test` и `npm run test:e2e`.
 
+e2e поднимает своё приложение на порту 3001, заглушку OpenRouter и Telegram на 3099 и пишет в базу `/tmp/pagent-e2e.sqlite`. Чтобы несколько прогонов шли одновременно (например, из разных worktree), каждому задают свои `E2E_PORT`, `E2E_FAKE_PORT` и `PAGENT_E2E_DB`: `E2E_PORT=3021 E2E_FAKE_PORT=3119 PAGENT_E2E_DB=/tmp/pagent-e2e-x.sqlite npx playwright test`. Файл сессии при заданном `E2E_PORT` получает порт в имени (`tests/fixtures/e2e-state-3021.json`).
+
 ### Меню разметки по «/»
 
 Markdown в поле оформляется на лету, но помнить его наизусть человек не обязан. Набрал косую черту — увидел список того, что вообще бывает, и выбрал; как в Notion.
