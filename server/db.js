@@ -694,9 +694,11 @@ export const NOTE_BODY_LIMIT = 20000;
 
 // Запись расхода: молча и никогда не мешая основному делу — если что-то в
 // цифрах не сошлось, запись просто не появится, а разбор не сорвётся.
-export function recordUsage(db, { provider, model = null, kind = 'classify', inputTokens = 0, outputTokens = 0, costUsd = null, userId = null } = {}) {
+export function recordUsage(db, { provider, model = null, kind = 'classify', inputTokens = 0, outputTokens = 0, costUsd = null, userId = null, at: atArg = null } = {}) {
   if (!provider) return null;
-  const at = now();
+  // Момент расхода можно передать снаружи: тесты живут по своим часам, и без
+  // этого запись уезжала бы в настоящий месяц, а потолок считал бы прошлый.
+  const at = atArg ? (typeof atArg === 'string' ? atArg : new Date(atArg).toISOString()) : now();
   const cost = Number.isFinite(costUsd) ? costUsd : null;
   db.prepare('INSERT INTO usage_events(id,provider,model,kind,input_tokens,output_tokens,cost_usd,created_at,user_id) VALUES(?,?,?,?,?,?,?,?,?)')
     .run(id(), provider, model, kind, Math.max(0, Math.round(inputTokens) || 0), Math.max(0, Math.round(outputTokens) || 0), cost, at, userId);
