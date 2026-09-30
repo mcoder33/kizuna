@@ -5,7 +5,7 @@ import { test, expect } from "@playwright/test";
 import { E2E_EMAIL, E2E_PASSWORD } from "./fixtures/e2e-account.js";
 
 const ANYA = { email: "anya@kizuna.test", password: "anya-very-long-password" };
-// Ящики «Сегодня» открываются по часам: вечером открыт «Что делал», и дела в
+// Ящики «Сегодня» открываются по часам: вечером открыт «Сделано», и дела в
 // «Дне» не видны. Оба человека видят один и тот же день — 13:00, фаза «день».
 const dayAt = (hour) => { const at = new Date(); at.setHours(hour, 0, 0, 0); return at; };
 

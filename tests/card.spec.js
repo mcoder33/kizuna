@@ -18,7 +18,7 @@ test.beforeEach(async ({ page }) => {
   await page.clock.install({ time: dayAt(13) });
 });
 
-// Под полем два ящика: открытое лежит в «Дне», закрытое — в «Что делал».
+// Под полем два ящика: открытое лежит в «Дне», закрытое — в «Сделано».
 async function showTab(page, name) {
   const tab = page.getByRole("tab", { name });
   if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
@@ -43,13 +43,13 @@ async function todayEntry(page, text) {
     }, { timeout: 15000 })
     .toBe(true);
   const inJournal = page.locator("#journal .entry").filter({ hasText: text });
-  await showTab(page, (await inJournal.count()) ? /Что делал/ : /^День/);
+  await showTab(page, (await inJournal.count()) ? /^Сделано/ : /^День/);
   return rows.first();
 }
 
 async function openCard(page, listSelector, raw) {
   if (listSelector === "#todo") await showTab(page, /^День/);
-  if (listSelector === "#journal") await showTab(page, /Что делал/);
+  if (listSelector === "#journal") await showTab(page, /^Сделано/);
   const card = page.locator(`${listSelector} .entry`).filter({ hasText: raw }).first();
   await expect(card).toBeVisible();
   await card.locator(".entry-title").click();
@@ -65,7 +65,7 @@ test("the focus card keeps its width while Parameters extends it with a column s
   const main = dialog.locator(".card-main");
   const width = (await main.boundingBox()).width;
   await expect(main.locator(".card-tick")).toBeVisible();
-  await expect(main.locator(".card-body .prop-section")).toHaveText("Описание");
+  await expect(main.locator(".card-body .prop-section")).toHaveText("Заметка");
   await expect(main.locator(".subtask-add")).toBeVisible();
   await expect(dialog.locator("#review-primary-type")).toHaveCount(0);
   await dialog.locator("#review-params-toggle").click();
@@ -132,7 +132,7 @@ test("the description starts empty with a placeholder, the original text is not 
 
   await expect(page.locator("#card-body-editor")).toHaveAttribute("data-placeholder", "Описание");
   await expect(page.locator("#card-body-editor")).toHaveText("");
-  await expect(page.locator(".card-body .prop-section")).toHaveText("Описание");
+  await expect(page.locator(".card-body .prop-section")).toHaveText("Заметка");
 
   const entries = await (await page.request.get("/api/entries?limit=100")).json();
   expect(entries.entries.find((item) => item.raw === raw).note).toBeNull();
@@ -196,7 +196,7 @@ test("escape closes the card and keeps what was typed", async ({ page }) => {
   await expect(page.locator(".card-markdown")).toContainText("дописанное перед закрытием");
 });
 
-test("closing a todo moves it from «Сегодня» to «Что делал»", async ({ page }) => {
+test("closing a todo moves it from «Сегодня» to «Сделано»", async ({ page }) => {
   const raw = "Нужно проверить уход закрытой задачи";
   await page.goto("/");
   await capture(page, raw);
@@ -205,7 +205,7 @@ test("closing a todo moves it from «Сегодня» to «Что делал»",
   await card.getByRole("button", { name: "Готово" }).click();
 
   await expect(page.locator("#todo")).not.toContainText(raw);
-  // «Что делал» — итог дня: закрытое кружком туду встаёт туда со временем закрытия
+  // «Сделано» — итог дня: закрытое кружком туду встаёт туда со временем закрытия
   await expect(page.locator("#journal")).toContainText(raw);
 
   // С открытых колонок доски оно тоже ушло, но лежит в «Сделано» — там же его
@@ -663,10 +663,10 @@ test("the entry card starts at 880px and centers its description", async ({ page
   await entry.locator(".entry-title").click();
   await page.waitForTimeout(760);
 
-  // Геометрия: ширина min(880, окно − 48), высота min(720, окно − 24).
+  // Короткая карточка не растягивается на всю доступную высоту.
   const card = await page.locator("#review-dialog").boundingBox();
   expect(Math.round(card.width)).toBe(880);
-  expect(Math.round(card.height)).toBe(720);
+  expect(Math.round(card.height)).toBe(680);
 
   // Контент собран в колонку страницы: сам #review — прокрутка во всю ширину,
   // колонку (788px карточки «Фокус») задают его поля, поэтому меряем заметки.
@@ -853,21 +853,20 @@ test("заметка сохраняется при любом закрытии �
   expect(saved.note.body).toContain("и перед крестиком");
 });
 
-test("статус записи — значком и словом: чипом под заголовком", async ({ page, request }) => {
+test("статус задачи виден у кружка и не дублируется среди свойств", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   const raw = "Нужно проверить статус на карточке";
   await page.goto("/");
   await capture(page, raw);
   await openCard(page, "#todo", raw);
 
-  // Дело без срока: статус назван словом и ведёт строку чипов под названием,
-  // которая стоит выше «Записано» в подвале.
-  await expect(page.locator("#review-dialog .card-chips .entry-status")).toHaveText("Сегодня");
+  // Чипы оставлены для срока и других редактируемых свойств.
+  await expect(page.locator("#review-dialog .card-chips .entry-status")).toHaveCount(0);
+  await expect(page.locator("#review-dialog .card-chips .chip").first()).toContainText("сегодня");
   const chipsBox = await page.locator("#review-dialog .card-chips").boundingBox();
   const writtenBox = await page.locator("#review-dialog .card-written").boundingBox();
   expect(chipsBox.y).toBeLessThan(writtenBox.y);
-  // Статус на карточке один — дубля нет.
-  expect(await page.locator("#review-dialog .entry-status").count()).toBe(1);
+  expect(await page.locator("#review-dialog .entry-status").count()).toBe(0);
   await page.keyboard.press("Escape");
 
   // Закрытая чекбоксом задача показывает «Сделано» — карточка открывается
@@ -879,7 +878,8 @@ test("статус записи — значком и словом: чипом �
   await page.locator('[data-reports-tab="day"]').click();
   await page.locator("#reports-day-next").click();
   await page.locator("#reports-day .report-items li").filter({ hasText: raw }).first().click();
-  await expect(page.locator("#review-dialog .card-chips .entry-status")).toHaveText("Сделано");
+  await expect(page.locator("#review-dialog .card-done-ok")).toContainText("Сделано");
+  await expect(page.locator("#review-dialog .card-title.is-done")).toBeVisible();
 });
 
 test("заголовок записи правится прямо в карточке", async ({ page, request }) => {
@@ -1068,7 +1068,7 @@ test("кружок в карточке закрывает дело и ведёт
   await dialog.locator(".card-finish-close").click();
 
   await expect(page.locator("#todo .day-rows .entry")).toHaveCount(0);
-  // Закрытое кружком лежит в «Что делал».
+  // Закрытое кружком лежит в «Сделано».
   await expect(page.locator("#journal")).toContainText(titles[0]);
 });
 

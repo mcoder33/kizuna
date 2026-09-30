@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { phaseOf, coverFor, plural, longDate, shortDate, isWeekend, MEETINGS } from '../public/today-cover.js';
 
-const text = parts => parts.map(part => (typeof part === 'string' ? part : part.b ?? part.a?.text ?? '')).join('');
+const text = parts => parts.map(part => (typeof part === 'string' ? part : part.b ?? part.a?.text ?? part.btn?.text ?? '')).join('');
 const meetings = [
   { title: 'Стендап Hub', start: 570, end: 585, joinUrl: 'https://meet.example/1', hasOutcome: true },
   { title: 'Монетизация', start: 660, end: 720, hasOutcome: true },
@@ -57,6 +57,25 @@ test('вечер подводит итог и спрашивает, чем за�
   assert.equal(cover.tab, 'journal');
 });
 
+test('вечером «N дела» и «перенести на завтра?» — кнопки: показать дела и перенести их', () => {
+  const cover = coverFor({ phase: 'evening', minutes: 1110, meetings, tasks, doneCount: 4, calendar: true });
+  const buttons = cover.brief.filter(part => part.btn).map(part => part.btn);
+  assert.deepEqual(buttons, [{ text: '3 дела', act: 'show' }, { text: 'перенести на завтра?', act: 'postpone' }]);
+  // Слова вокруг кнопок остаются обычным текстом: фраза читается целиком.
+  assert.equal(text(cover.brief), 'Сделано 4, встреч прошло 5. Не закрыто 3 дела со сроком — перенести на завтра?');
+  // Считается то, что переносят: открытые дела со сроком сегодня и раньше, а не только просроченные.
+  const today = coverFor({ phase: 'evening', minutes: 1110, meetings: [], tasks: { late: 1, unfinished: 4, open: 0 }, doneCount: 0, calendar: false });
+  assert.match(text(today.brief), /Не закрыто 4 дела со сроком — перенести на завтра\?$/);
+  assert.equal(today.brief.find(part => part.btn).btn.text, '4 дела');
+  // Дел нет — нет и кнопок: вечерняя фраза не предлагает то, что нечем сделать.
+  const none = coverFor({ phase: 'evening', minutes: 1110, meetings: [], tasks: { late: 0, unfinished: 0, open: 2 }, doneCount: 1, calendar: false });
+  assert.equal(none.brief.some(part => part.btn), false);
+  assert.equal(text(none.brief), 'Сделано 1. Открыто 2 дела без срока.');
+  // Днём и утром бриф кнопок не несёт: перенос на завтра предлагает только вечер.
+  for (const phase of ['morning', 'day', 'night', 'weekend'])
+    assert.equal(coverFor({ phase, minutes: 822, meetings, tasks: { ...tasks, unfinished: 3 }, doneCount: 1, calendar: true }).brief.some(part => part.btn), false, phase);
+});
+
 test('ночью страница говорит про завтра и просит записать и отпустить', () => {
   const cover = coverFor({ phase: 'night', minutes: 1380, meetings, tasks, doneCount: 4, calendar: true, tomorrow: { count: 3, first: { start: 600, title: 'Стендап Hub' } } });
   assert.equal(text(cover.brief), 'День закончился: сделано 4. Завтра 3 встречи, первая в 10:00 — Стендап Hub.');
@@ -83,7 +102,7 @@ test('даты подписываются по-русски и не завися
   assert.equal(isWeekend('2026-09-14'), false);
 });
 
-test('обложка открывает только «День» или «Что делал»: ящика «Заметки» нет', () => {
+test('обложка открывает только «День» или «Сделано»: ящика «Заметки» нет', () => {
   for (const phase of ['weekend', 'night', 'morning', 'day', 'evening'])
     for (const minutes of [420, 540, 822, 1110, 1380])
       for (const calendar of [true, false])

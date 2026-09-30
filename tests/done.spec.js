@@ -8,10 +8,10 @@ async function showTab(page, name) {
   if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
 }
 
-// «Сделано»: закрытая в «Дне» туду попадает в «Что делал», а страница «Сделано»
+// «Сделано»: закрытая в «Дне» туду попадает в «Сделано», а страница «Сделано»
 // — фраза про неделю, строка её семи дней, чипы по колонкам, ритм пяти недель
 // клетками и список по дням.
-test("закрытая в «Дне» туду видна в «Что делал» и на странице «Сделано»", async ({ page, request }) => {
+test("закрытая в «Дне» туду видна в «Сделано» и на странице «Сделано»", async ({ page, request }) => {
   await reset(request);
   await request.post("/api/captures", { data: { raw: "Проверить страницу итогов" } });
   await request.post("/api/captures", { data: { raw: "Остаться открытым делом" } });
@@ -21,10 +21,10 @@ test("закрытая в «Дне» туду видна в «Что делал�
   await expect(row).toBeVisible({ timeout: 15000 });
   await row.locator(".completion-button").click();
   await expect(page.locator("#tab-journal b")).toHaveText("1");
-  await showTab(page, /Что делал/);
+  await showTab(page, /^Сделано/);
   await expect(page.locator("#journal .entry").filter({ hasText: "Проверить страницу итогов" })).toBeVisible();
 
-  // «Сделано» — свой пункт в шапке, рядом с «Доской».
+  // «Сделано» — свой пункт в шапке, первый, перед «Сегодня».
   await expect(page.locator('nav a[href="#done"]')).toHaveText("Сделано");
   await page.locator('nav a[href="#done"]').click();
   await expect(page).toHaveURL(/#done$/);
@@ -204,12 +204,12 @@ test("пачка из трёх сообщений — две туду в «Дн�
   await expect(page.locator(".card-source-body")).toContainText("Привет!");
 });
 
-// «Сделал X» закрыто при записи, «Вернуть» из «Что делал» ставит его в «День».
-test("закрыл → Вернуть → снова в «Дне», а из «Что делал» ушло", async ({ page, request }) => {
+// «Сделал X» закрыто при записи, «Вернуть» из «Сделано» ставит его в «День».
+test("закрыл → Вернуть → снова в «Дне», а из «Сделано» ушло", async ({ page, request }) => {
   await reset(request);
   await request.post("/api/captures", { data: { raw: "Сделал отчёт для Игоря" } });
   await page.goto("/");
-  await showTab(page, /Что делал/);
+  await showTab(page, /^Сделано/);
   const done = page.locator("#journal .entry").filter({ hasText: "отчёт для Игоря" });
   await expect(done).toBeVisible({ timeout: 15000 });
   await expect(page.locator("#todo .entry").filter({ hasText: "отчёт для Игоря" })).toHaveCount(0);
@@ -219,7 +219,7 @@ test("закрыл → Вернуть → снова в «Дне», а из «Ч
   await expect(page.locator("#todo .entry").filter({ hasText: "отчёт для Игоря" })).toBeVisible({ timeout: 15000 });
   // Закрыть снова и вернуть кружком строки «Дня» — тот же круг.
   await page.locator("#todo .entry").filter({ hasText: "отчёт для Игоря" }).locator(".completion-button").click();
-  await showTab(page, /Что делал/);
+  await showTab(page, /^Сделано/);
   await expect(page.locator("#journal .entry").filter({ hasText: "отчёт для Игоря" })).toBeVisible({ timeout: 15000 });
 });
 
@@ -229,7 +229,7 @@ test("карточка закрытого дела и закрытого при 
   await reset(request);
   await request.post("/api/captures", { data: { raw: "Сделал сверку по смете" } });
   await page.goto("/");
-  await showTab(page, /Что делал/);
+  await showTab(page, /^Сделано/);
   await page.locator("#journal .entry").filter({ hasText: "сверку по смете" }).locator(".entry-title").click();
   const tick = page.locator("#review-dialog .card-head .card-tick");
   await expect(tick).toBeVisible();

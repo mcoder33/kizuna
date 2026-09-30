@@ -36,13 +36,15 @@ export const minutesOf = (time) => {
 };
 const lower = (text) => text.charAt(0).toLowerCase() + text.slice(1);
 
-// Бриф — массив кусков: строка, {b: текст} или {a: {text, href}}. В DOM это
-// уходит узлами, а не HTML: названия встреч и дел — чужой текст.
+// Бриф — массив кусков: строка, {b: текст}, {a: {text, href}} или
+// {btn: {text, act}} — кнопка-ссылка: что она делает, решает страница по act
+// («show» показывает дела, о которых речь, «postpone» переносит их на завтра).
+// В DOM это уходит узлами, а не HTML: названия встреч и дел — чужой текст.
 export function coverFor({
   phase,
   minutes,
   meetings = [],          // сегодняшние встречи по часам: {title, start, end, joinUrl, busy, hasOutcome}
-  tasks = { late: 0, today: 0, open: 0, todayTitle: null },
+  tasks = { late: 0, unfinished: 0, today: 0, open: 0, todayTitle: null },
   doneCount = 0,
   tomorrow = null,        // {count, first: {start, title}} | null
   calendar = false,       // подключён ли календарь
@@ -116,8 +118,10 @@ export function coverFor({
     brief.push(`Сделано ${doneCount}${calendar ? `, встреч прошло ${past}` : ""}`);
     if (next) brief.push(`, ещё в ${hm(next.start)} `, { b: next.title });
     brief.push(".");
-    // Вечером важно не только просроченное: открытое без срока тоже дело.
-    if (tasks.late) brief.push(` Не закрыто ${plural(tasks.late, DEALS)} со сроком — перенести на завтра?`);
+    // Вечером не закрыто всё со сроком сегодня и раньше (unfinished; без него —
+    // просроченное), и это можно тут же перенести. Важно и открытое без срока.
+    const unfinished = tasks.unfinished ?? tasks.late;
+    if (unfinished) brief.push(" Не закрыто ", { btn: { text: plural(unfinished, DEALS), act: "show" } }, " со сроком — ", { btn: { text: "перенести на завтра?", act: "postpone" } });
     else if (tasks.open) brief.push(` Открыто ${plural(tasks.open, DEALS)} без срока.`);
     else brief.push(" Все дела закрыты.");
     if (calendar && tomorrow?.first) brief.push(` Завтра первая встреча в ${hm(tomorrow.first.start)}.`);

@@ -99,7 +99,7 @@ function todayScene(state, hooks) {
   const tabs = h("div", "gd-today-tabs");
   const doneCount = state.doneEntries.length, dayCount = state.entries.filter((e) => !e.done).length;
   tabs.append(
-    button("gd-today-tab" + (state.tab === "done" ? " on" : ""), ["Что делал", h("b", null, String(doneCount))]),
+    button("gd-today-tab" + (state.tab === "done" ? " on" : ""), ["Сделано", h("b", null, String(doneCount))]),
     button("gd-today-tab" + (state.tab === "day" ? " on" : ""), ["День", h("b", null, `${dayCount} ${dayCount === 1 ? "дело" : dayCount > 1 && dayCount < 5 ? "дела" : "дел"}`)]),
   );
   root.append(tabs);

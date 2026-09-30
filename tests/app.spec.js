@@ -68,8 +68,10 @@ test("async capture shows a short success notification and adds the entry to the
   page,
 }) => {
   await page.goto("/");
-  // В шапке три двери и шестерёнка: Круги, Календарь, «?» и меню модели ушли.
-  await expect(page.locator("header nav a")).toHaveText(["Сегодня", "Доска", "Сделано", "Заметки"]);
+  // В шапке пять разделов и шестерёнка: «Сделано» стоит первым, перед «Сегодня»; Календарь
+  // вернулся между «Доской» и «Заметками», а Круги, «?» и меню модели ушли.
+  await expect(page.locator("header nav a")).toHaveText(["Сделано", "Сегодня", "Доска", "Календарь", "Заметки"]);
+  await expect(page.locator("header nav a.active")).toHaveText("Сегодня");
   await expect(page.locator(".settings-link")).toHaveAttribute("href", "#settings");
   await expect(page.locator(".ai-menu, .help-link")).toHaveCount(0);
   await capture(page, "Завтра в 11 созвон по Hub");
@@ -100,7 +102,7 @@ test("success notification disappears without shifting the drawers under the fie
   await expect(page.locator("#capture-notifications .capture-notification")).toHaveCount(0, {
     timeout: 5000,
   });
-  // Под полем два ящика: «Что делал» и «День». Заметок и колонок больше нет.
+  // Под полем два ящика: «Сделано» и «День». Заметок и колонок больше нет.
   await expect(page.locator(".drawer-tab")).toHaveCount(2);
 });
 test("notification stack is pinned to the viewport right edge on desktop", async ({
@@ -123,7 +125,7 @@ test("today separates reported work from the day's open todos", async ({
 }) => {
   await page.goto("/");
   await capture(page, "доработал обновление контекста для Hub");
-  // «Доработал X» — туду, закрытая сразу: она в «Что делал», не в «Дне».
+  // «Доработал X» — туду, закрытая сразу: она в «Сделано», не в «Дне».
   await expect(page.locator("#journal")).toContainText("доработал обновление контекста");
   await expect(page.locator("#todo")).not.toContainText("доработал обновление контекста");
   await capture(page, "Завтра в 11 созвон по Hub");
@@ -137,7 +139,7 @@ test("today separates reported work from the day's open todos", async ({
   const entries = await (await page.request.get("/api/entries")).json();
   expect(entries.entries.some((entry) => entry.raw.includes("голосовым ИИ"))).toBe(true);
   await expect(page.locator("#todo")).toContainText("голосовым ИИ");
-  await expect(page.getByRole("tab", { name: /Что делал/ })).toBeVisible();
+  await expect(page.getByRole("tab", { name: /^Сделано/ })).toBeVisible();
   await expect(page.getByRole("tab", { name: /День/ })).toBeVisible();
   // Ящика «Заметки» нет: остались две вкладки.
   await expect(page.getByRole("tab")).toHaveCount(2);
@@ -183,7 +185,7 @@ test("запись с намерениями дробится на дела, и 
   await page.keyboard.press("Escape");
 
   // Исходная запись цела и помнит оба дела.
-  await openTab(page, /Что делал/);
+  await openTab(page, /^Сделано/);
   const source = page.locator("#journal .entry").filter({ hasText: "Созвонились по ВойсОпс" });
   await expect(source).toBeVisible();
   await source.locator(".entry-title").click();
@@ -243,6 +245,33 @@ test("карточка ввода тянется за края и помнит �
   expect(Math.round(await height())).toBe(Math.round(startHeight));
 });
 
+// Подсказка под полем и подпись кнопки называют клавишу платформы: ⌘ на Mac и iOS,
+// Super на Linux (Android — не в счёт: ядро у него Linux, а рабочего стола нет),
+// Ctrl везде ещё. Сама отправка принимает и metaKey, и ctrlKey.
+test("подсказка под полем записи говорит, как отправить: «…+Enter — отправить»", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("#capture-hint")).toContainText("+Enter — отправить");
+  await expect(page.locator("#capture-hint")).toContainText("Enter — новая строка");
+  await expect(page.locator("#capture-submit")).toHaveAttribute("title", /^Сохранить запись — .+\+Enter$/);
+});
+for (const [name, platform, agent, key] of [
+  ["Mac", "MacIntel", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15", "⌘"],
+  ["iPhone", "iPhone", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15", "⌘"],
+  ["Linux", "Linux x86_64", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126.0", "Super"],
+  ["Android", "Linux armv8l", "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/126.0 Mobile", "Ctrl"],
+  ["Windows", "Win32", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0", "Ctrl"],
+]) {
+  test(`подсказка под полем записи на ${name}: «${key}+Enter — отправить»`, async ({ page }) => {
+    await page.addInitScript(([platformName, agentName]) => {
+      Object.defineProperty(navigator, "platform", { get: () => platformName });
+      Object.defineProperty(navigator, "userAgent", { get: () => agentName });
+    }, [platform, agent]);
+    await page.goto("/");
+    await expect(page.locator("#capture-hint")).toHaveText(`${key}+Enter — отправить, Enter — новая строка`);
+    await expect(page.locator("#capture-submit")).toHaveAttribute("title", `Сохранить запись — ${key}+Enter`);
+  });
+}
+
 // Лист — увеличенное поле поверх затемнённой страницы. Esc его закрывает, и клик
 // мимо листа тоже; клик внутри формы и в меню поля (оно лежит в <body>) — нет.
 test("лист поля записи закрывается кликом в сторону, а внутри формы и в меню поля остаётся", async ({ page }) => {
@@ -294,7 +323,7 @@ test("дата и бриф пропадают при раскрытом ящик
   const date = page.locator("#today-date");
   const dayNavDate = page.locator("#todo .daynav b");
   const dayTab = page.getByRole("tab", { name: /^День/ });
-  const journalTab = page.getByRole("tab", { name: /Что делал/ });
+  const journalTab = page.getByRole("tab", { name: /^Сделано/ });
   await expect(dayTab).toHaveAttribute("aria-selected", "true");
   await expect(brief).toBeHidden();
   await expect(date).toBeHidden();
@@ -318,7 +347,7 @@ test("дата и бриф пропадают при раскрытом ящик
 test("переключение ящика возвращает оба дня на сегодня", async ({ page }) => {
   await page.goto("/");
   const dayTab = page.getByRole("tab", { name: /^День/ });
-  const journalTab = page.getByRole("tab", { name: /Что делал/ });
+  const journalTab = page.getByRole("tab", { name: /^Сделано/ });
   const dayLabel = page.locator("#tab-day .drawer-tab-label");
   const journalLabel = page.locator("#tab-journal .drawer-tab-label");
   const dayToday = page.locator("#todo .daynav .daynav-mark");
@@ -332,15 +361,15 @@ test("переключение ящика возвращает оба дня н�
   // Открыли соседний ящик — «День» уже вернулся на сегодня.
   await journalTab.click();
   await expect(journalToday).toBeVisible();
-  await expect(journalLabel).toHaveText("Что делал");
+  await expect(journalLabel).toHaveText("Сделано");
   await expect(dayLabel).toHaveText("День");
 
-  // Теперь в другой день ушёл «Что делал» — и вернулся, когда открыли «День».
+  // Теперь в другой день ушёл «Сделано» — и вернулся, когда открыли «День».
   await page.locator('#journal .daynav [data-step="-1"]').click();
-  await expect(journalLabel).not.toHaveText("Что делал");
+  await expect(journalLabel).not.toHaveText("Сделано");
   await dayTab.click();
   await expect(dayToday).toBeVisible();
-  await expect(journalLabel).toHaveText("Что делал");
+  await expect(journalLabel).toHaveText("Сделано");
 
   // Закрыли ящик — открытый снова показывает сегодня, а не тот день.
   await page.locator('#todo .daynav [data-step="1"]').click();
@@ -371,7 +400,7 @@ test("the day keeps every todo together; tomorrow's ones wait for their day", as
   await showDay(page, 1);
   await expect(page.locator("#todo")).toContainText(meeting);
   await expect(page.locator("#todo")).not.toContainText(task);
-  await openTab(page, /Что делал/);
+  await openTab(page, /^Сделано/);
   await expect(page.locator("#journal")).not.toContainText(note);
   await expect(page.locator("#todo")).toBeHidden();
 });
@@ -431,7 +460,7 @@ test("completed reports, including ready wording, are Done while negated reports
   await expect(page.locator("#todo")).not.toContainText(completed);
   await capture(page, negated);
   // Отрицание — не сделанное: заметок нет, запись остаётся открытым туду на
-  // сегодня и в «Что делал» не попадает.
+  // сегодня и в «Сделано» не попадает.
   await expect(page.locator("#todo")).toContainText(negated);
   await expect(page.locator("#journal")).not.toContainText(negated);
 });
@@ -488,9 +517,9 @@ test("user completion survives reload, is single-flight, and undo returns a todo
     button.click();
     button.click();
   });
-  // Закрытое дело уходит из «Дня» и встаёт в «Что делал» с временем закрытия.
+  // Закрытое дело уходит из «Дня» и встаёт в «Сделано» с временем закрытия.
   await expect(page.locator("#todo")).not.toContainText(raw);
-  await openTab(page, /Что делал/);
+  await openTab(page, /^Сделано/);
   const closed = page.locator("#journal .entry").filter({ hasText: raw });
   await expect(closed).toHaveCount(1);
   await expect(closed.locator(".tag.time")).toHaveText(/^\d{2}:\d{2}$/);
@@ -499,7 +528,7 @@ test("user completion survives reload, is single-flight, and undo returns a todo
   });
   // Закрытие записано в данных, а не в состоянии страницы: переживает перезагрузку.
   await page.reload();
-  await openTab(page, /Что делал/);
+  await openTab(page, /^Сделано/);
   await expect(page.locator("#journal .entry").filter({ hasText: raw })).toHaveCount(1);
   const entries = await (await page.request.get("/api/entries")).json(),
     entry = entries.entries.find((candidate) => candidate.raw === raw),
@@ -1235,7 +1264,7 @@ test("карточки обновляются в реальном времени
   await expect(page.locator("#todo .entry")).toHaveCount(0, { timeout: 15000 });
 });
 
-test("в «Дне» дело — плотная строка без времени записи, в «Что делал» — со временем закрытия", async ({ page, request }) => {
+test("в «Дне» дело — плотная строка без времени записи, в «Сделано» — со временем закрытия", async ({ page, request }) => {
   await page.goto("/");
   const created = await request.post("/api/captures", {
     data: {
@@ -1256,11 +1285,11 @@ test("в «Дне» дело — плотная строка без времен
   await expect(entry.locator(".entry-meta")).not.toContainText("срок:");
   await expect(entry.locator(".entry-meta")).not.toContainText(/сегодня, \d{2}:\d{2}/);
 
-  // «Сделали X» — туду, закрытая при записи: в «Что делал» она строкой с
+  // «Сделали X» — туду, закрытая при записи: в «Сделано» она строкой с
   // временем закрытия, а не временем записи с днём.
   const done = await request.post("/api/captures", { data: { raw: "Сделали разбор по Hub" } });
   await page.reload();
-  await openTab(page, /Что делал/);
+  await openTab(page, /^Сделано/);
   const card = page.locator("#journal .entry").filter({ hasText: "Сделали разбор по Hub" }).first();
   await expect(card).toBeVisible({ timeout: 15000 });
   await expect(card).toHaveClass(/dense/);
@@ -1415,7 +1444,7 @@ test("дела без срока показываются все, а ящик н
 });
 
 // Дела на другие дни живут в своих днях: в сегодняшнем списке их нет, но хвост
-// «Ещё N» их считает, а «Что делал» показывает всё закрытое за день.
+// «Ещё N» их считает, а «Сделано» показывает всё закрытое за день.
 test("future-dated todos stay in their days while the tail counts them", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   await page.goto("/");
@@ -1434,8 +1463,8 @@ test("future-dated todos stay in their days while the tail counts them", async (
   await expect(page.locator("#board")).toBeVisible();
   await expect(page.locator("#board-columns .board-card").filter({ hasText: /первое|второе|третье/ })).toHaveCount(3);
   await page.locator('nav a[href="#today"]').click();
-  await openTab(page, /Что делал/);
-  // Семь «Обсудили …» — закрытые сразу туду: «Что делал» показывает все.
+  await openTab(page, /^Сделано/);
+  // Семь «Обсудили …» — закрытые сразу туду: «Сделано» показывает все.
   await expect(page.locator("#journal .entry:visible")).toHaveCount(7, { timeout: 15000 });
   await expect(page.locator("#tab-journal b")).toHaveText("7");
   await expect(page.locator("#todo")).toBeHidden();
@@ -1554,8 +1583,8 @@ test("«День» делит сегодняшнее и запас, берёт �
   await expect(todo.locator(".entry").filter({ hasText: title })).toHaveCount(0);
   await expect(page.locator("#tab-journal b")).toHaveText("1");
   await expect(page.locator("#toast")).toContainText("Отмечено как готовое");
-  // Закрытое видно во «Что делал» — и «Вернуть» кладёт его обратно в «День».
-  await openTab(page, /Что делал/);
+  // Закрытое видно во «Сделано» — и «Вернуть» кладёт его обратно в «День».
+  await openTab(page, /^Сделано/);
   await expect(page.locator("#journal .entry").filter({ hasText: title })).toHaveCount(1);
   await openTab(page, /^День/);
   await page.locator("#toast").getByRole("button", { name: "Вернуть" }).click();
@@ -1569,4 +1598,115 @@ test("«День» делит сегодняшнее и запас, берёт �
   await expect(todo.locator(".day-group")).toHaveText(["на сегодня · 2", "без срока · 1"]);
 
   for (const response of created) await request.delete(`/api/captures/${response.entry.id}`);
+});
+
+// ── перенос не закрытого на завтра: полки «Дня» и вечерняя фраза обложки ──────
+// День — по часам приложения (Самара), а не по UTC.
+const zoneDay = (shift = 0) => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Samara", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(Date.now() + shift * 86400000));
+const scheduleById = async (request, id) => (await (await request.get(`/api/captures/${id}`)).json()).entry.interpretation.classification.entities.schedule;
+// Пять дел: два просроченных (одно со временем), сегодняшнее, завтрашнее и ежедневное
+// (его серию одной кнопкой не двигают).
+async function postponeSetup(request) {
+  const make = async (raw, due) => (await (await request.post("/api/captures", { data: { raw, due } })).json()).entry.id;
+  const ids = {
+    late: await make("Просроченный отчёт для переноса", { date: zoneDay(-1) }),
+    lateTimed: await make("Просроченный звонок для переноса", { date: zoneDay(-3), time: "10:00" }),
+    today: await make("Сегодняшнее дело для переноса", { date: zoneDay(0) }),
+    tomorrow: await make("Завтрашнее дело для переноса", { date: zoneDay(1) }),
+    daily: await make("Ежедневное дело для переноса", { date: zoneDay(0) }),
+  };
+  await request.post(`/api/captures/${ids.daily}/corrections`, { data: { at: Date.now(), patch: { schedule: { date: zoneDay(0), time: null, repeat: { freq: "daily", interval: 1 } } } } });
+  return ids;
+}
+
+test("на полках «просрочено» и «на сегодня» — «перенести всё на завтра»: сроки уезжают, время остаётся, повтор на месте, «Вернуть» возвращает", async ({ page, request }) => {
+  const ids = await postponeSetup(request);
+  await page.goto("/");
+  await openTab(page, /^День/);
+  const todo = page.locator("#todo");
+  // Подписи полок — по-прежнему свои элементы; ссылка стоит справа от подписи и у каждой полки своя.
+  await expect(todo.locator(".day-group")).toHaveText(["просрочено · 2", "на сегодня · 2"]);
+  const late = todo.locator(".day-head", { has: page.locator(".day-group.late") });
+  const today = todo.locator(".day-head", { has: page.locator(".day-group.today") });
+  await expect(late.locator(".day-head-act")).toHaveText("перенести всё на завтра");
+  await expect(today.locator(".day-head-act")).toHaveText("перенести всё на завтра");
+  await expect(late.locator(".day-head-act")).toHaveCSS("text-transform", "none");
+
+  // Просроченные: оба на завтра, у второго остаётся 10:00; полка пропала, «Вернуть» кладёт сроки обратно.
+  await late.locator(".day-head-act").click();
+  await expect(page.locator("#toast")).toContainText("Перенесено на завтра: 2");
+  await expect(todo.locator(".day-group.late")).toHaveCount(0);
+  expect(await scheduleById(request, ids.late)).toMatchObject({ date: zoneDay(1) });
+  expect(await scheduleById(request, ids.lateTimed)).toMatchObject({ date: zoneDay(1), time: "10:00" });
+  await page.locator("#toast").getByRole("button", { name: "Вернуть" }).click();
+  await expect(page.locator("#toast")).toContainText("Сроки вернулись");
+  await expect(todo.locator(".day-group.late")).toHaveText("просрочено · 2");
+  expect(await scheduleById(request, ids.late)).toMatchObject({ date: zoneDay(-1) });
+  expect(await scheduleById(request, ids.lateTimed)).toMatchObject({ date: zoneDay(-3), time: "10:00" });
+
+  // «На сегодня»: переносится только настоящее дело, ежедневное остаётся на месте.
+  await todo.locator(".day-head", { has: page.locator(".day-group.today") }).locator(".day-head-act").click();
+  await expect(page.locator("#toast")).toContainText("Перенесено на завтра: 1");
+  expect(await scheduleById(request, ids.today)).toMatchObject({ date: zoneDay(1) });
+  const daily = await scheduleById(request, ids.daily);
+  expect(daily.date).toBe(zoneDay(0));
+  expect(daily.repeat).toMatchObject({ freq: "daily" });
+  // Завтрашнее не трогали.
+  expect(await scheduleById(request, ids.tomorrow)).toMatchObject({ date: zoneDay(1) });
+  // На полке остался один повтор — переносить нечего, ссылки нет.
+  await expect(todo.locator(".day-group.today")).toHaveText("на сегодня · 1");
+  await expect(todo.locator(".day-head-act.today")).toHaveCount(0);
+});
+
+test("вечером во фразе обложки «3 дела» и «перенести на завтра?» — кнопки: показать дела и перенести, «Вернуть» возвращает", async ({ page, request }) => {
+  const today = zoneDay(0);
+  test.skip([0, 6].includes(new Date(`${today}T12:00:00Z`).getUTCDay()), "по выходным обложка говорит про выходной, а не про вечер");
+  const ids = await postponeSetup(request);
+  // Вечер по часам приложения: 19:00 в Самаре.
+  await page.clock.setSystemTime(new Date(`${today}T19:00:00+04:00`));
+  await page.goto("/");
+  const brief = page.locator("#today-brief");
+  // Вечером открыт «Сделано»: свернули ящик — обложка на месте.
+  await page.getByRole("tab", { name: /^Сделано/ }).click();
+  await expect(brief).toBeVisible();
+  await expect(page.locator("#today-date .today-phase")).toHaveText("вечер");
+  // Не закрыто всё со сроком сегодня и раньше: два просроченных и сегодняшнее; ежедневное не в счёте.
+  await expect(brief).toContainText("Не закрыто 3 дела со сроком — перенести на завтра?");
+  await expect(brief.locator("button.linkish")).toHaveText(["3 дела", "перенести на завтра?"]);
+  // Кнопка-ссылка того же цвета, что слово «вечер».
+  const color = (locator) => locator.evaluate((element) => getComputedStyle(element).color);
+  expect(await color(brief.locator("button.linkish").first())).toBe(await color(page.locator("#today-date .today-phase")));
+
+  // «3 дела» открывает «День», ведёт к полке «просрочено» и подсвечивает строки, которые не закрыты.
+  await brief.getByRole("button", { name: "3 дела" }).click();
+  await expect(page.getByRole("tab", { name: /^День/ })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#todo .day-group.late")).toBeInViewport();
+  await expect(page.locator("#todo .entry.flash")).toHaveCount(3);
+  await expect(page.locator("#todo .entry.flash").filter({ hasText: "Ежедневное" })).toHaveCount(0);
+  // Подсветка гаснет сама, строки на месте.
+  await expect(page.locator("#todo .entry.flash")).toHaveCount(0, { timeout: 4000 });
+  await expect(page.locator("#todo .entry").filter({ hasText: "Просроченный отчёт" })).toBeVisible();
+
+  // «перенести на завтра?»: все три уезжают, время сохраняется, ежедневное и завтрашнее не тронуты.
+  await page.getByRole("tab", { name: /^День/ }).click();
+  await expect(brief).toBeVisible();
+  const postpone = brief.getByRole("button", { name: "перенести на завтра?" });
+  await postpone.click();
+  await expect(page.locator("#toast")).toContainText("Перенесено на завтра: 3");
+  expect(await scheduleById(request, ids.late)).toMatchObject({ date: zoneDay(1) });
+  expect(await scheduleById(request, ids.lateTimed)).toMatchObject({ date: zoneDay(1), time: "10:00" });
+  expect(await scheduleById(request, ids.today)).toMatchObject({ date: zoneDay(1) });
+  expect((await scheduleById(request, ids.daily)).date).toBe(today);
+  expect((await scheduleById(request, ids.tomorrow)).date).toBe(zoneDay(1));
+  // Переносить нечего — фраза без кнопок.
+  await expect(brief.locator("button.linkish")).toHaveCount(0);
+  await expect(brief).not.toContainText("перенести на завтра");
+
+  // «Вернуть» — прежние сроки теми же поправками, и фраза с кнопками возвращается.
+  await page.locator("#toast").getByRole("button", { name: "Вернуть" }).click();
+  await expect(page.locator("#toast")).toContainText("Сроки вернулись");
+  expect(await scheduleById(request, ids.late)).toMatchObject({ date: zoneDay(-1) });
+  expect(await scheduleById(request, ids.lateTimed)).toMatchObject({ date: zoneDay(-3), time: "10:00" });
+  expect(await scheduleById(request, ids.today)).toMatchObject({ date: today });
+  await expect(brief).toContainText("Не закрыто 3 дела со сроком — перенести на завтра?");
 });

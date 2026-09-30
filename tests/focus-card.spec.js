@@ -16,6 +16,36 @@ async function openById(page, id) {
   await expect(page.locator("#review-dialog .card-title")).not.toBeEmpty();
 }
 
+test("короткая завершённая подзадача остаётся компактной, с заметкой и собранным подвалом", async ({ page, request }) => {
+  await reset(request);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const parent = await deed(request, "Отправить смету по Хабу и напомнить про доступы");
+  const child = await sub(request, parent.id, "Отправить Ане смету по Хабу");
+  await request.post(`/api/captures/${child.id}/notes`, { data: { body: "Смета для нового стенда." } });
+  for (const projection of child.projections.filter((item) => item.type === "task"))
+    await request.post(`/api/projections/${projection.id}/complete`, { data: {} });
+  await openById(page, child.id);
+  const card = page.locator("#review-dialog");
+  await expect(card.locator(".card-title.is-done")).toBeVisible();
+  await expect(card.locator(".card-done-ok")).toContainText("Сделано");
+  await expect(card.locator(".card-body .prop-section")).toHaveText("Заметка");
+  await expect(card.locator(".subtask-add")).toBeVisible();
+  await expect(card.locator(".card-chips .entry-status")).toHaveCount(0);
+  const dialog = await card.boundingBox();
+  const top = await card.locator(".card-top").boundingBox();
+  const head = await card.locator(".card-head").boundingBox();
+  const note = await card.locator(".card-body").boundingBox();
+  const subtasks = await card.locator(".card-subtasks").boundingBox();
+  const footer = await card.locator(".card-footer-row").boundingBox();
+  expect(Math.round(dialog.height)).toBe(680);
+  expect(head.y - top.y - top.height).toBeLessThan(45);
+  expect(subtasks.y - note.y - note.height).toBeLessThan(32);
+  expect(footer.y + footer.height).toBeLessThan(dialog.y + dialog.height - 55);
+  const source = await card.locator(".card-source summary").boundingBox();
+  const remove = await card.locator(".card-delete").boundingBox();
+  expect(Math.abs(source.y - remove.y)).toBeLessThan(8);
+});
+
 test("дуга вокруг кружка считает конечные шаги, подпись ведёт к карте, список и карта — одни данные", async ({ page, request }) => {
   await reset(request);
   const coffee = await deed(request, "Купить кофе");
@@ -86,7 +116,7 @@ test("подзадача открывается той же карточкой: 
   const kitchen = await sub(request, stock.id, "Проверить запас в кухонном шкафу");
   await openById(page, coffee.id);
   const dialog = page.locator("#review-dialog");
-  await expect(dialog.locator("#review-crumb")).toContainText("задача");
+  await expect(dialog.locator("#review-crumb")).toContainText("Сегодня");
 
   // Правка заметки родителя уходит на сервер до перехода — медленный ответ
   // не теряет текст.
@@ -345,14 +375,14 @@ test("медленное сохранение заголовка не возвр
   await expect.poll(async () => (await (await request.get(`/api/captures/${coffee.id}`)).json()).entry.interpretation.classification.summary).toBe("Купить кофе — ещё раз");
 });
 
-test("короткая заметка не оставляет пустой провал перед подзадачами", async ({ page, request }) => {
+test("пустая заметка не оставляет провал перед подзадачами", async ({ page, request }) => {
   await reset(request);
   await page.setViewportSize({ width: 390, height: 844 });
   const coffee = await deed(request, "Купить кофе");
   await sub(request, coffee.id, "Проверить запас");
   await openById(page, coffee.id);
   const editor = page.locator("#review-dialog #card-body-editor");
-  await expect(editor).toHaveCSS("min-height", "120px");
+  await expect(editor).toHaveCSS("min-height", "36px");
   const box = await editor.boundingBox();
   expect(box.height).toBeLessThan(160);
 });
@@ -376,7 +406,7 @@ test("панель «Параметры» — ровный инспектор: �
     await dialog.locator("#review-repeat").selectOption("weekly:1");
     await expect(dialog.locator("#review-repeat-until")).toBeVisible();
     // Панель доехала до своей ширины — мерить можно.
-    await expect.poll(async () => Math.round((await dialog.locator("#review-params").boundingBox()).width)).toBe(Math.min(340, width - 30));
+    await expect.poll(async () => Math.round((await dialog.locator("#review-params").boundingBox()).width)).toBe(width <= 760 ? width : 340);
     const { fields, labels, overflow } = await geometry();
     expect(overflow).toBe(false);
     // Повторяющегося названия задачи в шапке панели нет.

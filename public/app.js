@@ -7,6 +7,7 @@ import { attachFormatToolbar } from "./format-toolbar.js";
 import { openNotes, refreshNotes } from "./notes.js";
 import { mountGuide } from "./guide.js";
 import { phaseOf, coverFor, plural, hm, duration, minutesOf, longDate, shortDate, isWeekend, MEETINGS, DEALS, PHASE_NAMES } from "./today-cover.js";
+import { FILTER_FIELDS, FILTER_STATUSES, FILTER_NONE, DONE_LANE, defaultFilter, readFilter, tidyFilter, activeConditions, sameFilter, matchesFilter, statusAllowsDone, readOrder, orderKeys, moveKey } from "./board-model.js";
 
 const $ = (selector) => document.querySelector(selector);
 const typeNames = {
@@ -364,22 +365,23 @@ function scheduleLabel(schedule, on = null) {
   if (!schedule) return null;
   if (schedule.state === "conflict" || (!schedule.date && !schedule.time))
     return schedule.display || null;
+  const today = currentDayDate || zoneDate(new Date());
   // У повтора подпись — про показанный день или ближайший экземпляр, а не
   // про первый: «сегодня, 10:00, каждую неделю».
   const shown = schedule.repeat && schedule.date
-    ? (on && repeatOccursOn(schedule, on) ? on : nextRepeatDate(schedule, currentDayDate || schedule.date) || schedule.date)
+    ? (on && repeatOccursOn(schedule, on) ? on : nextRepeatDate(schedule, today) || schedule.date)
     : schedule.date;
   let dateLabel = shown;
-  if (shown && currentDayDate) {
+  if (shown) {
     dateLabel =
-      shown === currentDayDate
+      shown === today
         ? "сегодня"
-        : shown === shiftDate(currentDayDate, 1)
+        : shown === shiftDate(today, 1)
           ? "завтра"
-          : shown === shiftDate(currentDayDate, -1)
+          : shown === shiftDate(today, -1)
             ? "вчера"
             : `${shown.slice(8, 10)}.${shown.slice(5, 7)}${
-                shown.slice(0, 4) === currentDayDate.slice(0, 4)
+                shown.slice(0, 4) === today.slice(0, 4)
                   ? ""
                   : `.${shown.slice(0, 4)}`
               }`;
@@ -590,7 +592,7 @@ function sinceLabel(date) {
 }
 // Строка дела: кружок, название и справа тихие чипы — час или «со вчера»,
 // люди, круг, кому передано. Типа, проекта и тегов у неё нет: всё, что
-// записано, — дело. doneAt — минуты закрытия для строки «Что делал».
+// записано, — дело. doneAt — минуты закрытия для строки «Сделано».
 function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt = null, takeToday = false } = {}) {
   const c = entry.interpretation.classification,
     projections = completableProjections(entry),
@@ -638,7 +640,7 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
     const review = reviewFromEntry(entry);
     cardOccurrence = c.entities.schedule?.repeat && on && scheduledOn(entry, on) ? on : null;
     const list = card.closest("#todo, #journal");
-    pendingCardList = list ? { label: list.id === "journal" ? "Что делал" : "День", items: rowsAsList([...list.querySelectorAll(".entry[data-capture-id]")]), id: entry.id, occurrence: card.dataset.occurrence || null } : null;
+    pendingCardList = list ? { label: list.id === "journal" ? "Сделано" : "День", items: rowsAsList([...list.querySelectorAll(".entry[data-capture-id]")]), id: entry.id, occurrence: card.dataset.occurrence || null } : null;
     // Запись из круга открывается перечитанной: обсуждение и исполнитель
     // меняются у другого человека, и показывать вчерашний разговор нельзя.
     if (entry.foreign || circleOf(entry)) { openSharedCard(entry.id); return; }
@@ -679,7 +681,7 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
 // ── «Сегодня»: обложка по часам, полоса дней, два ящика ──────────────────────
 // Страница знает, который час: дата с фазой суток, бриф из двух-трёх фраз и
 // вопрос в поле меняются утром, днём, вечером и ночью. Под полем — два ящика
-// с вкладками и своей полосой дней: «Что делал» (закрытое кружком и прошедшие
+// с вкладками и своей полосой дней: «Сделано» (закрытое кружком и прошедшие
 // встречи) и «День», где дела лежат вместе с календарём. Заметок здесь нет:
 // любая запись — туду, а старые заметки видны в «Обзоре» и в поиске.
 const TODAY_ZONE = "Europe/Samara";
@@ -692,14 +694,14 @@ const roomsRefresh = { running: false, again: false, edits: 0 };
 function kcEdited() { roomsRefresh.edits += 1; }
 const todayState = {
   view: 0,            // смещение дня, показанного в «Дне», от сегодняшнего
-  journalView: 0,     // то же для «Что делал»: у ящиков свои дни
+  journalView: 0,     // то же для «Сделано»: у ящиков свои дни
   tab: null,          // открытый ящик: "journal" | "day" | null
   manual: false,      // ящик выбран рукой — фаза его не трогает
   phase: null,
   cover: null,
   calendar: null,     // /api/calendar на сегодня и завтра
   entries: [],
-  done: [],     // строки «Что делал» из /api/done на сегодня
+  done: [],     // строки «Сделано» из /api/done на сегодня
   doneStale: true,
   todo: [],
   // Общее: полоса «к вам», взятые чужие дела, круги и метки для строк.
@@ -831,7 +833,7 @@ async function skipOccurrence(target, date, { announce = true } = {}) {
   } catch (error) { toast(error.message); }
 }
 // Кружок у повтора: экземпляр закрывается одним запросом. Сервер пишет событие
-// «экземпляр закрыт» (оно попадает в «Что делал» и «Сделано») и убирает день из
+// «экземпляр закрыт» (оно попадает в «Сделано» на «Сегодня» и на страницу «Сделано») и убирает день из
 // серии, остальные повторы живут дальше. «Вернуть» снимает событие и возвращает день.
 async function doneOccurrence(target, date, { announce = true } = {}) {
   let { id, projectionId = null } = target;
@@ -874,11 +876,20 @@ function todayMeetings() {
       .map((entry) => ({ id: entry.id, title: titleOf(entry), start: minutesOf(scheduleOf(entry).time), end: minutesOf(scheduleOf(entry).end) ?? minutesOf(scheduleOf(entry).time) + defaults, joinUrl: null, busy: false })),
   ].filter((meeting) => meeting.start != null);
 }
+// Дело, которое можно перенести на завтра одним движением: открытая задача со
+// сроком сегодня или раньше. Повтор не в счёт — серию двигают в карточке, — и
+// взятое чужое дело тоже: срок у него у автора.
+function canPostpone(entry, today = currentDayDate) {
+  const schedule = scheduleOf(entry);
+  return isActiveTask(entry) && !entry.foreign && entry.mine !== false && Boolean(schedule?.date) && !schedule.repeat && schedule.date <= today;
+}
+const unfinishedTasks = () => todayState.todo.filter((entry) => canPostpone(entry));
 function todayTasks() {
   const today = currentDayDate;
   const todays = todayState.todo.filter((entry) => scheduledOn(entry, today));
   return {
     late: todayState.todo.filter((entry) => isOverdue(entry, today)).length,
+    unfinished: unfinishedTasks().length,
     open: todayState.todo.filter((entry) => isActiveTask(entry) && !isOverdue(entry, today)).length,
     today: todays.length,
     todayTitle: todays.find((entry) => isActiveTask(entry)) ? titleOf(todays.find((entry) => isActiveTask(entry))) : null,
@@ -1046,7 +1057,80 @@ function paintCover(cover, date) {
       link.target = "_blank";
       link.rel = "noopener";
       brief.append(link);
+    } else if (part.btn) {
+      // Вечернее «Не закрыто 3 дела со сроком — перенести на завтра?»: число
+      // показывает дела, вопрос их переносит.
+      const button = node("button", part.btn.text, "linkish");
+      button.type = "button";
+      button.dataset.act = part.btn.act;
+      button.addEventListener("click", () => (part.btn.act === "show" ? showUnfinished() : postponeToTomorrow(unfinishedTasks(), button)));
+      brief.append(button);
     }
+  }
+}
+// Ящик открывается рукой: то же, что щелчок по вкладке, только без «закрыть
+// открытый». Любое переключение возвращает все дни на сегодня: день, куда человек
+// ушёл стрелками, не тянется за ним в соседний ящик и не ждёт его в закрытом.
+function pickTodayTab(key) {
+  todayState.tab = key;
+  todayState.manual = true;
+  todayState.view = 0;
+  todayState.journalView = 0;
+  rememberTab();
+  renderToday();
+}
+// «3 дела» в вечерней фразе: открыть «День», подвести к первой полке с незакрытым
+// (просрочено, а если его нет — на сегодня) и на секунду подсветить эти строки.
+function showUnfinished() {
+  pickTodayTab("day");
+  const ids = new Set(unfinishedTasks().map((entry) => entry.id));
+  const rows = [...$("#todo").querySelectorAll(".entry[data-capture-id]")].filter((row) => ids.has(row.dataset.captureId));
+  const shelf = $("#todo .day-group.late") || $("#todo .day-group.today");
+  (shelf?.closest(".day-head") || shelf || rows[0])?.scrollIntoView({ block: "start", behavior: motionAllowed() ? "smooth" : "auto" });
+  // Класс встаёт на следующем кадре, чтобы фон успел проявиться плавно, а не появился сразу.
+  requestAnimationFrame(() => { for (const row of rows) row.classList.add("flash"); });
+  setTimeout(() => { for (const row of rows) row.classList.remove("flash"); }, 1400);
+}
+// Перенос группы дел на завтра одним нажатием — из вечерней фразы обложки и с
+// полок «просрочено» и «на сегодня». Двигаются только те, что можно (canPostpone):
+// срок меняется поправкой, как при переносе в карточке, время и конец остаются.
+// «Вернуть» кладёт прежние сроки теми же поправками. Пока запросы идут, кнопка
+// не нажимается.
+async function postponeToTomorrow(entries, button = null) {
+  const today = currentDayDate || zoneDate(new Date());
+  const tomorrow = shiftDate(today, 1);
+  const tasks = entries.filter((entry) => canPostpone(entry, today));
+  if (!tasks.length) return;
+  const put = (id, when) => request(`/api/captures/${id}/corrections`, {
+    method: "POST",
+    // метка времени в теле — чтобы перенос туда и обратно не принимался за повтор одного и того же
+    body: JSON.stringify({ at: Date.now(), patch: { schedule: { date: when.date, time: when.time || null, ...(when.time && when.end ? { end: when.end } : {}) } } }),
+  });
+  if (button) button.disabled = true;
+  const moved = [];
+  let failure = null;
+  try {
+    for (const entry of tasks) {
+      const before = scheduleOf(entry);
+      try {
+        await put(entry.id, { date: tomorrow, time: before.time, end: before.end });
+        moved.push({ id: entry.id, before: { date: before.date, time: before.time, end: before.end } });
+      } catch (error) { failure = error; }
+    }
+    if (moved.length)
+      toast(`Перенесено на завтра: ${moved.length}${failure ? ` из ${tasks.length}` : ""}`, { label: "Вернуть", run: async () => {
+        try {
+          for (const item of moved) await put(item.id, item.before);
+          toast("Сроки вернулись");
+          await load();
+          refreshOtherViews();
+        } catch (error) { toast(error.message); }
+      } });
+    else toast(failure?.message || "Не получилось перенести");
+    await load();
+    refreshOtherViews();
+  } finally {
+    if (button) button.disabled = false;
   }
 }
 // Стрелки по дням живут внутри каждого ящика: слева предыдущий день, справа
@@ -1133,7 +1217,7 @@ function paintTabs(date, journalDate) {
   const doneList = doneRows(journalDate);
   const doneCount = doneList ? String(doneList.length) : "…";
   const tabs = [
-    ["journal", journalToday ? "Что делал" : `Что делал ${shortDate(journalDate)}`, node("b", doneCount)],
+    ["journal", journalToday ? "Сделано" : `Сделано ${shortDate(journalDate)}`, node("b", doneCount)],
     ["day", today ? "День" : `День ${shortDate(date)}`, dayCountNode(date)],
   ];
   for (const [key, label, count] of tabs) {
@@ -1144,17 +1228,8 @@ function paintTabs(date, journalDate) {
     button.setAttribute("aria-selected", String(todayState.tab === key));
     button.setAttribute("aria-controls", DRAWER_PANELS[key]);
     button.append(node("span", label, "drawer-tab-label"), count);
-    button.addEventListener("click", () => {
-      todayState.tab = todayState.tab === key ? null : key;
-      todayState.manual = true;
-      // Любое переключение ящика возвращает все дни на сегодня: день, куда
-      // человек ушёл стрелками, не тянется за ним в соседний ящик и не ждёт
-      // его в закрытом. Открывается всегда то, что сейчас.
-      todayState.view = 0;
-      todayState.journalView = 0;
-      rememberTab();
-      renderToday();
-    });
+    // Повторный щелчок по открытой вкладке закрывает ящик.
+    button.addEventListener("click", () => pickTodayTab(todayState.tab === key ? null : key));
     host.append(button);
   }
   for (const [key, panel] of Object.entries(DRAWER_PANELS)) $(`#${panel}`).hidden = todayState.tab !== key;
@@ -1177,7 +1252,7 @@ function eventFinish(item) {
   return end ?? (start == null ? null : start + (todayState.calendar?.defaults?.meetingMinutes || 30));
 }
 // Встреча из календаря, которая уже прошла: в «Дне» она остаётся с пометкой
-// «прошла», а в «Что делал» появляется сама. Событие на весь день, занятость и
+// «прошла», а в «Сделано» появляется сама. Событие на весь день, занятость и
 // отказ встречами не считаются.
 function eventEnded(item, minutes, date = currentDayDate) {
   if (item.allDay || !item.time || busyOnly(item) || item.me?.status === "declined") return false;
@@ -1428,6 +1503,20 @@ function paintDayList(date) {
   }
   paintOtherDayList(container, date, data);
 }
+// Заголовок полки «просрочено» или «на сегодня». Если на полке есть что
+// переносить, справа от подписи — тихая ссылка «перенести всё на завтра»; подпись
+// остаётся своим элементом .day-group, ссылка стоит рядом с ней в общей строке.
+function shelfHeadEl(text, kind, entries) {
+  const label = node("div", text, `day-group ${kind}`);
+  const movable = entries.filter((entry) => canPostpone(entry));
+  if (!movable.length) return label;
+  const head = node("div", undefined, "day-head");
+  const act = node("button", "перенести всё на завтра", `day-head-act ${kind}`);
+  act.type = "button";
+  act.addEventListener("click", () => postponeToTomorrow(movable, act));
+  head.append(label, act);
+  return head;
+}
 // Сегодня: сверху «без времени» — просроченное, требующее уточнения, сегодняшнее
 // без часа и дела без срока, ниже «по часам» — свои дела и встречи со временем
 // вперемешку с чужими событиями, между прошедшими и будущими — строка «сейчас».
@@ -1481,7 +1570,7 @@ function paintTodayList(container) {
   // Просроченное — своей полосой сразу под часами, а не строкой в общем списке:
   // под встречами оно иначе теряется, а это единственное, что горит.
   if (late.length) {
-    container.append(node("div", `просрочено · ${late.length}`, "day-group late"));
+    container.append(shelfHeadEl(`просрочено · ${late.length}`, "late", late));
     const strip = node("div", undefined, "day-late");
     for (const entry of late) strip.append(entryCard(entry, { overdue: true, on: today }));
     container.append(strip);
@@ -1492,7 +1581,7 @@ function paintTodayList(container) {
   const shelf = rest.filter((entry) => order(entry) <= 2);
   const stock = rest.filter((entry) => order(entry) === 3);
   if (shelf.length || stock.length) {
-    container.append(node("div", shelf.length ? `на сегодня · ${shelf.length}` : "на сегодня", "day-group today"));
+    container.append(shelfHeadEl(shelf.length ? `на сегодня · ${shelf.length}` : "на сегодня", "today", shelf));
     if (shelf.length) {
       const rows = node("div", undefined, "day-rows");
       for (const entry of shelf) rows.append(entryCard(entry, { on: today }));
@@ -1537,7 +1626,7 @@ function paintOtherDayList(container, date, data) {
     container.append(rows);
   }
 }
-// «Что делал» — то же, что вечером назвали бы итогом дня: туду, закрытые
+// «Сделано» на «Сегодня» — то же, что вечером назвали бы итогом дня: туду, закрытые
 // кружком (кружок возвращает в работу), и встречи из календаря, чей конец
 // прошёл (пунктирный кружок: закрылись сами, руками их не вернуть). Сегодня —
 // из /api/done и календаря; другой день — из отчёта «Обзора» и календаря того
@@ -1555,7 +1644,7 @@ function doneRows(date = currentDayDate) {
     if (eventEnded(item, minutes, date)) rows.push({ item, at: eventFinish(item) });
   return rows.sort((a, b) => b.at - a.at);
 }
-// Строка «Что делал» из /api/done: зелёный кружок «Вернуть в работу» (у
+// Строка «Сделано» из /api/done: зелёный кружок «Вернуть в работу» (у
 // экземпляра повтора он снимает только этот день), название и час закрытия.
 // Старая запись без дела внутри возвращать нечем — у неё немой кружок.
 function doneItemRow(item) {
@@ -1685,7 +1774,7 @@ async function load() {
     request("/api/day"),
     request("/api/entries?limit=100"),
     onToday ? request(`/api/calendar?from=${todayGuess}&to=${shiftDate(todayGuess, 1)}`).catch(() => null) : Promise.resolve(undefined),
-    // «Что делал» рисуется прямо из /api/done: старое дело, закрытое сегодня, не
+    // «Сделано» рисуется прямо из /api/done: старое дело, закрытое сегодня, не
     // попадает в последние сто записей, и добирать его карточкой не нужно. Звать
     // только пока открыта «Сегодня»; на других страницах список ждёт возвращения.
     onToday ? request(`/api/done?from=${todayGuess}&to=${todayGuess}`).catch(() => null) : Promise.resolve(undefined),
@@ -2651,7 +2740,7 @@ function cardDiscussion(entry) {
 function cardBody(entry) {
   const wrap = node("section", undefined, "card-body"),
     hint = node("p", "Markdown оформляется прямо в тексте · ⌘/Ctrl + Enter — сохранить · закроете карточку — сохранится само", "card-body-hint"),
-    label = node("p", "Описание", "prop-section");
+    label = node("p", "Заметка", "prop-section");
   // Описание пишет разбор из текста записи и кладёт первой версией заметки. Нет
   // заметки — поле пустое, с подсказкой «Описание»: копия исходного текста тут
   // только дублировала бы то, что лежит в свёрнутом «Исходном тексте» ниже.
@@ -2747,7 +2836,7 @@ let cardAdvance = null;
 let cardArmedUntil = 0;
 let cardSnackTimer = null;
 const cardKeys = { toggle: null };
-const CARD_LIST_DONE = { "Сегодня": "На «Сегодня» всё отмечено", "Что делал": "В «Что делал» всё отмечено", "День": "В «Дне» всё отмечено", "Доска": "На «Доске» всё отмечено", "Календарь": "В календаре всё отмечено" };
+const CARD_LIST_DONE = { "Сегодня": "На «Сегодня» всё отмечено", "Сделано": "В «Сделано» всё отмечено", "День": "В «Дне» всё отмечено", "Доска": "На «Доске» всё отмечено", "Календарь": "В календаре всё отмечено" };
 const CARD_TICK_ICON = '<svg class="card-tick-check" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.8 8.4l2.7 2.7 5.7-6.2"/></svg>';
 const CARD_CLOCK_ICON = '<svg class="card-tick-hands" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4.6V8l2.3 1.5"/></svg>';
 const CARD_REPEAT_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.2 7.2A4.6 4.6 0 0 1 11.6 5"/><path d="M12.8 8.8A4.6 4.6 0 0 1 4.4 11"/><path d="M11.8 2.4V5H9.2"/><path d="M4.2 13.6V11h2.6"/></svg>';
@@ -2796,8 +2885,9 @@ function paintCardNav({ finished = false, entry = null } = {}) {
   column.hidden = !cardMenu.columnName;
   if (!cardList) {
     if (entry) {
-      const type = entry.interpretation?.classification?.primaryType;
-      crumb.append(node("i", undefined, "card-crumb-dot"), column, node("span", typeNames[type] || "Запись", "card-crumb-word"));
+      const date = entry.interpretation?.classification?.entities?.schedule?.date;
+      const day = date === (currentDayDate || zoneDate(new Date())) ? "Сегодня" : date ? scheduleLabel({ state: "ok", date }) : "Задача";
+      crumb.append(node("i", undefined, "card-crumb-dot"), column, node("span", day, "card-crumb-word"));
     }
     return;
   }
@@ -3726,7 +3816,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   followUp.value = c.entities.followUp || "";
   followUp.placeholder = "Следующее действие";
   // Признак «уже сделано» ставила только модель, и исправить её решение было
-  // нечем: заметка, принятая за отчёт, навсегда оставалась в «Что делал».
+  // нечем: заметка, принятая за отчёт, навсегда оставалась в «Сделано».
   let done = Boolean(c.completed);
   doneToggle.id = "review-completed";
   doneToggle.type = "button";
@@ -3811,8 +3901,6 @@ function showReview(entry, review, undoGroupId, provenance) {
   };
   const paintChips = () => {
     clear(chips);
-    const state = entryStatus(entry);
-    if (state) chips.append(statusBadge(state));
     if (!scheduleWrap.hidden) {
       const due = scheduleLabel({ state: "ok", date: date.value || null, time: time.value || null });
       chips.append(chip("schedule", due ? `${due}${time.value && end.value ? `–${end.value}` : ""}` : "Назначить день", { quiet: !due, target: date, label: "Срок" }));
@@ -4417,9 +4505,17 @@ attachLinkMenu(captureField);
 attachMentionMenu(captureField);
 attachFormatToolbar(captureField, { prefs: window.pagentText });
 
-// Отправка — ⌘+Enter на Mac и Ctrl+Enter везде ещё; простой Enter переносит
-// строку, как в любом редакторе. Подпись и подсказка кнопки говорят то же.
-const CAPTURE_MOD = /Mac|iPhone|iPad/.test(navigator.platform || "") ? "⌘" : "Ctrl";
+// Отправка — ⌘+Enter, Ctrl+Enter или Super+Enter (в поле принимают и metaKey, и
+// ctrlKey); простой Enter переносит строку, как в любом редакторе. Подпись и
+// подсказка кнопки называют клавишу той платформы, где сидит человек: ⌘ — на Mac
+// и iOS, Super — на Linux (Android, у которого ядро тоже Linux, не в счёт),
+// Ctrl — везде ещё.
+function captureModifier(platform = navigator.platform || "", agent = navigator.userAgent || "") {
+  if (/Mac|iPhone|iPad|iPod/.test(platform)) return "⌘";
+  if (/Linux/.test(`${platform} ${agent}`) && !/Android/.test(agent)) return "Super";
+  return "Ctrl";
+}
+const CAPTURE_MOD = captureModifier();
 $("#capture-hint").textContent = `${CAPTURE_MOD}+Enter — отправить, Enter — новая строка`;
 $("#capture-submit").title = `Сохранить запись — ${CAPTURE_MOD}+Enter`;
 
@@ -5076,7 +5172,7 @@ $("#review-dialog").addEventListener("click", (event) => {
 // симметрично — она остаётся по центру, как и была, а край идёт за курсором.
 // Размер запоминается и возвращается при следующем открытии; двойной клик по
 // краю возвращает исходный.
-const cardSizeStorageKey = "pagent.card-size";
+const cardSizeStorageKey = "pagent.focus-card-size";
 const CARD_MIN_WIDTH = 480;
 const CARD_MIN_HEIGHT = 360;
 function applyCardSize(size) {
@@ -6002,7 +6098,7 @@ function renderReportsDay(area, data) {
   area.append(counters);
 
   const grid = node("div", undefined, "report-grid-2");
-  const doneCard = reportCard("Сделано", { right: String(data.done.length || ""), hint: "Зафиксированная работа за этот день — как в «Что делал»" });
+  const doneCard = reportCard("Сделано", { right: String(data.done.length || ""), hint: "Зафиксированная работа за этот день — как во вкладке «Сделано»" });
   doneCard.append(reportItemList(data.done.map((row) => ({
     captureId: row.captureId, title: row.title, type: row.type,
     meta: reportTimeLabel(row.at, data.timeZone), metaCls: "ok",
@@ -6161,20 +6257,29 @@ async function uploadPendingShots(captureId) {
   }
 }
 
-// ── доска: вид и группировка ─────────────────────────────────────────────────
+// ── доска: вид, группировка, порядок колонок и фильтр ───────────────────────
 // Как в Notion: вид — то, как рисовать (доска, список, таблица), группировка —
 // по каким полям раскладывать. Полей можно взять сколько угодно: первое даёт
 // колонки или разделы, каждое следующее — вложенные подгруппы. Готовых видов
 // нет: всё выбирается руками и помнится в браузере; у каждого поля свой цвет
-// (--f-* в app.css). «Сделано» — первая колонка доски и последний раздел списка
-// и таблицы при любой группировке. Колонки заводит человек, карточка — открытое
+// (--f-* в app.css). «Сделано» — последний раздел списка и таблицы при любой
+// группировке, а на доске — обычная колонка: первая по умолчанию, и её, как
+// любую другую, можно перетащить. Колонки заводит человек, карточка — открытое
 // дело: кружок, название и мелкая строка. Название открывает карточку записи,
 // кружок закрывает дело, перенос между колонками сохраняется на сервере, а
 // при группировке по дню бросок в другой день меняет срок.
-const BOARD_FIELDS = { col: "Колонка", day: "День", who: "Человек", proj: "Проект", src: "Откуда" };
+//
+// Заголовок любой колонки доски тянется: порядок помнится в браузере по полю
+// первого уровня (kizuna-board-order), а у колонок человека ещё и на сервере.
+// Над доской — наборный фильтр по полям дела (kizuna-board-filter): в первый
+// заход он «сегодня», дальше — что человек выбрал, в том числе пустой.
+// Логика фильтра и порядка — в public/board-model.js, здесь — хранение и рисунок.
+const BOARD_FIELDS = Object.fromEntries(Object.entries(FILTER_FIELDS).filter(([key]) => key !== "status"));
 const BOARD_VIEWS = ["board", "list", "table"];
 const BOARD_VIEW_KEY = "kizuna-board-view";
 const BOARD_GROUPS_KEY = "kizuna-board-groups";
+const BOARD_FILTER_KEY = "kizuna-board-filter";
+const BOARD_ORDER_KEY = "kizuna-board-order";
 // Порядок групп фиксированный: у дня и источника — свой, у человека и
 // проекта — по алфавиту, «без …» всегда последним.
 const BOARD_DAYS = [["late", "просрочено"], ["today", "сегодня"], ["tomorrow", "завтра"], ["week", "на неделе"], ["later", "позже"], ["none", "без срока"]];
@@ -6193,20 +6298,39 @@ function boardStoredGroups() {
     return [...new Set(list.filter((field) => Object.keys(BOARD_FIELDS).includes(field)))];
   } catch { return ["col"]; }
 }
+function boardStoredFilter() {
+  try { return readFilter(localStorage.getItem(BOARD_FILTER_KEY)); } catch { return defaultFilter(); }
+}
+function boardStoredOrder() {
+  try { return readOrder(localStorage.getItem(BOARD_ORDER_KEY)); } catch { return {}; }
+}
 const boardState = {
   // stamp — ответ сервера (строкой), по которому нарисована доска: тот же ответ не перерисовывается.
   data: null, stamp: null, drag: null, openAdder: null,
   search: "",
   view: boardStoredView(),
   groups: boardStoredGroups(),
-  // На телефоне открывается первая своя колонка, а не «Сделано».
-  mobileColumn: 1,
+  // Наборный фильтр: условия {field, op, value}. Строка под панелью открыта, пока фильтр что-то отбирает.
+  filter: boardStoredFilter(),
+  filterOpen: false,
+  // Порядок колонок доски: { "<поле первого уровня>": ["__done", "<ключ группы>", …] }.
+  order: boardStoredOrder(),
+  // На телефоне открывается первая своя колонка, а не «Сделано»; null — ещё не выбирали.
+  mobileColumn: null,
 };
+boardState.filterOpen = activeConditions(boardState.filter).length > 0;
 function boardRemember() {
   try {
     localStorage.setItem(BOARD_VIEW_KEY, boardState.view);
     localStorage.setItem(BOARD_GROUPS_KEY, JSON.stringify(boardState.groups));
   } catch {}
+}
+// Черновик условия (значение ещё не выбрано) не сохраняется: он ничего не отбирает.
+function boardRememberFilter() {
+  try { localStorage.setItem(BOARD_FILTER_KEY, JSON.stringify(activeConditions(boardState.filter))); } catch {}
+}
+function boardRememberOrder() {
+  try { localStorage.setItem(BOARD_ORDER_KEY, JSON.stringify(boardState.order)); } catch {}
 }
 const boardDropHint = (() => { const hint = document.createElement("div"); hint.className = "board-drop"; return hint; })();
 
@@ -7438,7 +7562,7 @@ function kcBoundEl() {
         kcEl("li", null, kcEl("b", null, "Записи, где позвали"), " участника"),
         kcEl("li", null, kcEl("b", null, "Разговоры"), " круга и комнат"))),
       kcEl("div", "kc-bound-out", kcEl("h4", null, kcIcon("lock"), "Остаётся вашим"), kcEl("ul", null,
-        kcEl("li", null, "День, заметки, «Что делал»"),
+        kcEl("li", null, "День, заметки, «Сделано»"),
         kcEl("li", null, "Голос и расход на модели"),
         kcEl("li", null, "Всё, что не отдали в круг")))),
     kcEl("p", "kc-hint", kcEl("b", null, "Правит запись автор"), ", исполнитель закрывает дело и пишет в обсуждение. ", kcEl("b", null, "Разбор моделью"), " считается тому, кто записал."));
@@ -7980,18 +8104,93 @@ function boardHeadTools(element, { menu = null } = {}) {
   tools.append(plus);
   return tools;
 }
-// «Сделано» — прибитая слева колонка: закрытые дела (последние 50), кружок
-// возвращает дело в его колонку, а карточка, брошенная на колонку, закрывается.
-// Колонка не тянется, меню у неё нет; заголовок ведёт на страницу «Сделано».
-function boardDoneColumnEl(closed) {
+// Заголовок любой колонки доски тянется: бросок на другую колонку — слева от неё
+// или справа, смотря на какую половину пришёлся, — меняет порядок. Тянутся и
+// колонки человека, и группы (день, человек, проект, откуда), и «Сделано».
+// field — поле первого уровня («all» — доска без группировки), key — ключ
+// колонки в сохранённом порядке.
+function boardLaneDrag(element, head, field, key) {
+  element.dataset.lane = key;
+  head.draggable = true;
+  const clearHints = () => { for (const other of document.querySelectorAll(".board-column")) other.classList.remove("col-drop-left", "col-drop-right"); };
+  head.addEventListener("dragstart", (event) => {
+    boardState.drag = { type: "column", field, key };
+    event.dataTransfer.setData("text/plain", key);
+    event.dataTransfer.effectAllowed = "move";
+    element.classList.add("dragging-column");
+    event.stopPropagation();
+  });
+  head.addEventListener("dragend", () => {
+    element.classList.remove("dragging-column");
+    boardState.drag = null;
+    clearHints();
+  });
+  const foreign = () => boardState.drag?.type === "column" && boardState.drag.key !== key;
+  const leftHalf = (event) => { const rect = element.getBoundingClientRect(); return event.clientX < rect.left + rect.width / 2; };
+  element.addEventListener("dragover", (event) => {
+    if (!foreign()) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const left = leftHalf(event);
+    element.classList.toggle("col-drop-left", left);
+    element.classList.toggle("col-drop-right", !left);
+  });
+  element.addEventListener("dragleave", () => element.classList.remove("col-drop-left", "col-drop-right"));
+  element.addEventListener("drop", (event) => {
+    if (!foreign()) return;
+    event.preventDefault();
+    const { field: from, key: dragged } = boardState.drag;
+    const after = !leftHalf(event);
+    boardState.drag = null;
+    clearHints();
+    boardMoveLane(from, dragged, key, after);
+  });
+}
+// Все колонки поля в естественном порядке — с «Сделано» впереди, включая
+// скрытые фильтром: порядок сохраняется целиком, а не по тому, что сейчас видно.
+function boardLaneKeys(field, data) {
+  if (field === "all") return [DONE_LANE, "all"];
+  const open = data.columns.flatMap((column) => column.cards);
+  return [DONE_LANE, ...boardGroups(open, field, data, true).map((group) => group.key ?? FILTER_NONE)];
+}
+// Колонки в порядке показа: сохранённый порядок, а незнакомые ему группы —
+// после известных, в своём естественном порядке.
+function boardOrderedLanes(field, lanes) {
+  const byKey = new Map(lanes.map((lane) => [lane.key, lane]));
+  return orderKeys(boardState.order[field], lanes.map((lane) => lane.key)).map((key) => byKey.get(key));
+}
+async function boardMoveLane(field, key, target, after) {
+  const data = boardAnnotate(boardState.data);
+  const current = orderKeys(boardState.order[field], boardLaneKeys(field, data));
+  const next = moveKey(current, key, target, after);
+  if (next.join("\n") === current.join("\n")) return;
+  boardState.order[field] = next;
+  boardRememberOrder();
+  renderBoard(boardState.data);
+  // Порядок колонок человека живёт и на сервере; место «Сделано» — только здесь.
+  const own = (keys) => keys.filter((item) => item !== DONE_LANE);
+  if (field !== "col" || key === DONE_LANE || own(current).join("\n") === own(next).join("\n")) return;
+  try {
+    await request(`/api/board/columns/${key}`, { method: "PATCH", body: JSON.stringify({ index: own(next).indexOf(key) }) });
+  } catch (error) { toast(error.message); }
+  loadBoard();
+}
+// «Сделано» — обычная колонка доски, зелёная подложка отличает её от остальных:
+// закрытые дела (последние 50), кружок возвращает дело в его колонку, а карточка,
+// брошенная на колонку, закрывается. Меню у неё нет; заголовок ведёт на страницу
+// «Сделано», а тянется, как у остальных, за свободное место шапки.
+function boardDoneColumnEl(closed, field) {
   const element = node("section", undefined, "board-column board-done-column");
   element.dataset.columnId = "done";
   const head = node("div", undefined, "board-col-head");
   const pill = node("span", undefined, "board-pill");
   const link = node("a", "Сделано", "board-col-name");
   link.href = "#done";
+  // Ссылку браузер тянет сам, как адрес; тянуться должна колонка.
+  link.draggable = false;
   pill.append(link);
   head.append(pill, node("span", String(closed.length), "board-col-count"));
+  boardLaneDrag(element, head, field, DONE_LANE);
   const list = node("div", undefined, "board-cards");
   for (const card of closed) list.append(boardCardEl(card, { closed: true }));
   if (!closed.length) list.append(node("p", "Закрытое появится здесь", "board-done-empty"));
@@ -8023,19 +8222,7 @@ function boardColumnEl(column, cards, rest, data) {
   const element = node("section", undefined, "board-column");
   element.dataset.columnId = column.id;
   const head = boardHeadEl(column.name, cards.length);
-  head.draggable = true;
-  head.addEventListener("dragstart", (event) => {
-    boardState.drag = { type: "column", columnId: column.id };
-    event.dataTransfer.setData("text/plain", column.id);
-    event.dataTransfer.effectAllowed = "move";
-    element.classList.add("dragging-column");
-    event.stopPropagation();
-  });
-  head.addEventListener("dragend", () => {
-    element.classList.remove("dragging-column");
-    boardState.drag = null;
-    for (const other of document.querySelectorAll(".board-column")) other.classList.remove("col-drop-left", "col-drop-right");
-  });
+  boardLaneDrag(element, head, "col", column.id);
   // Название правится на месте: щелчком по нему или через меню.
   const rename = () => {
     const input = document.createElement("input");
@@ -8105,46 +8292,65 @@ function boardColumnEl(column, cards, rest, data) {
     boardDropHint.remove();
     boardMove({ captureId, columnId: column.id, index });
   });
-  // Перенос колонок: подсветка стороны, куда встанет колонка.
-  element.addEventListener("dragover", (event) => {
-    if (boardState.drag?.type !== "column" || column.id === boardState.drag.columnId) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
-    const rect = element.getBoundingClientRect();
-    const left = event.clientX < rect.left + rect.width / 2;
-    element.classList.toggle("col-drop-left", left);
-    element.classList.toggle("col-drop-right", !left);
-  });
-  element.addEventListener("dragleave", () => element.classList.remove("col-drop-left", "col-drop-right"));
-  element.addEventListener("drop", async (event) => {
-    if (boardState.drag?.type !== "column") return;
-    event.preventDefault();
-    const rect = element.getBoundingClientRect();
-    const left = event.clientX < rect.left + rect.width / 2;
-    const ids = boardState.data.columns.map((item) => item.id);
-    const from = ids.indexOf(boardState.drag.columnId);
-    let index = ids.indexOf(column.id) + (left ? 0 : 1);
-    if (from >= 0 && from < index) index -= 1;
-    element.classList.remove("col-drop-left", "col-drop-right");
-    try {
-      await request(`/api/board/columns/${boardState.drag.columnId}`, { method: "PATCH", body: JSON.stringify({ index }) });
-    } catch (error) { toast(error.message); }
-    loadBoard();
-  });
-  element.append(head, list, boardAdderEl(column));
+  element.append(head, list, boardAdderEl(boardInviteFor("col", { key: column.id, column }, data)));
   return element;
 }
-// Быстрое добавление дела прямо в колонку: Enter сохраняет и оставляет поле
-// открытым для следующего (как в Todoist), Escape закрывает.
-function boardAdderEl(column) {
+// Новое дело, созданное прямо на доске: туду с названием из набранного.
+const boardCreateDeed = (raw, extra = {}) => request("/api/captures", { method: "POST", body: JSON.stringify(withProvider({ raw, primaryType: "todo", ...extra })) });
+// Как назвать приглашение и куда падает дело, набранное внизу колонки первого
+// уровня. Колонка человека — в неё, и порядок в ней серверный; день — на срок
+// группы (сегодня, завтра, +2, +14: те же, что при броске карточки); человек —
+// он встаёт первым среди людей дела, чтобы оно осталось в этой колонке;
+// проект — проектом дела. В «просрочено» и «без срока», в «Откуда» и в
+// «Сделано» приглашения нет: срок и источник так не назначить.
+const BOARD_INVITE_DAY = { today: "на сегодня", tomorrow: "на завтра", week: "на неделе", later: "позже" };
+function boardInviteFor(field, group, data) {
+  const key = `${field}:${group.key ?? FILTER_NONE}`;
+  if (field === "col") {
+    const { column } = group;
+    return { key, label: `+ Дело в «${column.name}»`, create: async (raw) => {
+      const created = await boardCreateDeed(raw);
+      await request("/api/board/move", { method: "POST", body: JSON.stringify({ captureId: created.entry.id, columnId: column.id, index: 100000 }) });
+    } };
+  }
+  if (field === "day") {
+    if (!(group.key in BOARD_INVITE_DAY)) return null;
+    return { key, label: `+ Дело ${BOARD_INVITE_DAY[group.key]}`, create: (raw) => boardCreateDeed(raw, { due: { date: shiftDate(data.today, BOARD_DAY_DROP[group.key]) } }) };
+  }
+  if (field === "who") {
+    const name = group.key;
+    if (name === null) return { key, label: "+ Дело без человека", create: (raw) => boardCreateDeed(raw) };
+    return { key, label: `+ Дело для ${genitiveName(name)}`, create: async (raw) => {
+      const created = await boardCreateDeed(raw);
+      const others = (created.entry.interpretation?.classification?.entities?.people || []).filter((person) => person !== name);
+      await request(`/api/captures/${created.entry.id}/corrections`, { method: "POST", body: JSON.stringify({ at: Date.now(), patch: { people: [name, ...others] } }) });
+    } };
+  }
+  if (field === "proj") {
+    const name = group.key;
+    if (name === null) return { key, label: "+ Дело без проекта", create: (raw) => boardCreateDeed(raw) };
+    return { key, label: `+ Дело в «${name}»`, create: async (raw) => {
+      const created = await boardCreateDeed(raw);
+      await request(`/api/captures/${created.entry.id}/corrections`, { method: "POST", body: JSON.stringify({ at: Date.now(), patch: { project: name } }) });
+    } };
+  }
+  return null;
+}
+// Внизу каждой колонки — пунктирная карточка-приглашение «+ Дело в …»: её видно
+// по наведению на колонку, с клавиатуры — при фокусе внутри, а там, где наведения
+// нет, всегда. Щелчок превращает её в поле на месте: Enter сохраняет и оставляет
+// поле открытым для следующего (как в Todoist), Escape закрывает.
+function boardAdderEl(invite) {
+  if (!invite) return null;
   const wrap = node("div", undefined, "board-add");
-  const button = node("button", "+ Дело", "board-add-button");
+  const button = node("button", invite.label, "board-add-button");
   button.type = "button";
+  button.title = invite.label;
   const input = document.createElement("input");
   input.type = "text";
   input.placeholder = "Что сделать?";
   input.hidden = true;
-  const adderKey = `column:${column.id}`;
+  const adderKey = invite.key;
   const open = ({ focus = true } = {}) => {
     button.hidden = true;
     input.hidden = false;
@@ -8162,8 +8368,7 @@ function boardAdderEl(column) {
     if (!raw) return close();
     input.disabled = true;
     try {
-      const created = await request("/api/captures", { method: "POST", body: JSON.stringify(withProvider({ raw, primaryType: "todo" })) });
-      await request("/api/board/move", { method: "POST", body: JSON.stringify({ captureId: created.entry.id, columnId: column.id, index: 100000 }) });
+      await invite.create(raw);
       // Дело ушло — текст больше не черновик; при ошибке он остаётся в поле.
       input.value = "";
     } catch (error) { toast(error.message); }
@@ -8274,15 +8479,20 @@ function boardBoxes(items, fields, data, { draggable = true } = {}) {
     return box;
   });
 }
-// Колонка-группа: первый уровень — не «Колонка». Заголовок не правится, не
-// тянется и без меню, «+ Колонки» нет; карточки тянутся, только когда группа —
-// день (срок меняется броском) или группировки нет вовсе.
+// Колонка-группа: первый уровень — не «Колонка». Заголовок не правится и без
+// меню, «+ Колонки» нет, зато он тянется, как у колонок человека; карточки
+// тянутся, только когда группа — день (срок меняется броском) или группировки
+// нет вовсе. Внизу — приглашение «+ Дело …», где оно осмысленно.
 function boardGroupColumnEl(group, field, rest, data) {
   const element = node("section", undefined, "board-column group");
   element.dataset.group = `${field || "all"}:${group.key ?? ""}`;
+  const head = boardHeadEl(group.label, group.items.length);
+  boardLaneDrag(element, head, field || "all", group.key ?? FILTER_NONE);
   const list = node("div", undefined, "board-cards");
   list.append(...boardBoxes(group.items, rest, data, { draggable: !field || field === "day" }));
-  element.append(boardHeadEl(group.label, group.items.length), list);
+  element.append(head, list);
+  const adder = field ? boardAdderEl(boardInviteFor(field, group, data)) : null;
+  if (adder) element.append(adder);
   if (field === "day") boardDayDropOn(element, group.key);
   return element;
 }
@@ -8351,9 +8561,12 @@ function boardDoneHead(count, className) {
   head.append(link, " ", node("span", `· ${count}`, "n"));
   return head;
 }
+// «Статус = открыто» прячет «Сделано» — колонку доски, раздел списка и таблицы.
+const boardDoneShown = () => statusAllowsDone(boardState.filter);
 function boardListEl(open, closed, data) {
   const list = node("div", undefined, "g-list");
   list.append(...boardListNodes(open, boardState.groups, 1, data, boardState.groups[0] === "col"));
+  if (!boardDoneShown()) return list;
   const kids = node("div", undefined, "g-kids done");
   const rows = node("div", undefined, "g-rows");
   rows.append(...closed.map((card) => boardRowEl(card, { closed: true })));
@@ -8388,22 +8601,137 @@ function boardTableEl(open, closed, data) {
   head.append(headRow);
   const body = node("tbody");
   body.append(...boardTableNodes(open, boardState.groups, 1, cols, data, boardState.groups[0] === "col"));
-  const doneRow = node("tr", undefined, "sec");
-  const doneCell = node("td");
-  doneCell.colSpan = cols.length + 1;
-  doneCell.append(boardDoneHead(closed.length, "g-sec d1 done"));
-  doneRow.append(doneCell);
-  body.append(doneRow, ...closed.map((card) => boardTableRowEl(card, 2, cols, { closed: true })));
+  if (boardDoneShown()) {
+    const doneRow = node("tr", undefined, "sec");
+    const doneCell = node("td");
+    doneCell.colSpan = cols.length + 1;
+    doneCell.append(boardDoneHead(closed.length, "g-sec d1 done"));
+    doneRow.append(doneCell);
+    body.append(doneRow, ...closed.map((card) => boardTableRowEl(card, 2, cols, { closed: true })));
+  }
   table.append(head, body);
   wrap.append(table);
   return wrap;
 }
+// ── наборный фильтр ──────────────────────────────────────────────────────────
+// Кнопка «Фильтр · N» над доской открывает строку под панелью: условия-плашки
+// («Человек = Аня ×», «День ≠ просрочено ×»), «+ условие», «Сегодня» и «Сбросить».
+// В плашке три списка — поле, «=» или «≠» и значение из того, что есть в
+// загруженных делах; цвет плашки — цвет поля, у «Статуса» нейтральный. «=» на
+// одном поле объединяются по «или» (между такими плашками стоит «или»), разные
+// поля — по «и», «≠» — всегда по «и». Условие без значения — черновик: он
+// ничего не отбирает и не сохраняется.
+const BOARD_FILTER_OPS = [["=", "="], ["!=", "≠"]];
+const boardFilterTint = (field) => (field === "status" ? "var(--f-status)" : boardTint(field));
+// Значения условия по полю; у человека и проекта последним — «пусто».
+function boardFilterValues(field) {
+  const data = boardState.data;
+  if (field === "col") return (data?.columns || []).map((column) => [column.id, column.name]);
+  if (field === "day") return BOARD_DAYS;
+  if (field === "src") return BOARD_SOURCES;
+  if (field === "status") return FILTER_STATUSES;
+  const cards = data ? [...data.columns.flatMap((column) => column.cards), ...(data.closed || [])] : [];
+  const names = [...new Set(cards.flatMap((card) => (field === "who" ? card.people : card.projects) || []))].sort((left, right) => left.localeCompare(right, "ru"));
+  return [...names.map((name) => [name, name]), [FILTER_NONE, "пусто"]];
+}
+function boardFilterSelect(part, label, options, value) {
+  const select = node("select");
+  select.dataset.part = part;
+  select.setAttribute("aria-label", label);
+  for (const [key, name] of options) { const option = new Option(name, key); option.selected = key === value; select.append(option); }
+  return select;
+}
+function boardCondEl(condition, index) {
+  const chip = node("span", undefined, "board-cond");
+  chip.dataset.index = String(index);
+  chip.style.setProperty("--fc", boardFilterTint(condition.field));
+  const values = boardFilterValues(condition.field);
+  // Значение, которого в загруженном уже нет (человек ушёл, колонку удалили), не
+  // подменяется молча: остаётся в списке, и условие видно.
+  if (condition.value && !values.some(([key]) => key === condition.value))
+    values.push([condition.value, !boardState.data ? "…" : condition.field === "col" ? "колонка удалена" : condition.value]);
+  const nth = index + 1;
+  const value = boardFilterSelect("value", `Значение условия ${nth}`, values, condition.value);
+  if (!condition.value) {
+    const hint = new Option("значение", "");
+    hint.disabled = true;
+    hint.hidden = true;
+    hint.selected = true;
+    value.prepend(hint);
+    value.classList.add("is-empty");
+  }
+  const remove = node("button", "×", "board-cond-x");
+  remove.type = "button";
+  remove.dataset.remove = String(index);
+  remove.title = "Убрать условие";
+  remove.setAttribute("aria-label", `Убрать условие ${nth}: ${FILTER_FIELDS[condition.field]}`);
+  chip.append(
+    boardFilterSelect("field", `Поле условия ${nth}`, Object.entries(FILTER_FIELDS), condition.field),
+    boardFilterSelect("op", `Оператор условия ${nth}`, BOARD_FILTER_OPS, condition.op),
+    value,
+    remove,
+  );
+  return chip;
+}
+function paintBoardFilter() {
+  const toggle = $("#board-filter-toggle"), row = $("#board-filter");
+  const count = activeConditions(boardState.filter).length;
+  toggle.classList.toggle("is-on", count > 0);
+  toggle.setAttribute("aria-expanded", String(boardState.filterOpen));
+  toggle.querySelector(".board-filter-n").textContent = count ? ` · ${count}` : "";
+  row.hidden = !boardState.filterOpen;
+  // Строка пересобирается, только когда поменялись условия или то, из чего
+  // выбирают: доска перечитывается и сама по себе, и это не должно закрывать
+  // открытый список и сбивать фокус.
+  const conditions = JSON.stringify(boardState.filter);
+  const key = JSON.stringify([conditions, ["col", "who", "proj"].map((field) => boardFilterValues(field))]);
+  if (row.dataset.key === key || (row.contains(document.activeElement) && row.dataset.conditions === conditions)) return;
+  row.dataset.key = key;
+  row.dataset.conditions = conditions;
+  clear(row);
+  row.append(node("span", "Фильтр", "board-bar-label"));
+  boardState.filter.forEach((condition, index) => {
+    const before = boardState.filter[index - 1];
+    if (before && before.field === condition.field && before.op === "=" && condition.op === "=") row.append(node("span", "или", "board-or"));
+    row.append(boardCondEl(condition, index));
+  });
+  const add = node("button", "+ условие", "board-cond-add");
+  add.type = "button";
+  add.dataset.add = "1";
+  const today = node("button", "Сегодня", "board-filter-today");
+  today.type = "button";
+  today.dataset.today = "1";
+  today.title = "Вернуть фильтр по умолчанию: сегодняшнее и просроченное";
+  today.setAttribute("aria-pressed", String(sameFilter(boardState.filter, defaultFilter())));
+  const clearAll = node("button", "Сбросить", "board-filter-clear");
+  clearAll.type = "button";
+  clearAll.dataset.clear = "1";
+  clearAll.title = "Снять все условия";
+  clearAll.hidden = !boardState.filter.length;
+  const tail = node("span", undefined, "board-filter-tail");
+  tail.append(today, clearAll);
+  row.append(add, tail);
+}
+// Условие изменено: условия одного поля встают рядом, выбор запоминается, доска
+// перерисовывается по загруженному. Фокус возвращается на тот список, который
+// трогали, — плашка при перерисовке пересобрана.
+function boardFilterChanged(focus = null) {
+  boardState.filter = tidyFilter(boardState.filter);
+  boardRememberFilter();
+  if (boardState.data) renderBoard(boardState.data);
+  else paintBoardBar();
+  if (!focus) return;
+  const index = boardState.filter.indexOf(focus.condition);
+  $("#board-filter").querySelector(`.board-cond[data-index="${index}"] [data-part="${focus.part}"]`)?.focus();
+}
+
 // Панель над доской: вид, уровни группировки (у каждого поля свой цвет, номер
 // уровня и «×»), «+ ещё» добавляет следующее неиспользованное поле; справа —
 // цепочка «Колонка → День → Человек», когда уровней больше одного.
 function paintBoardBar() {
   for (const button of $("#board-view").children) button.setAttribute("aria-pressed", String(button.dataset.view === boardState.view));
   $("#board-hint").textContent = boardState.groups.length > 1 ? boardState.groups.map((field) => BOARD_FIELDS[field]).join(" → ") : "";
+  paintBoardFilter();
   const box = $("#board-grp");
   // Уровни пересобираются, только когда они поменялись: доска перечитывается и
   // сама по себе, и это не должно сбивать фокус и закрывать открытый список.
@@ -8444,20 +8772,36 @@ function boardChanged() {
   if (boardState.data) renderBoard(boardState.data);
   else paintBoardBar();
 }
-// Поиск действует на названия: доска не перезапрашивается — всё уже загружено.
-// Карточки круга, который человек выключил, не показываются.
-function boardCardVisible(card) {
+// Что о деле знает фильтр. «День» у закрытого дела — день, когда его закрыли (его
+// же показывает столбец «День» в таблице), у открытого — срок: закрыл дело без
+// срока — оно осталось в «Сделано» под фильтром «сегодня», а не исчезло. У дела
+// несколько людей и проектов — подходит любой из них.
+function boardFacts(card, today) {
+  const closed = Boolean(card.closedAt);
+  return {
+    col: card.columnId ?? null,
+    day: boardDayKey(closed ? { due: { date: card.closedDate || notifyDay(card.closedAt) } } : card, today),
+    who: card.people || [],
+    proj: card.projects || [],
+    src: boardSource(card),
+    status: closed ? "done" : "open",
+  };
+}
+// Поиск действует на названия, фильтр — на поля дела: доска не перезапрашивается,
+// всё уже загружено. Карточки круга, который человек выключил, не показываются.
+function boardCardVisible(card, today) {
   const circle = boardCircleOf(card);
   if (circle && (boardState.data?.circles || []).some((item) => item.id === circle.id && item.muted)) return false;
   const query = boardState.search.trim().toLowerCase();
   if (query && !card.title.toLowerCase().includes(query)) return false;
-  return true;
+  return matchesFilter(boardState.filter, boardFacts(card, today));
 }
 function boardFilteredData(data) {
+  const visible = (card) => boardCardVisible(card, data.today);
   return {
     ...data,
-    columns: data.columns.map((column) => ({ ...column, cards: column.cards.filter(boardCardVisible) })),
-    closed: (data.closed || []).filter(boardCardVisible),
+    columns: data.columns.map((column) => ({ ...column, cards: column.cards.filter(visible) })),
+    closed: (data.closed || []).filter(visible),
   };
 }
 // На телефоне колонки — по одной на экран: сверху сегмент подписей, точка
@@ -8465,6 +8809,9 @@ function boardFilteredData(data) {
 function paintBoardSegments(columns) {
   const wrap = $("#board-segments");
   clear(wrap);
+  // Открыта первая колонка, которая не «Сделано»: пока человек не выбрал сам, а
+  // колонки можно переставлять, «вторая по счёту» уже не значит «первая своя».
+  if (boardState.mobileColumn === null) boardState.mobileColumn = Math.max(0, columns.findIndex((column) => !column.classList.contains("board-done-column")));
   if (boardState.mobileColumn >= columns.length) boardState.mobileColumn = 0;
   columns.forEach((column, index) => {
     const name = column.querySelector(".board-col-name");
@@ -8503,7 +8850,8 @@ function renderBoard(source) {
   clear(lanes);
   clear(flat);
   boardState.openAdder = openAdder;
-  const data = boardFilteredData(boardAnnotate(source));
+  const all = boardAnnotate(source);
+  const data = boardFilteredData(all);
   const open = data.columns.flatMap((column) => column.cards);
   const closed = data.closed || [];
   const view = boardState.view;
@@ -8516,14 +8864,21 @@ function renderBoard(source) {
     flat.append(view === "list" ? boardListEl(open, closed, data) : boardTableEl(open, closed, data));
     return;
   }
-  // Доска: «Сделано» слева, дальше по колонке на группу первого уровня. Колонки
-  // человека — со всем, что у них есть (тянутся, правятся, «+ Дело» и «+ Колонка»);
-  // любая другая группа — колонка без меню, без «+» и без перетаскивания заголовка.
+  // Доска: колонка на группу первого уровня и «Сделано» — такая же колонка, по
+  // умолчанию первая. Колонки человека — со всем, что у них есть (правятся,
+  // «+ Дело в …» и «+ Колонка»); любая другая группа — колонка без меню и без
+  // «+ Колонки». Заголовок тянется у всех, порядок помнится по полю первого уровня.
+  // Пока фильтр что-то отбирает, пустые группы скрыты (колонки человека остаются:
+  // в них бросают), а «Сделано» пропадает, только если статус исключает закрытое.
   const [first, ...rest] = boardState.groups;
-  lanes.append(boardDoneColumnEl(closed));
-  if (first === "col") for (const group of boardGroups(open, "col", data, true)) lanes.append(boardColumnEl(group.column, group.items, rest, data));
-  else if (first) for (const group of boardGroups(open, first, data, first === "day" && ((group) => group.key !== "late"))) lanes.append(boardGroupColumnEl(group, first, rest, data));
-  else lanes.append(boardGroupColumnEl({ key: "all", label: "Все дела", items: open }, null, [], data));
+  const field = first || "all";
+  const filtering = activeConditions(boardState.filter).length > 0;
+  const shown = [];
+  if (boardDoneShown()) shown.push({ key: DONE_LANE, element: boardDoneColumnEl(closed, field) });
+  if (first === "col") for (const group of boardGroups(open, "col", data, true)) shown.push({ key: group.key, element: boardColumnEl(group.column, group.items, rest, data) });
+  else if (first) for (const group of boardGroups(open, first, data, first === "day" && !filtering && ((group) => group.key !== "late"))) shown.push({ key: group.key ?? FILTER_NONE, element: boardGroupColumnEl(group, first, rest, data) });
+  else shown.push({ key: "all", element: boardGroupColumnEl({ key: "all", label: "Все дела", items: open }, null, [], data) });
+  for (const lane of boardOrderedLanes(field, shown)) lanes.append(lane.element);
   if (first === "col") {
     lanes.append(boardGhostColumnEl(ghost));
     if (ghost?.focus) lanes.querySelector(".board-column.ghost input")?.focus();
@@ -8564,6 +8919,46 @@ function renderBoard(source) {
     if (add) [...$("#board-grp").querySelectorAll("select")].at(-1)?.focus();
     else $("#board-grp .board-lv-add")?.focus();
   });
+  // Фильтр: кнопка открывает и закрывает строку, а внутри строки — выбор
+  // в плашках, «+ условие», «Сегодня» (фильтр по умолчанию) и «Сбросить».
+  $("#board-filter-toggle").addEventListener("click", () => {
+    boardState.filterOpen = !boardState.filterOpen;
+    paintBoardFilter();
+  });
+  $("#board-filter").addEventListener("change", (event) => {
+    const select = event.target.closest("select[data-part]");
+    const condition = boardState.filter[Number(select?.closest(".board-cond")?.dataset.index)];
+    if (!condition) return;
+    const part = select.dataset.part;
+    // Другое поле — другие значения: прежнее не подходит, условие снова черновик.
+    if (part === "field") { condition.field = select.value; condition.value = ""; }
+    else if (part === "op") condition.op = select.value;
+    else condition.value = select.value;
+    boardFilterChanged({ condition, part });
+  });
+  $("#board-filter").addEventListener("click", (event) => {
+    const row = $("#board-filter");
+    const remove = event.target.closest("[data-remove]");
+    if (remove) {
+      boardState.filter.splice(Number(remove.dataset.remove), 1);
+      boardFilterChanged();
+      row.querySelector(".board-cond-add")?.focus();
+    } else if (event.target.closest("[data-add]")) {
+      // Новое условие — на первом поле, которого ещё нет; значение выберут сами.
+      const used = new Set(boardState.filter.map((condition) => condition.field));
+      const condition = { field: Object.keys(FILTER_FIELDS).find((field) => !used.has(field)) || "col", op: "=", value: "" };
+      boardState.filter.push(condition);
+      boardFilterChanged({ condition, part: "field" });
+    } else if (event.target.closest("[data-today]")) {
+      boardState.filter = defaultFilter();
+      boardFilterChanged();
+      row.querySelector(".board-filter-today")?.focus();
+    } else if (event.target.closest("[data-clear]")) {
+      boardState.filter = [];
+      boardFilterChanged();
+      row.querySelector(".board-cond-add")?.focus();
+    }
+  });
   $("#board-search").addEventListener("input", (event) => {
     boardState.search = event.target.value;
     if (boardState.data) renderBoard(boardState.data);
@@ -8571,7 +8966,7 @@ function renderBoard(source) {
   const quick = $("#board-quick");
   const closeQuick = () => { quick.hidden = true; quick.value = ""; };
   $("#board-new").addEventListener("click", () => {
-    const button = $("#board-columns").querySelector(".board-column:not(.ghost):not(.board-done-column) .board-add-button");
+    const button = $("#board-columns").querySelector(".board-column[data-column-id]:not(.board-done-column) .board-add-button");
     if (button) { button.click(); button.closest(".board-column")?.scrollIntoView({ block: "nearest", inline: "nearest" }); return; }
     quick.hidden = false;
     quick.focus();
@@ -8668,7 +9063,7 @@ async function loadBoard({ force = false } = {}) {
 // ── «Сделано» ────────────────────────────────────────────────────────────────
 // Один экран. Вверху в две колонки: слева фраза про неделю, строка её семи
 // дней и чипы «куда ушла неделя» по колонкам доски, справа — ритм пяти недель
-// клетками. Ниже список по дням — тот же «Что делал», только за неделю. Клик по
+// клетками. Ниже список по дням — тот же, что во вкладке «Сделано» на «Сегодня», только за неделю. Клик по
 // клетке или по дню в строке недели показывает список этого дня, повторный клик
 // и «Все дни» возвращают неделю. Всё берётся из одного ответа GET /api/done —
 // с понедельника четыре недели назад по сегодня; фраза, строка и чипы считаются

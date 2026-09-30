@@ -25,5 +25,9 @@ setup('первый администратор заходит и сохраня�
 
   await expect(page).toHaveURL(/\/(#.*)?$/);
   await expect(page.locator('#account-summary')).toHaveAttribute('title', E2E_EMAIL);
+  // Доска в первый заход фильтрует по «сегодня» (просроченное и сегодняшнее), а
+  // проверкам, которым до этого дела нет, нужны все дела: с пустого фильтра они
+  // и стартуют. Проверки самого фильтра сами убирают этот ключ и видят умолчание.
+  await page.evaluate(() => localStorage.setItem('kizuna-board-filter', '[]'));
   await page.context().storageState({ path: E2E_STORAGE });
 });

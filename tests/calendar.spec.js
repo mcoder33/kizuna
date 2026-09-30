@@ -22,9 +22,9 @@ test("календарь: неделя, день, месяц, перенос м�
   await page.reload();
   const calendar = page.locator("#calendar-view");
   await expect(calendar).toBeVisible();
-  // Страница открывается по адресу, а в шапке ей пункта нет: ни один не активен.
-  await expect(page.locator("nav a")).toHaveText(["Сегодня", "Доска", "Сделано", "Заметки"]);
-  await expect(page.locator("nav a.active")).toHaveCount(0);
+  // У страницы свой пункт в шапке, между «Доской» и «Заметками», и на открытой странице он подсвечен.
+  await expect(page.locator("nav a")).toHaveText(["Сделано", "Сегодня", "Доска", "Календарь", "Заметки"]);
+  await expect(page.locator("nav a.active")).toHaveText("Календарь");
   await expect(page.locator("#calendar .page-heading h2")).toHaveText("Календарь");
   await expect(calendar.locator(".cal-title")).toContainText(String(new Date(`${monday}T12:00:00Z`).getUTCDate()));
   // Дело со временем — блок в сетке, дело без времени — чип в полосе «без
@@ -80,6 +80,9 @@ test("календарь: неделя, день, месяц, перенос м�
   await timed.click();
   const dialog = page.locator("#review-dialog");
   await expect(dialog).toBeVisible();
+  const propsBar = dialog.locator(".props-bar");
+  await propsBar.click();
+  await expect(propsBar).toHaveAttribute("aria-expanded", "true");
   await expect(page.locator("#review-end")).toBeVisible();
   await page.locator("#review-end").fill("13:30");
   // Первый Esc закрывает панель «Параметры», второй — карточку.
@@ -309,13 +312,12 @@ test("своя серия: повторы в сетке, «только этот
   const blocks = calendar.locator(".cal-ev.task", { hasText: "Стендап" });
   await expect(blocks).toHaveCount(7);
   await expect(blocks.first().locator(".cal-ev-repeat")).toHaveAttribute("title", "каждый день");
-  // Из карточки, открытой на среду, «Удалить» в меню «⋯» предлагает выбор; «только
-  // этот повтор» убирает среду, остальные дни остаются.
+  // Из карточки, открытой на среду, «Удалить запись» в подвале предлагает выбор;
+  // «только этот повтор» убирает среду, остальные дни остаются.
   const wednesday = shift(monday, 2);
   await calendar.locator(`.cal-col[data-date="${wednesday}"] .cal-ev.task`, { hasText: "Стендап" }).click();
   const dialog = page.locator("#review-dialog");
   await expect(dialog).toBeVisible();
-  await page.locator("#review-dialog .card-more > summary").click();
   await page.locator("#review-dialog .card-delete").click();
   const ask = page.locator(".card-delete-ask");
   await expect(ask).toBeVisible();
@@ -329,6 +331,9 @@ test("своя серия: повторы в сетке, «только этот
   // В карточке правило видно и меняется: «не повторять» оставляет один блок.
   await calendar.locator(`.cal-col[data-date="${shift(monday, 3)}"] .cal-ev.task`, { hasText: "Стендап" }).click();
   await expect(dialog).toBeVisible();
+  const propsBar = dialog.locator(".props-bar");
+  await propsBar.click();
+  await expect(propsBar).toHaveAttribute("aria-expanded", "true");
   const repeat = page.locator("#review-repeat");
   await expect(repeat).toHaveValue("daily:1");
   await expect(page.locator("#review-repeat-until")).toBeVisible();
@@ -364,9 +369,9 @@ test("«День»: повторяющееся дело видно сегодн�
   await expect(todo.locator(".entry", { hasText: "Проверить почту" }).locator(".tag.due")).toHaveText("каждый день");
 });
 // Встреча из календаря, чей конец прошёл: в «Дне» она остаётся с пометкой
-// «прошла» (без «Записать итог»), а в «Что делал» стоит строкой с пунктирным
+// «прошла» (без «Записать итог»), а в «Сделано» стоит строкой с пунктирным
 // кружком «прошла по календарю» — руками её не вернуть. То же для вчерашнего дня.
-test("прошедшая встреча календаря: «прошла» в «Дне» и «прошла по календарю» в «Что делал»", async ({ page, request }) => {
+test("прошедшая встреча календаря: «прошла» в «Дне» и «прошла по календарю» в «Сделано»", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   const today = (await (await request.get("/api/day")).json()).date;
   const yesterday = shift(today, -1);
@@ -395,7 +400,7 @@ test("прошедшая встреча календаря: «прошла» в 
   await expect(past.getByRole("button", { name: "Записать итог" })).toHaveCount(0);
   await expect(todo.locator(".day-row.external", { hasText: "Ретро спринта" })).not.toHaveClass(/past/);
 
-  await page.getByRole("tab", { name: /Что делал/ }).click();
+  await page.getByRole("tab", { name: /^Сделано/ }).click();
   const journal = page.locator("#journal");
   const auto = journal.locator(".entry.auto-done");
   await expect(auto).toHaveCount(1);
@@ -405,7 +410,7 @@ test("прошедшая встреча календаря: «прошла» в 
   await expect(journal).not.toContainText("Ретро спринта");
   await expect(page.locator("#tab-journal b")).toHaveText("1");
 
-  // Вчера прошедшая встреча стоит в «Что делал» того дня тем же образом.
+  // Вчера прошедшая встреча стоит в «Сделано» того дня тем же образом.
   await journal.locator('.daynav [data-step="-1"]').click();
   await expect(journal.locator(".entry.auto-done")).toContainText("Вчерашний созвон");
 });

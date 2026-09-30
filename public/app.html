@@ -36,9 +36,10 @@
         ><span class="brand-word">Кизуна</span></a
       >
       <nav aria-label="Разделы">
+        <a href="#done">Сделано</a>
         <a class="active" href="#today">Сегодня</a>
         <a href="#board">Доска</a>
-        <a href="#done">Сделано</a>
+        <a href="#calendar">Календарь</a>
         <a href="#notes">Заметки</a>
       </nav>
       <div class="header-tail">
@@ -145,7 +146,7 @@
             <div class="capture-resize" data-dir="sw" aria-hidden="true"></div>
           </form>
         </section>
-        <!-- Под полем — два ящика: «Что делал» и «День», где дела лежат вместе
+        <!-- Под полем — два ящика: «Сделано» и «День», где дела лежат вместе
              с календарём. В каждом свои стрелки по дням. -->
         <section class="drawers" aria-label="Дневная сводка">
           <div class="drawer-tabs" id="today-tabs" role="tablist"></div>
@@ -168,9 +169,12 @@
           <h2>Доска</h2>
         </div>
         <!-- Над доской: вид (как рисовать — доска, список, таблица) и группировка
-             (по каким полям раскладывать, уровней сколько угодно); справа поиск
-             и «+ Дело». «Сделано» — первая колонка доски и последний раздел
-             списка и таблицы. Панель и обе ленты собирает public/app.js. -->
+             (по каким полям раскладывать, уровней сколько угодно); справа
+             «Фильтр», поиск и «+ Дело». Под панелью — строка фильтра (условия по
+             полям дела), она открывается кнопкой «Фильтр». «Сделано» — обычная
+             колонка доски (по умолчанию первая, тянется, как остальные) и
+             последний раздел списка и таблицы. Панель, строку фильтра и обе
+             ленты собирает public/app.js. -->
         <div class="board-controls">
           <div class="board-bar">
             <span class="board-bar-label">Вид</span>
@@ -184,6 +188,10 @@
             <span class="board-hint" id="board-hint"></span>
           </div>
           <div class="board-tools">
+            <button type="button" class="board-filter-toggle" id="board-filter-toggle" aria-expanded="false" aria-controls="board-filter">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11L9.4 8.4v4.1l-2.8 1.3V8.4Z"/></svg>
+              <span>Фильтр</span><span class="board-filter-n"></span>
+            </button>
             <label class="board-search">
               <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>
               <input id="board-search" type="search" placeholder="Поиск" aria-label="Поиск по делам" autocomplete="off" />
@@ -192,6 +200,7 @@
             <button type="button" class="board-new" id="board-new">+ Дело</button>
           </div>
         </div>
+        <div class="board-filter" id="board-filter" role="group" aria-label="Условия фильтра" hidden></div>
         <div class="board-segments" id="board-segments" role="tablist" aria-label="Колонки"></div>
         <div id="board-columns" class="board-columns" aria-label="Колонки доски"></div>
         <div id="board-flat" class="board-flat" aria-label="Дела" hidden></div>
