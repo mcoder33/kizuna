@@ -82,3 +82,10 @@ test('даты подписываются по-русски и не завися
   assert.equal(isWeekend('2026-09-19'), true);
   assert.equal(isWeekend('2026-09-14'), false);
 });
+
+test('обложка открывает только «День» или «Что делал»: ящика «Заметки» нет', () => {
+  for (const phase of ['weekend', 'night', 'morning', 'day', 'evening'])
+    for (const minutes of [420, 540, 822, 1110, 1380])
+      for (const calendar of [true, false])
+        assert.ok(['day', 'journal'].includes(coverFor({ phase, minutes, meetings, tasks, doneCount: 2, calendar, tomorrow: { count: 1, first: { start: 600, title: 'Стендап Hub' } } }).tab), `${phase} ${minutes}`);
+});

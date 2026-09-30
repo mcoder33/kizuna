@@ -292,6 +292,19 @@ test("круг: дело человеку прямо за столом и при
     .poll(async () => (await (await request.get("/api/entries?limit=5")).json()).entries.some((entry) => entry.raw.includes("глянь смету")), { timeout: 15000 })
     .toBe(true);
 
+  // На листе — увеличенном поле — подсказка «@» тоже лежит вне формы, и выбор в ней
+  // не считается кликом «мимо»: лист остаётся, закрывает его только клик в сторону.
+  await page.locator("#capture-expand").click();
+  await expect(page.locator("#capture-form")).toHaveClass(/capture-large/);
+  await page.locator("#capture-input").click();
+  await page.keyboard.type("@");
+  await expect(menu).toBeVisible();
+  await menu.locator(".mention-option").filter({ hasText: "Аня" }).click();
+  await expect(page.locator("#capture-input")).toContainText("@Аня");
+  await expect(page.locator("#capture-form")).toHaveClass(/capture-large/);
+  await page.mouse.click(10, 400);
+  await expect(page.locator("#capture-form")).not.toHaveClass(/capture-large/);
+
   // Позванная видит запись у себя за колокольчиком и может её открыть.
   await anya.page.goto("/#today");
   await anya.page.locator("#bell-summary").click();
