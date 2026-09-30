@@ -9988,3 +9988,37 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0 0 96px; }
 .card-is-open {
   box-shadow: inset 0 0 0 2px var(--focus);
 }
+
+/* ── правая группа шапки в цветах дока ──
+   Колокольчик, шестерёнка, тема и лицо — те же тёплые плитки, что разделы внизу:
+   у каждого своя заливка и цвет значка, рамка — тонкий внутренний волосок. */
+.bell-menu > summary,
+.settings-link,
+.theme-toggle,
+.account-menu > summary {
+  border: 0;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.05);
+  transition: filter 0.15s ease, transform 0.15s ease;
+}
+:root[data-theme='dark'] .bell-menu > summary,
+:root[data-theme='dark'] .settings-link,
+:root[data-theme='dark'] .theme-toggle,
+:root[data-theme='dark'] .account-menu > summary {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+.bell-menu > summary { background: color-mix(in srgb, var(--coral) 13%, var(--paper)); color: var(--coral); }
+.settings-link { background: var(--dock-board-b); color: var(--dock-board-f); }
+.theme-toggle { background: var(--dock-today-b); color: var(--dock-today-f); }
+.account-menu > summary { background: var(--dock-done-b); color: var(--dock-done-f); }
+.bell-menu > summary:hover, .bell-menu[open] > summary,
+.settings-link:hover,
+.theme-toggle:hover,
+.account-menu > summary:hover, .account-menu[open] > summary {
+  border: 0;
+  filter: saturate(1.3) brightness(0.97);
+  transform: scale(1.06);
+}
+.bell-menu > summary:hover, .bell-menu[open] > summary { color: var(--coral); }
+.settings-link:hover { color: var(--dock-board-f); }
+.theme-toggle:hover { color: var(--dock-today-f); }
+.account-menu > summary:hover, .account-menu[open] > summary { color: var(--dock-done-f); }
