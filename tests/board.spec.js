@@ -173,6 +173,7 @@ test("доска: «Закрыто» — обычная колонка, своя
   const propsBar = page.locator(".props-bar");
   if ((await propsBar.getAttribute("aria-expanded")) === "false") await propsBar.click();
   await page.locator("#review-project").fill("Доска-проект");
+  await page.locator("#review-project").press("Enter");
   // Первый Esc закрывает панель «Параметры», второй — карточку.
   await page.keyboard.press("Escape");
   await expect(propsBar).toHaveAttribute("aria-expanded", "false");

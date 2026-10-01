@@ -5323,6 +5323,16 @@ body {
 .board-done.is-done { border-color: var(--green); background: var(--green); color: var(--paper); }
 .board-done.is-done:hover { background: transparent; color: var(--green); }
 .board-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 5px; }
+.project-picker { position: relative; min-width: 0; }
+.project-picker input { width: 100%; }
+.project-selection { display: inline-flex; align-items: center; max-width: 100%; border-radius: 99px; background: var(--fmt-bg-blue); color: var(--fmt-blue); }
+.project-selected-name, .project-remove { border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; padding: 7px 10px; }
+.project-selected-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-remove { flex: 0 0 auto; padding-left: 2px; }
+.project-options { position: absolute; z-index: 5; top: 100%; left: 0; right: 0; margin-top: 4px; padding: 4px; max-height: 220px; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); box-shadow: 0 5px 20px var(--hairline); }
+.project-option { display: block; width: 100%; border: 0; border-radius: 6px; background: transparent; color: var(--ink); padding: 8px; font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.project-option:hover, .project-option[aria-selected="true"] { background: var(--fmt-bg-blue); }
+.project-options-empty { margin: 4px; color: var(--muted); font-size: 12px; }
 .board-title-row { display: flex; align-items: flex-start; gap: 6px; }
 .board-remove {
   flex: 0 0 auto; width: 20px; height: 20px; margin-left: auto; padding: 0; border: 0; border-radius: 6px;

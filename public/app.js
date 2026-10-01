@@ -2084,6 +2084,103 @@ function propIcon(name) {
   glyph.innerHTML = `<svg viewBox="0 0 16 16" width="16" height="16">${PROP_ICONS[name]}</svg>`;
   return glyph;
 }
+function projectPicker(input) {
+  const wrap = node("div", undefined, "project-picker");
+  const chip = node("span", undefined, "project-selection");
+  const edit = node("button", undefined, "project-selected-name");
+  edit.type = "button";
+  edit.title = "Выбрать другой проект";
+  const remove = node("button", "×", "project-remove");
+  remove.type = "button";
+  remove.setAttribute("aria-label", "Убрать проект");
+  const list = node("div", undefined, "project-options");
+  list.id = "review-project-options";
+  list.setAttribute("role", "listbox");
+  list.setAttribute("aria-label", "Проекты");
+  list.hidden = true;
+  input.setAttribute("role", "combobox");
+  input.setAttribute("aria-label", "Проект");
+  input.setAttribute("aria-autocomplete", "list");
+  input.setAttribute("aria-controls", list.id);
+  input.autocomplete = "off";
+  let names = [], active = -1, options = [], committed = input.value.trim();
+  const close = () => { list.hidden = true; input.setAttribute("aria-expanded", "false"); input.removeAttribute("aria-activedescendant"); active = -1; };
+  const paint = () => {
+    const value = input.value.trim();
+    chip.hidden = !value;
+    input.hidden = Boolean(value);
+    edit.textContent = value;
+    close();
+  };
+  const select = (name) => {
+    input.value = name;
+    committed = name;
+    paint();
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    edit.focus();
+  };
+  const suggest = () => {
+    if (input.hidden || document.activeElement !== input) return;
+    const query = input.value.trim();
+    const key = query.toLocaleLowerCase();
+    options = names.filter((name) => name.toLocaleLowerCase().includes(key));
+    const create = query && !names.some((name) => name.toLocaleLowerCase() === key);
+    if (create) options.push(query);
+    clear(list);
+    active = -1;
+    input.removeAttribute("aria-activedescendant");
+    options.forEach((name, index) => {
+      const option = node("button", create && index === options.length - 1 ? `Создать проект «${name}»` : name, "project-option");
+      option.type = "button";
+      option.id = `review-project-option-${index}`;
+      option.setAttribute("role", "option");
+      option.setAttribute("aria-selected", "false");
+      option.tabIndex = -1;
+      option.addEventListener("mousedown", (event) => event.preventDefault());
+      option.addEventListener("click", () => select(name));
+      list.append(option);
+    });
+    if (!options.length) list.append(node("p", "Введите название нового проекта", "project-options-empty"));
+    list.hidden = false;
+    input.setAttribute("aria-expanded", "true");
+  };
+  edit.addEventListener("click", () => { chip.hidden = true; input.hidden = false; input.focus(); input.select(); });
+  const reset = () => { committed = ""; input.value = ""; paint(); input.dispatchEvent(new Event("input", { bubbles: true })); };
+  remove.addEventListener("click", () => { reset(); input.focus(); });
+  input.addEventListener("focus", suggest);
+  input.addEventListener("input", suggest);
+  input.addEventListener("blur", () => {
+    input.value = names.find((name) => name.toLocaleLowerCase() === input.value.trim().toLocaleLowerCase()) || input.value.trim();
+    committed = input.value;
+    paint();
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !list.hidden) { event.preventDefault(); event.stopPropagation(); input.value = committed; paint(); input.dispatchEvent(new Event("change", { bubbles: true })); if (input.hidden) edit.focus(); }
+    else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault(); event.stopPropagation();
+      if (list.hidden) suggest();
+      if (!options.length) return;
+      active = active < 0 ? (event.key === "ArrowDown" ? 0 : options.length - 1) : (active + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
+      [...list.querySelectorAll('[role="option"]')].forEach((option, index) => option.setAttribute("aria-selected", String(index === active)));
+      input.setAttribute("aria-activedescendant", `review-project-option-${active}`);
+      list.children[active].scrollIntoView({ block: "nearest" });
+    } else if (event.key === "Enter") {
+      event.preventDefault(); event.stopPropagation();
+      const exact = names.find((name) => name.toLocaleLowerCase() === input.value.trim().toLocaleLowerCase());
+      select(active >= 0 ? options[active] : exact || input.value.trim());
+    }
+  });
+  chip.append(edit, remove);
+  wrap.append(chip, input, list);
+  paint();
+  request("/api/projects").then((data) => {
+    names = [...new Map([input.value.trim(), ...data.projects].filter(Boolean).map((name) => [name.toLocaleLowerCase(), name])).values()];
+    if (document.activeElement === input) suggest();
+  }).catch(() => {});
+  return { element: wrap, focusTarget: () => input.hidden ? edit : input };
+}
+
 function propertyRow(label, control, icon, { clear = null, filled = null } = {}) {
   const row = node("div", undefined, "prop");
   const name = node("span", label, "prop-label");
@@ -3983,9 +4080,9 @@ function showReview(entry, review, undoGroupId, provenance) {
   const remindWrap = node("span", undefined, "review-remind-row");
   remindWrap.append(node("span", "напомнить", "review-end-label"), remind);
   project.id = "review-project";
-  project.setAttribute("list", "known-projects");
   project.value = c.entities.projects[0] || "";
-  project.placeholder = "Например, Hub";
+  project.placeholder = "Найти или создать проект";
+  const projectChoice = projectPicker(project);
   people.id = "review-people";
   people.value = (c.entities.people || []).join(", ");
   people.placeholder = "Например, Анна, BE";
@@ -4047,7 +4144,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   props.append(
     columnRow,
     scheduleWrap,
-    propertyRow("Проект", project, "project", { clear: () => clearAndSave(() => { project.value = ""; }), filled: () => Boolean(project.value.trim()) }),
+    propertyRow("Проект", projectChoice.element, "project"),
     ...(entry.circles?.length ? [circleWrap] : []),
     ...(assignWrap && (hasCircles || entry.assignment) ? [assignWrap] : []),
     peopleWrap,
@@ -4091,7 +4188,7 @@ function showReview(entry, review, undoGroupId, provenance) {
       const who = people.value.trim() || doneState.assignment?.assignee?.name || "";
       chips.append(chip("people", who || "Человек", { quiet: !who, target: people, label: "Участники" }));
     }
-    if (project.value.trim()) chips.append(chip("project", project.value.trim(), { target: project, label: "Проект" }));
+    if (project.value.trim()) chips.append(chip("project", project.value.trim(), { target: projectChoice.focusTarget(), label: "Проект" }));
     if (!followUpWrap.hidden && followUp.value.trim()) chips.append(chip("next", `далее: ${followUp.value.trim()}`, { target: followUp, label: "Далее" }));
     chips.hidden = !chips.childElementCount;
   };

@@ -704,6 +704,15 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
 
   // Люди из ваших кругов — для подсказки «@» в поле записи: там круг ещё не
   // выбран, а позвать можно любого своего.
+  app.get('/api/projects',(req,res,next)=>{try{
+    const rows=db.prepare("SELECT i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.user_id=? AND c.deleted_at IS NULL ORDER BY i.created_at DESC, c.created_at DESC").all(req.user.id);
+    const names=new Map();
+    for(const row of rows) for(const name of JSON.parse(row.classification_json).entities?.projects || []) {
+      const value=name.trim();
+      if(value && !names.has(value.toLocaleLowerCase())) names.set(value.toLocaleLowerCase(),value);
+    }
+    res.json({projects:[...names.values()]});
+  }catch(error){next(error);}});
   app.get('/api/people',(req,res,next)=>{try{res.json({people:circles.peopleAround(db,req.user.id)});}catch(error){next(error);}});
   app.get('/api/circles',(req,res,next)=>{try{res.json({circles:circles.circlesOf(db,req.user.id).map(circle=>circles.circleDetail(db,circle.id,req.user.id)),me:circles.publicUser(findUserById(db,req.user.id))});}catch(error){next(error);}});
   app.post('/api/circles',(req,res,next)=>{try{const result=circles.createCircle(db,req.user.id,req.body?.name,req.body?.color||'violet');if(!result.error)chat.ensureGeneral(db,result.circle.id,req.user.id);circleReply(res,result,201);}catch(error){next(error);}});
