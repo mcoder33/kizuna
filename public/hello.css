@@ -314,6 +314,26 @@
 .hello-footer-brand > span { margin-left: 5px; color: var(--hello-accent); font-size: 18px; }
 .hello-footer > a:last-child { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; }
 
+/* Приложение для Mac — спокойное продолжение первого экрана. */
+.hello-desktop { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 44px; padding: 34px 38px; margin-bottom: 4px; border: 1px solid var(--hello-rule); border-radius: 20px; background: var(--hello-soft); }
+.hello-desktop-copy { min-width: 0; }
+.hello-desktop-label { margin-bottom: 10px; color: var(--hello-muted); font-size: 12px; }
+.hello-body .hello-desktop h2 { margin-bottom: 16px; font-size: 30px; line-height: 1.15; letter-spacing: -.8px; }
+.hello-desktop-description { max-width: 455px; margin-bottom: 18px; font-size: 15px; line-height: 1.65; color: var(--hello-muted); }
+.hello-desktop-shortcut { white-space: nowrap; color: var(--hello-ink); }
+.hello-body .hello-desktop-download { display: inline-flex; align-items: center; justify-content: space-between; gap: 28px; min-height: 44px; padding: 9px 16px; border: 1px solid var(--hello-rule); border-radius: 8px; background: var(--hello-surface); color: var(--hello-ink); font-size: 14px; font-weight: 550; }
+.hello-body .hello-desktop-download:hover { border-color: var(--hello-accent); color: var(--hello-accent); }
+.hello-desktop-requirements { margin: 10px 0 0; color: var(--hello-muted); font-size: 11px; line-height: 1.6; }
+.hello-desktop-visual { min-width: 0; padding: 20px 0 0; }
+.hello-desktop-panel { display: flex; align-items: flex-start; gap: 15px; padding: 22px 24px 16px; background: var(--hello-surface); border: 1px solid var(--hello-rule); border-radius: 18px; box-shadow: 0 12px 30px rgb(25 30 24 / 8%), 0 2px 5px rgb(25 30 24 / 4%); }
+.hello-desktop-mark { flex: 0 0 24px; width: 24px; height: 24px; margin-top: 2px; color: var(--hello-muted); }
+.hello-desktop-field { min-width: 0; }
+.hello-desktop-field > span { display: block; color: var(--hello-muted); font-size: 22px; line-height: 1.35; white-space: nowrap; }
+.hello-desktop-field > small { display: block; margin-top: 9px; color: var(--hello-muted); font-size: 10px; line-height: 1.5; }
+.hello-desktop-keys { display: flex; justify-content: center; align-items: center; gap: 7px; margin-top: 28px; }
+.hello-desktop-keys kbd { display: grid; place-items: center; box-sizing: border-box; min-width: 32px; height: 31px; padding: 0 9px; border: 1px solid var(--hello-rule); border-radius: 7px; box-shadow: 0 2px 0 var(--hello-rule); background: var(--hello-surface); color: var(--hello-muted); font-family: inherit; font-size: 13px; line-height: 1; }
+.hello-desktop-caption { margin: 14px 0 0; text-align: center; color: var(--hello-muted); font-size: 11px; line-height: 1.6; }
+
 @media (max-width: 1100px) {
   .hello-hero { gap: 32px; }
   .hello-title { font-size: 4.7vw; letter-spacing: -2.5px; }
@@ -325,6 +345,9 @@
   .hello-keep-section { gap: 42px; }
 }
 @media (max-width: 900px) {
+  .hello-desktop { gap: 25px; padding: 28px; }
+  .hello-desktop-panel { gap: 10px; padding: 18px 15px 14px; }
+  .hello-desktop-field > span { font-size: 18px; }
   .hello-header, .hello-shell, .hello-footer { width: calc(100% - 48px); }
   .hello-header { min-height: 80px; }
   .hello-nav { gap: 24px; }
@@ -351,6 +374,11 @@
   .hello-last-call { padding: 32px; }
 }
 @media (max-width: 620px) {
+  .hello-desktop { grid-template-columns: 1fr; gap: 24px; padding: 26px 22px; border-radius: 16px; }
+  .hello-body .hello-desktop h2 { font-size: 28px; }
+  .hello-desktop-description { font-size: 14px; }
+  .hello-desktop-visual { padding: 0; }
+  .hello-desktop-keys { margin-top: 22px; }
   .hello-header, .hello-shell, .hello-footer { width: calc(100% - 40px); }
   .hello-header { min-height: 76px; }
   .hello-header .brand-mark { width: 28px; height: 28px; }
