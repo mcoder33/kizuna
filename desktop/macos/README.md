@@ -27,7 +27,7 @@ The website serves files under `public/` directly. Publishing the updated Mac do
 ## Behavior and limits
 
 - Press **Command-Shift-Space** to open a small new-entry window from any app while Kizuna is running. Closing the main window leaves the app available from the menu bar.
-- The menu bar uses the Kizuna torii mark as a monochrome template icon, so macOS adapts it to light and dark appearances.
+- The menu bar draws the Kizuna torii mark as a transparent monochrome template, so macOS adapts it to light and dark appearances.
 - Notifications require explicit opt-in from the app menu. While the app is open, it checks for notifications about once a minute and handles up to the 60 most recent items, once per notification ID.
 - Sign in to an existing Kizuna account through the app's browser view. The app connects to the existing Kizuna server.
 - There is no offline sync or automatic updating in this build.

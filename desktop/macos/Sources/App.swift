@@ -8,6 +8,7 @@ enum KizunaMain {
         if CommandLine.arguments.contains("--self-test") {
             DesktopOrigin.selfTest()
             QuickCapturePolicy.selfTest()
+            KizunaIcon.selfTest()
             return
         }
         let application = NSApplication.shared
@@ -153,9 +154,7 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
     }
     private func makeStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        if let resource = Bundle.main.url(forResource: "MenuBarIcon", withExtension: "png"), let icon = NSImage(contentsOf: resource) {
-            icon.isTemplate = true; icon.size = NSSize(width: 18, height: 18); statusItem.button?.image = icon
-        } else { statusItem.button?.image = NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Кизуна") }
+        statusItem.button?.image = KizunaIcon.menuBarTemplate(size: 18)
         statusItem.button?.setAccessibilityLabel("Кизуна")
         let menu = NSMenu()
         addItem("Новая запись  ⌘⇧Пробел", action: #selector(quickCapture(_:)), to: menu)

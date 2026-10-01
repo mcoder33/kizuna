@@ -48,14 +48,6 @@ mkdir -p "$RESOURCES" "$MACOS"
 
 cp "$MAC_DIR/Info.plist" "$CONTENTS/Info.plist"
 cp "$ROOT/public/icon.svg" "$RESOURCES/AppIcon.svg"
-MENU_ICON_WORK="$BUILD_ROOT/menu-icon"
-mkdir -p "$MENU_ICON_WORK"
-qlmanage -t -s 128 -o "$MENU_ICON_WORK" "$MAC_DIR/Resources/MenuBarIcon.svg" >/dev/null
-if [[ ! -f "$MENU_ICON_WORK/MenuBarIcon.svg.png" ]]; then
-  echo "Quick Look did not render the menu bar icon." >&2
-  exit 1
-fi
-cp "$MENU_ICON_WORK/MenuBarIcon.svg.png" "$RESOURCES/MenuBarIcon.png"
 
 ICON_WORK="$BUILD_ROOT/icon"
 mkdir -p "$ICON_WORK/Rendered" "$ICON_WORK/AppIcon.iconset"
