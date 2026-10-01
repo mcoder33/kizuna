@@ -1,4 +1,5 @@
 node_modules/
+desktop/macos/dist/
 .env
 data/*.sqlite
 data/*.sqlite-*
