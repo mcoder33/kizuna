@@ -14,9 +14,20 @@ The script uses the Swift compiler and Apple frameworks shipped with Xcode Comma
 
 The generated app is ad-hoc signed for local testing. It is not Developer ID signed or notarized. macOS Gatekeeper may block an app downloaded from the internet because its developer cannot be verified. For public distribution, sign with a Developer ID certificate and notarize the app or disk image through Apple.
 
+## Prepare a public update
+
+1. Bump `CFBundleShortVersionString` and `CFBundleVersion` in `Info.plist`.
+2. Run `./desktop/macos/build.sh --universal` and verify both CPU slices are listed.
+3. Copy `desktop/macos/dist/Kizuna.dmg` to `public/downloads/Kizuna-mac.dmg`.
+4. From `public/downloads`, refresh the checksum with `shasum -a 256 Kizuna-mac.dmg > SHA256SUMS`.
+5. Check the downloaded artifact against the generated DMG with `shasum -a 256` and run `hdiutil verify`.
+
+The website serves files under `public/` directly. Publishing the updated Mac download therefore follows the repository's normal `main` deployment workflow.
+
 ## Behavior and limits
 
-- Press **Command-Shift-Space** to open quick capture while the app is running. Closing the window leaves the app available from the menu bar.
+- Press **Command-Shift-Space** to open a small new-entry window from any app while Kizuna is running. Closing the main window leaves the app available from the menu bar.
+- The menu bar uses the Kizuna torii mark as a monochrome template icon, so macOS adapts it to light and dark appearances.
 - Notifications require explicit opt-in from the app menu. While the app is open, it checks for notifications about once a minute and handles up to the 60 most recent items, once per notification ID.
 - Sign in to an existing Kizuna account through the app's browser view. The app connects to the existing Kizuna server.
 - There is no offline sync or automatic updating in this build.

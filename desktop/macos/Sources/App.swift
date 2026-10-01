@@ -7,6 +7,7 @@ enum KizunaMain {
     static func main() {
         if CommandLine.arguments.contains("--self-test") {
             DesktopOrigin.selfTest()
+            QuickCapturePolicy.selfTest()
             return
         }
         let application = NSApplication.shared
@@ -25,9 +26,11 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
     private var webView: WKWebView!
     private var navigation: DesktopNavigation!
     private var notifications: DesktopNotifications!
+    private var quickCapturePanel: DesktopQuickCapture!
     private var statusItem: NSStatusItem!
     private var hotKey: EventHotKeyRef?
     private var hotKeyHandler: EventHandlerRef?
+    private var localCaptureShortcut: Any?
     private var errorView: NSView!
     private var errorText: NSTextField!
     private var capturePending = false
@@ -39,6 +42,14 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         Self.shared = self
         makeMenus()
         makeWindow()
+        quickCapturePanel = DesktopQuickCapture(webView: webView, origin: origin)
+        quickCapturePanel.onLogin = { [weak self] in
+            guard let self else { return }
+            self.showWindow(nil)
+            if self.webView.url?.path != "/login" {
+                self.webView.load(URLRequest(url: self.origin.appendingPathComponent("login")))
+            }
+        }
         makeStatusItem()
         registerCaptureShortcut()
         notifications = DesktopNotifications(webView: webView, origin: origin)
@@ -67,6 +78,7 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         navigation.onLoad = { [weak self] in
             guard let self else { return }
             self.errorView.isHidden = true
+            if self.webView.url?.path == "/" { self.quickCapturePanel?.resumeAfterLogin() }
             if self.capturePending || self.pendingDestination != nil { self.beginCaptureFocus() }
         }
         navigation.onFailure = { [weak self] _ in
@@ -141,7 +153,10 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
     }
     private func makeStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Кизуна")
+        if let resource = Bundle.main.url(forResource: "MenuBarIcon", withExtension: "png"), let icon = NSImage(contentsOf: resource) {
+            icon.isTemplate = true; icon.size = NSSize(width: 18, height: 18); statusItem.button?.image = icon
+        } else { statusItem.button?.image = NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Кизуна") }
+        statusItem.button?.setAccessibilityLabel("Кизуна")
         let menu = NSMenu()
         addItem("Новая запись  ⌘⇧Пробел", action: #selector(quickCapture(_:)), to: menu)
         addItem("Показать Кизуну", action: #selector(showWindow(_:)), to: menu)
@@ -152,15 +167,26 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
     }
 
     private func registerCaptureShortcut() {
+        // AppKit-targeted synthetic/accessibility key events may bypass the
+        // WindowServer's Carbon hotkey dispatch. Keep an in-app fallback too.
+        localCaptureShortcut = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function])
+            guard event.keyCode == UInt16(kVK_Space), modifiers == [.command, .shift] else { return event }
+            self?.quickCapture(nil)
+            return nil
+        }
         var event = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
         let installed = InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
+            if ProcessInfo.processInfo.environment["KIZUNA_DEBUG_HOTKEY"] == "1" { fputs("Kizuna hotkey: Carbon event received\n", stderr) }
             DispatchQueue.main.async { KizunaAppDelegate.shared?.quickCapture(nil) }
             return noErr
         }, 1, &event, nil, &hotKeyHandler)
+        if ProcessInfo.processInfo.environment["KIZUNA_DEBUG_HOTKEY"] == "1" { fputs("Kizuna hotkey: InstallEventHandler status=\(installed)\n", stderr) }
         guard installed == noErr else { return }
         let identifier = EventHotKeyID(signature: 0x4B495A55, id: 1)
         let result = RegisterEventHotKey(UInt32(kVK_Space), UInt32(cmdKey | shiftKey), identifier,
                                         GetApplicationEventTarget(), 0, &hotKey)
+        if ProcessInfo.processInfo.environment["KIZUNA_DEBUG_HOTKEY"] == "1" { fputs("Kizuna hotkey: RegisterEventHotKey status=\(result), keyCode=\(kVK_Space), modifiers=\(cmdKey | shiftKey)\n", stderr) }
         if result != noErr {
             let item = NSMenuItem(title: "⌘⇧Пробел занят — используйте меню «Новая запись»", action: nil, keyEquivalent: "")
             statusItem.menu?.insertItem(item, at: 0)
@@ -172,10 +198,7 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
     }
     @objc func quickCapture(_ sender: Any?) {
-        pendingDestination = nil; capturePending = true; showWindow(nil)
-        if let current = webView.url, DesktopOrigin.contains(current, origin: origin), !webView.isLoading {
-            beginCaptureFocus()
-        } else if !webView.isLoading { webView.load(URLRequest(url: origin)) }
+        quickCapturePanel.show()
     }
     private func openNotification(_ url: URL) {
         capturePending = false; pendingDestination = url; showWindow(nil)
@@ -246,5 +269,6 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         notifications?.stop()
         if let hotKey { UnregisterEventHotKey(hotKey) }
         if let hotKeyHandler { RemoveEventHandler(hotKeyHandler) }
+        if let localCaptureShortcut { NSEvent.removeMonitor(localCaptureShortcut) }
     }
 }
