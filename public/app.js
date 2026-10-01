@@ -8734,7 +8734,7 @@ async function boardMoveLane(field, key, target, after) {
 // закрытые дела (последние 50), кружок возвращает дело в его колонку, а карточка,
 // брошенная на колонку, закрывается. Меню у неё нет; заголовок ведёт на страницу
 // «Сделано», а тянется, как у остальных, за свободное место шапки.
-function boardDoneColumnEl(closed, field) {
+function boardDoneColumnEl(closed, field, rest, data) {
   const element = node("section", undefined, "board-column board-done-column");
   element.dataset.columnId = "done";
   const head = node("div", undefined, "board-col-head");
@@ -8747,7 +8747,7 @@ function boardDoneColumnEl(closed, field) {
   head.append(pill, node("span", String(closed.length), "board-col-count"));
   boardLaneDrag(element, head, field, DONE_LANE);
   const list = node("div", undefined, "board-cards");
-  for (const card of closed) list.append(boardCardEl(card, { closed: true }));
+  list.append(...boardBoxes(closed, rest, data, { closed: true, draggable: false }));
   if (!closed.length) list.append(node("p", "Закрытое появится здесь", "board-done-empty"));
   element.addEventListener("dragover", (event) => {
     if (boardState.drag?.type !== "card") return;
@@ -9022,15 +9022,15 @@ function boardGroups(items, field, data, keepEmpty = false, extra = []) {
 const boardTint = (field) => `var(--f-${field})`;
 // Вложенные коробки подгрупп внутри колонки: заголовок в цвете поля, а внутри —
 // следующий уровень или карточки.
-function boardBoxes(items, fields, data, { draggable = true } = {}) {
-  if (!fields.length) return items.map((card) => boardCardEl(card, { draggable }));
+function boardBoxes(items, fields, data, { draggable = true, closed = false } = {}) {
+  if (!fields.length) return items.map((card) => boardCardEl(card, { draggable, closed }));
   const [field, ...rest] = fields;
   return boardGroups(items, field, data).map((group) => {
     const box = node("div", undefined, "g-box");
     box.style.setProperty("--fc", boardTint(field));
     const head = node("div", group.label, "g-bh");
     head.append(" ", node("span", `· ${group.items.length}`, "n"));
-    box.append(head, ...boardBoxes(group.items, rest, data, { draggable }));
+    box.append(head, ...boardBoxes(group.items, rest, data, { draggable, closed }));
     return box;
   });
 }
@@ -9196,10 +9196,10 @@ async function boardChangeDue(card, date) {
 }
 // Список: вложенные разделы — заголовок и тело в рамке цвета поля, — а в самом
 // глубоком — строки. Глубина задаёт размер заголовка.
-function boardListNodes(items, fields, depth, data, keepEmpty = false) {
+function boardListNodes(items, fields, depth, data, keepEmpty = false, closed = false) {
   if (!fields.length) {
     const rows = node("div", undefined, "g-rows");
-    rows.append(...items.map((card) => boardRowEl(card)));
+    rows.append(...items.map((card) => boardRowEl(card, { closed })));
     return [rows];
   }
   const [field, ...rest] = fields;
@@ -9209,7 +9209,7 @@ function boardListNodes(items, fields, depth, data, keepEmpty = false) {
     const kids = node("div", undefined, "g-kids");
     head.style.setProperty("--fc", boardTint(field));
     kids.style.setProperty("--fc", boardTint(field));
-    kids.append(...boardListNodes(group.items, rest, depth + 1, data));
+    kids.append(...boardListNodes(group.items, rest, depth + 1, data, false, closed));
     return [head, kids];
   });
 }
@@ -9228,9 +9228,7 @@ function boardListEl(open, closed, data) {
   list.append(...boardListNodes(open, boardState.groups, 1, data, boardState.groups[0] === "col"));
   if (!boardDoneShown()) return list;
   const kids = node("div", undefined, "g-kids done");
-  const rows = node("div", undefined, "g-rows");
-  rows.append(...closed.map((card) => boardRowEl(card, { closed: true })));
-  kids.append(rows);
+  kids.append(...boardListNodes(closed, boardState.groups.slice(1), 2, data, false, true));
   list.append(boardDoneHead(closed.length, "g-sec d1 done"), kids);
   return list;
 }
@@ -9577,7 +9575,7 @@ function renderBoard(source) {
   const [first, ...rest] = boardState.groups;
   const field = first || "all";
   const shown = [];
-  if (boardDoneShown()) shown.push({ key: DONE_LANE, element: boardDoneColumnEl(closed, field) });
+  if (boardDoneShown()) shown.push({ key: DONE_LANE, element: boardDoneColumnEl(closed, field, rest, data) });
   if (first === "col") for (const group of boardGroups(open, "col", data, true)) shown.push({ key: group.key, element: boardColumnEl(group.column, group.items, rest, data) });
   else if (first) {
     const own = boardState.shown[first] || [];

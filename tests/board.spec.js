@@ -1,5 +1,37 @@
 import { test, expect } from "@playwright/test";
 
+test("закрытые дела сохраняют вложенную группировку, длинная подзадача помещается в колонку", async ({ page, request }) => {
+  await reset(request);
+  const parent = await deed(request, "Дописываем карусель с генератором фраз и длинным названием родительской задачи", { due: day(0) });
+  const child = await subOf(request, parent, "Проверить карусель");
+  await request.post(`/api/captures/${child.id}/corrections`, { data: { patch: { schedule: { date: day(0) } } } });
+  const done = await deed(request, "Закрытое дело сегодня", { due: day(0) });
+  await closeDeed(request, done);
+  await page.goto("/#board");
+  await arrange(page, "board", ["col", "day", "src"]);
+  const closed = page.locator(".board-done-column");
+  await expect(closed.locator(".g-box > .g-bh").first()).toContainText("сегодня");
+  await expect(closed.locator(".g-box .g-box .board-card.closed")).toHaveCount(1);
+  await expect(closed.locator(".board-done")).toHaveAttribute("aria-label", "Вернуть в работу: Закрытое дело сегодня");
+  for (const width of [1440, 768, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    const overflow = await page.locator("#board-columns .board-card").evaluateAll((cards) => cards.map((card) => {
+      const box = card.getBoundingClientRect();
+      const parent = card.parentElement.getBoundingClientRect();
+      return Math.max(box.right - parent.right, parent.left - box.left, card.scrollWidth - card.clientWidth);
+    }));
+    expect(Math.max(...overflow)).toBeLessThanOrEqual(1);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await closed.locator(".board-done").click();
+  await expect(closed.locator(".board-card")).toHaveCount(0);
+  await closeDeed(request, done);
+  await arrange(page, "list", ["col", "day", "src"]);
+  await expect(page.locator("#board-flat .g-kids.done .g-sec").first()).toContainText("сегодня");
+  await expect(page.locator("#board-flat .g-kids.done .g-row.closed")).toHaveCount(1);
+  await reset(request);
+});
+
 const reset = (request) => request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
 // Дни считаются в часовом поясе приложения, а не в UTC.
 const day = (shift) =>

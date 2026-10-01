@@ -5900,6 +5900,8 @@ main:has(> #board:not([hidden])) { max-width: none; padding-left: 0; padding-rig
 .g-box {
   --fc: var(--muted);
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: 6px;
   margin: 0;
   padding: 8px;
