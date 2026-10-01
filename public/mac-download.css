@@ -1,0 +1,39 @@
+/* Общие детали небольшого окна установки и публичной страницы загрузки. */
+.macapp-dialog { width: min(510px, calc(100vw - 28px)); max-width: none; max-height: calc(100dvh - 32px); background: var(--n-100); color: var(--n-25); }
+.macapp-panel { position: relative; padding: 30px; }
+.macapp-panel :is(h1, h2, p) { margin-top: 0; }
+.macapp-panel h1 { font-size: clamp(30px, 6vw, 44px); line-height: 1.1; margin-bottom: 16px; letter-spacing: -.035em; }
+.macapp-panel h2 { font-size: 26px; line-height: 1.2; letter-spacing: -.025em; margin-bottom: 12px; }
+.macapp-icon { display: block; margin-bottom: 22px; border-radius: 16px; }
+.macapp-eyebrow { color: var(--n-54); font-size: 12px; margin-bottom: 9px; }
+.macapp-lead { font-size: 15px; line-height: 1.55; color: var(--n-54); margin-bottom: 22px; }
+.macapp-panel .macapp-download { display: inline-flex; align-items: center; justify-content: center; gap: 24px; min-height: 46px; padding: 11px 20px; box-sizing: border-box; background: #b83c36; color: #fff; border-radius: 12px; text-decoration: none; font-size: 15px; font-weight: 600; }
+.macapp-panel .macapp-download:hover { background: #a33430; }
+.macapp-panel .macapp-compat { font-size: 12px; color: var(--n-54); margin: 10px 0 24px; }
+.macapp-steps { padding-left: 22px; margin: 0 0 22px; font-size: 14px; line-height: 1.55; }
+.macapp-steps li { padding-left: 4px; margin: 10px 0; }
+.macapp-notice { background: var(--n-96); border-radius: 13px; padding: 17px 18px; font-size: 13px; line-height: 1.6; }
+.macapp-notice strong { display: block; margin-bottom: 5px; font-weight: 600; }
+.macapp-notice p { margin: 7px 0; }
+.macapp-panel .macapp-notice h2 { font-size: 16px; letter-spacing: -.01em; margin-bottom: 10px; }
+.macapp-panel .macapp-notice a { color: var(--blue-54); text-underline-offset: 3px; }
+.macapp-panel .macapp-tip { margin: 20px 0 0; font-size: 12px; line-height: 1.7; color: var(--n-54); }
+.macapp-panel kbd { font-family: inherit; white-space: nowrap; }
+.macapp-panel .macapp-close { position: absolute; top: 12px; right: 12px; width: 38px; height: 38px; border: 0; border-radius: 50%; background: transparent; color: var(--n-54); font: 25px/1 system-ui, sans-serif; cursor: pointer; }
+.macapp-panel .macapp-close:hover { background: var(--n-96); }
+.macapp-panel :is(a, button):focus-visible, .macapp-home:focus-visible { outline: 2px solid var(--blue-54); outline-offset: 4px; }
+.macapp-page { margin: 0; padding: 36px 24px 24px; background: var(--n-98-4); color: var(--n-25); }
+.macapp-home { display: block; width: fit-content; max-width: 680px; margin: 0 auto 26px; color: var(--n-54); font-size: 13px; text-decoration: none; }
+.macapp-page main.macapp-panel { box-sizing: border-box; width: 100%; max-width: 680px; margin: 0 auto; padding: 44px; background: var(--n-100); border: 1px solid var(--n-93); border-radius: 24px; }
+.macapp-features { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 24px 0; margin-bottom: 8px; border-top: 1px solid var(--n-93); }
+.macapp-features strong { font-size: 14px; }
+.macapp-features p { font-size: 13px; color: var(--n-54); line-height: 1.65; margin: 7px 0 0; }
+.macapp-panel .macapp-install h2 { font-size: 20px; margin-top: 12px; }
+.macapp-footer { max-width: 680px; margin: 24px auto 0; text-align: center; color: var(--n-54); font-size: 12px; line-height: 1.7; }
+@media (max-width: 520px) {
+  .macapp-panel { padding: 24px; }
+  .macapp-page { padding: 22px 14px; }
+  .macapp-page main.macapp-panel { padding: 26px 22px; border-radius: 18px; }
+  .macapp-features { grid-template-columns: 1fr; gap: 16px; }
+  .macapp-panel .macapp-download { width: 100%; }
+}

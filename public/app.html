@@ -16,6 +16,7 @@
     <link rel="stylesheet" href="/public/app.css" />
     <link rel="stylesheet" href="/public/notes.css" />
     <link rel="stylesheet" href="/public/guide.css" />
+    <link rel="stylesheet" href="/public/mac-download.css" />
   </head>
   <body>
     <a class="skip-link" href="#capture-input">К полю записи</a>
@@ -82,6 +83,7 @@
           <p id="account-role" class="account-role"></p>
           <a id="account-admin-link" href="#admin" hidden>Пользователи</a>
           <a href="#settings">Настройки и учётная запись</a>
+          <button id="account-mac-download" class="linklike" type="button" aria-haspopup="dialog" aria-controls="mac-download-dialog">Скачать для Mac</button>
           <button id="account-logout" class="linklike" type="button">Выйти</button>
         </div>
       </details>
@@ -863,6 +865,27 @@
         ></button>
       </div>
       <div id="preview-body" class="preview-body"></div>
+    </dialog>
+    <dialog id="mac-download-dialog" class="macapp-dialog" aria-labelledby="mac-download-title" aria-describedby="mac-download-description">
+      <div class="macapp-panel">
+        <button id="mac-download-close" class="macapp-close" type="button" aria-label="Закрыть окно загрузки" autofocus>×</button>
+        <img class="macapp-icon" src="/public/icon.svg" width="56" height="56" alt="" />
+        <p class="macapp-eyebrow">Теперь рядом, в Dock</p>
+        <h2 id="mac-download-title">Кизуна для Mac</h2>
+        <p id="mac-download-description" class="macapp-lead">Те же дела и ваша учётная запись — в отдельном приложении.</p>
+        <a class="macapp-download" href="/public/downloads/Kizuna-mac.dmg" download>Скачать для Mac <span aria-hidden="true">↓</span></a>
+        <p class="macapp-compat">macOS 13 и новее · Apple Silicon и Intel</p>
+        <ol class="macapp-steps">
+          <li>Откройте скачанный DMG и перетащите Kizuna в Applications («Программы»).</li>
+          <li>Откройте Кизуну из «Программ» и войдите с почтой и паролем от сайта.</li>
+        </ol>
+        <div class="macapp-notice">
+          <strong>Предварительная версия</strong>
+          <p>У приложения пока нет подписи Developer ID и проверки Apple. При первом запуске macOS может его заблокировать.</p>
+          <a href="/public/mac-download.html#first-launch" target="_blank" rel="noopener">Как открыть после загрузки ↗</a>
+        </div>
+        <p class="macapp-tip"><kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>Пробел</kbd> — быстро перейти к новой записи. Нужен интернет; уведомления приходят, пока приложение запущено.</p>
+      </div>
     </dialog>
     <dialog id="password-dialog">
       <form method="dialog">

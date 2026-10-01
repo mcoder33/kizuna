@@ -308,6 +308,8 @@
 .hello-last-action > p { margin: 14px 0 0; color: var(--hello-muted); font-size: 13px; line-height: 1.6; }
 .hello-footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 26px 0 32px; border-top: 1px solid var(--hello-rule); color: var(--hello-muted); font-size: 13px; }
 .hello-footer > p { margin: 0; }
+.hello-footer .hello-mac-link { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; color: var(--hello-ink); }
+.hello-footer .hello-mac-link:hover { color: var(--hello-accent); }
 .hello-footer .hello-footer-brand { color: var(--hello-ink); font-size: 16px; font-weight: 650; }
 .hello-footer-brand > span { margin-left: 5px; color: var(--hello-accent); font-size: 18px; }
 .hello-footer > a:last-child { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; }

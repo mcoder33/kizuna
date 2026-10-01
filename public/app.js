@@ -6057,6 +6057,20 @@ $("#account-logout")?.addEventListener("click", () => logout());
 $("#account-logout-2")?.addEventListener("click", () => logout());
 $("#logout-everywhere")?.addEventListener("click", () => logout(true));
 
+// Маленькое окно установки в существующем меню учётной записи.
+const macDownloadDialog = $("#mac-download-dialog");
+$("#account-mac-download")?.addEventListener("click", () => {
+  $(".account-menu")?.removeAttribute("open");
+  if (!macDownloadDialog.open) macDownloadDialog.showModal();
+});
+$("#mac-download-close")?.addEventListener("click", () => macDownloadDialog.close());
+macDownloadDialog?.addEventListener("close", () => $("#account-summary")?.focus());
+macDownloadDialog?.addEventListener("click", (event) => {
+  if (event.target !== macDownloadDialog) return;
+  const bounds = macDownloadDialog.getBoundingClientRect();
+  if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) macDownloadDialog.close();
+});
+
 // ── тема ─────────────────────────────────────────────────────────────────────
 // Кнопка в шапке для быстрого переключения, поле в настройках — чтобы выбор
 // пережил смену браузера.
