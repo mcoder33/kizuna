@@ -28,9 +28,31 @@ jobs:
       - run: npm ci
       - run: npm test
 
+  freshness:
+    name: Проверка актуальности релиза
+    runs-on: ubuntu-latest
+    outputs:
+      current: ${{ steps.current.outputs.current }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: current
+        name: Не выкладывать устаревший запуск
+        run: |
+          git fetch origin main --no-tags
+          if [ "$(git rev-parse origin/main)" = "$GITHUB_SHA" ]; then
+            echo 'current=true' >> "$GITHUB_OUTPUT"
+            echo "Этот запуск соответствует текущему main ($GITHUB_SHA)."
+          else
+            echo 'current=false' >> "$GITHUB_OUTPUT"
+            echo "Пропуск: $GITHUB_SHA уже устарел относительно origin/main ($(git rev-parse origin/main))."
+          fi
+
   deploy:
     name: Выкладка на сервер
-    needs: tests
+    needs: [tests, freshness]
+    if: needs.freshness.outputs.current == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,3 +68,62 @@ jobs:
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
       - run: ./deploy.sh
+        env:
+          KIZUNA_RELEASE_SHA: ${{ github.sha }}
+
+  announce:
+    name: Объявление релиза в Telegram
+    needs: [tests, freshness, deploy]
+    if: needs.freshness.outputs.current == 'true' && needs.deploy.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Проверить изображение релиза
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const manifest = JSON.parse(fs.readFileSync('release-notes/latest.json', 'utf8'));
+          if (!manifest.id || !manifest.title || !Array.isArray(manifest.changes)) {
+            throw new Error('Некорректный release-notes/latest.json');
+          }
+          if (manifest.image) {
+            const url = new URL(manifest.image);
+            if (url.hostname !== 'kizuna.agent-hub.space' || url.protocol !== 'https:') {
+              throw new Error('Изображение релиза должно размещаться на публичном домене Кизуны');
+            }
+          }
+          NODE
+          image_url=$(node -p "JSON.parse(require('fs').readFileSync('release-notes/latest.json','utf8')).image || ''")
+          if [ -n "$image_url" ]; then
+            result=$(curl -sS -L --max-time 20 -o /dev/null -w '%{http_code} %{content_type}' "$image_url")
+            [ "${result%% *}" = 200 ] && [[ "${result#* }" = image/* ]] || {
+              echo "Картинка релиза недоступна или имеет неверный MIME type: $result" >&2
+              exit 1
+            }
+          fi
+      - name: Ключ деплоя и host-ключи сервера
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${DEPLOY_SSH_KEY}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          cat >> ~/.ssh/known_hosts <<'HOSTS'
+          193.8.215.89 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPs6iliVOxv+eE1haGiYlnu+BZ1jCImucjV8//Mmk5mq
+          193.8.215.89 ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBF51PCAIT/no2I2VhfxmbUYxQqEBtdJqxfqHWpvr9Sy6OA7HXExxZXNkkZfhNgBodGC2iQ4cZHa2pxaC/bxOVfQ=
+          HOSTS
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      - name: Объявить только проверенный выложенный релиз
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          ssh root@193.8.215.89 "bash -s -- '$RELEASE_SHA'" <<'REMOTE_ANNOUNCE'
+          set -euo pipefail
+          expected="$1"
+          actual=$(cat /opt/kizuna/.deployed-sha)
+          if [ "$actual" != "$expected" ]; then
+            echo "Пропуск объявления: выложен SHA $actual, ожидался $expected" >&2
+            exit 1
+          fi
+          cd /opt/kizuna/app
+          sudo -u kizuna env DOTENV_CONFIG_PATH=/opt/kizuna/.env node scripts/announce-release.mjs --send --release-sha "$expected"
+          REMOTE_ANNOUNCE

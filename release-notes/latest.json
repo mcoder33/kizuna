@@ -1,0 +1,15 @@
+{
+  "id": "mac-1.0.2-homepage-release-notes",
+  "title": "Кизуна стала чуть ближе 🌿",
+  "changes": [
+    "⌘⇧Пробел — маленькое окно для дела, пока мысль не убежала.",
+    "Значок Кизуны теперь аккуратно живёт в строке меню.",
+    "Приложение для Mac можно скачать прямо с главной."
+  ],
+  "footer": "Версия 1.0.2 · macOS 13+\nОб обновлениях будем рассказывать здесь — коротко и по делу.",
+  "image": "https://kizuna.agent-hub.space/public/release-mac-quick-capture.png",
+  "buttons": [
+    { "text": "Открыть Кизуну", "url": "https://kizuna.agent-hub.space/" },
+    { "text": "Скачать для Mac", "url": "https://kizuna.agent-hub.space/public/mac-download.html" }
+  ]
+}

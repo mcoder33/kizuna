@@ -14,6 +14,7 @@ set -euo pipefail
 
 SERVER="${KIZUNA_SERVER:-root@193.8.215.89}"
 REMOTE="${KIZUNA_PATH:-/opt/kizuna/app}"
+RELEASE_SHA="${KIZUNA_RELEASE_SHA:-}"
 
 echo "→ проверяю, что рабочее дерево чистое"
 if [ -n "$(git status --porcelain)" ]; then
@@ -48,17 +49,43 @@ fi
 systemctl restart kizuna
 REMOTE_STEPS
 
-echo "→ жду, пока служба ответит"
-ssh "$SERVER" 'i=0; until curl -fsS -o /dev/null http://127.0.0.1:3000/login || [ $i -ge 20 ]; do sleep 1; i=$((i+1)); done; systemctl is-active kizuna'
+echo "→ жду, пока служба ответит кодом 200"
+ssh "$SERVER" 'bash -s' <<'REMOTE_HEALTH'
+set -euo pipefail
+systemctl is-active --quiet kizuna || { echo "служба kizuna не активна" >&2; exit 1; }
+code=000
+for attempt in $(seq 1 20); do
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3000/login || true)
+  [ "$code" = 200 ] && break
+  sleep 1
+done
+if [ "$code" != 200 ]; then
+  echo "локальная проверка /login не прошла: HTTP $code" >&2
+  exit 1
+fi
+REMOTE_HEALTH
 
 echo "→ проверяю снаружи"
-# Сразу после перезапуска первое соединение иногда обрывается на установке TLS,
-# поэтому спрашиваем трижды и верим последнему внятному ответу.
+code=000
 for attempt in 1 2 3; do
-  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 https://kizuna.agent-hub.space/login || true)
-  [ "$code" != "000" ] && break
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://kizuna.agent-hub.space/login || true)
+  [ "$code" = 200 ] && break
   sleep 2
 done
-echo "   https://kizuna.agent-hub.space/login → $code (401 = басик-авторизация на месте, как и должно быть)"
+if [ "$code" != 200 ]; then
+  echo "внешняя проверка /login не прошла: HTTP $code" >&2
+  exit 1
+fi
+echo "   https://kizuna.agent-hub.space/login → HTTP 200"
+
+# GitHub Actions passes its immutable commit SHA. Record only after both health
+# checks pass, outside the rsync-managed application directory.
+if [ -n "$RELEASE_SHA" ]; then
+  if ! [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "KIZUNA_RELEASE_SHA должен быть полным SHA-1 коммита" >&2
+    exit 1
+  fi
+  ssh "$SERVER" "printf '%s\\n' '$RELEASE_SHA' > /opt/kizuna/.deployed-sha"
+fi
 
 echo "готово"
