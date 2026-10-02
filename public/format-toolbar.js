@@ -1,3 +1,4 @@
+import { t, localizedBuiltins } from "./browser-i18n.js";
 // Панель оформления выделенного текста — как в Notion: появляется над
 // выделением в любом живом поле. Кнопки не меняют модель поля напрямую — они
 // переписывают строки текстом с маркерами Markdown, а цвет ставят
@@ -6,39 +7,39 @@
 import { COLOR_NAMES } from "./markdown-live.js";
 
 export const INLINE_MARKS = {
-  bold: { open: "**", close: "**", label: "Ж", title: "Жирный · ⌘B" },
-  italic: { open: "*", close: "*", label: "К", title: "Курсив · ⌘I" },
-  underline: { open: "++", close: "++", label: "Ч", title: "Подчёркнутый · ⌘U" },
-  strike: { open: "~~", close: "~~", label: "S", title: "Зачёркнутый · ⌘⇧S" },
-  code: { open: "`", close: "`", label: "<>", title: "Код · ⌘E" },
-  highlight: { open: "==", close: "==", label: "▮", title: "Маркер · ⌘⇧H" },
+  bold: { open: "**", close: "**", get label() { return t("Ж"); }, get title() { return t("Жирный · ⌘B"); } },
+  italic: { open: "*", close: "*", get label() { return t("К"); }, get title() { return t("Курсив · ⌘I"); } },
+  underline: { open: "++", close: "++", get label() { return t("Ч"); }, get title() { return t("Подчёркнутый · ⌘U"); } },
+  strike: { open: "~~", close: "~~", label: "S", get title() { return t("Зачёркнутый · ⌘⇧S"); } },
+  code: { open: "`", close: "`", label: "<>", get title() { return t("Код · ⌘E"); } },
+  highlight: { open: "==", close: "==", label: "▮", get title() { return t("Маркер · ⌘⇧H"); } },
 };
 
 export const COLOR_LABELS = {
-  gray: "Серый", brown: "Коричневый", orange: "Оранжевый", yellow: "Жёлтый", green: "Зелёный",
-  blue: "Синий", purple: "Фиолетовый", pink: "Розовый", red: "Красный",
+  get gray() { return t("Серый"); }, get brown() { return t("Коричневый"); }, get orange() { return t("Оранжевый"); }, get yellow() { return t("Жёлтый"); }, get green() { return t("Зелёный"); },
+  get blue() { return t("Синий"); }, get purple() { return t("Фиолетовый"); }, get pink() { return t("Розовый"); }, get red() { return t("Красный"); },
 };
 
-export const BLOCK_KINDS = [
-  { id: "text", label: "Текст", prefix: "" },
-  { id: "h1", label: "Заголовок 1", prefix: "# " },
-  { id: "h2", label: "Заголовок 2", prefix: "## " },
-  { id: "h3", label: "Заголовок 3", prefix: "### " },
-  { id: "bullet", label: "Список", prefix: "- " },
-  { id: "ordered", label: "Нумерованный", prefix: "1. " },
-  { id: "task", label: "Задача", prefix: "- [ ] " },
-  { id: "quote", label: "Цитата", prefix: "> " },
-];
+export const BLOCK_KINDS = localizedBuiltins([
+  { id: "text", get label() { return "Текст"; }, prefix: "" },
+  { id: "h1", get label() { return "Заголовок 1"; }, prefix: "# " },
+  { id: "h2", get label() { return "Заголовок 2"; }, prefix: "## " },
+  { id: "h3", get label() { return "Заголовок 3"; }, prefix: "### " },
+  { id: "bullet", get label() { return "Список"; }, prefix: "- " },
+  { id: "ordered", get label() { return "Нумерованный"; }, prefix: "1. " },
+  { id: "task", get label() { return "Задача"; }, prefix: "- [ ] " },
+  { id: "quote", get label() { return "Цитата"; }, prefix: "> " },
+]);
 
-export const FONT_OPTIONS = [
-  { id: "default", label: "Обычный" },
-  { id: "serif", label: "С засечками" },
-  { id: "mono", label: "Моноширинный" },
-];
-export const SIZE_OPTIONS = [
-  { id: "normal", label: "Обычный" },
-  { id: "small", label: "Мелкий" },
-];
+export const FONT_OPTIONS = localizedBuiltins([
+  { id: "default", get label() { return "Обычный"; } },
+  { id: "serif", get label() { return "С засечками"; } },
+  { id: "mono", get label() { return "Моноширинный"; } },
+]);
+export const SIZE_OPTIONS = localizedBuiltins([
+  { id: "normal", get label() { return "Обычный"; } },
+  { id: "small", get label() { return "Мелкий"; } },
+]);
 
 const BLOCK_PREFIX = /^(\s*)(#{1,6}\s+|[-*+]\s+\[[ xX/-]\]\s+|[-*+]\s+|\d{1,3}[.)]\s+|>\s?)/;
 
@@ -145,7 +146,7 @@ export function attachFormatToolbar(field, { document: doc = document, prefs = n
   const bar = doc.createElement("div");
   bar.className = "fmt-bar";
   bar.setAttribute("role", "toolbar");
-  bar.setAttribute("aria-label", "Оформление текста");
+  bar.setAttribute("aria-label", t("Оформление текста"));
   bar.hidden = true;
   doc.body.append(bar);
   // Как и меню разметки: внутри <dialog> элемент из body не виден — панель
@@ -216,7 +217,7 @@ export function attachFormatToolbar(field, { document: doc = document, prefs = n
   const link = () => {
     const range = field.selection();
     if (!range || range.from.line !== range.to.line) return;
-    const url = window.prompt("Адрес ссылки", "https://");
+    const url = window.prompt(t("Адрес ссылки"), "https://");
     if (!url || !/^https?:\/\/\S+$/i.test(url.trim())) return;
     apply((line, from, to) => {
       const text = line.slice(from, to);
@@ -268,13 +269,13 @@ export function attachFormatToolbar(field, { document: doc = document, prefs = n
   };
 
   // «Превратить в» — блок текущих строк.
-  const blockTrigger = button("Текст", "Превратить в…", () => {}, "fmt-trigger");
+  const blockTrigger = button(t("Текст"), t("Превратить в…"), () => {}, "fmt-trigger");
   blockTrigger.dataset.menu = "block";
   blockTrigger.setAttribute("aria-haspopup", "menu");
   blockTrigger.setAttribute("aria-expanded", "false");
   menu(blockTrigger, (panel) => {
     const current = field.caret() ? blockKindOf(field.lineAt(field.caret().line)) : "text";
-    panel.append(head("Превратить в"));
+    panel.append(head(t("Превратить в")));
     for (const kind of BLOCK_KINDS) panel.append(item(kind.label, () => applyBlock(kind.id), { active: kind.id === current }));
   });
 
@@ -282,30 +283,30 @@ export function attachFormatToolbar(field, { document: doc = document, prefs = n
     const element = button(mark.label, mark.title, () => wrap(mark), `fmt-${id}`);
     return element;
   });
-  const linkButton = button("Ссылка", "Ссылка · ⌘K", link, "fmt-link");
+  const linkButton = button(t("Ссылка"), t("Ссылка · ⌘K"), link, "fmt-link");
 
-  const colorTrigger = button("A", "Цвет текста и фона", () => {}, "fmt-trigger fmt-color");
+  const colorTrigger = button("A", t("Цвет текста и фона"), () => {}, "fmt-trigger fmt-color");
   colorTrigger.dataset.menu = "color";
   colorTrigger.setAttribute("aria-haspopup", "menu");
   colorTrigger.setAttribute("aria-expanded", "false");
   menu(colorTrigger, (panel) => {
     panel.classList.add("fmt-menu-colors");
-    panel.append(head("Цвет"));
-    panel.append(item("Без цвета", () => color(null)));
+    panel.append(head(t("Цвет")));
+    panel.append(item(t("Без цвета"), () => color(null)));
     for (const name of COLOR_NAMES) panel.append(item(COLOR_LABELS[name], () => color(name), { swatch: name }));
-    panel.append(head("Фон"));
+    panel.append(head(t("Фон")));
     for (const name of COLOR_NAMES) panel.append(item(COLOR_LABELS[name], () => color(`bg-${name}`), { swatch: `bg-${name}` }));
   });
 
-  const fontTrigger = button("Aa", "Шрифт и размер текста", () => {}, "fmt-trigger fmt-font");
+  const fontTrigger = button("Aa", t("Шрифт и размер текста"), () => {}, "fmt-trigger fmt-font");
   fontTrigger.dataset.menu = "font";
   fontTrigger.setAttribute("aria-haspopup", "menu");
   fontTrigger.setAttribute("aria-expanded", "false");
   menu(fontTrigger, (panel) => {
     const current = prefs?.read?.() || { font: "default", size: "normal" };
-    panel.append(head("Шрифт"));
+    panel.append(head(t("Шрифт")));
     for (const option of FONT_OPTIONS) panel.append(item(option.label, () => prefs?.set?.({ font: option.id }), { active: current.font === option.id }));
-    panel.append(head("Размер"));
+    panel.append(head(t("Размер")));
     for (const option of SIZE_OPTIONS) panel.append(item(option.label, () => prefs?.set?.({ size: option.id }), { active: current.size === option.id }));
   });
 
@@ -340,7 +341,7 @@ export function attachFormatToolbar(field, { document: doc = document, prefs = n
     // Подпись «Превратить в» показывает текущий блок строки с кареткой.
     const caret = field.caret();
     const kind = BLOCK_KINDS.find((entry) => entry.id === (caret ? blockKindOf(field.lineAt(caret.line)) : "text"));
-    blockTrigger.textContent = kind?.label ?? "Текст";
+    blockTrigger.textContent = kind?.label ?? t("Текст");
     place(rect);
   };
 

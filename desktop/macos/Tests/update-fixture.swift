@@ -49,6 +49,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         log(message); timer?.invalidate(); NSApp.terminate(nil)
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if Bundle.main.object(forInfoDictionaryKey: "TestMode") as? String != "demo" { DesktopLocale.requested = "ru" }
         if let path = Bundle.main.object(forInfoDictionaryKey: "TestProcessFile") as? String {
             try? String(ProcessInfo.processInfo.processIdentifier).write(toFile: path, atomically: true, encoding: .utf8)
         }

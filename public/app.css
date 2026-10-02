@@ -10024,7 +10024,8 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0 0 96px; }
 .bell-menu > summary,
 .settings-link,
 .theme-toggle,
-.account-menu > summary {
+.account-menu > summary,
+.header-tail .language-control {
   border: 0;
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.05);
   transition: filter 0.15s ease, transform 0.15s ease;
@@ -10032,14 +10033,16 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0 0 96px; }
 :root[data-theme='dark'] .bell-menu > summary,
 :root[data-theme='dark'] .settings-link,
 :root[data-theme='dark'] .theme-toggle,
-:root[data-theme='dark'] .account-menu > summary {
+:root[data-theme='dark'] .account-menu > summary,
+:root[data-theme='dark'] .header-tail .language-control {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) .bell-menu > summary,
   :root:not([data-theme='light']) .settings-link,
   :root:not([data-theme='light']) .theme-toggle,
-  :root:not([data-theme='light']) .account-menu > summary {
+  :root:not([data-theme='light']) .account-menu > summary,
+  :root:not([data-theme='light']) .header-tail .language-control {
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
   }
 }
@@ -10050,7 +10053,8 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0 0 96px; }
 .bell-menu > summary:hover, .bell-menu[open] > summary,
 .settings-link:hover,
 .theme-toggle:hover,
-.account-menu > summary:hover, .account-menu[open] > summary {
+.account-menu > summary:hover, .account-menu[open] > summary,
+.header-tail .language-control:hover {
   border: 0;
   filter: saturate(1.3) brightness(0.97);
   transform: scale(1.06);
@@ -10059,3 +10063,42 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0 0 96px; }
 .settings-link:hover { color: var(--dock-board-f); }
 .theme-toggle:hover { color: var(--dock-today-f); }
 .account-menu > summary:hover, .account-menu[open] > summary { color: var(--dock-done-f); }
+
+/* Editor placeholders are application text, resolved by the active locale. */
+.notes-title[contenteditable="true"][data-placeholder]:empty::before {
+  content: attr(data-placeholder);
+}
+
+/* The same native language picker is available before and after sign-in. */
+.language-control { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 36px; padding: 0 8px; border: 1px solid var(--n-90); border-radius: 10px; color: var(--ink); background: var(--n-100); white-space: nowrap; cursor: pointer; font-size: 11px; line-height: 1; }
+.language-control svg { width: 17px; height: 17px; flex: none; }
+.language-code { font-weight: 650; }
+.language-mode { color: var(--n-54); font-size: 9px; }
+.language-mode[hidden] { display: none; }
+.language-control .language-select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; margin: 0; padding: 0; cursor: pointer; font-size: 16px; }
+.language-control:focus-within { outline: 2px solid var(--blue-54); outline-offset: 3px; }
+.guest-header-actions { position: absolute; top: 20px; right: 22px; display: flex; align-items: center; gap: 10px; }
+.guest-header-actions .auth-theme { position: static; }
+.guest-download-header { max-width: 680px; margin: 0 auto 26px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.guest-download-header .macapp-home { margin: 0; }
+@media (max-width: 390px) {
+  header > .header-tail { gap: 4px; }
+  .language-control { padding-inline: 6px; gap: 4px; }
+}
+
+/* Account language belongs to the same compact action group as the avatar. */
+.header-tail .language-control {
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  flex: none;
+  padding: 0;
+  gap: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--dock-notes-b);
+  color: var(--dock-notes-f);
+  font-size: 10px;
+}
+.header-tail .language-code,
+.header-tail .language-mode { display: none; }

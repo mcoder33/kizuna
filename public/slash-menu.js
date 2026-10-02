@@ -1,3 +1,4 @@
+import { t, localizedBuiltins } from "./browser-i18n.js";
 // Меню разметки по «/». Markdown в поле оформляется на лету, но помнить его
 // наизусть человек не обязан: набрал косую черту — увидел, что вообще бывает,
 // и выбрал. Отдельный модуль, потому что это не про разбор разметки, а про
@@ -24,7 +25,7 @@ const CALLOUT_ITEMS = [];
     }
     const item = {
       id: `callout-${kind}`,
-      title: `Выноска: ${title.toLowerCase()}`,
+      get title() { return t("Выноска: {label}", { label: CALLOUTS[kind].toLowerCase() }); },
       hint: `> [!${kind}]`,
       keys: `callout выноска ${kind} ${title.toLowerCase()} ${CALLOUT_SYNONYMS[kind] ?? ""}`.trimEnd(),
       kind: "prefix",
@@ -35,47 +36,47 @@ const CALLOUT_ITEMS = [];
   }
 }
 
-export const SLASH_ITEMS = [
-  { id: "h1", title: "Заголовок 1", hint: "# ", keys: "h1 heading zagolovok заголовок большой", kind: "prefix", value: "# " },
-  { id: "h2", title: "Заголовок 2", hint: "## ", keys: "h2 heading подзаголовок заголовок", kind: "prefix", value: "## " },
-  { id: "h3", title: "Заголовок 3", hint: "### ", keys: "h3 heading заголовок мелкий", kind: "prefix", value: "### " },
-  { id: "h4", title: "Заголовок 4", hint: "#### ", keys: "h4 heading заголовок", kind: "prefix", value: "#### " },
-  { id: "h5", title: "Заголовок 5", hint: "##### ", keys: "h5 heading заголовок", kind: "prefix", value: "##### " },
-  { id: "h6", title: "Заголовок 6", hint: "###### ", keys: "h6 heading заголовок", kind: "prefix", value: "###### " },
-  { id: "bullet", title: "Список", hint: "- ", keys: "list bullet список маркер пункт", kind: "prefix", value: "- " },
-  { id: "ordered", title: "Нумерованный список", hint: "1. ", keys: "ordered number нумерованный список цифры", kind: "prefix", value: "1. " },
-  { id: "task", title: "Задача", hint: "- [ ] ", keys: "todo task чекбокс задача галочка дело", kind: "prefix", value: "- [ ] " },
-  { id: "quote", title: "Цитата", hint: "> ", keys: "quote цитата", kind: "prefix", value: "> " },
-  { id: "code", title: "Блок кода", hint: "```", keys: "code блок кода программа", kind: "block", value: "```\n\n```", caret: 4 },
-  { id: "divider", title: "Разделитель", hint: "---", keys: "divider hr разделитель черта линия", kind: "block", value: "---" },
+export const SLASH_ITEMS = localizedBuiltins([
+  { id: "h1", get title() { return "Заголовок 1"; }, hint: "# ", get keys() { return "h1 heading zagolovok заголовок большой"; }, kind: "prefix", value: "# " },
+  { id: "h2", get title() { return "Заголовок 2"; }, hint: "## ", get keys() { return "h2 heading подзаголовок заголовок"; }, kind: "prefix", value: "## " },
+  { id: "h3", get title() { return "Заголовок 3"; }, hint: "### ", get keys() { return "h3 heading заголовок мелкий"; }, kind: "prefix", value: "### " },
+  { id: "h4", get title() { return "Заголовок 4"; }, hint: "#### ", get keys() { return "h4 heading заголовок"; }, kind: "prefix", value: "#### " },
+  { id: "h5", get title() { return "Заголовок 5"; }, hint: "##### ", get keys() { return "h5 heading заголовок"; }, kind: "prefix", value: "##### " },
+  { id: "h6", get title() { return "Заголовок 6"; }, hint: "###### ", get keys() { return "h6 heading заголовок"; }, kind: "prefix", value: "###### " },
+  { id: "bullet", get title() { return "Список"; }, hint: "- ", get keys() { return "list bullet список маркер пункт"; }, kind: "prefix", value: "- " },
+  { id: "ordered", get title() { return "Нумерованный список"; }, hint: "1. ", get keys() { return "ordered number нумерованный список цифры"; }, kind: "prefix", value: "1. " },
+  { id: "task", get title() { return "Задача"; }, hint: "- [ ] ", get keys() { return "todo task чекбокс задача галочка дело"; }, kind: "prefix", value: "- [ ] " },
+  { id: "quote", get title() { return "Цитата"; }, hint: "> ", get keys() { return "quote цитата"; }, kind: "prefix", value: "> " },
+  { id: "code", get title() { return "Блок кода"; }, hint: "```", get keys() { return "code блок кода программа"; }, kind: "block", value: "```\n\n```", caret: 4 },
+  { id: "divider", get title() { return "Разделитель"; }, hint: "---", get keys() { return "divider hr разделитель черта линия"; }, kind: "block", value: "---" },
   // Ячейки пустые, а не с примером внутри: заготовку с «Что» и «Сколько»
   // пришлось бы сначала стирать, а каретка и так стоит в первой ячейке.
-  { id: "table", title: "Таблица", hint: "| … | … |", keys: "table таблица", kind: "block", value: "|  |  |\n| --- | --- |\n|  |  |", caret: 2 },
-  { id: "bold", title: "Жирный", hint: "**текст**", keys: "bold жирный полужирный", kind: "wrap", before: "**", after: "**" },
-  { id: "italic", title: "Курсив", hint: "*текст*", keys: "italic курсив наклонный", kind: "wrap", before: "*", after: "*" },
-  { id: "strike", title: "Зачёркнутый", hint: "~~текст~~", keys: "strike зачёркнутый зачеркнутый", kind: "wrap", before: "~~", after: "~~" },
-  { id: "mark", title: "Выделение", hint: "==текст==", keys: "highlight mark выделение маркер", kind: "wrap", before: "==", after: "==" },
-  { id: "inline-code", title: "Код в строке", hint: "`код`", keys: "code inline код строка", kind: "wrap", before: "`", after: "`" },
+  { id: "table", get title() { return "Таблица"; }, hint: "| … | … |", get keys() { return "table таблица"; }, kind: "block", value: "|  |  |\n| --- | --- |\n|  |  |", caret: 2 },
+  { id: "bold", get title() { return "Жирный"; }, get hint() { return "**текст**"; }, get keys() { return "bold жирный полужирный"; }, kind: "wrap", before: "**", after: "**" },
+  { id: "italic", get title() { return "Курсив"; }, get hint() { return "*текст*"; }, get keys() { return "italic курсив наклонный"; }, kind: "wrap", before: "*", after: "*" },
+  { id: "strike", get title() { return "Зачёркнутый"; }, get hint() { return "~~текст~~"; }, get keys() { return "strike зачёркнутый зачеркнутый"; }, kind: "wrap", before: "~~", after: "~~" },
+  { id: "mark", get title() { return "Выделение"; }, get hint() { return "==текст=="; }, get keys() { return "highlight mark выделение маркер"; }, kind: "wrap", before: "==", after: "==" },
+  { id: "inline-code", get title() { return "Код в строке"; }, get hint() { return "`код`"; }, get keys() { return "code inline код строка"; }, kind: "wrap", before: "`", after: "`" },
   // Адрес в заготовке настоящий, а не «https://»: поле рисует ссылку только с
   // полным адресом, и с обрубком человек видел бы серый текст вместо ссылки.
   // example.com зарезервирован стандартом и никуда не ведёт.
-  { id: "link", title: "Ссылка", hint: "[текст](адрес)", keys: "link ссылка адрес url", kind: "wrap", before: "[", after: "](https://example.com)" },
-  { id: "image", title: "Изображение", hint: "![подпись](адрес)", keys: "image picture photo изображение картинка фото", kind: "wrap", before: "![", after: "](https://example.com)" },
-  { id: "wikilink", title: "Внутренняя ссылка", hint: "[[запись]]", keys: "wikilink internal вики внутренняя ссылка память", kind: "wrap", before: "[[", after: "]]" },
-  { id: "embed", title: "Встраивание записи", hint: "![[запись]]", keys: "embed transclude встраивание вложение записи", kind: "wrap", before: "![[", after: "]]" },
+  { id: "link", get title() { return "Ссылка"; }, get hint() { return "[текст](адрес)"; }, get keys() { return "link ссылка адрес url"; }, kind: "wrap", before: "[", after: "](https://example.com)" },
+  { id: "image", get title() { return "Изображение"; }, get hint() { return "![подпись](адрес)"; }, get keys() { return "image picture photo изображение картинка фото"; }, kind: "wrap", before: "![", after: "](https://example.com)" },
+  { id: "wikilink", get title() { return "Внутренняя ссылка"; }, get hint() { return "[[запись]]"; }, get keys() { return "wikilink internal вики внутренняя ссылка память"; }, kind: "wrap", before: "[[", after: "]]" },
+  { id: "embed", get title() { return "Встраивание записи"; }, get hint() { return "![[запись]]"; }, get keys() { return "embed transclude встраивание вложение записи"; }, kind: "wrap", before: "![[", after: "]]" },
   ...CALLOUT_ITEMS,
-  { id: "math", title: "Формула", hint: "$x$", keys: "math formula latex формула математика", kind: "wrap", before: "$", after: "$" },
-  { id: "math-block", title: "Формула блоком", hint: "$$x$$", keys: "math formula block формула блоком выключная", kind: "wrap", before: "$$", after: "$$" },
-  { id: "comment", title: "Комментарий", hint: "%%текст%%", keys: "comment hidden комментарий скрытый черновик", kind: "wrap", before: "%%", after: "%%" },
-  { id: "footnote", title: "Сноска", hint: "^[текст]", keys: "footnote inline сноска примечание", kind: "wrap", before: "^[", after: "]" },
-  { id: "footnote-ref", title: "Сноска: ссылка", hint: "[^1]", keys: "footnote ref сноска ссылка номер", kind: "wrap", before: "[^", after: "]" },
-  { id: "footnote-def", title: "Сноска: определение", hint: "[^1]:", keys: "footnote definition сноска определение внизу", kind: "prefix", value: "[^1]: " },
+  { id: "math", get title() { return "Формула"; }, hint: "$x$", get keys() { return "math formula latex формула математика"; }, kind: "wrap", before: "$", after: "$" },
+  { id: "math-block", get title() { return "Формула блоком"; }, hint: "$$x$$", get keys() { return "math formula block формула блоком выключная"; }, kind: "wrap", before: "$$", after: "$$" },
+  { id: "comment", get title() { return "Комментарий"; }, get hint() { return "%%текст%%"; }, get keys() { return "comment hidden комментарий скрытый черновик"; }, kind: "wrap", before: "%%", after: "%%" },
+  { id: "footnote", get title() { return "Сноска"; }, get hint() { return "^[текст]"; }, get keys() { return "footnote inline сноска примечание"; }, kind: "wrap", before: "^[", after: "]" },
+  { id: "footnote-ref", get title() { return "Сноска: ссылка"; }, hint: "[^1]", get keys() { return "footnote ref сноска ссылка номер"; }, kind: "wrap", before: "[^", after: "]" },
+  { id: "footnote-def", get title() { return "Сноска: определение"; }, hint: "[^1]:", get keys() { return "footnote definition сноска определение внизу"; }, kind: "prefix", value: "[^1]: " },
   // У тега нет закрывающей пары: after пустой, набранное после решётки и есть тег.
-  { id: "tag", title: "Тег", hint: "#тег", keys: "tag hashtag тег метка рубрика", kind: "wrap", before: "#", after: "" },
+  { id: "tag", get title() { return "Тег"; }, get hint() { return "#тег"; }, get keys() { return "tag hashtag тег метка рубрика"; }, kind: "wrap", before: "#", after: "" },
   // Имя якоря — латиницей: поле рисует только такие, поэтому в заготовке
   // настоящее имя-пример, как адрес у ссылки, а не кириллический обрубок.
-  { id: "anchor", title: "Якорь блока", hint: "^имя", keys: "anchor block якорь блока метка ссылка", kind: "block", value: "^anchor" },
-];
+  { id: "anchor", get title() { return "Якорь блока"; }, get hint() { return "^имя"; }, get keys() { return "anchor block якорь блока метка ссылка"; }, kind: "block", value: "^anchor" },
+]);
 
 const normalize = (value) => String(value).toLowerCase().replace(/ё/g, "е");
 
@@ -114,7 +115,7 @@ export function attachSlashMenu(field, { document: doc = document } = {}) {
   const menu = doc.createElement("div");
   menu.className = "slash-menu";
   menu.setAttribute("role", "listbox");
-  menu.setAttribute("aria-label", "Разметка");
+  menu.setAttribute("aria-label", t("Разметка"));
   menu.hidden = true;
   // Пока меню закрыто, оно лежит в body; перед показом переезжает в модальную
   // карточку, если поле живёт в ней: элемент вне <dialog> рисуется под

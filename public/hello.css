@@ -81,6 +81,7 @@
   z-index: 1;
   display: flex;
   justify-content: space-between;
+  flex-wrap: nowrap;
   min-height: 96px;
   padding: 0;
   border-bottom: 1px solid var(--hello-rule);
@@ -90,12 +91,15 @@
 .hello-header .brand-mark { width: 32px; height: 32px; }
 .hello-header .brand-word { font-size: 23px; letter-spacing: -0.7px; }
 .hello-nav {
+  display: flex;
+  order: 2;
   position: static;
   transform: none;
   flex: 0 1 auto;
   align-items: center;
-  gap: 30px;
+  gap: 28px;
 }
+.hello-header-actions { display: flex; align-items: center; gap: 8px; }
 .hello-nav a { font-size: 14px; color: var(--hello-muted); }
 .hello-nav .hello-login {
   display: inline-flex;
@@ -106,6 +110,17 @@
   border-radius: 7px;
   color: var(--hello-ink);
 }
+.hello-header .language-control {
+  min-height: 44px;
+  padding-inline: 10px;
+  border: 1px solid var(--hello-rule);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--hello-ink);
+  font-size: 12px;
+}
+.hello-header .language-mode { color: var(--hello-muted); font-size: 10px; }
+.hello-header .language-control:focus-within { outline-color: var(--hello-accent); }
 .hello-nav a:hover, .hello-text-link:hover { color: var(--hello-accent); }
 .hello-shell { max-width: 1184px; padding: 0; }
 .hello-hero {
@@ -383,7 +398,6 @@
   .hello-header { min-height: 76px; }
   .hello-header .brand-mark { width: 28px; height: 28px; }
   .hello-header .brand-word { font-size: 21px; }
-  .hello-nav-anchor { display: none; }
   .hello-nav .hello-login { padding-inline: 16px; }
   .hello-hero { padding: 40px 0 44px; gap: 30px; }
   .hello-eyebrow { margin-bottom: 18px; letter-spacing: 1.2px; }
@@ -433,4 +447,16 @@
 @media (prefers-reduced-motion: reduce) {
   .hello-body *, .hello-body *::before, .hello-body *::after { animation: none !important; transition: none !important; }
   .hello-body .hello-primary:hover { transform: none; }
+}
+
+@media (max-width: 390px) {
+  .hello-header { gap: 8px; }
+  .hello-header .brand { gap: 8px; }
+  .hello-header .hello-login { padding-inline: 8px; font-size: 12px; }
+  .hello-header .language-control { padding-inline: 6px; }
+  .hello-header .brand-word { font-size: 18px; }
+}
+
+@media (max-width: 760px) {
+  .hello-nav-anchor { display: none; }
 }

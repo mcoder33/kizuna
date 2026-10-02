@@ -14,7 +14,9 @@ import {
 } from './auth.js';
 import QRCode from 'qrcode';
 import express from 'express';
-import { monthlySpend } from './db.js';
+import { monthlySpend, writeSettings } from './db.js';
+import { validLocaleSetting, validDetectedLocale } from './locale.js';
+import { resolveLocale, translate } from '../public/i18n.js';
 import { avatarUrl, avatarPresets, choosePreset, saveAvatarImage, avatarImage, forgetAvatar, AVATAR_IMAGE_LIMIT } from './avatars.js';
 import { notify } from './notifications.js';
 import {
@@ -43,7 +45,7 @@ export function publicUser(row) {
 const PENDING_LIMIT = 50;
 const fail = (res, status, code, message, extra = {}) => res.status(status).json({ error: { code, message, ...extra } });
 
-export function createAccounts({ db, now = () => new Date(), secureCookies = false, audit = () => {}, sessionTtlMs = SESSION_TTL_MS, timeZone = () => 'UTC' } = {}) {
+export function createAccounts({ db, now = () => new Date(), secureCookies = false, audit = () => {}, sessionTtlMs = SESSION_TTL_MS, timeZone = () => 'UTC', onPreferencesChanged = () => {} } = {}) {
   const at = () => now().toISOString();
   const note = (event) => { try { audit(event); } catch {} };
 
@@ -53,11 +55,14 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
   // забирает себе журнал, который вёлся до обновления.
   const needsBootstrap = () => countUsers(db) === 0;
 
-  function registerAccount({ email, password, userAgent = null }) {
+  function registerAccount({ email, password, locale, detectedLocale, userAgent = null }) {
     const address = normalizeEmail(email);
     if (!validEmail(address)) return { error: [400, 'invalid_email', 'Введите корректный адрес почты.'] };
     const problem = passwordProblem(password);
     if (problem) return { error: [400, 'weak_password', problem] };
+    for (const [name, value, valid] of [['locale', locale, validLocaleSetting], ['detectedLocale', detectedLocale, value => value === null || validDetectedLocale(value)]]) {
+      if (value !== undefined && !valid(value)) return { error: [400, 'invalid_setting', translate(resolveLocale(locale, [detectedLocale]), 'Некорректное значение настройки: {name}.', { name })] };
+    }
     const first = needsBootstrap();
     // Регистрация открыта всем, а решает администратор — значит, очередь заявок
     // легко забить и утопить в ней настоящих людей. Больше полусотни
@@ -74,6 +79,10 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
       email: address, passwordHash: hashPassword(password),
       role: first ? 'admin' : 'user', status: first ? 'active' : 'pending',
     });
+    const preferences = {};
+    if (locale !== undefined) preferences[`user:${user.id}:locale`] = locale;
+    if (detectedLocale !== undefined && detectedLocale !== null) preferences[`user:${user.id}:detectedLocale`] = detectedLocale;
+    if (Object.keys(preferences).length) { writeSettings(db, preferences); onPreferencesChanged(); }
     if (first) {
       updateUser(db, user.id, { approved_at: at(), approved_by: user.id });
       adoptOrphanRecords(db, user.id);
@@ -186,7 +195,7 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
 
     app.post('/api/auth/register', (req, res, next) => {
       try {
-        const result = registerAccount({ email: req.body?.email, password: req.body?.password, userAgent: req.get('user-agent') });
+        const result = registerAccount({ email: req.body?.email, password: req.body?.password, locale: req.body?.locale, detectedLocale: req.body?.detectedLocale, userAgent: req.get('user-agent') });
         if (result.error) return fail(res, ...result.error);
         // Первого администратора незачем заставлять входить ещё раз — он уже
         // доказал, что знает пароль, придумав его минуту назад.
@@ -194,7 +203,7 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
         // Заявку разбирает администратор — и узнаёт о ней сразу, а не когда
         // случайно заглянет в «Пользователей».
         for (const admin of listUsers(db).filter(user => user.role === 'admin' && user.status === 'active'))
-          notify(db, { userId: admin.id, kind: 'signup', lead: 'Новая заявка на вход:', text: result.user.email, meta: ['доступ открывает администратор'], data: { url: '/#admin' } });
+          notify(db, { userId: admin.id, kind: 'signup', lead: 'Новая заявка на вход:', template: { lead: { source: 'Новая заявка на вход:' } }, text: result.user.email, meta: ['доступ открывает администратор'], metaTemplates: [{source:'доступ открывает администратор'}], data: { url: '/#admin' } });
         res.status(201).json({ user: publicUser(result.user), first: false, message: 'Заявка отправлена. Доступ откроет администратор.' });
       } catch (error) { next(error); }
     });

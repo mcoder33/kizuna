@@ -143,7 +143,7 @@ export function createRoom(db, circleId, userId, name, memberIds = [], { everyon
     db.prepare("INSERT INTO chat_rooms(id,circle_id,name,kind,everyone,created_by,created_at) VALUES(?,?,?,'room',1,?,?)").run(roomId, circleId, clean, userId, at);
     system(db, roomId, userId, 'joined', 'завёл(а) разговор для всего круга');
     const room = findRoom(db, roomId);
-    for (const person of circlePeople) roomCall(db, room, userId, person, at, `заводит разговор «${clean}» для всего круга`);
+    for (const person of circlePeople) roomCall(db, room, userId, person, at, `заводит разговор «${clean}» для всего круга`, {source:'заводит разговор «{name}» для всего круга',params:{name:clean}});
     return { room: serializeRoom(db, room, userId) };
   }
   const wanted = [...new Set([userId, ...memberIds])].filter(person => circlePeople.has(person));
@@ -158,9 +158,9 @@ export function createRoom(db, circleId, userId, name, memberIds = [], { everyon
   for (const person of wanted) roomCall(db, findRoom(db, roomId), userId, person, at);
   return { room: serializeRoom(db, findRoom(db, roomId), userId) };
 }
-function roomCall(db, room, actorId, personId, at = now(), text = `зовёт вас в комнату «${room.name}»`) {
+function roomCall(db, room, actorId, personId, at = now(), text = null, textTemplate = null) {
   const circle = db.prepare('SELECT id, name, color FROM circles WHERE id=?').get(room.circle_id) || null;
-  notify(db, { userId: personId, kind: 'room', actorId, roomId: room.id, circleId: room.circle_id, text, data: { circle, roomName: room.name }, at });
+  notify(db, { userId: personId, kind: 'room', actorId, roomId: room.id, circleId: room.circle_id, text: text ?? `зовёт вас в комнату «${room.name}»`, textTemplate: textTemplate ?? (text === null ? {source:'зовёт вас в комнату «{name}»',params:{name:room.name}} : null), data: { circle, roomName: room.name }, at });
 }
 function system(db, roomId, userId, kind, body) {
   db.prepare('INSERT INTO chat_messages(id,room_id,author_id,body,kind,created_at) VALUES(?,?,?,?,?,?)').run(id(), roomId, userId, body, kind, now());
@@ -360,10 +360,10 @@ export function say(db, roomId, userId, body, { replyTo = null, join = null } = 
     const call = called.some(item => item.id === person.id);
     const answered = reply?.author_id === person.id;
     notify(db, call
-      ? { userId: person.id, kind: 'call', actorId: userId, roomId, circleId: room.circle_id, text: `зовёт вас в разговоре «${chatTitle(room, circle)}»: «${excerpt}»`, meta: [], data: { circle, roomName: chatTitle(room, circle) }, at }
+      ? { userId: person.id, kind: 'call', actorId: userId, roomId, circleId: room.circle_id, text: `зовёт вас в разговоре «${chatTitle(room, circle)}»: «${excerpt}»`, textTemplate: { source: "зовёт вас в разговоре «{title}»: «{excerpt}»", params: { title: chatTitle(room, circle), excerpt: excerpt } }, meta: [], data: { circle, roomName: chatTitle(room, circle) }, at }
       : answered
-        ? { userId: person.id, kind: 'reply', actorId: userId, roomId, circleId: room.circle_id, text: `отвечает вам в разговоре «${chatTitle(room, circle)}»: «${excerpt}»`, meta: [], data: { circle, roomName: chatTitle(room, circle) }, at }
-        : { userId: person.id, kind: 'chatter', actorId: userId, roomId, circleId: room.circle_id, text: `в разговоре «${chatTitle(room, circle)}»: «${excerpt}»`, meta: [], data: { circle, roomName: chatTitle(room, circle) }, group: `chat:${roomId}`, at });
+        ? { userId: person.id, kind: 'reply', actorId: userId, roomId, circleId: room.circle_id, text: `отвечает вам в разговоре «${chatTitle(room, circle)}»: «${excerpt}»`, textTemplate: { source: "отвечает вам в разговоре «{title}»: «{excerpt}»", params: { title: chatTitle(room, circle), excerpt: excerpt } }, meta: [], data: { circle, roomName: chatTitle(room, circle) }, at }
+        : { userId: person.id, kind: 'chatter', actorId: userId, roomId, circleId: room.circle_id, text: `в разговоре «${chatTitle(room, circle)}»: «${excerpt}»`, textTemplate: { source: "в разговоре «{title}»: «{excerpt}»", params: { title: chatTitle(room, circle), excerpt: excerpt } }, meta: [], data: { circle, roomName: chatTitle(room, circle) }, group: `chat:${roomId}`, at });
   }
   return { message: messages(db, roomId, userId, { limit: 1 }).messages.find(item => item.id === messageId), called, room: serializeRoom(db, room, userId) };
 }
@@ -382,7 +382,7 @@ export function react(db, roomId, messageId, userId, emoji) {
   else {
     db.prepare('INSERT INTO chat_reactions(message_id,user_id,emoji,created_at) VALUES(?,?,?,?)').run(messageId, userId, emoji, at);
     const circle = db.prepare('SELECT id, name, color FROM circles WHERE id=?').get(room.circle_id) || null;
-    if (message.author_id) notify(db, { userId: message.author_id, kind: 'reaction', actorId: userId, roomId, circleId: room.circle_id, text: `${emoji} на ваше сообщение в «${chatTitle(room, circle)}»: «${excerptOf(message.body)}»`, data: { circle, roomName: chatTitle(room, circle), emoji }, group: `react:${roomId}`, at });
+    if (message.author_id) notify(db, { userId: message.author_id, kind: 'reaction', actorId: userId, roomId, circleId: room.circle_id, text: `${emoji} на ваше сообщение в «${chatTitle(room, circle)}»: «${excerptOf(message.body)}»`, textTemplate: { source: "{emoji} на ваше сообщение в «{title}»: «{excerpt}»", params: { emoji: emoji, title: chatTitle(room, circle), excerpt: excerptOf(message.body) } }, data: { circle, roomName: chatTitle(room, circle), emoji }, group: `react:${roomId}`, at });
   }
   return { reactions: chatReactionsOf(db, [messageId], userId).get(messageId) || [], added: !exists };
 }
@@ -402,7 +402,7 @@ export function pin(db, roomId, userId, messageId = null) {
   db.prepare('UPDATE chat_rooms SET pinned_message_id=?, pinned_by=?, pinned_at=? WHERE id=?').run(messageId, userId, at, roomId);
   const circle = db.prepare('SELECT id, name, color FROM circles WHERE id=?').get(room.circle_id) || null;
   for (const person of roomMembers(db, room))
-    notify(db, { userId: person.id, kind: 'pin', actorId: userId, roomId, circleId: room.circle_id, text: `закрепляет в «${chatTitle(room, circle)}»: «${excerptOf(message.body)}»`, data: { circle, roomName: chatTitle(room, circle) }, group: `pin:${roomId}`, at });
+    notify(db, { userId: person.id, kind: 'pin', actorId: userId, roomId, circleId: room.circle_id, text: `закрепляет в «${chatTitle(room, circle)}»: «${excerptOf(message.body)}»`, textTemplate: { source: "закрепляет в «{title}»: «{excerpt}»", params: { title: chatTitle(room, circle), excerpt: excerptOf(message.body) } }, data: { circle, roomName: chatTitle(room, circle) }, group: `pin:${roomId}`, at });
   return { room: serializeRoom(db, findRoom(db, roomId), userId) };
 }
 // Своё сообщение можно убрать: свои слова — свои. Чужие остаются.

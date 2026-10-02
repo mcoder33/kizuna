@@ -1,3 +1,4 @@
+import { t, bindTranslation } from "./browser-i18n.js";
 // Подсказка страниц после «[[». Внутренняя ссылка работает, только когда
 // название совпадает со страницей, а помнить названия наизусть человек не
 // обязан: набрал две скобки — увидел страницы, выбрал, ссылка готова. Нет
@@ -46,7 +47,7 @@ export function rankPages(pages, query, limit = 8) {
 export function placeHint(page) {
   if (page.parentTitle) return page.parentTitle;
   if (page.parentKey?.startsWith?.("project:")) return page.parentKey.slice(8);
-  if (page.parentKey === "inbox") return "Входящие";
+  if (page.parentKey === "inbox") return t("Входящие");
   return "";
 }
 
@@ -72,7 +73,7 @@ export function attachLinkMenu(field, { document: doc = document, exclude = () =
   const menu = doc.createElement("div");
   menu.className = "link-menu";
   menu.setAttribute("role", "listbox");
-  menu.setAttribute("aria-label", "Страницы");
+  bindTranslation(menu, "Страницы", "aria-label");
   menu.hidden = true;
   doc.body.append(menu);
   const mount = () => {
@@ -119,10 +120,10 @@ export function attachLinkMenu(field, { document: doc = document, exclude = () =
       option.setAttribute("role", "option");
       const title = doc.createElement("span");
       title.className = "link-title";
-      title.textContent = item.create ? `Новая страница «${item.title}»` : item.title;
+      title.textContent = item.create ? t("Новая страница «{title}»", { title: item.title }) : item.title;
       const hint = doc.createElement("span");
       hint.className = "link-hint";
-      hint.textContent = item.create ? "создать" : item.hint;
+      hint.textContent = item.create ? t("создать") : item.hint;
       option.append(title, hint);
       option.addEventListener("mousedown", (event) => {
         event.preventDefault();
@@ -178,7 +179,7 @@ export function attachLinkMenu(field, { document: doc = document, exclude = () =
     const skip = exclude();
     const pages = (data.pages || []).filter((page) => page.id !== skip).map((page) => ({ title: page.title, hint: placeHint(page), updatedAt: page.updatedAt }));
     // Встраивание «![[…]]» — это ещё и базы: их вид встаёт в страницу.
-    const bases = found.embed ? (data.bases || []).map((base) => ({ title: base.name, hint: "база", updatedAt: base.updatedAt })) : [];
+    const bases = found.embed ? (data.bases || []).map((base) => ({ title: base.name, get hint() { return t("база"); }, updatedAt: base.updatedAt })) : [];
     const matches = rankPages([...bases, ...pages], found.query);
     const wanted = found.query.trim();
     const exact = wanted && [...bases, ...pages].some((item) => normalize(item.title) === normalize(wanted));

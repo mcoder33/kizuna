@@ -68,7 +68,7 @@ export function correctionPatchError(patch) {
 // Ключ операции делает повтор того же запроса безвредным; у голоса он свой на
 // каждый вызов — иначе «убери повтор», «верни», «убери снова» третьим разом
 // считался бы повтором первого и молча ничего не менял.
-export function correctCapture(db, { captureId, userId = null, patch, operationKey = null, source = 'correction' }) {
+export function correctCapture(db, { captureId, userId = null, patch, operationKey = null, source = 'correction', timeZone = 'Europe/Samara' }) {
   const active = getAggregate(db, captureId);
   if (!active) return { error: { status: 404, code: 'not_found', message: 'Запись не найдена.' } };
   const invalid = correctionPatchError(patch);
@@ -78,7 +78,7 @@ export function correctCapture(db, { captureId, userId = null, patch, operationK
   const original = JSON.parse(active.classification_json);
   const classification = correctedClassification(original, patch);
   const review = gateClassification(classification);
-  const replacement = replaceInterpretation(db, captureId, classification, 'manual', { ...patch, patch, operationKey: key, requestFingerprint }, shouldMaterializeProjections(classification));
+  const replacement = replaceInterpretation(db, captureId, classification, 'manual', { ...patch, patch, operationKey: key, requestFingerprint }, shouldMaterializeProjections(classification),null,{timeZone});
   if (replacement?.conflict) return { error: { status: 409, code: 'idempotency_conflict', message: 'Ключ уже использован для другого уточнения.' } };
   if (review.level === 'high') resolveNotifications(db, { userId, kind: 'clarify', captureId });
   // Поправка — это урок: в следующий раз такую же запись разбирают уже

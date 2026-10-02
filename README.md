@@ -758,3 +758,28 @@ PAGENT_RUN_REAL_CLI_SMOKE=1 npm run smoke:provider -- --provider claude-cli
 Ежедневный отчёт — только source-grounded, версионированная производная сводка: каждая строка ссылается на исходную запись, проекцию, интерпретацию или событие журнала. Следующий срез должен так же хранить derived-сущности и их источники для проектов, людей, решений, обязательств и уроков: `raw → derived → index/daily log`.
 
 Такой слой требует человеческого review, неизменяемого run id для каждой пересборки и отчёта обслуживания о дублях, противоречиях, устаревших и осиротевших связях. Автоконсолидация графа, destructive deduplication и автоматическое удаление в MVP намеренно не реализуются.
+
+## Localization
+
+The shared pure ESM core is `public/i18n.js`; web, Node and macOS use the same
+`public/i18n-catalog.js` source catalog. Supported locales: ru, en, es, pt-BR,
+de, fr and ja. Source keys are Russian system phrases with named `{tokens}`;
+plural entries use CLDR `one`, `few`, `many`, `other` categories. Extract keys
+with `node scripts/extract-i18n.mjs` after changing a system phrase.
+
+Account settings use existing personal `app_settings` keys: `locale` accepts
+`system` or a canonical supported locale, while `detectedLocale` accepts only
+a canonical locale. Explicit account locale wins over browser/macOS language,
+then stored detection, then Russian. Portuguese variants normalize to pt-BR.
+User records, raw captures, names and generated history are never translated.
+AI capture descriptions remain in the input language; IDs and ISO date logic
+are unchanged. Native builds generate the bundle JSON from this shared catalog.
+New notification templates carry source keys separately from user text;
+old notifications without template metadata retain their original text.
+
+Personal time zone uses `requestedTimeZone` (`system` or a canonical IANA zone) and `detectedTimeZone` in user-scoped settings. Browser and macOS detection update the detected preference; explicit selection takes priority. The settings response `timeZone` is the effective account zone. The existing administrator `settings.timeZone` / `PAGENT_TIMEZONE` remains the legacy fallback and operational billing zone, so changing personal time zone does not reset monthly quotas.
+
+New capture jobs retain a server-generated zone and reference instant in `overrides_json.timeContext`; retries preserve both it and manual overrides. Linked calendar exports retain `export_time_zone`, preserving absolute instants through later edits. Date-only tasks and all-day events remain dates. Daily brief revisions retain their original zone; historical revision and source requests accept `?timeZone=<brief.timeZone>`.
+
+
+The header language selector is available in the app and on guest pages. Guest choices are validated and kept only in the current browser session; they apply to landing, authentication, and downloads. New registrations retain the selected language for both active and pending accounts. Logging into an existing account keeps its own language preference. Authenticated app HTML supplies validated account language attributes before settings load, avoiding a temporary switch to the browser language.

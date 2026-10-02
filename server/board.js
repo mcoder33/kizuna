@@ -1,3 +1,5 @@
+import { userLocale } from './locale.js';
+import { translate } from '../public/i18n.js';
 // Доска: канбан по открытым делам — задачам и встречам, не закрытым чекбоксом.
 // Колонки заводит человек (как разделы в Todoist); дело без колонки живёт в
 // первой колонке — «Входящих» больше нет. Раскладка — отдельная таблица поверх записей: сама запись ничего
@@ -161,17 +163,17 @@ function sortBucket(bucket, today) {
 export const DEFAULT_COLUMN = 'Дела';
 // У человека всегда есть хотя бы одна колонка: новое падает в первую. Заводим
 // лениво, один раз — на первом обращении к доске или при удалении последней.
-function ensureColumn(db, userId) {
+function ensureColumn(db, userId, locale = userLocale(db,userId)) {
   const first = db.prepare('SELECT id, name, position, color FROM board_columns WHERE user_id IS ? ORDER BY position, created_at LIMIT 1').get(userId);
   if (first) return first;
-  const column = { id: crypto.randomUUID(), name: DEFAULT_COLUMN, position: 0, color: null };
+  const column = { id: crypto.randomUUID(), name: translate(locale,DEFAULT_COLUMN), position: 0, color: null };
   db.prepare('INSERT INTO board_columns(id, user_id, name, position, created_at) VALUES(?,?,?,?,?)').run(column.id, userId, column.name, column.position, now());
   return column;
 }
 
-export function boardView(db, { userId, timeZone = 'Europe/Samara', now: at = new Date(), borrowed = [], withSubtasks = true, subtaskCards = false } = {}) {
+export function boardView(db, { userId, locale = userLocale(db,userId), timeZone = 'Europe/Samara', now: at = new Date(), borrowed = [], withSubtasks = true, subtaskCards = false } = {}) {
   const today = dateInZone(at, timeZone);
-  ensureColumn(db, userId);
+  ensureColumn(db, userId, locale);
   const columns = db.prepare('SELECT id, name, position, color FROM board_columns WHERE user_id IS ? ORDER BY position, created_at').all(userId);
   const placements = new Map(db.prepare('SELECT capture_id, column_id, position FROM board_placements WHERE user_id IS ?').all(userId).map(row => [row.capture_id, row]));
   const known = new Set(columns.map(column => column.id));
@@ -258,7 +260,7 @@ export function deleteColumn(db, { userId, id }) {
 }
 // Последняя колонка удаляется: новая «Дела» встаёт на её место до удаления.
 function ensureColumnAfter(db, userId) {
-  const column = { id: crypto.randomUUID(), name: DEFAULT_COLUMN, position: 0, color: null };
+  const column = { id: crypto.randomUUID(), name: translate(userLocale(db,userId),DEFAULT_COLUMN), position: 0, color: null };
   db.prepare('INSERT INTO board_columns(id, user_id, name, position, created_at) VALUES(?,?,?,?,?)').run(column.id, userId, column.name, column.position, now());
   return column;
 }
