@@ -2,7 +2,7 @@ import AppKit
 import WebKit
 
 struct DesktopOrigin {
-    static let production = URL(string: "https://kizuna.agent-hub.space")!
+    static let production = URL(string: "https://yourkizuna.com")!
 
     static func configured(_ value: String?) -> URL {
         guard let value, let url = URL(string: value),
@@ -45,16 +45,17 @@ struct DesktopOrigin {
         let loopback = configured("http://127.0.0.1:8878/test?x=1#today")
         check(loopback.absoluteString == "http://127.0.0.1:8878/", "loopback configuration normalized")
         check(configured("https://preview.example/path").absoluteString == "https://preview.example/", "explicit HTTPS configuration")
-        check(contains(URL(string: "https://kizuna.agent-hub.space:443/login")!, origin: prod), "same-origin login")
-        check(!contains(URL(string: "https://kizuna.agent-hub.space.evil.test/")!, origin: prod), "reject host suffix")
-        check(!contains(URL(string: "https://kizuna.agent-hub.space:444/")!, origin: prod), "reject changed port")
-        check(!contains(URL(string: "http://kizuna.agent-hub.space/")!, origin: prod), "reject scheme downgrade")
+        check(contains(URL(string: "https://yourkizuna.com:443/login")!, origin: prod), "same-origin login")
+        check(!contains(URL(string: "https://yourkizuna.com.evil.test/")!, origin: prod), "reject host suffix")
+        check(!contains(URL(string: "https://yourkizuna.com:444/")!, origin: prod), "reject changed port")
+        check(!contains(URL(string: "http://yourkizuna.com/")!, origin: prod), "reject scheme downgrade")
+        check(!contains(URL(string: "https://kizuna.agent-hub.space/")!, origin: prod), "legacy host is a different origin")
         for value in ["javascript:alert(1)", "file:///tmp/data", "data:text/html,test", "custom:payload"] {
             check(!canOpenExternally(URL(string: value)!), "reject external scheme \(value)")
         }
         check(canOpenExternally(URL(string: "https://example.com")!), "allow external web link")
         check(canOpenExternally(URL(string: "mailto:user@example.com")!), "allow mail link")
-        print("PASS: desktop navigation policy (16 checks)")
+        print("PASS: desktop navigation policy (17 checks)")
     }
 }
 

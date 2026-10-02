@@ -6978,6 +6978,13 @@ const boardCircleOf = (card) => boardState.data?.circleMarks?.[card.captureId] |
 // Счётчик непрочитанного по-прежнему живёт только на этой странице: в день
 // попадает призыв, а не каждое сообщение.
 const chatState = { rooms: [], messages: [], more: false, loading: false, drafts: {} };
+// The native updater also needs drafts from conversations no longer in the DOM.
+window.addEventListener("kizuna:before-update", (event) => {
+  if (typeof event.detail?.block !== "function") return;
+  if (Object.values(chatState.drafts).some((text) => text.trim())) {
+    event.detail.block("В «Кругах» есть неотправленный текст. Отправьте или очистите его перед обновлением.");
+  }
+});
 const kc = {
   circle: null, chat: null, info: null, person: null, table: true, menu: false, talks: false, ctx: null,
   reply: null, share: null, newFrom: null, talk: null, modal: null, invite: null,

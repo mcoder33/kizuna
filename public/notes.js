@@ -53,6 +53,17 @@ const state = {
 let editor = null;
 let picker = null;
 
+// Read-only handshake with the Mac updater: don't restart during autosave,
+// and don't mistake a successfully saved note for an unsent draft.
+window.addEventListener("kizuna:before-update", (event) => {
+  if (!editor || typeof event.detail?.block !== "function") return;
+  if (editor.saving || editor.field.getValue() !== editor.saved) {
+    event.detail.block("Дождитесь сохранения заметки и продолжите обновление.");
+  } else {
+    event.detail.savedEditors.push(editor.field.element);
+  }
+});
+
 // ── мелочи ──────────────────────────────────────────────────────────────────
 function el(tag, className, text) {
   const node = document.createElement(tag);

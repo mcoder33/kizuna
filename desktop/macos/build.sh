@@ -38,6 +38,7 @@ if ! command -v swiftc >/dev/null || ! command -v hdiutil >/dev/null; then
 fi
 
 mkdir -p "$DIST_DIR"
+SPARKLE_DIR="$(bash "$MAC_DIR/fetch-sparkle.sh")"
 BUILD_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/kizuna-macos.XXXXXX")"
 trap 'rm -rf "$BUILD_ROOT"' EXIT
 APP="$BUILD_ROOT/$APP_NAME.app"
@@ -48,6 +49,9 @@ mkdir -p "$RESOURCES" "$MACOS"
 
 cp "$MAC_DIR/Info.plist" "$CONTENTS/Info.plist"
 cp "$ROOT/public/icon.svg" "$RESOURCES/AppIcon.svg"
+cp "$MAC_DIR/Resources/RestartGuard.js" "$RESOURCES/RestartGuard.js"
+mkdir -p "$CONTENTS/Frameworks"
+ditto "$SPARKLE_DIR/Sparkle.framework" "$CONTENTS/Frameworks/Sparkle.framework"
 
 ICON_WORK="$BUILD_ROOT/icon"
 mkdir -p "$ICON_WORK/Rendered" "$ICON_WORK/AppIcon.iconset"
@@ -65,7 +69,8 @@ done
 iconutil -c icns "$ICON_WORK/AppIcon.iconset" -o "$RESOURCES/AppIcon.icns"
 
 SOURCES=("$SOURCE_DIR"/*.swift)
-FRAMEWORKS=(-framework AppKit -framework WebKit -framework UserNotifications -framework Carbon)
+FRAMEWORKS=(-framework AppKit -framework WebKit -framework UserNotifications -framework Carbon
+  -F "$SPARKLE_DIR" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks)
 if ((UNIVERSAL)); then
   for arch in arm64 x86_64; do
     swiftc -O -target "$arch-apple-macosx13.0" -module-name "$APP_NAME" \

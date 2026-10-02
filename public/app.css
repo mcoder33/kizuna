@@ -529,6 +529,19 @@ header > .header-tail {
   --dock-calendar-b: #2a2a2a; --dock-calendar-f: #eaeaea; --dock-cal-band: #c7443c;
   --dock-notes-b: #332c14; --dock-notes-f: #d9b84a;
 }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --dockbg: rgba(24, 24, 24, 0.72);
+    --dockline: rgba(255, 255, 255, 0.1);
+    --dock-tip-bg: #eaeaea;
+    --dock-tip-fg: #181818;
+    --dock-done-b: #1c2e23; --dock-done-f: #64b69c;
+    --dock-today-b: #352718; --dock-today-f: #e0904a;
+    --dock-board-b: #14223a; --dock-board-f: #599fff;
+    --dock-calendar-b: #2a2a2a; --dock-calendar-f: #eaeaea; --dock-cal-band: #c7443c;
+    --dock-notes-b: #332c14; --dock-notes-f: #d9b84a;
+  }
+}
 header > nav.dock {
   position: fixed;
   left: 50%;
@@ -569,6 +582,11 @@ header > nav.dock {
 }
 :root[data-theme='dark'] .dock-item > a {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .dock-item > a {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  }
 }
 .dock-item > a svg {
   width: 22px;
@@ -10016,6 +10034,14 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0 0 96px; }
 :root[data-theme='dark'] .theme-toggle,
 :root[data-theme='dark'] .account-menu > summary {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .bell-menu > summary,
+  :root:not([data-theme='light']) .settings-link,
+  :root:not([data-theme='light']) .theme-toggle,
+  :root:not([data-theme='light']) .account-menu > summary {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  }
 }
 .bell-menu > summary { background: color-mix(in srgb, var(--coral) 13%, var(--paper)); color: var(--coral); }
 .settings-link { background: var(--dock-board-b); color: var(--dock-board-f); }

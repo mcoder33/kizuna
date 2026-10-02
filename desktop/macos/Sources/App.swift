@@ -28,6 +28,8 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
     private var navigation: DesktopNavigation!
     private var notifications: DesktopNotifications!
     private var quickCapturePanel: DesktopQuickCapture!
+    private var updates: DesktopUpdates!
+    private var restartPrepared = false
     private var statusItem: NSStatusItem!
     private var hotKey: EventHotKeyRef?
     private var hotKeyHandler: EventHandlerRef?
@@ -59,6 +61,15 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
             self.openNotification(url)
         }
         notifications.start()
+        updates = DesktopUpdates()
+        updates.banner.attach(to: window.contentView!)
+        updates.showWindow = { [weak self] in self?.showWindow(nil) }
+        updates.prepareForRestart = { [weak self] reply in self?.prepareForUpdate(reply) }
+        updates.resumeEditing = { [weak self] in
+            self?.restartPrepared = false
+            self?.webView.evaluateJavaScript("window.KizunaUpdateGuard?.resume()", completionHandler: nil)
+        }
+        updates.start()
         webView.load(URLRequest(url: origin.appendingPathComponent("login")))
         showWindow(nil)
     }
@@ -71,6 +82,10 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         window.isReleasedWhenClosed = false
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
+        if let scriptURL = Bundle.main.url(forResource: "RestartGuard", withExtension: "js"),
+           let script = try? String(contentsOf: scriptURL, encoding: .utf8) {
+            configuration.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        }
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.allowsBackForwardNavigationGestures = true
         webView.customUserAgent = nil
@@ -123,6 +138,7 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         let bar = NSMenu(); NSApp.mainMenu = bar
         let app = NSMenu(); addMenu("Кизуна", menu: app, to: bar)
         addItem("О Кизуне", action: #selector(about(_:)), to: app)
+        addItem("Проверить обновления…", action: #selector(checkForUpdates(_:)), to: app)
         app.addItem(.separator())
         addItem("Включить уведомления…", action: #selector(enableNotifications(_:)), to: app)
         addItem("Новая запись", action: #selector(quickCapture(_:)), key: "n", to: app)
@@ -159,6 +175,7 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         let menu = NSMenu()
         addItem("Новая запись  ⌘⇧Пробел", action: #selector(quickCapture(_:)), to: menu)
         addItem("Показать Кизуну", action: #selector(showWindow(_:)), to: menu)
+        addItem("Проверить обновления…", action: #selector(checkForUpdates(_:)), to: menu)
         addItem("Включить уведомления…", action: #selector(enableNotifications(_:)), to: menu)
         menu.addItem(.separator())
         addItem("Завершить Кизуну", action: #selector(NSApplication.terminate(_:)), target: NSApp, to: menu)
@@ -197,9 +214,11 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
     }
     @objc func quickCapture(_ sender: Any?) {
+        guard !restartPrepared else { return }
         quickCapturePanel.show()
     }
     private func openNotification(_ url: URL) {
+        guard !restartPrepared else { return }
         capturePending = false; pendingDestination = url; showWindow(nil)
         if url.path != "/" && !url.path.isEmpty {
             pendingDestination = nil; webView.load(URLRequest(url: url)); return
@@ -248,6 +267,7 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         }
     }
     @objc private func reload(_ sender: Any?) {
+        guard !restartPrepared else { return }
         errorView.isHidden = true
         let url = webView.url.flatMap { DesktopOrigin.contains($0, origin: origin) ? $0 : nil } ?? origin
         webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
@@ -257,6 +277,36 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         NSWorkspace.shared.open(url)
     }
     @objc private func enableNotifications(_ sender: Any?) { notifications.requestAuthorization() }
+    @objc private func checkForUpdates(_ sender: Any?) { updates?.checkForUpdates(sender) }
+
+    private func prepareForUpdate(_ reply: @escaping (String?) -> Void) {
+        if quickCapturePanel.preventsRestart {
+            reply("Сохраните быструю запись (⌘⇧Пробел) или дождитесь её отправки, затем продолжите обновление.")
+            return
+        }
+        if webView.isLoading { reply("Дождитесь загрузки страницы и продолжите обновление."); return }
+        // A failed initial navigation has no page or draft to preserve.
+        if webView.url == nil { restartPrepared = true; quickCapturePanel.hideForRestart(); reply(nil); return }
+        guard let url = webView.url, DesktopOrigin.contains(url, origin: origin) else {
+            reply("Вернитесь в Кизуну и продолжите обновление."); return
+        }
+        webView.evaluateJavaScript("JSON.stringify({ reason: window.KizunaUpdateGuard ? window.KizunaUpdateGuard.prepare() : 'Завершите редактирование и перезагрузите страницу перед обновлением.' })") { [weak self] result, error in
+            guard let self else { return }
+            guard error == nil, let json = result as? String, let data = json.data(using: .utf8),
+                  let status = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                reply("Не удалось проверить незавершённый ввод. Попробуйте обновление ещё раз."); return
+            }
+            let reason = status["reason"] as? String
+            // Native quick capture may have opened while WebKit answered.
+            if reason == nil && self.quickCapturePanel.preventsRestart {
+                self.webView.evaluateJavaScript("window.KizunaUpdateGuard?.resume()", completionHandler: nil)
+                reply("Сначала сохраните быструю запись (⌘⇧Пробел)."); return
+            }
+            self.restartPrepared = reason == nil
+            if self.restartPrepared { self.quickCapturePanel.hideForRestart() }
+            reply(reason)
+        }
+    }
     @objc private func about(_ sender: Any?) {
         NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "Кизуна", .credits: NSAttributedString(string:
             "⌘⇧Пробел — новая запись из любого приложения.\nУведомления приходят, пока Кизуна запущена.\nДля работы требуется интернет.")])
