@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import Database from 'better-sqlite3';
+import { RELEASE_CARDS, selectSeasonalReleaseCard } from '../server/release-cards.js';
 import { announceRelease, prepareRelease, readBroadcastSource, broadcastExitCode } from '../server/release-broadcast.js';
 
 const TOKEN = `123456789:${'x'.repeat(32)}`;
@@ -213,7 +214,7 @@ test('tracked release manifest is sendable as text or a photo with its declared 
   const latest = JSON.parse(fs.readFileSync(new URL('../release-notes/latest.json', import.meta.url), 'utf8'));
   const result = prepareRelease(latest);
   assert.ok(latest.changes.length > 0);
-  if (latest.image) {
+  if (latest.image || latest.seasonalImage) {
     assert.equal(result.method, 'sendPhoto');
     assert.ok(result.payload.caption.length <= 1024);
     assert.equal(new URL(result.payload.photo).origin, SITE);
@@ -228,5 +229,97 @@ test('tracked release manifest is sendable as text or a photo with its declared 
   for (const button of buttons) {
     assert.ok(button.text.trim());
     assert.equal(new URL(button.url).origin, SITE);
+  }
+});
+
+const seasonalNote = { ...note, seasonalImage: true };
+test('seasonal deck covers all seven weekdays in each of the four calendar seasons', () => {
+  const weeks = { spring: '2026-03-02', summer: '2026-06-01', autumn: '2026-09-07', winter: '2026-12-07' };
+  const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+  const selected = [];
+  for (const [season, monday] of Object.entries(weeks)) for (const [offset, day] of days.entries()) {
+    const date = new Date(monday + 'T08:00:00Z'); date.setUTCDate(date.getUTCDate() + offset);
+    const url = selectSeasonalReleaseCard(date);
+    assert.equal(url, SITE + '/public/release-cards/' + season + '-' + day + '.png');
+    selected.push(url);
+  }
+  assert.equal(new Set(selected).size, 28);
+  assert.deepEqual(new Set(selected), new Set(RELEASE_CARDS));
+});
+
+test('selection follows Samara local midnight at season boundaries and leap day', () => {
+  for (const [utc, expected] of [
+    ['2026-02-28T19:59:59Z', 'winter-sat'], ['2026-02-28T20:00:00Z', 'spring-sun'],
+    ['2026-05-31T19:59:59Z', 'spring-sun'], ['2026-05-31T20:00:00Z', 'summer-mon'],
+    ['2026-08-31T19:59:59Z', 'summer-mon'], ['2026-08-31T20:00:00Z', 'autumn-tue'],
+    ['2026-11-30T19:59:59Z', 'autumn-mon'], ['2026-11-30T20:00:00Z', 'winter-tue'],
+    ['2024-02-29T08:00:00Z', 'winter-thu'], ['2024-02-29T20:00:00Z', 'spring-fri'],
+  ]) assert.equal(selectSeasonalReleaseCard(new Date(utc)), SITE + '/public/release-cards/' + expected + '.png');
+  assert.equal(selectSeasonalReleaseCard(new Date('2026-02-28T20:00:00Z'), 'UTC'), SITE + '/public/release-cards/winter-sat.png');
+});
+
+test('seasonal manifest rejects ambiguous media and overlong captions before any send', async t => {
+  for (const bad of [{ ...seasonalNote, image: photo.image }, { ...seasonalNote, seasonalImage: 'yes' },
+    { ...seasonalNote, changes: Array(3).fill('x'.repeat(360)) }]) assert.throws(() => prepareRelease(bad));
+  assert.equal(prepareRelease(seasonalNote).method, 'sendPhoto');
+  assert.notEqual(prepareRelease(seasonalNote).contentHash, prepareRelease({ ...note, image: RELEASE_CARDS[0] }).contentHash);
+  const f = fixture(t);
+  await assert.rejects(f.run({ manifest: seasonalNote, releaseDate: '2026-02-30T00:00:00Z' }), /invalid_release_date/);
+  assert.equal(f.calls.length, 0); assert.equal(fs.existsSync(f.receiptsPath), false);
+});
+
+test('seasonal dry run previews successful deploy date without creating or changing receipts', async t => {
+  const f = fixture(t); const sourceBefore = fs.readFileSync(f.filename);
+  const options = { manifest: seasonalNote, send: false, releaseDate: '2026-06-01T08:00:00Z', now: () => new Date('2026-12-01T08:00:00Z') };
+  const preview = await f.run(options);
+  assert.equal(preview.image, SITE + '/public/release-cards/summer-mon.png');
+  assert.equal(fs.existsSync(f.receiptsPath), false); assert.equal(f.calls.length, 0);
+  assert.deepEqual(fs.readFileSync(f.filename), sourceBefore);
+  await f.run({ ...options, send: true });
+  const before = fs.readFileSync(f.receiptsPath);
+  const retry = await f.run({ ...options, releaseDate: '2026-12-01T08:00:00Z' });
+  assert.equal(retry.image, preview.image); assert.equal(retry.status, 'complete');
+  assert.deepEqual(fs.readFileSync(f.receiptsPath), before);
+});
+
+test('a pending seasonal release reuses its exact image across day and season changes', async t => {
+  const f = fixture(t);
+  const first = await f.run({ manifest: seasonalNote, releaseDate: '2026-02-28T19:59:59Z', fetchImpl: async (url, options) => {
+    const result = await f.fetchImpl(url, options);
+    f.source.prepare("UPDATE app_settings SET value='' WHERE key='telegramBotToken'").run();
+    return result;
+  } });
+  assert.equal(first.status, 'configuration-changed'); assert.equal(first.sent, 1);
+  f.source.prepare("UPDATE app_settings SET value=? WHERE key='telegramBotToken'").run(TOKEN);
+  const second = await f.run({ manifest: seasonalNote, releaseDate: '2026-06-01T08:00:00Z' });
+  assert.equal(second.sent, 1); assert.equal(second.previousSent, 1);
+  assert.equal(f.calls.length, 2);
+  assert.deepEqual(f.calls.map(call => call.body.photo), Array(2).fill(SITE + '/public/release-cards/winter-sat.png'));
+  const saved = readReceipts(f.receiptsPath, db => JSON.parse(db.prepare('SELECT payload_json FROM releases').get().payload_json));
+  assert.equal(saved.selectedAt, '2026-02-28T19:59:59.000Z');
+  await assert.rejects(f.run({ manifest: { ...seasonalNote, title: 'Changed' } }), /release_content_changed/);
+});
+
+test('uncertain seasonal sends never repeat and plain or manual media remain unchanged', async t => {
+  const f = fixture(t, { chats: ['101'] });
+  let attempts = 0;
+  const failed = await f.run({ manifest: seasonalNote, releaseDate: '2026-03-02T08:00:00Z', fetchImpl: async () => { attempts++; throw Error('lost'); } });
+  assert.equal(failed.uncertain, 1);
+  const retry = await f.run({ manifest: seasonalNote, releaseDate: '2026-12-01T08:00:00Z', fetchImpl: async () => { attempts++; } });
+  assert.equal(attempts, 1); assert.equal(retry.image, failed.image);
+  await f.run({ manifest: { ...note, id: 'plain-new' } });
+  await f.run({ manifest: { ...photo, id: 'manual-new' } });
+  assert.equal(f.calls[0].body.photo, undefined);
+  assert.equal(f.calls[1].body.photo, photo.image);
+  assert.equal(readReceipts(f.receiptsPath, db => db.prepare("SELECT COUNT(*) AS n FROM releases WHERE json_extract(payload_json, '$.selectedAt') IS NOT NULL").get().n), 1);
+});
+
+test('every seasonal card has a tracked PNG asset available for deployment', () => {
+  assert.equal(RELEASE_CARDS.length, 28);
+  for (const url of RELEASE_CARDS) {
+    const filename = new URL('..' + new URL(url).pathname, import.meta.url);
+    const content = fs.readFileSync(filename);
+    assert.deepEqual(content.subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), url);
+    assert.ok(content.readUInt32BE(16) > 0 && content.readUInt32BE(20) > 0, url);
   }
 });

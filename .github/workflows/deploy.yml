@@ -51,6 +51,8 @@ jobs:
 
   deploy:
     name: Выкладка на сервер
+    outputs:
+      released_at: ${{ steps.deployed.outputs.released_at }}
     needs: [tests, freshness]
     if: needs.freshness.outputs.current == 'true'
     runs-on: ubuntu-latest
@@ -70,6 +72,9 @@ jobs:
       - run: ./deploy.sh
         env:
           KIZUNA_RELEASE_SHA: ${{ github.sha }}
+      - id: deployed
+        name: Время успешной выкладки
+        run: echo "released_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
   announce:
     name: Объявление релиза в Telegram
@@ -86,21 +91,30 @@ jobs:
           if (!manifest.id || !manifest.title || !Array.isArray(manifest.changes)) {
             throw new Error('Некорректный release-notes/latest.json');
           }
-          if (manifest.image) {
-            const url = new URL(manifest.image);
-            if (url.hostname !== 'kizuna.agent-hub.space' || url.protocol !== 'https:') {
-              throw new Error('Изображение релиза должно размещаться на публичном домене Кизуны');
-            }
+          if (manifest.seasonalImage !== undefined && typeof manifest.seasonalImage !== 'boolean') {
+            throw new Error('Некорректный seasonalImage');
           }
+          if (manifest.seasonalImage && manifest.image) throw new Error('Выберите image или seasonalImage');
+          (async () => {
+            const { RELEASE_CARDS } = await import('./server/release-cards.js');
+            const images = manifest.seasonalImage ? RELEASE_CARDS : (manifest.image ? [manifest.image] : []);
+            for (const image of images) {
+              const url = new URL(image);
+              if (url.hostname !== 'kizuna.agent-hub.space' || url.protocol !== 'https:') {
+                throw new Error('Изображение релиза должно размещаться на публичном домене Кизуны');
+              }
+            }
+            fs.writeFileSync('/tmp/kizuna-release-images.txt', images.join('\n'));
+          })().catch(error => { console.error(error.message); process.exitCode = 1; });
           NODE
-          image_url=$(node -p "JSON.parse(require('fs').readFileSync('release-notes/latest.json','utf8')).image || ''")
-          if [ -n "$image_url" ]; then
+          while IFS= read -r image_url || [ -n "$image_url" ]; do
+            [ -n "$image_url" ] || continue
             result=$(curl -sS -L --max-time 20 -o /dev/null -w '%{http_code} %{content_type}' "$image_url")
             [ "${result%% *}" = 200 ] && [[ "${result#* }" = image/* ]] || {
               echo "Картинка релиза недоступна или имеет неверный MIME type: $result" >&2
               exit 1
             }
-          fi
+          done < /tmp/kizuna-release-images.txt
       - name: Ключ деплоя и host-ключи сервера
         run: |
           mkdir -p ~/.ssh
@@ -115,15 +129,17 @@ jobs:
       - name: Объявить только проверенный выложенный релиз
         env:
           RELEASE_SHA: ${{ github.sha }}
+          RELEASE_DATE: ${{ needs.deploy.outputs.released_at }}
         run: |
-          ssh root@193.8.215.89 "bash -s -- '$RELEASE_SHA'" <<'REMOTE_ANNOUNCE'
+          ssh root@193.8.215.89 "bash -s -- '$RELEASE_SHA' '$RELEASE_DATE'" <<'REMOTE_ANNOUNCE'
           set -euo pipefail
           expected="$1"
+          released_at="$2"
           actual=$(cat /opt/kizuna/.deployed-sha)
           if [ "$actual" != "$expected" ]; then
             echo "Пропуск объявления: выложен SHA $actual, ожидался $expected" >&2
             exit 1
           fi
           cd /opt/kizuna/app
-          sudo -u kizuna env DOTENV_CONFIG_PATH=/opt/kizuna/.env node scripts/announce-release.mjs --send --release-sha "$expected"
+          sudo -u kizuna env DOTENV_CONFIG_PATH=/opt/kizuna/.env node scripts/announce-release.mjs --send --release-sha "$expected" --release-date "$released_at"
           REMOTE_ANNOUNCE

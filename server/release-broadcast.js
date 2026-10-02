@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
+import { RELEASE_CARDS, selectSeasonalReleaseCard } from './release-cards.js';
 
 export class ReleaseBroadcastError extends Error {
   constructor(code) { super(code); this.code = code; }
@@ -27,13 +28,15 @@ function publicUrl(value, image = false) {
 
 export function prepareRelease(manifest) {
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) fail('invalid_manifest');
-  if (Object.keys(manifest).some(key => !['id', 'title', 'changes', 'url', 'image', 'buttons', 'footer'].includes(key))) fail('invalid_manifest');
+  if (Object.keys(manifest).some(key => !['id', 'title', 'changes', 'url', 'image', 'buttons', 'footer', 'seasonalImage'].includes(key))) fail('invalid_manifest');
   if (typeof manifest.id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$/.test(manifest.id)) fail('invalid_release_id');
+  if (manifest.seasonalImage !== undefined && typeof manifest.seasonalImage !== 'boolean') fail('invalid_manifest');
+  if (manifest.seasonalImage && manifest.image !== undefined) fail('invalid_manifest');
   const title = cleanText(manifest.title, 140);
   if (!Array.isArray(manifest.changes) || !manifest.changes.length || manifest.changes.length > 8) fail('invalid_manifest');
   const changes = manifest.changes.map(value => cleanText(value, 360));
   const url = manifest.url === undefined ? null : publicUrl(manifest.url);
-  const image = manifest.image === undefined ? null : publicUrl(manifest.image, true);
+  const image = manifest.seasonalImage ? RELEASE_CARDS[0] : (manifest.image === undefined ? null : publicUrl(manifest.image, true));
   const footer = manifest.footer === undefined ? null : cleanText(manifest.footer, 240);
   if (manifest.buttons !== undefined && (!Array.isArray(manifest.buttons) || manifest.buttons.length > 2)) fail('invalid_manifest_buttons');
   const buttons = (manifest.buttons || []).map(button => {
@@ -45,7 +48,9 @@ export function prepareRelease(manifest) {
   const method = image ? 'sendPhoto' : 'sendMessage';
   const payload = image ? { photo: image, caption: text } : { text, link_preview_options: { is_disabled: true } };
   if (buttons.length) payload.reply_markup = { inline_keyboard: [buttons] };
-  return { id: manifest.id, method, payload, text, contentHash: hash(JSON.stringify({ method, payload })) };
+  // Hash the reviewed logical manifest, excluding its date-dependent image.
+  const logicalPayload = manifest.seasonalImage ? { method, payload, seasonalImage: true } : { method, payload };
+  return { id: manifest.id, method, payload, text, seasonalImage: manifest.seasonalImage === true, contentHash: hash(JSON.stringify(logicalPayload)) };
 }
 
 export function readBroadcastSource(db, env = process.env) {
@@ -97,6 +102,30 @@ function existingSnapshot(filename, release) {
   } finally { db.close(); }
 }
 
+
+// Called under the release lock/transaction for sends. A saved payload always
+// wins: pending recipients on a retry see the exact same image as earlier ones.
+function chooseReleaseCard(receipts, release, date, timeZone) {
+  if (!release.seasonalImage) return;
+  const existing = receipts?.prepare('SELECT payload_json FROM releases WHERE id=?').get(release.id);
+  if (existing) {
+    const saved = JSON.parse(existing.payload_json);
+    release.payload = saved.payload;
+    release.selectedAt = saved.selectedAt;
+    return;
+  }
+  release.selectedAt = date.toISOString();
+  try {
+    release.payload = { ...release.payload, photo: selectSeasonalReleaseCard(date, timeZone) };
+  } catch { fail('invalid_release_date'); }
+}
+function previewReleaseCard(filename, release, date, timeZone) {
+  if (!release.seasonalImage) return;
+  if (!fs.existsSync(filename)) { chooseReleaseCard(null, release, date, timeZone); return; }
+  const receipts = new Database(filename, { readonly: true, fileMustExist: true });
+  try { chooseReleaseCard(receipts, release, date, timeZone); } finally { receipts.close(); }
+}
+
 async function deliver(release, chat, token, fetchImpl, timeoutMs) {
   try {
     const response = await fetchImpl(`https://api.telegram.org/bot${token}/${release.method}`, {
@@ -115,16 +144,23 @@ async function deliver(release, chat, token, fetchImpl, timeoutMs) {
 }
 
 export async function announceRelease({ db, receiptsPath, manifest, env = process.env, send = false,
-  fetchImpl = globalThis.fetch, timeoutMs = 15000, intervalMs = 100, now = () => new Date(), isProcessAlive = processAlive, releaseSha = null }) {
+  fetchImpl = globalThis.fetch, timeoutMs = 15000, intervalMs = 100, now = () => new Date(), isProcessAlive = processAlive, releaseSha = null, releaseDate = null }) {
   const release = prepareRelease(manifest);
+  const selectionDate = releaseDate === null ? new Date(now()) : new Date(releaseDate);
+  if (!Number.isFinite(selectionDate.getTime()) || (releaseDate !== null &&
+      (typeof releaseDate !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(releaseDate) ||
+       selectionDate.toISOString() !== releaseDate.replace(/Z$/, releaseDate.includes('.') ? 'Z' : '.000Z')))) fail('invalid_release_date');
+  const timeZone = env.PAGENT_TIMEZONE || 'Europe/Samara';
   if (releaseSha !== null && !/^[a-f0-9]{40,64}$/.test(releaseSha)) fail('invalid_release_sha');
   if (path.resolve(receiptsPath) === path.resolve(db.name)) fail('receipts_must_be_separate');
   const initial = readBroadcastSource(db, env);
   const snapshot = existingSnapshot(receiptsPath, release); // Hash check precedes ANY skip.
+  previewReleaseCard(receiptsPath, release, selectionDate, timeZone);
   const report = { releaseId: release.id, mode: send ? 'send' : 'dry-run', status: 'planned',
     eligible: initial.recipients.length, planned: snapshot ? (snapshot.counts.pending || 0) : initial.recipients.length,
     sent: 0, previousSent: snapshot?.counts.sent || 0, rejected: snapshot?.counts.rejected || 0,
     uncertain: (snapshot?.counts.uncertain || 0) + (snapshot?.counts.reserved || 0), unlinked: snapshot?.counts.unlinked || 0 };
+  if (release.seasonalImage) report.image = release.payload.photo;
   if (snapshot?.completed) { report.status = 'complete'; report.planned = 0; return report; }
   if (!send) { report.status = 'dry-run'; report.tokenConfigured = Boolean(initial.token); return report; }
   if (!initial.token) { report.status = 'no-token'; return report; }
@@ -146,9 +182,11 @@ export async function announceRelease({ db, receiptsPath, manifest, env = proces
 
     receipts.transaction(() => {
       const existing = inspectReceipt(receipts, release);
+      chooseReleaseCard(receipts, release, selectionDate, timeZone);
+      if (release.seasonalImage) report.image = release.payload.photo;
       if (!existing) {
         receipts.prepare('INSERT INTO releases(id,content_hash,payload_json,created_at,source_sha) VALUES(?,?,?,?,?)')
-          .run(release.id, release.contentHash, JSON.stringify({ method: release.method, payload: release.payload }), at(), releaseSha);
+          .run(release.id, release.contentHash, JSON.stringify({ method: release.method, payload: release.payload, ...(release.seasonalImage ? { selectedAt: release.selectedAt } : {}) }), at(), releaseSha);
         const insert = receipts.prepare("INSERT INTO receipts(release_id,chat_hash,state) VALUES(?,?,'pending')");
         // Freeze the first audience. Later registrations never receive old news.
         for (const chat of initial.recipients) insert.run(release.id, chatHash(chat));

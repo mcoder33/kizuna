@@ -13,7 +13,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     const { values } = parseArgs({ args: argv, options: {
       send: { type: 'boolean', default: false }, 'dry-run': { type: 'boolean', default: false },
       manifest: { type: 'string' }, database: { type: 'string' }, receipts: { type: 'string' },
-      'release-sha': { type: 'string' },
+      'release-sha': { type: 'string' }, 'release-date': { type: 'string' },
     } });
     if (values.send && values['dry-run']) throw new ReleaseBroadcastError('conflicting_modes');
     const databasePath = path.resolve(values.database || env.PAGENT_DB_PATH || path.join(root, 'data', 'pagent.sqlite'));
@@ -21,7 +21,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     const manifest = JSON.parse(fs.readFileSync(values.manifest || path.join(root, 'release-notes', 'latest.json'), 'utf8'));
     // Do not call openDatabase/createApp: they run migrations and start services.
     db = new Database(databasePath, { readonly: true, fileMustExist: true });
-    const report = await announceRelease({ db, receiptsPath, manifest, env, send: values.send, releaseSha: values['release-sha'] || null });
+    const report = await announceRelease({ db, receiptsPath, manifest, env, send: values.send, releaseSha: values['release-sha'] || null, releaseDate: values['release-date'] || null });
     console.log(JSON.stringify(report));
     return broadcastExitCode(report);
   } catch (error) {

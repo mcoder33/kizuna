@@ -27,6 +27,7 @@ echo "→ гоню код на $SERVER:$REMOTE"
 # раздаваемая статика (превью ссылки og.png): правило для них стоит раньше.
 rsync -az --delete \
   --include='/public/*.png' \
+  --include='/public/release-cards/*.png' \
   --exclude='.git' --exclude='node_modules' --exclude='data' --exclude='.env' \
   --exclude='test-results' --exclude='playwright-report' --exclude='.playwright-mcp' \
   --exclude='tmp' --exclude='*.png' --exclude='.serena' --exclude='deploy.sh' \
