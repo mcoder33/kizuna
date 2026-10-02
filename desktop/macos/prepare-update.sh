@@ -18,6 +18,6 @@ ARCHIVE="$OUTPUT/Kizuna-$VERSION.zip"
 [[ ! -e "$ARCHIVE" ]] || { echo "Build $VERSION is already prepared. Increment CFBundleVersion for a new release." >&2; exit 1; }
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ARCHIVE"
 "$SPARKLE_DIR/bin/generate_appcast" --account "$ACCOUNT" --maximum-deltas 0 \
-  --download-url-prefix https://kizuna.agent-hub.space/public/downloads/mac/ "$OUTPUT"
+  --download-url-prefix https://yourkizuna.com/public/downloads/mac/ "$OUTPUT"
 "$SPARKLE_DIR/bin/sign_update" --account "$ACCOUNT" --verify "$OUTPUT/appcast.xml"
 echo "Prepared signed update in $OUTPUT. Nothing has been published."

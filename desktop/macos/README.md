@@ -1,6 +1,6 @@
 # Kizuna for Mac
 
-This folder contains the native macOS shell around Kizuna. It requires macOS 13 or later. The app uses the existing Kizuna account and server. Sparkle checks for updates and presents a native banner; offline sync is not provided.
+This folder contains the native macOS shell around Kizuna. It requires macOS 13 or later. The app uses the existing Kizuna account and connects to `https://yourkizuna.com`. Sparkle checks for updates and presents a native banner; offline sync is not provided.
 
 ## Build
 
@@ -24,7 +24,7 @@ The generated app is ad-hoc signed for local testing. It is not Developer ID sig
 4. **Only when releasing:** copy the prepared ZIP files and `appcast.xml` to `public/downloads/mac/`. Keep versioned archives immutable. Copy `desktop/macos/dist/Kizuna.dmg` to `public/downloads/Kizuna-mac.dmg`, and refresh `public/downloads/SHA256SUMS` with `shasum -a 256 Kizuna-mac.dmg` from that directory.
 5. Publish through the repository's normal `main` deployment workflow. Verify the public feed and archive before considering the release complete. Publish archives before the feed if uploading separately.
 
-The feed URL is `https://kizuna.agent-hub.space/public/downloads/mac/appcast.xml`. Both the feed and the archive must have valid Ed25519 signatures; archives are verified before extraction. Signing failures never expire into acceptance. No custom downloader, executable installer script, or update API is exposed to the web page.
+The feed URL is `https://yourkizuna.com/public/downloads/mac/appcast.xml`. Both the feed and the archive must have valid Ed25519 signatures; archives are verified before extraction. Signing failures never expire into acceptance. No custom downloader, executable installer script, or update API is exposed to the web page.
 
 The private update-signing key is stored in the macOS login Keychain under the Sparkle account `space.agenthub.kizuna.updates`. Only its public counterpart (`SUPublicEDKey`) is committed. Keep a secure backup of the signing key before the first release. Never put it in the repository or on the public web server. `generate_keys --account space.agenthub.kizuna.updates -p` prints only the public key. On a different release machine, import the existing key using Sparkle's `generate_keys`; do not replace it with a newly generated key. Future CI signing must use a protected secret.
 

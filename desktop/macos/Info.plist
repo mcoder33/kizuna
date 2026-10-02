@@ -25,7 +25,7 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>SUFeedURL</key>
-	<string>https://kizuna.agent-hub.space/public/downloads/mac/appcast.xml</string>
+	<string>https://yourkizuna.com/public/downloads/mac/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>0WTRjGY7hPIspxnt2yObng9SndOh0GEx0JxlTNBmQtI=</string>
 	<key>SUEnableAutomaticChecks</key>
