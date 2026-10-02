@@ -101,18 +101,11 @@
      data-i18n-attrs="{&quot;aria-label&quot;: &quot;Обработка записей&quot;}"></aside>
     <main>
       <section class="app-page today-page" id="today">
-        <section class="hero hero-head">
+        <section class="hero">
           <!-- Обложка живёт по часам: дата с фазой суток, две-три фразы о дне
                и вопрос в поле. Слова собираются шаблонами из данных дня. -->
           <p class="today-date" id="today-date"></p>
           <p class="today-brief" id="today-brief" aria-live="polite"></p>
-        </section>
-        <!-- Пилюля метрики дня: запланировано · сделано · осталось · просрочено,
-             серия и искра за неделю. Стоит между сводкой и полем и липнет к верху
-             окна, поэтому она — прямой потомок страницы, а не обложки: липкий
-             элемент ходит только внутри своего родителя. Рисует paintDayMetric. -->
-        <div id="day-metric" class="metric-slot stick" hidden></div>
-        <section class="hero hero-field">
           <form id="capture-form" class="capture">
             <!-- Поле ввода создаётся из public/markdown-live.js: разметка
                  оформляется прямо во время набора, поэтому это не textarea. -->
@@ -176,9 +169,6 @@
       <section id="board" class="app-page board-page" hidden>
         <div class="page-heading">
           <h2 data-i18n="Доска">Доска</h2>
-
-          <!-- Та же пилюля метрики дня, что на «Сегодня»: у правого края строки заголовка. -->
-          <div id="board-metric" class="metric-slot board" hidden></div>
         </div>
         <!-- Над доской: вид (как рисовать — доска или список) и группировка
              (по каким полям раскладывать, уровней сколько угодно); справа

@@ -1363,11 +1363,11 @@ test("в «Дне» дело — плотная строка без времен
   const entry = page.locator("#todo .entry").filter({ hasText: "созвон по Hub" }).first();
   await expect(entry).toBeVisible({ timeout: 15000 });
 
-  // Срок в прошлом: строка красная, с чипом «с 27 авг». Ни типа, ни проекта,
+  // Срок в прошлом: строка красная, с чипом «с 27 авг.» (Intl ru-RU). Ни типа, ни проекта,
   // ни тегов, ни времени записи в ней нет.
   await expect(entry).toHaveClass(/dense/);
   await expect(entry).toHaveClass(/overdue/);
-  await expect(entry.locator(".entry-meta .tag.due")).toHaveText("с 27 авг");
+  await expect(entry.locator(".entry-meta .tag.due")).toHaveText("с 27 авг.");
   await expect(entry.locator(".entry-meta .tag.project, .entry-meta .tag.task")).toHaveCount(0);
   await expect(entry.locator(".entry-meta")).not.toContainText("срок:");
   await expect(entry.locator(".entry-meta")).not.toContainText(/сегодня, \d{2}:\d{2}/);
