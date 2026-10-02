@@ -87,7 +87,7 @@ print(key.publicKey.rawRepresentation.base64EncodedString())
     binary = root / 'UpdaterFixture'
     run('swiftc', '-O', '-framework', 'AppKit', '-F', str(SPARKLE), '-framework', 'Sparkle',
         '-Xlinker', '-rpath', '-Xlinker', '@executable_path/../Frameworks',
-        str(MAC / 'Sources/UpdateReminder.swift'), str(MAC / 'Sources/Updates.swift'),
+        str(MAC / 'Sources/Localization.swift'), str(MAC / 'Sources/UpdateReminder.swift'), str(MAC / 'Sources/Updates.swift'),
         str(MAC / 'Tests/update-fixture.swift'), '-o', str(binary))
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(Handler, directory=temp))
     threading.Thread(target=server.serve_forever, daemon=True).start()

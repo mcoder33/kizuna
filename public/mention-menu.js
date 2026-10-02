@@ -1,3 +1,4 @@
+import { bindTranslation } from "./browser-i18n.js";
 // Подсказка людей после «@» в поле записи. Позвать человека в запись можно, не
 // заходя в круг: набрал «@», увидел своих, выбрал — и он эту запись видит и
 // знает о ней. Кого звать, решает сервер: GET /api/people отдаёт людей из всех
@@ -62,7 +63,7 @@ export function attachMentionMenu(field, { document: doc = document, fetch: fetc
   const menu = doc.createElement("div");
   menu.className = "mention-menu";
   menu.setAttribute("role", "listbox");
-  menu.setAttribute("aria-label", "Кого позвать");
+  bindTranslation(menu, "Кого позвать", "aria-label");
   menu.hidden = true;
   doc.body.append(menu);
   const mount = () => {
@@ -121,7 +122,7 @@ export function attachMentionMenu(field, { document: doc = document, fetch: fetc
     });
     const foot = doc.createElement("p");
     foot.className = "mention-foot";
-    foot.textContent = "Позванный увидит эту запись";
+    bindTranslation(foot, "Позванный увидит эту запись");
     menu.append(foot);
     menu.hidden = false;
     place();

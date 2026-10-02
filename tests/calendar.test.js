@@ -621,3 +621,47 @@ test('свой повтор: экземпляры в окне, убранный 
   mine = (await api.get(`/api/calendar?${range}`).expect(200)).body.items.filter(item => item.id === series.id);
   assert.deepEqual(mine.map(item => [item.date, item.recurring]), [[shiftDate(day, 1), undefined]]);
 });
+
+test('personal timezone changes preserve linked calendar instants through later edits',async()=>{
+ const calls=[],app=freshApp({calendarFetch:fakeYandex({calls}),now:()=>new Date('2026-09-01T00:00:00Z')});
+ const api=authed(app);
+ try{
+  await api.put('/api/settings').send({requestedTimeZone:'America/New_York'}).expect(200);
+  const account=(await api.post('/api/calendar/accounts').send(yandexBody).expect(201)).body.account;
+  const capture=(await api.post('/api/captures').send({raw:'Original 山田',provider:'fallback',due:{date:'2026-09-15',time:'09:00',repeat:{freq:'weekly',interval:1,until:'2026-10-15'}}}).expect(201)).body.entry;
+  await api.post('/api/calendar/export').send({captureId:capture.id,accountId:account.id,calendarId:account.calendars[0].id}).expect(201);
+  const link=app.database.prepare('SELECT * FROM calendar_links WHERE capture_id=?').get(capture.id);assert.equal(link.export_time_zone,'America/New_York');
+  const first=calls.filter(call=>call.method==='PUT').at(-1);
+  assert.ok(first.body.includes('DTSTART:20260915T130000Z'));
+  await api.put('/api/settings').send({requestedTimeZone:'Asia/Tokyo'}).expect(200);
+  calls.length=0;await app.calendar.autoExport();assert.equal(calls.filter(call=>call.method==='PUT').length,0);
+  await api.post(`/api/captures/${capture.id}/corrections`).send({patch:{summary:'Renamed 山田'}}).expect(200);
+  calls.length=0;await app.calendar.autoExport();
+  const update=calls.filter(call=>call.method==='PUT').at(-1);assert.ok(update.body.includes('DTSTART:20260915T130000Z'));assert.ok(update.body.includes(`UID:${link.uid}`));assert.ok(update.body.includes('RRULE:FREQ=WEEKLY'));
+  const unchanged=app.database.prepare('SELECT * FROM calendar_links WHERE capture_id=?').get(capture.id);assert.equal(unchanged.uid,link.uid);assert.equal(unchanged.export_time_zone,'America/New_York');
+  assert.equal(app.database.prepare('SELECT raw FROM captures WHERE id=?').get(capture.id).raw,'Original 山田');
+ }finally{app.database.close();}
+});
+
+test('title-only Google edits preserve late DST fold instants, recurrence identity and all-day dates',async()=>{
+ const calls=[];
+ const googleFetch=async(url,options={})=>{
+  calls.push({url,method:options.method||'GET',body:options.body});
+  if(url.startsWith('https://oauth2.googleapis.com/token'))return Response.json({access_token:'at',refresh_token:'rt',expires_in:3600});
+  if(url.includes('/users/me/calendarList'))return Response.json({items:[{id:'fold@test',summary:'Fold calendar',primary:true,accessRole:'owner'}]});
+  if(options.method==='PATCH')return Response.json({etag:'"edited"'});
+  if(url.includes('/events?'))return Response.json({items:[{id:'late',summary:'Late fold 山田',status:'confirmed',recurringEventId:'series-fold',originalStartTime:{dateTime:'2026-11-01T06:30:00Z'},start:{dateTime:'2026-11-01T06:30:00Z'},end:{dateTime:'2026-11-01T07:30:00Z'}},{id:'all-day',summary:'All day 原文',status:'confirmed',start:{date:'2026-11-01'},end:{date:'2026-11-02'}}]});
+  return new Response('not found',{status:404});
+ };
+ const app=freshApp({calendarFetch:googleFetch,now:()=>new Date('2026-10-25T00:00:00Z')}),api=authed(app);
+ try{
+  await api.put('/api/settings').send({googleClientId:'client',googleClientSecret:'secret',requestedTimeZone:'UTC'}).expect(200);
+  const start=await api.get('/api/calendar/google/start').set('Host','kizuna.example').expect(302),state=new URL(start.headers.location).searchParams.get('state');await api.get(`/api/calendar/google/callback?state=${state}&code=ok`).expect(302);
+  const originals=app.database.prepare('SELECT * FROM calendar_events ORDER BY uid').all();assert.equal(originals.length,2);
+  await api.put('/api/settings').send({requestedTimeZone:'America/New_York'}).expect(200);
+  const view=(await api.get('/api/calendar?from=2026-11-01&to=2026-11-01').expect(200)).body;
+  assert.equal(view.external.find(x=>x.title==='Late fold 山田').time,'01:30');
+  for(const event of view.external){calls.length=0;await api.patch(`/api/calendar/external/${encodeURIComponent(event.id)}`).send({title:`Renamed ${event.title}`}).expect(200);assert.deepEqual(Object.keys(JSON.parse(calls.find(x=>x.method==='PATCH').body)),['summary']);}
+  for(const original of originals){const current=app.database.prepare('SELECT * FROM calendar_events WHERE id=?').get(original.id);for(const field of ['start_at','end_at','all_day','uid','instance_key','series_uid'])assert.equal(current[field],original[field],field);}
+ }finally{app.database.close();}
+});

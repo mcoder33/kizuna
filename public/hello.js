@@ -1,3 +1,4 @@
+import { t } from "./browser-i18n.js";
 // Гостевая главная: ролик «как это работает» в копии «Сегодня». Он идёт сам,
 // как видео: фраза печатается, запись раскладывается на встречу завтра и дело
 // на сегодня, дело закрывается кружком и уходит во вкладку «Закрыто», а число
@@ -11,8 +12,8 @@
 // человек, долистав до неё, видит ролик с того места, где он остановился.
 import { longDate, shortDate, plural, DEALS, MEETINGS } from "./today-cover.js";
 
-const PHRASE = "Завтра в 11 созвон с Аней, а смету отправить сегодня";
-const PLACEHOLDER = "Запишите и отпустите";
+const demoPhrase = () => t("Завтра в 11 созвон с Аней, а смету отправить сегодня");
+const demoPlaceholder = () => t("Запишите и отпустите");
 const DOCK = [
   ["done", '<circle cx="12" cy="12" r="9"/><path d="M7.9 12.4l2.9 2.9 5.4-5.8"/>'],
   ["today", '<circle cx="12" cy="12" r="3.7"/><path d="M12 3.4v2M12 18.6v2M3.4 12h2M18.6 12h2M5.9 5.9l1.4 1.4M16.7 16.7l1.4 1.4M18.1 5.9l-1.4 1.4M7.3 16.7l-1.4 1.4"/>'],
@@ -55,10 +56,10 @@ const start = () => ({
   toast: null,
   fresh: null,
   closing: null,
-  today: [{ id: "parcel", title: "Забрать посылку" }],
-  stock: [{ id: "service", title: "Позвонить в сервис насчёт стиралки" }],
+  today: [{ id: "parcel", get title() { return t("Забрать посылку"); } }],
+  stock: [{ id: "service", get title() { return t("Позвонить в сервис насчёт стиралки"); } }],
   tomorrow: [],
-  done: [{ id: "report", title: "Отправить отчёт за неделю" }],
+  done: [{ id: "report", get title() { return t("Отправить отчёт за неделю"); } }],
 });
 let state = start();
 
@@ -79,7 +80,7 @@ function shelf(label, items, options) {
 function paint() {
   const s = state;
   const shown = isoDay(s.view);
-  const text = h("div", `hello-app-text${s.text ? "" : " is-empty"}`, s.text || PLACEHOLDER);
+  const text = h("div", `hello-app-text${s.text ? "" : " is-empty"}`, s.text || demoPlaceholder());
   if (s.typing) text.append(h("i", "hello-app-caret"));
   const send = h("span", "hello-app-send", "→");
   const tab = (key, label, count) => {
@@ -96,11 +97,11 @@ function paint() {
     el.dataset.step = String(delta);
     return el;
   };
-  const current = h("span", "hello-app-current", h("b", null, longDate(shown)), h("span", null, s.view ? "завтра" : "сегодня"));
+  const current = h("span", "hello-app-current", h("b", null, longDate(shown)), h("span", null, s.view ? t("завтра") : t("сегодня")));
   let list;
-  if (s.tab === "journal") list = shelf("закрыто сегодня", s.done, { done: true });
-  else if (s.view) list = shelf("по часам", s.tomorrow);
-  else list = [...shelf(`на сегодня · ${s.today.length}`, s.today, { today: true, aside: "перенести всё на завтра" }), ...shelf(`без срока · ${s.stock.length}`, s.stock)];
+  if (s.tab === "journal") list = shelf(t("закрыто сегодня"), s.done, { done: true });
+  else if (s.view) list = shelf(t("по часам"), s.tomorrow);
+  else list = [...shelf(t("на сегодня · {length}", { length: s.today.length }), s.today, { today: true, get aside() { return t("перенести всё на завтра"); } }), ...shelf(t("без срока · {length}", { length: s.stock.length }), s.stock)];
   const dock = h("div", "hello-app-dock");
   const badges = { done: s.done.length, today: s.today.length };
   for (const [key, icon] of DOCK) {
@@ -113,8 +114,8 @@ function paint() {
     dock.append(item);
   }
   const parts = [
-    h("div", "hello-app-capture", text, h("div", "hello-app-foot", h("span", "hello-app-hint", "⌘+Enter — отправить, Enter — новая строка"), send)),
-    h("div", "hello-app-tabs", tab("day", s.view ? `День ${shortDate(shown)}` : "День", dayCount), tab("journal", "Закрыто", String(s.done.length))),
+    h("div", "hello-app-capture", text, h("div", "hello-app-foot", h("span", "hello-app-hint", t("⌘+Enter — отправить, Enter — новая строка")), send)),
+    h("div", "hello-app-tabs", tab("day", s.view ? t("День {value1}", { value1: shortDate(shown) }) : t("День"), dayCount), tab("journal", t("Закрыто"), String(s.done.length))),
     h("div", "hello-app-nav", step(-1), current, step(1)),
     ...list,
     dock,
@@ -127,7 +128,7 @@ const progress = (part) => { bar.style.width = `${Math.round(part * 100)}%`; };
 // к кадру, а вместе с ней прыгал бы заголовок слева. Кадры меряются при запуске
 // и когда меняется ширина.
 function tallFrames() {
-  const sent = { ...start(), today: [{ id: "smeta", title: "Отправить смету" }, ...start().today], tomorrow: [{ id: "meet", title: "Созвон с Аней", time: "11:00", who: "Аня" }] };
+  const sent = { ...start(), today: [{ id: "smeta", get title() { return t("Отправить смету"); } }, ...start().today], tomorrow: [{ id: "meet", get title() { return t("Созвон с Аней"); }, time: "11:00", get who() { return t("Аня"); } }] };
   return [start(), sent, { ...sent, view: 1 }, { ...sent, tab: "journal", done: [sent.today[1], ...sent.done] }];
 }
 function fit() {
@@ -192,10 +193,10 @@ async function press(selector, token) {
 // Фраза печатается по букве; при «уменьшении движения» появляется сразу.
 async function type(token) {
   state.typing = true;
-  let typed = motion() ? 0 : PHRASE.length - 1;
-  while (typed < PHRASE.length) {
+  let typed = motion() ? 0 : demoPhrase().length - 1;
+  while (typed < demoPhrase().length) {
     typed += 1;
-    state.text = PHRASE.slice(0, typed);
+    state.text = demoPhrase().slice(0, typed);
     paint();
     await wait(40, token);
     if (!alive(token)) return;
@@ -219,10 +220,10 @@ async function play(token) {
     await press(".hello-app-send", token);
     if (!alive(token)) return;
     state.text = "";
-    state.today = [{ id: "smeta", title: "Отправить смету" }, ...state.today];
-    state.tomorrow = [{ id: "meet", title: "Созвон с Аней", time: "11:00", who: "Аня" }];
+    state.today = [{ id: "smeta", get title() { return t("Отправить смету"); } }, ...state.today];
+    state.tomorrow = [{ id: "meet", get title() { return t("Созвон с Аней"); }, time: "11:00", get who() { return t("Аня"); } }];
     state.fresh = "smeta";
-    state.toast = "Записано: встреча завтра в 11:00 и дело на сегодня";
+    state.toast = t("Записано: встреча завтра в 11:00 и дело на сегодня");
     paint();
     progress(0.38);
     await wait(2800, token);
@@ -251,7 +252,7 @@ async function play(token) {
     state.today = state.today.filter((item) => item.id !== "parcel");
     state.done = [parcel, ...state.done];
     state.closing = null;
-    state.toast = "Дело закрыто — оно в «Закрыто»";
+    state.toast = t("Дело закрыто — оно в «Закрыто»");
     paint();
     progress(0.82);
     await wait(2200, token);
@@ -267,7 +268,7 @@ async function play(token) {
 function restart() {
   demo.run += 1;
   demo.paused = false;
-  pauseButton.textContent = "Пауза";
+  pauseButton.textContent = t("Пауза");
   pauseButton.setAttribute("aria-pressed", "false");
   play(demo.run);
 }
@@ -278,7 +279,7 @@ if (figure && app && bar && controls && pauseButton) {
   controls.hidden = false;
   pauseButton.addEventListener("click", () => {
     demo.paused = !demo.paused;
-    pauseButton.textContent = demo.paused ? "Продолжить" : "Пауза";
+    pauseButton.textContent = demo.paused ? t("Продолжить") : t("Пауза");
     pauseButton.setAttribute("aria-pressed", String(demo.paused));
   });
   document.getElementById("demo-again").addEventListener("click", restart);

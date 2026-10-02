@@ -8,6 +8,7 @@ enum KizunaMain {
         if CommandLine.arguments.contains("--self-test") {
             DesktopOrigin.selfTest()
             QuickCapturePolicy.selfTest()
+            DesktopLocale.selfTest()
             KizunaIcon.selfTest()
             return
         }
@@ -20,7 +21,7 @@ enum KizunaMain {
 }
 
 @MainActor
-final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMessageHandler {
     static weak var shared: KizunaAppDelegate?
     private let origin = DesktopOrigin.configured(ProcessInfo.processInfo.environment["KIZUNA_URL"])
     private var window: NSWindow!
@@ -30,6 +31,8 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
     private var quickCapturePanel: DesktopQuickCapture!
     private var updates: DesktopUpdates!
     private var restartPrepared = false
+    private var timeZoneObserver: NSObjectProtocol?
+    private var displayedLocale = DesktopLocale.current
     private var statusItem: NSStatusItem!
     private var hotKey: EventHotKeyRef?
     private var hotKeyHandler: EventHandlerRef?
@@ -45,6 +48,7 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         Self.shared = self
         makeMenus()
         makeWindow()
+        timeZoneObserver = NotificationCenter.default.addObserver(forName: .NSSystemTimeZoneDidChange, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.refreshSystemTimeZone() } }
         quickCapturePanel = DesktopQuickCapture(webView: webView, origin: origin)
         quickCapturePanel.onLogin = { [weak self] in
             guard let self else { return }
@@ -74,14 +78,76 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         showWindow(nil)
     }
 
+    private func refreshSystemTimeZone() {
+        guard let webView, let url = webView.url, DesktopOrigin.contains(url, origin: origin) else { return }
+        webView.evaluateJavaScript(DesktopTimeZone.script(), completionHandler: nil)
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == "kizunaTimeZoneDetection" {
+            guard message.frameInfo.isMainFrame, let url = message.frameInfo.request.url, DesktopOrigin.contains(url, origin: origin) else { return }
+            refreshSystemTimeZone()
+            return
+        }
+        guard message.name == "kizunaLocale", message.frameInfo.isMainFrame,
+              let url = message.frameInfo.request.url, DesktopOrigin.contains(url, origin: origin),
+              let snapshot = message.body as? [String: Any],
+              let requested = snapshot["requestedLocale"] as? String,
+              requested == "system" || DesktopLocale.supported.contains(requested) else { return }
+        let detected = snapshot["detectedLocale"] as? String
+        guard snapshot["detectedLocale"] == nil || snapshot["detectedLocale"] is NSNull || (detected != nil && DesktopLocale.supported.contains(detected!)) else { return }
+        DesktopLocale.requested = requested
+        DesktopLocale.detected = detected
+        guard displayedLocale != DesktopLocale.current else { return }
+        displayedLocale = DesktopLocale.current
+        window?.title = L("Кизуна")
+        makeMenus()
+        quickCapturePanel?.refreshLocale()
+        updates?.refreshLocale()
+        if let container = window?.contentView {
+            let wasVisible = errorView?.isHidden == false
+            errorView?.removeFromSuperview()
+            makeErrorView(in: container)
+            errorView.isHidden = !wasVisible
+            errorText.stringValue = L("Проверьте подключение к интернету и попробуйте ещё раз.\nВаши записи остаются на сервере.")
+        }
+        if let statusItem { NSStatusBar.system.removeStatusItem(statusItem); makeStatusItem() }
+    }
+
     private func makeWindow() {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1240, height: 820),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "Кизуна"; window.minSize = NSSize(width: 760, height: 560)
+        window.title = L("Кизуна"); window.minSize = NSSize(width: 760, height: 560)
         window.setFrameAutosaveName("KizunaMainWindow"); window.center(); window.delegate = self
         window.isReleasedWhenClosed = false
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
+        configuration.userContentController.add(self, name: "kizunaLocale")
+        configuration.userContentController.add(self, name: "kizunaTimeZoneDetection")
+        let originString = String(data: try! JSONEncoder().encode(origin.absoluteString), encoding: .utf8)!
+        let detectionScript = "if (window.location.origin === new URL(\(originString)).origin) { \(DesktopTimeZone.script()) window.webkit.messageHandlers.kizunaTimeZoneDetection.postMessage({}); }"
+        configuration.userContentController.addUserScript(WKUserScript(source:detectionScript,injectionTime:.atDocumentStart,forMainFrameOnly:true))
+        let localeBridge = """
+        (() => {
+          let generation = 0;
+          async function sync() {
+            const requestGeneration = ++generation;
+            try {
+              const response = await fetch('/api/settings', {credentials:'same-origin', cache:'no-store'});
+              if (requestGeneration !== generation) return;
+              if (!response.ok) { window.webkit.messageHandlers.kizunaLocale.postMessage({requestedLocale:'system',detectedLocale:null}); return; }
+              const data = await response.json();
+              if (requestGeneration !== generation) return;
+              window.webkit.messageHandlers.kizunaLocale.postMessage({requestedLocale:data.settings?.locale || 'system',detectedLocale:data.settings?.detectedLocale || null});
+            } catch {}
+          }
+          sync(); window.addEventListener('pagent:localesaved', sync);
+          window.addEventListener('pagent:timezonesaved', sync);
+          window.addEventListener('focus', sync);
+        })();
+        """
+        configuration.userContentController.addUserScript(WKUserScript(source: localeBridge, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+
         if let scriptURL = Bundle.main.url(forResource: "RestartGuard", withExtension: "js"),
            let script = try? String(contentsOf: scriptURL, encoding: .utf8) {
             configuration.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -99,7 +165,7 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         }
         navigation.onFailure = { [weak self] _ in
             guard let self else { return }
-            self.errorText.stringValue = "Проверьте подключение к интернету и попробуйте ещё раз.\nВаши записи остаются на сервере."
+            self.errorText.stringValue = L("Проверьте подключение к интернету и попробуйте ещё раз.\nВаши записи остаются на сервере.")
             self.errorView.isHidden = false
         }
         webView.navigationDelegate = navigation; webView.uiDelegate = navigation
@@ -119,13 +185,13 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
             backdrop.leadingAnchor.constraint(equalTo: container.leadingAnchor), backdrop.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             backdrop.topAnchor.constraint(equalTo: container.topAnchor), backdrop.bottomAnchor.constraint(equalTo: container.bottomAnchor)
         ])
-        let title = NSTextField(labelWithString: "Кизуна пока недоступна")
+        let title = NSTextField(labelWithString: L("Кизуна пока недоступна"))
         title.font = .systemFont(ofSize: 24, weight: .semibold)
-        errorText = NSTextField(wrappingLabelWithString: "Проверьте подключение к интернету.")
+        errorText = NSTextField(wrappingLabelWithString: L("Проверьте подключение к интернету."))
         errorText.alignment = .center; errorText.textColor = .secondaryLabelColor
-        let retry = NSButton(title: "Попробовать снова", target: self, action: #selector(reload(_:)))
+        let retry = NSButton(title: L("Попробовать снова"), target: self, action: #selector(reload(_:)))
         retry.bezelStyle = .rounded; retry.keyEquivalent = "\r"
-        let browser = NSButton(title: "Открыть в браузере", target: self, action: #selector(openInBrowser(_:)))
+        let browser = NSButton(title: L("Открыть в браузере"), target: self, action: #selector(openInBrowser(_:)))
         browser.bezelStyle = .rounded
         let stack = NSStackView(views: [title, errorText, retry, browser]); stack.orientation = .vertical; stack.spacing = 18
         stack.translatesAutoresizingMaskIntoConstraints = false; backdrop.addSubview(stack)
@@ -136,29 +202,29 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
 
     private func makeMenus() {
         let bar = NSMenu(); NSApp.mainMenu = bar
-        let app = NSMenu(); addMenu("Кизуна", menu: app, to: bar)
-        addItem("О Кизуне", action: #selector(about(_:)), to: app)
-        addItem("Проверить обновления…", action: #selector(checkForUpdates(_:)), to: app)
+        let app = NSMenu(); addMenu(L("Кизуна"), menu: app, to: bar)
+        addItem(L("О Кизуне"), action: #selector(about(_:)), to: app)
+        addItem(L("Проверить обновления…"), action: #selector(checkForUpdates(_:)), to: app)
         app.addItem(.separator())
-        addItem("Включить уведомления…", action: #selector(enableNotifications(_:)), to: app)
-        addItem("Новая запись", action: #selector(quickCapture(_:)), key: "n", to: app)
+        addItem(L("Включить уведомления…"), action: #selector(enableNotifications(_:)), to: app)
+        addItem(L("Новая запись"), action: #selector(quickCapture(_:)), key: "n", to: app)
         app.addItem(.separator())
-        addItem("Скрыть Кизуну", action: #selector(NSApplication.hide(_:)), key: "h", target: NSApp, to: app)
-        addItem("Завершить Кизуну", action: #selector(NSApplication.terminate(_:)), key: "q", target: NSApp, to: app)
-        let edit = NSMenu(); addMenu("Правка", menu: edit, to: bar)
-        for (title, selector, key) in [("Отменить", "undo:", "z"), ("Вырезать", "cut:", "x"),
-                                       ("Копировать", "copy:", "c"), ("Вставить", "paste:", "v"), ("Выбрать всё", "selectAll:", "a")] {
+        addItem(L("Скрыть Кизуну"), action: #selector(NSApplication.hide(_:)), key: "h", target: NSApp, to: app)
+        addItem(L("Завершить Кизуну"), action: #selector(NSApplication.terminate(_:)), key: "q", target: NSApp, to: app)
+        let edit = NSMenu(); addMenu(L("Правка"), menu: edit, to: bar)
+        for (title, selector, key) in [(L("Отменить"), "undo:", "z"), (L("Вырезать"), "cut:", "x"),
+                                       (L("Копировать"), "copy:", "c"), (L("Вставить"), "paste:", "v"), (L("Выбрать всё"), "selectAll:", "a")] {
             let item = NSMenuItem(title: title, action: Selector(selector), keyEquivalent: key); edit.addItem(item)
         }
-        let redo = NSMenuItem(title: "Повторить", action: NSSelectorFromString("redo:"), keyEquivalent: "z")
+        let redo = NSMenuItem(title: L("Повторить"), action: NSSelectorFromString("redo:"), keyEquivalent: "z")
         redo.keyEquivalentModifierMask = [.command, .shift]; edit.insertItem(redo, at: 1)
-        let view = NSMenu(); addMenu("Вид", menu: view, to: bar)
-        addItem("Обновить", action: #selector(reload(_:)), key: "r", to: view)
-        addItem("Открыть в браузере", action: #selector(openInBrowser(_:)), key: "l", to: view)
-        let windows = NSMenu(); addMenu("Окно", menu: windows, to: bar); NSApp.windowsMenu = windows
-        addItem("Показать Кизуну", action: #selector(showWindow(_:)), key: "0", to: windows)
-        addItem("Свернуть", action: #selector(NSWindow.performMiniaturize(_:)), key: "m", target: nil, to: windows)
-        addItem("Закрыть окно", action: #selector(NSWindow.performClose(_:)), key: "w", target: nil, to: windows)
+        let view = NSMenu(); addMenu(L("Вид"), menu: view, to: bar)
+        addItem(L("Обновить"), action: #selector(reload(_:)), key: "r", to: view)
+        addItem(L("Открыть в браузере"), action: #selector(openInBrowser(_:)), key: "l", to: view)
+        let windows = NSMenu(); addMenu(L("Окно"), menu: windows, to: bar); NSApp.windowsMenu = windows
+        addItem(L("Показать Кизуну"), action: #selector(showWindow(_:)), key: "0", to: windows)
+        addItem(L("Свернуть"), action: #selector(NSWindow.performMiniaturize(_:)), key: "m", target: nil, to: windows)
+        addItem(L("Закрыть окно"), action: #selector(NSWindow.performClose(_:)), key: "w", target: nil, to: windows)
     }
     private func addMenu(_ title: String, menu: NSMenu, to parent: NSMenu) {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: ""); menu.title = title; item.submenu = menu; parent.addItem(item)
@@ -171,14 +237,14 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
     private func makeStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = KizunaIcon.menuBarTemplate(size: 18)
-        statusItem.button?.setAccessibilityLabel("Кизуна")
+        statusItem.button?.setAccessibilityLabel(L("Кизуна"))
         let menu = NSMenu()
-        addItem("Новая запись  ⌘⇧Пробел", action: #selector(quickCapture(_:)), to: menu)
-        addItem("Показать Кизуну", action: #selector(showWindow(_:)), to: menu)
-        addItem("Проверить обновления…", action: #selector(checkForUpdates(_:)), to: menu)
-        addItem("Включить уведомления…", action: #selector(enableNotifications(_:)), to: menu)
+        addItem(L("Новая запись  ⌘⇧Пробел"), action: #selector(quickCapture(_:)), to: menu)
+        addItem(L("Показать Кизуну"), action: #selector(showWindow(_:)), to: menu)
+        addItem(L("Проверить обновления…"), action: #selector(checkForUpdates(_:)), to: menu)
+        addItem(L("Включить уведомления…"), action: #selector(enableNotifications(_:)), to: menu)
         menu.addItem(.separator())
-        addItem("Завершить Кизуну", action: #selector(NSApplication.terminate(_:)), target: NSApp, to: menu)
+        addItem(L("Завершить Кизуну"), action: #selector(NSApplication.terminate(_:)), target: NSApp, to: menu)
         statusItem.menu = menu
     }
 
@@ -204,7 +270,7 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
                                         GetApplicationEventTarget(), 0, &hotKey)
         if ProcessInfo.processInfo.environment["KIZUNA_DEBUG_HOTKEY"] == "1" { fputs("Kizuna hotkey: RegisterEventHotKey status=\(result), keyCode=\(kVK_Space), modifiers=\(cmdKey | shiftKey)\n", stderr) }
         if result != noErr {
-            let item = NSMenuItem(title: "⌘⇧Пробел занят — используйте меню «Новая запись»", action: nil, keyEquivalent: "")
+            let item = NSMenuItem(title: L("⌘⇧Пробел занят — используйте меню «Новая запись»"), action: nil, keyEquivalent: "")
             statusItem.menu?.insertItem(item, at: 0)
         }
     }
@@ -281,26 +347,29 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
 
     private func prepareForUpdate(_ reply: @escaping (String?) -> Void) {
         if quickCapturePanel.preventsRestart {
-            reply("Сохраните быструю запись (⌘⇧Пробел) или дождитесь её отправки, затем продолжите обновление.")
+            reply(L("Сохраните быструю запись (⌘⇧Пробел) или дождитесь её отправки, затем продолжите обновление."))
             return
         }
-        if webView.isLoading { reply("Дождитесь загрузки страницы и продолжите обновление."); return }
+        if webView.isLoading { reply(L("Дождитесь загрузки страницы и продолжите обновление.")); return }
         // A failed initial navigation has no page or draft to preserve.
         if webView.url == nil { restartPrepared = true; quickCapturePanel.hideForRestart(); reply(nil); return }
         guard let url = webView.url, DesktopOrigin.contains(url, origin: origin) else {
-            reply("Вернитесь в Кизуну и продолжите обновление."); return
+            reply(L("Вернитесь в Кизуну и продолжите обновление.")); return
         }
-        webView.evaluateJavaScript("JSON.stringify({ reason: window.KizunaUpdateGuard ? window.KizunaUpdateGuard.prepare() : 'Завершите редактирование и перезагрузите страницу перед обновлением.' })") { [weak self] result, error in
+        guard let script = DesktopRestartScript.prepare(fallbackMessage: L("Завершите редактирование и перезагрузите страницу перед обновлением.")) else {
+            reply(L("Не удалось проверить незавершённый ввод. Попробуйте обновление ещё раз.")); return
+        }
+        webView.evaluateJavaScript(script) { [weak self] result, error in
             guard let self else { return }
             guard error == nil, let json = result as? String, let data = json.data(using: .utf8),
                   let status = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                reply("Не удалось проверить незавершённый ввод. Попробуйте обновление ещё раз."); return
+                reply(L("Не удалось проверить незавершённый ввод. Попробуйте обновление ещё раз.")); return
             }
             let reason = status["reason"] as? String
             // Native quick capture may have opened while WebKit answered.
             if reason == nil && self.quickCapturePanel.preventsRestart {
                 self.webView.evaluateJavaScript("window.KizunaUpdateGuard?.resume()", completionHandler: nil)
-                reply("Сначала сохраните быструю запись (⌘⇧Пробел)."); return
+                reply(L("Сначала сохраните быструю запись (⌘⇧Пробел).")); return
             }
             self.restartPrepared = reason == nil
             if self.restartPrepared { self.quickCapturePanel.hideForRestart() }
@@ -308,8 +377,8 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         }
     }
     @objc private func about(_ sender: Any?) {
-        NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "Кизуна", .credits: NSAttributedString(string:
-            "⌘⇧Пробел — новая запись из любого приложения.\nУведомления приходят, пока Кизуна запущена.\nДля работы требуется интернет.")])
+        NSApp.orderFrontStandardAboutPanel(options: [.applicationName: L("Кизуна"), .credits: NSAttributedString(string:
+            L("⌘⇧Пробел — новая запись из любого приложения.\nУведомления приходят, пока Кизуна запущена.\nДля работы требуется интернет."))])
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool { sender.orderOut(nil); return false }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showWindow(nil); return true }

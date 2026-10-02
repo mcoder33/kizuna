@@ -1,3 +1,4 @@
+import { t, bindTranslation } from "./browser-i18n.js";
 // Страница «Как пользоваться»: слева вопросы с поиском, справа прогон в копии
 // интерфейса. На телефоне сначала список, потом экран прогона с «‹ Вопросы».
 //
@@ -62,12 +63,12 @@ function todayScene(state, hooks) {
   const text = h("div", "gd-cap-text" + (hasText ? "" : " empty"));
   text.tabIndex = 0;
   text.setAttribute("role", "textbox");
-  text.setAttribute("aria-label", "Поле записи в примере");
-  text.textContent = state.text || (state.typing ? "" : "Что нужно сделать?");
+  bindTranslation(text, "Поле записи в примере", "aria-label");
+  text.textContent = state.text || (state.typing ? "" : t("Что нужно сделать?"));
   const foot = h("div", "gd-cap-foot");
-  const send = button("gd-cap-send", "→", null, { "aria-label": "Сохранить запись в примере" });
+  const send = button("gd-cap-send", "→", null, { get "aria-label"() { return t("Сохранить запись в примере"); } });
   send.hidden = !state.text;
-  const expand = button("gd-cap-expand", expandIcon(), null, { "aria-label": "Увеличить поле в примере" });
+  const expand = button("gd-cap-expand", expandIcon(), null, { get "aria-label"() { return t("Увеличить поле в примере"); } });
   foot.append(expand, send);
   cap.append(text, foot);
   root.append(cap);
@@ -89,18 +90,18 @@ function todayScene(state, hooks) {
   const tabs = h("div", "gd-today-tabs");
   const doneCount = state.doneEntries.length, dayCount = state.entries.filter((e) => !e.done).length;
   tabs.append(
-    button("gd-today-tab" + (state.tab === "day" ? " on" : ""), ["День", h("b", null, `${dayCount} ${dayCount === 1 ? "дело" : dayCount > 1 && dayCount < 5 ? "дела" : "дел"}`)]),
-    button("gd-today-tab" + (state.tab === "done" ? " on" : ""), ["Закрыто", h("b", null, String(doneCount))]),
+    button("gd-today-tab" + (state.tab === "day" ? " on" : ""), [t("День"), h("b", null, `${dayCount} ${dayCount === 1 ? t("дело") : dayCount > 1 && dayCount < 5 ? t("дела") : t("дел")}`)]),
+    button("gd-today-tab" + (state.tab === "done" ? " on" : ""), [t("Закрыто"), h("b", null, String(doneCount))]),
   );
   root.append(tabs);
-  root.append(h("div", "gd-day-head", h("span", null, `‹ ${shortDate(isoDay(-1))}`), h("span", "gd-mid", longDate(isoDay()), h("i", null, "Сегодня")), h("span", "gd-r", `${shortDate(isoDay(1))} ›`)));
+  root.append(h("div", "gd-day-head", h("span", null, `‹ ${shortDate(isoDay(-1))}`), h("span", "gd-mid", longDate(isoDay()), h("i", null, t("Сегодня"))), h("span", "gd-r", `${shortDate(isoDay(1))} ›`)));
   const list = h("div", "gd-entries");
   if (state.tab === "day") {
-    root.append(h("p", "gd-shelf", "Без времени"));
+    root.append(h("p", "gd-shelf", t("Без времени")));
     for (const entry of state.entries) list.append(entryRow(entry));
   } else {
-    root.append(h("p", "gd-shelf", "Сделано сегодня"));
-    if (!state.doneEntries.length) list.append(h("p", "gd-cover-brief", "Пока нет зафиксированной работы за сегодня."));
+    root.append(h("p", "gd-shelf", t("Сделано сегодня")));
+    if (!state.doneEntries.length) list.append(h("p", "gd-cover-brief", t("Пока нет зафиксированной работы за сегодня.")));
     for (const entry of state.doneEntries) list.append(entryRow(entry));
   }
   root.append(list);
@@ -109,72 +110,72 @@ function todayScene(state, hooks) {
 }
 function entryRow(entry) {
   const row = h("div", "gd-entry" + (entry.isNew ? " new" : "") + (entry.done ? " done" : "") + (entry.type === "task" ? "" : " no-check"));
-  if (entry.type === "task") row.append(button("gd-check", "", null, { "aria-label": entry.done ? "Вернуть в работу" : "Готово" }));
+  if (entry.type === "task") row.append(button("gd-check", "", null, { "aria-label": entry.done ? t("Вернуть в работу") : t("Готово") }));
   row.append(button("gd-title", entry.title));
   const meta = h("div", "gd-meta");
   if (entry.project) meta.append(h("span", "gd-tag project", entry.project));
   if (entry.from) meta.append(h("span", "gd-tag from", entry.from));
   if (entry.assign) meta.append(h("span", "gd-tag assign" + (entry.taken ? " taken" : ""), entry.assign));
   if (entry.when) meta.append(h("span", null, entry.when));
-  if (entry.due) meta.append(h("span", "gd-tag due" + (entry.ontime ? " ontime" : ""), "срок: " + entry.due));
-  if (entry.undated && !entry.done) meta.append(h("span", "gd-tag", "без срока"));
-  if (entry.due && entry.ontime && !entry.done) meta.append(h("span", "gd-tag ontime", "в срок"));
-  if (entry.done) meta.append(h("span", "gd-tag done", "готово"));
+  if (entry.due) meta.append(h("span", "gd-tag due" + (entry.ontime ? " ontime" : ""), t("срок: ") + entry.due));
+  if (entry.undated && !entry.done) meta.append(h("span", "gd-tag", t("без срока")));
+  if (entry.due && entry.ontime && !entry.done) meta.append(h("span", "gd-tag ontime", t("в срок")));
+  if (entry.done) meta.append(h("span", "gd-tag done", t("готово")));
   row.append(meta);
   return row;
 }
 function cardScene(state) {
   const root = h("div", "gd-cardv");
-  root.append(h("div", "gd-card-head", "Сегодня / запись", button("gd-round", "×", null, { "aria-label": "Закрыть карточку в примере" })), h("p", "gd-card-title", state.title));
+  root.append(h("div", "gd-card-head", t("Сегодня / запись"), button("gd-round", "×", null, { get "aria-label"() { return t("Закрыть карточку в примере"); } })), h("p", "gd-card-title", state.title));
   const props = h("div", "gd-props");
-  root.append(button("gd-act gd-card-params", "Параметры"));
-  props.append(h("div", "gd-prop gd-prop-due", h("span", "gd-prop-name", "Срок"), h("div", "gd-prop-val", state.due ? h("span", "gd-select", state.due) : h("span", "gd-ghost", "без срока"))));
-  props.append(h("div", "gd-prop", h("span", "gd-prop-name", "Проект"), h("div", "gd-prop-val", h("span", "gd-select", state.project || "—"))));
+  root.append(bindTranslation(button("gd-act gd-card-params", t("Параметры")), "Параметры"));
+  props.append(h("div", "gd-prop gd-prop-due", h("span", "gd-prop-name", t("Срок")), h("div", "gd-prop-val", state.due ? h("span", "gd-select", state.due) : h("span", "gd-ghost", t("без срока")))));
+  props.append(h("div", "gd-prop", h("span", "gd-prop-name", t("Проект")), h("div", "gd-prop-val", h("span", "gd-select", state.project || "—"))));
   if (state.assignee !== undefined) {
-    const val = h("div", "gd-prop-val", h("span", "gd-select", state.assignee || "— никому"));
+    const val = h("div", "gd-prop-val", h("span", "gd-select", state.assignee || t("— никому")));
     if (state.assignWord) val.append(h("span", "gd-origin", "— " + state.assignWord));
-    props.append(h("div", "gd-prop gd-prop-assign", h("span", "gd-prop-name", "Исполнитель"), val));
+    props.append(h("div", "gd-prop gd-prop-assign", h("span", "gd-prop-name", t("Исполнитель")), val));
   }
   if (state.params) root.append(props);
   if (state.lesson) root.append(h("p", "gd-lesson", h("span", "gd-mk", "✓"), state.lesson));
-  root.append(h("div", "gd-card-src", "Исходная запись: ", h("b", null, `«${state.title}»`), " · сегодня, 12:05. Она хранится как есть, правки живут поверх."));
+  root.append(h("div", "gd-card-src", t("Исходная запись: "), h("b", null, `«${state.title}»`), t(" · сегодня, 12:05. Она хранится как есть, правки живут поверх.")));
   return root;
 }
 function circlesScene(state) {
   const root = h("div", "gd-circles");
-  const band = h("div", "gd-kc-band", h("div", "gd-kc-title", h("span", "gd-kc-dot"), "ВойсОпс ", h("span", "gd-kc-sub", "3 за столом")));
+  const band = h("div", "gd-kc-band", h("div", "gd-kc-title", h("span", "gd-kc-dot"), t("ВойсОпс "), h("span", "gd-kc-sub", t("3 за столом"))));
   const seats = h("div", "gd-kc-seats");
-  for (const person of [{ n: "Саша", sub: "вы", me: true, cls: "me" }, { n: "Аня", sub: "1 открытое дело", cls: "a" }, { n: "Миша", sub: "открытых дел нет", cls: "m" }]) {
+  for (const person of [{ get n() { return t("Саша"); }, get sub() { return t("вы"); }, me: true, cls: "me" }, { get n() { return t("Аня"); }, get sub() { return t("1 открытое дело"); }, cls: "a" }, { get n() { return t("Миша"); }, get sub() { return t("открытых дел нет"); }, cls: "m" }]) {
     const seat = h("div", "gd-kc-seat", h("span", "gd-ava " + person.cls, person.n[0]), h("span", null, h("span", "gd-kc-name", person.n), h("span", "gd-kc-sub", person.sub)));
-    if (!person.me && (state.showTodo || person.n === "Аня")) seat.append(button("gd-kc-todo", todoIcon(), null, { title: "Поручить дело", "aria-label": "Поручить дело: " + person.n }));
+    if (!person.me && (state.showTodo || person.n === t("Аня"))) seat.append(button("gd-kc-todo", todoIcon(), null, { get title() { return t("Поручить дело"); }, "aria-label": t("Поручить дело: ") + person.n }));
     seats.append(seat);
   }
-  seats.append(h("div", "gd-kc-seat add", h("span", "gd-ava", "+"), h("span", "gd-kc-name", "Позвать")));
+  seats.append(h("div", "gd-kc-seat add", h("span", "gd-ava", "+"), h("span", "gd-kc-name", t("Позвать"))));
   band.append(seats);
   root.append(band);
   if (state.panel) {
-    const panel = h("div", "gd-kc-panel", h("div", "gd-kc-panel-head", h("span", "gd-ava a", "А"), state.panel, h("span", "gd-kc-sub", "в круге ВойсОпс")));
+    const panel = h("div", "gd-kc-panel", h("div", "gd-kc-panel-head", h("span", "gd-ava a", t("А")), state.panel, h("span", "gd-kc-sub", t("в круге ВойсОпс"))));
     const input = h("input");
     input.type = "text";
-    input.placeholder = "Что поручить";
+    bindTranslation(input, "Что поручить", "placeholder");
     input.value = state.deed || "";
-    input.setAttribute("aria-label", "Дело для " + state.panel + " в примере");
-    panel.append(h("div", "gd-kc-deed", input, button("gd-act primary", "Отдать")), h("p", "gd-kc-hint", "Срок пишется словами внутри: «до пятницы». Разбирает та же модель, что и обычную запись."));
+    input.setAttribute("aria-label", t("Дело для ") + state.panel + t(" в примере"));
+    panel.append(h("div", "gd-kc-deed", input, bindTranslation(button("gd-act primary", t("Отдать")), "Отдать")), h("p", "gd-kc-hint", t("Срок пишется словами внутри: «до пятницы». Разбирает та же модель, что и обычную запись.")));
     root.append(panel);
   }
   return root;
 }
 function annaScene(state) {
-  const root = h("div", "gd-anna", h("p", "gd-as-label", h("span", "gd-ava a", "А"), "Так это видит Аня"));
-  const bell = h("div", "gd-bell", h("div", "gd-bell-h", "Колокольчик", h("span", "gd-n", "1")));
-  const notice = h("div", "gd-notice" + (state.taken ? " taken" : ""), h("span", "gd-ava s", "С"));
+  const root = h("div", "gd-anna", h("p", "gd-as-label", h("span", "gd-ava a", t("А")), t("Так это видит Аня")));
+  const bell = h("div", "gd-bell", h("div", "gd-bell-h", t("Колокольчик"), h("span", "gd-n", "1")));
+  const notice = h("div", "gd-notice" + (state.taken ? " taken" : ""), h("span", "gd-ava s", t("С")));
   if (!state.taken) {
-    notice.append(h("div", null, h("b", null, "Саша"), " просит: «Прислать смету по Хабу»", h("div", "gd-notice-meta", "срок: сегодня · круг ВойсОпс")));
-    notice.append(h("div", "gd-notice-acts", button("gd-act primary gd-take", "Беру"), button("gd-act", "Не я")));
-  } else notice.append(h("div", null, h("b", null, "Взято"), ", дело в вашем дне"));
+    notice.append(h("div", null, h("b", null, t("Саша")), t(" просит: «Прислать смету по Хабу»"), h("div", "gd-notice-meta", t("срок: сегодня · круг ВойсОпс"))));
+    notice.append(h("div", "gd-notice-acts", bindTranslation(button("gd-act primary gd-take", t("Беру")), "Беру"), bindTranslation(button("gd-act", t("Не я")), "Не я")));
+  } else notice.append(h("div", null, h("b", null, t("Взято")), t(", дело в вашем дне")));
   bell.append(notice);
   root.append(bell);
-  if (state.taken) root.append(h("div", "gd-anna-day", h("p", "gd-shelf", "День Ани · без времени"), h("div", "gd-entries", entryRow({ title: "Прислать смету по Хабу", type: "task", due: "сегодня", ontime: true, from: "от Саши", when: "ссылка на запись Саши" }))));
+  if (state.taken) root.append(h("div", "gd-anna-day", h("p", "gd-shelf", t("День Ани · без времени")), h("div", "gd-entries", entryRow({ get title() { return t("Прислать смету по Хабу"); }, type: "task", get due() { return t("сегодня"); }, ontime: true, get from() { return t("от Саши"); }, get when() { return t("ссылка на запись Саши"); } }))));
   return root;
 }
 function scene(state, hooks) {
@@ -205,14 +206,14 @@ function createPlayer({ onTry, onGo, onExit, onBack, onDone, onMode }) {
   let guide = null, id = null, idx = 0, mode = "hands";
   // Номер хода гасит ожидания прошлого шага; пауза и скорость применяются на лету.
   const demo = { run: 0, paused: false, speed: 1 };
-  const back = button("gd-back", "‹ Вопросы", () => onBack());
+  const back = bindTranslation(button("gd-back", t("‹ Вопросы"), () => onBack()), "‹ Вопросы");
   const title = h("h3", "gd-p-title");
   title.tabIndex = -1;
-  const handsButton = button("", "Пройти самому", () => setMode("hands"));
-  const demoButton = button("", withMark("▶", "Смотреть демо"), () => setMode("demo"));
+  const handsButton = bindTranslation(button("", t("Пройти самому"), () => setMode("hands")), "Пройти самому");
+  const demoButton = button("", withMark("▶", t("Смотреть демо")), () => setMode("demo"));
   const modes = h("div", "gd-modes", handsButton, demoButton);
   modes.setAttribute("role", "group");
-  modes.setAttribute("aria-label", "Как смотреть вопрос");
+  bindTranslation(modes, "Как смотреть вопрос", "aria-label");
   const count = h("span", "gd-count");
   const head = h("div", "gd-p-head", back, title, modes, count);
   const bar = h("div", "gd-demo-bar");
@@ -309,24 +310,24 @@ function createPlayer({ onTry, onGo, onExit, onBack, onDone, onMode }) {
   }
   function demoControls() {
     const acts = h("div", "gd-acts");
-    const pause = button("gd-act primary", withMark(demo.paused ? "▶" : "❚❚", demo.paused ? "Продолжить" : "Пауза"), () => {
+    const pause = button("gd-act primary", withMark(demo.paused ? "▶" : "❚❚", demo.paused ? t("Продолжить") : t("Пауза")), () => {
       demo.paused = !demo.paused;
       root.classList.toggle("paused", demo.paused);
-      pause.replaceChildren(...withMark(demo.paused ? "▶" : "❚❚", demo.paused ? "Продолжить" : "Пауза"));
+      pause.replaceChildren(...withMark(demo.paused ? "▶" : "❚❚", demo.paused ? t("Продолжить") : t("Пауза")));
     });
-    const speed = button("gd-act", `Скорость ${demo.speed}×`, () => {
+    const speed = bindTranslation(button("gd-act", t("Скорость {speed}×", { speed: demo.speed }), () => {
       demo.speed = demo.speed === 1 ? 2 : 1;
-      speed.textContent = `Скорость ${demo.speed}×`;
-    });
-    acts.append(pause, button("gd-act", withMark("↺", "Сначала"), () => setMode("demo")), speed);
+      speed.textContent = t("Скорость {speed}×", { speed: demo.speed });
+    }), "Скорость {speed}×", { speed: demo.speed });
+    acts.append(pause, button("gd-act", withMark("↺", t("Сначала")), () => setMode("demo")), speed);
     return acts;
   }
   function exitButtons(first, again) {
     const acts = h("div", "gd-acts");
     if (first) acts.append(first);
     if (again) acts.append(again);
-    acts.append(button("gd-act", "К вопросам", () => onBack()));
-    acts.append(button("gd-act ghost", "Выйти из обучения", () => onExit()));
+    acts.append(bindTranslation(button("gd-act", t("К вопросам"), () => onBack()), "К вопросам"));
+    acts.append(bindTranslation(button("gd-act ghost", t("Выйти из обучения"), () => onExit()), "Выйти из обучения"));
     return acts;
   }
   function render() {
@@ -337,14 +338,14 @@ function createPlayer({ onTry, onGo, onExit, onBack, onDone, onMode }) {
     modes.hidden = !guide.steps;
     handsButton.setAttribute("aria-pressed", String(!watching));
     demoButton.setAttribute("aria-pressed", String(watching));
-    count.textContent = guide.steps ? `${watching ? "демо · " : ""}шаг ${idx + 1} из ${guideLength(guide)}` : "";
+    count.textContent = guide.steps ? t("{value1}шаг {value2} из {value3}", { value1: watching ? t("демо · ") : "", value2: idx + 1, value3: guideLength(guide) }) : "";
     bar.hidden = !watching;
     if (watching) bar.replaceChildren(...guide.steps.map((_, i) => h("i", i < idx ? "done" : i === idx ? "on" : "")));
     stage.classList.toggle("plain", Boolean(guide.plain));
     stage.scrollTop = 0;
     if (guide.plain) {
       stage.replaceChildren(h("div", "gd-plain", h("ol", null, ...guide.plain.map((text) => h("li", null, text)))));
-      rail.replaceChildren(h("div", "gd-no end", "✓"), h("div", null, h("p", "gd-say", "Шаги по порядку. Кнопка ведёт в нужный раздел приложения, там всё уже по-настоящему."), exitButtons(button("gd-act primary", "Открыть раздел", () => onGo(guide.go || "#today")))));
+      rail.replaceChildren(h("div", "gd-no end", "✓"), h("div", null, h("p", "gd-say", t("Шаги по порядку. Кнопка ведёт в нужный раздел приложения, там всё уже по-настоящему.")), exitButtons(bindTranslation(button("gd-act primary", t("Открыть раздел"), () => onGo(guide.go || "#today")), "Открыть раздел"))));
       onDone(id);
       return;
     }
@@ -367,16 +368,16 @@ function createPlayer({ onTry, onGo, onExit, onBack, onDone, onMode }) {
     const no = h("div", "gd-no" + (step.act === "finish" ? " end" : ""), step.act === "finish" ? "✓" : String(idx + 1));
     const body = h("div", null, h("p", "gd-say", step.say));
     if (step.act === "finish") {
-      const again = watching ? button("gd-act", withMark("↺", "Смотреть ещё раз"), () => setMode("demo")) : null;
-      body.append(exitButtons(step.tryText ? button("gd-act primary", "Попробовать по-настоящему", () => onTry(step.tryText)) : null, again));
+      const again = watching ? button("gd-act", withMark("↺", t("Смотреть ещё раз")), () => setMode("demo")) : null;
+      body.append(exitButtons(step.tryText ? bindTranslation(button("gd-act primary", t("Попробовать по-настоящему"), () => onTry(step.tryText)), "Попробовать по-настоящему") : null, again));
       onDone(id);
     } else if (watching) {
       body.append(demoControls());
     } else {
       const acts = h("div", "gd-acts");
-      if (step.act === "click") acts.append(h("span", "gd-hint", h("i"), "Нажмите подсвеченное"), button("gd-act ghost", "Или дальше", next));
-      if (step.act === "next") acts.append(button("gd-act primary", "Дальше", next));
-      if (idx > 0) acts.append(button("gd-act ghost", "Назад", () => { idx--; render(); }));
+      if (step.act === "click") acts.append(h("span", "gd-hint", h("i"), t("Нажмите подсвеченное")), bindTranslation(button("gd-act ghost", t("Или дальше"), next), "Или дальше"));
+      if (step.act === "next") acts.append(bindTranslation(button("gd-act primary", t("Дальше"), next), "Дальше"));
+      if (idx > 0) acts.append(bindTranslation(button("gd-act ghost", t("Назад"), () => { idx--; render(); }), "Назад"));
       body.append(acts);
     }
     rail.replaceChildren(no, body);
@@ -419,16 +420,16 @@ export function mountGuide(host, { initial = null, initialDemo = false, onTry, o
   sizeTop();
   const shell = h("div", "gd-shell");
   const side = h("aside", "gd-side");
-  side.setAttribute("aria-label", "Вопросы");
+  bindTranslation(side, "Вопросы", "aria-label");
   const search = h("label", "gd-search", h("span", "gd-search-mark", "⌕"));
   const input = h("input");
   input.type = "search";
   input.id = "guide-search";
-  input.placeholder = "Что вы хотите сделать?";
-  input.setAttribute("aria-label", "Поиск по вопросам");
+  bindTranslation(input, "Что вы хотите сделать?", "placeholder");
+  bindTranslation(input, "Поиск по вопросам", "aria-label");
   search.append(input);
   const list = h("div", "gd-list");
-  side.append(h("h2", "gd-side-title", "Как пользоваться"), h("p", "gd-side-sub", "Нажмите вопрос: справа покажется, как это делается, в копии интерфейса. С красной точкой — руками, по шагам."), search, list);
+  side.append(h("h2", "gd-side-title", t("Как пользоваться")), h("p", "gd-side-sub", t("Нажмите вопрос: справа покажется, как это делается, в копии интерфейса. С красной точкой — руками, по шагам.")), search, list);
   const main = h("div", "gd-main");
   shell.append(side, main);
   host.append(shell);
@@ -454,23 +455,23 @@ export function mountGuide(host, { initial = null, initialDemo = false, onTry, o
       list.append(h("p", "gd-group", group.name));
       for (const id of items) {
         const guide = GUIDES[id];
-        const mark = done.has(id) ? h("span", "gd-q-side done", "✓") : guide.steps ? h("span", "gd-q-side live") : h("span", "gd-q-side", "шаги");
-        const hint = done.has(id) ? "Пройдено" : guide.steps ? `${guide.steps.length} шагов, руками` : `${guide.plain.length} шага списком`;
+        const mark = done.has(id) ? h("span", "gd-q-side done", "✓") : guide.steps ? h("span", "gd-q-side live") : h("span", "gd-q-side", t("шаги"));
+        const hint = done.has(id) ? t("Пройдено") : guide.steps ? t("{length} шагов, руками", { length: guide.steps.length }) : t("{length} шага списком", { length: guide.plain.length });
         const row = button("gd-q" + (id === current ? " on" : "") + (done.has(id) ? " done" : ""), [h("span", "gd-q-text", guide.q), mark], () => pick(id), { "data-guide": id, title: hint });
         if (id === current) row.setAttribute("aria-current", "true");
         list.append(row);
       }
     }
-    if (!list.childNodes.length) list.append(h("p", "gd-side-sub", "Такого вопроса пока нет."));
+    if (!list.childNodes.length) list.append(h("p", "gd-side-sub", t("Такого вопроса пока нет.")));
   }
   function empty() {
     main.replaceChildren(h("div", "gd-empty-player",
       h("span", "gd-big", "?"),
-      h("b", null, "Выберите вопрос слева"),
-      h("span", null, "Вопросы с красной точкой проходятся руками в копии интерфейса: в журнал ничего не запишется, пока вы сами не нажмёте «Попробовать по-настоящему». Остальные показывают шаги по порядку."),
+      h("b", null, t("Выберите вопрос слева")),
+      h("span", null, t("Вопросы с красной точкой проходятся руками в копии интерфейса: в журнал ничего не запишется, пока вы сами не нажмёте «Попробовать по-настоящему». Остальные показывают шаги по порядку.")),
       h("div", "gd-acts gd-empty-acts",
-        button("gd-act primary", "Начать с первого: как завести дело", () => pick("todo")),
-        button("gd-act", withMark("▶", "Смотреть демо: как поручить дело"), () => pick("assign", { watch: true })))));
+        bindTranslation(button("gd-act primary", t("Начать с первого: как завести дело"), () => pick("todo")), "Начать с первого: как завести дело"),
+        button("gd-act", withMark("▶", t("Смотреть демо: как поручить дело")), () => pick("assign", { watch: true })))));
   }
   function pick(id, { focus = true, watch = false } = {}) {
     current = id;

@@ -1,3 +1,5 @@
+import { translate, formatDate } from '../public/i18n.js';
+import { userLocale, localizedDay, localizedRepeat } from './locale.js';
 // Telegram — второй вход в журнал. Написанное или пересланное боту Кизуны
 // записывается и разбирается так же, как запись с главной страницы: та же
 // очередь, та же модель, тот же потолок расходов; модель сама решает, дело
@@ -224,47 +226,48 @@ export function composeCapture(messages, { files = [], timeZone = 'Europe/Samara
 // ── ответ после разбора ─────────────────────────────────────────────────────
 // Та же сводка, что показывает карточка записи на главной после разбора: что
 // получилось, когда, что отделилось, что осталось неясным.
-export function whenText(schedule, today) {
+export function whenText(schedule, today, locale = 'ru') {
   if (!schedule || (!schedule.date && !schedule.time)) return '';
   const words = [];
-  if (schedule.date) words.push(dayWords(schedule.date, today));
-  if (schedule.time) words.push(`в ${schedule.time}${schedule.end ? `–${schedule.end}` : ''}`);
-  const repeat = schedule.repeat ? describeRepeat(schedule.repeat) : null;
+  if (schedule.date) words.push(locale === 'ru' ? dayWords(schedule.date, today) : localizedDay(locale,schedule.date,today));
+  if (schedule.time) words.push(translate(locale,'в {time}',{time:`${schedule.time}${schedule.end ? `–${schedule.end}` : ''}`}));
+  const repeat = schedule.repeat ? (locale === 'ru' ? describeRepeat(schedule.repeat) : localizedRepeat(locale,schedule.repeat)) : null;
   if (repeat) words.push(`(${repeat})`);
   return words.join(' ');
 }
 const clip = (text, limit) => { const value = String(text || '').replace(/\s+/g, ' ').trim(); return value.length > limit ? `${value.slice(0, limit - 1)}…` : value; };
 // Срок в ответе: сегодняшний день не называем («на сегодня» уже в заголовке),
 // остальное — словами: «в пятницу», «завтра в 11:00», «каждую среду».
-function dueText(schedule, today) {
+function dueText(schedule, today, locale = 'ru') {
   if (!schedule) return '';
-  if (!schedule.date || schedule.date === today) return whenText({ ...schedule, date: null }, today);
-  return whenText(schedule, today);
+  if (!schedule.date || schedule.date === today) return whenText({ ...schedule, date: null }, today, locale);
+  return whenText(schedule, today, locale);
 }
-export function resultText({ state, classification = null, parts = [], captureGone = false }, { today }) {
-  if (captureGone) return 'Запись уже удалена из журнала.';
-  if (state === 'cancelled') return 'Разбор отменён — запись сохранена как есть.';
-  if (state !== 'succeeded' || !classification) return '⚠️ Записано, но не разобрано — название и срок можно поправить в карточке записи.';
+export function resultText({ state, classification = null, parts = [], captureGone = false }, { today, locale = 'ru' }) {
+  const t = (source, params = {}) => translate(locale, source, params);
+  if (captureGone) return t('Запись уже удалена из журнала.');
+  if (state === 'cancelled') return t('Разбор отменён — запись сохранена как есть.');
+  if (state !== 'succeeded' || !classification) return t('⚠️ Записано, но не разобрано — название и срок можно поправить в карточке записи.');
   const lines = [];
   const title = `«${clip(classification.summary, 140)}»`;
   const partTitles = parts.map(part => `«${clip(part.title, 80)}»`);
   if (classification.completed === true) {
-    const when = whenText(classification.entities?.doneOn, today);
-    lines.push(`🏁 Записано как сделанное: ${title}${when ? ` — ${when}` : ''}`);
-    if (partTitles.length) lines.push(`Легло ${partTitles.length} ${plural(partTitles.length, ['туду', 'туду', 'туду'])} на сегодня:\n${partTitles.map(item => `• ${item}`).join('\n')}`);
+    const when = whenText(classification.entities?.doneOn, today, locale);
+    lines.push(t('🏁 Записано как сделанное: {title}{when}', {title, when:when ? ` — ${when}` : ''}));
+    if (partTitles.length) lines.push(t('Легло {count} туду на сегодня:',{count:partTitles.length})+'\n'+partTitles.map(item=>`• ${item}`).join('\n'));
   } else {
-    const due = dueText(classification.entities?.schedule, today);
+    const due = dueText(classification.entities?.schedule, today, locale);
     const onToday = !classification.entities?.schedule?.date || classification.entities.schedule.date === today;
-    if (!partTitles.length) lines.push(`📌 Легло${onToday ? ' на сегодня' : ''}: ${title}${due ? ` — ${due}` : ''}`);
+    if (!partTitles.length) lines.push(t(onToday ? '📌 Легло на сегодня: {title}{due}' : '📌 Легло: {title}{due}', {title,due:due ? ` — ${due}` : ''}));
     else {
       // Родитель при пачке дел не туду: перечисляются только отделившиеся дела.
       const count = partTitles.length;
-      lines.push(`📌 Легло ${count} ${plural(count, ['туду', 'туду', 'туду'])} на сегодня:`);
+      lines.push(t('📌 Легло {count} туду на сегодня:', {count}));
       for (const item of partTitles) lines.push(`• ${item}`);
     }
   }
   const projects = (classification.entities?.projects || []).filter(Boolean);
-  if (projects.length) lines.push(`Проект: ${projects.join(', ')}`);
+  if (projects.length) lines.push(t('Проект: {projects}', {projects:projects.join(', ')}));
   const review = gateClassification(classification);
   if (review.question) lines.push(`❓ ${review.question}`);
   return lines.join('\n');
@@ -272,13 +275,13 @@ export function resultText({ state, classification = null, parts = [], captureGo
 
 // Кнопка к записи. Telegram не принимает в кнопках адреса без https и
 // локальные — с ними не ушёл бы и сам ответ.
-function openButton(appUrl, captureId) {
+function openButton(appUrl, captureId, locale = 'ru') {
   if (!appUrl || !/^https:\/\//i.test(appUrl)) return undefined;
   try {
     const host = new URL(appUrl).hostname;
     if (host === 'localhost' || /^[\d.]+$/.test(host) || host.includes(':')) return undefined;
   } catch { return undefined; }
-  return { inline_keyboard: [[{ text: 'Открыть в Кизуне', url: `${appUrl.replace(/\/+$/, '')}/#today?open=${captureId}` }]] };
+  return { inline_keyboard: [[{ text: translate(locale, 'Открыть в Кизуне'), url: `${appUrl.replace(/\/+$/, '')}/#today?open=${captureId}` }]] };
 }
 
 const hashCode = code => crypto.createHash('sha256').update(String(code)).digest('hex');
@@ -352,6 +355,7 @@ export function createTelegramService({
     if (bytes.length > attachmentLimit) throw Object.assign(new Error('too_large'), { tooLarge: true });
     return bytes;
   }
+  const localeForChat = chatId => userLocale(db, db.prepare('SELECT user_id FROM telegram_links WHERE chat_id=?').get(chatId)?.user_id);
   const say = (chatId, text, replyTo = null, extra = {}) => call('sendMessage', {
     chat_id: chatId,
     text,
@@ -504,7 +508,7 @@ export function createTelegramService({
     const head = messages[0];
     if (!userActive(link.user_id)) { await quietly(say(chatId, TELEGRAM_TEXTS.inactive, head.message_id)); return; }
     // Слишком длинная пачка ложится по сообщению на запись: предел поля один.
-    const draft = composeCapture(messages, { files: messages.map(fileOf).filter(Boolean), timeZone: timeZone(), now: now() });
+    const draft = composeCapture(messages, { files: messages.map(fileOf).filter(Boolean), timeZone: timeZone(link.user_id), now: now() });
     if (draft && draft.raw.length > RAW_LIMIT && messages.length > 1) {
       for (const message of messages) await save({ chatId, link, items: [{ message }] });
       return;
@@ -519,7 +523,7 @@ export function createTelegramService({
       try { files.push({ ...file, bytes: await download(file.fileId) }); }
       catch (error) { problems.push(error?.tooLarge ? `«${file.filename}» не сохранён: файлы больше ${limitText} не принимаются.` : `«${file.filename}» не удалось скачать из Telegram.`); }
     }
-    const composed = composeCapture(messages, { files, timeZone: timeZone(), now: now() });
+    const composed = composeCapture(messages, { files, timeZone: timeZone(link.user_id), now: now() });
     if (!composed) { await quietly(say(chatId, problems.length ? problems.join('\n') : TELEGRAM_TEXTS.unsupported, head.message_id)); return; }
     const occurredAt = Number.isInteger(head.date) ? new Date(head.date * 1000).toISOString() : undefined;
     const queued = await queueCapture({ userId: link.user_id, raw: composed.raw.slice(0, RAW_LIMIT), occurredAt, origin: composed.forwarded ? 'telegram_forward' : 'telegram' });
@@ -553,8 +557,8 @@ export function createTelegramService({
     const claimed = db.prepare('UPDATE telegram_messages SET answered_at=? WHERE chat_id=? AND message_id=? AND answered_at IS NULL').run(at(), row.chat_id, row.message_id);
     if (!claimed.changes) return false;
     const link = db.prepare('SELECT app_url FROM telegram_links WHERE user_id=?').get(row.user_id);
-    const text = [resultText(summary, { today: dateInZone(now(), timeZone()) }), row.note].filter(Boolean).join('\n');
-    const markup = summary.captureGone ? undefined : openButton(link?.app_url, row.capture_id);
+    const text = [resultText(summary, { today: dateInZone(now(), timeZone(row.user_id)), locale:userLocale(db,row.user_id) }), row.note].filter(Boolean).join('\n');
+    const markup = summary.captureGone ? undefined : openButton(link?.app_url, row.capture_id, userLocale(db,row.user_id));
     const extra = { link_preview_options: { is_disabled: true }, ...(markup ? { reply_markup: markup } : {}) };
     if (row.reply_id) {
       const edited = await quietly(call('editMessageText', { chat_id: row.chat_id, message_id: row.reply_id, text, ...extra }));

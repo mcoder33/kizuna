@@ -1,3 +1,6 @@
+import { normalizeTimeZone } from "./time-zone.js";
+import { getTimeZone, getDetectedTimeZone, initTimeZone, setTimeZone, announceTimeZoneSaved } from "./browser-time-zone.js";
+import { t, getLocale, localizedBuiltins, bindTranslation, initLocale, setLocale, getDetectedLocale, announceLocaleSaved } from "./browser-i18n.js";
 import { renderMarkdown, renderInlineMarkdown } from "./markdown.js";
 import { createMarkdownField } from "./markdown-live.js";
 import { attachSlashMenu } from "./slash-menu.js";
@@ -11,14 +14,14 @@ import { FILTER_FIELDS, FILTER_STATUSES, FILTER_NONE, DONE_LANE, defaultFilter, 
 
 const $ = (selector) => document.querySelector(selector);
 const typeNames = {
-  meeting_event: "встреча",
-  task: "задача",
-  note: "заметка",
-  outcome_decision: "результат",
-  idea_question: "идея",
+  get meeting_event() { return t("встреча"); },
+  get task() { return t("задача"); },
+  get note() { return t("заметка"); },
+  get outcome_decision() { return t("результат"); },
+  get idea_question() { return t("идея"); },
 };
 const providerNames = {
-  fallback: "Без разбора",
+  get fallback() { return t("Без разбора"); },
   openai: "OpenAI",
   openrouter: "OpenRouter",
   gemini: "Google Gemini",
@@ -30,20 +33,20 @@ const modelStorageKey = "pagent.ai-model";
 // же API, у OpenRouter — из своего; у CLI-провайдеров модель задаёт окружение.
 const modelCapableProviders = new Set(["openrouter", "openai", "gemini"]);
 const fallbackNames = {
-  unavailable: "недоступен",
-  not_configured: "не настроен",
-  busy: "занят",
-  timeout: "не ответил вовремя",
-  aborted: "отменён",
-  nonzero: "не завершил запрос",
-  malformed_output: "вернул непонятный ответ",
-  absent_output: "не вернул ответ",
-  oversize_output: "вернул слишком большой ответ",
-  schema_invalid: "вернул некорректную структуру",
-  rate_limited: "достиг лимита",
-  citation_failure: "не подтвердил источники",
-  invalid_provider: "неизвестный провайдер",
-  spend_limit: "остановлен потолком расходов",
+  get unavailable() { return t("недоступен"); },
+  get not_configured() { return t("не настроен"); },
+  get busy() { return t("занят"); },
+  get timeout() { return t("не ответил вовремя"); },
+  get aborted() { return t("отменён"); },
+  get nonzero() { return t("не завершил запрос"); },
+  get malformed_output() { return t("вернул непонятный ответ"); },
+  get absent_output() { return t("не вернул ответ"); },
+  get oversize_output() { return t("вернул слишком большой ответ"); },
+  get schema_invalid() { return t("вернул некорректную структуру"); },
+  get rate_limited() { return t("достиг лимита"); },
+  get citation_failure() { return t("не подтвердил источники"); },
+  get invalid_provider() { return t("неизвестный провайдер"); },
+  get spend_limit() { return t("остановлен потолком расходов"); },
 };
 const activeCaptureStorageKey = "pagent.active-captures";
 const legacyActiveCaptureStorageKey = "pagent.active-capture";
@@ -64,6 +67,7 @@ function correctionOperationKey(body) {
 async function requestResponse(url, options = {}) {
   const headers = {
       "Content-Type": "application/json",
+      "Accept-Language": getLocale(),
       ...(options.headers || {}),
     },
     isCorrection = /^\/api\/captures\/[0-9a-f-]{36}\/corrections$/i.test(url),
@@ -77,9 +81,9 @@ async function requestResponse(url, options = {}) {
       data = await response.json().catch(() => null);
     // Сессия кончилась или её закрыл администратор: сообщать об этом ошибкой в
     // углу бессмысленно — дальше всё равно ничего не откроется.
-    if (response.status === 401) { location.replace("/login"); throw new Error("Нужно войти."); }
+    if (response.status === 401) { location.replace("/login"); throw new Error(t("Нужно войти.")); }
     if (!response.ok)
-      throw new Error(data?.error?.message || "Не удалось выполнить действие.");
+      throw new Error(data?.error?.message || t("Не удалось выполнить действие."));
     return { response, data };
   })();
   if (cacheKey) correctionResponses.set(cacheKey, pending);
@@ -161,14 +165,14 @@ function withProvider(body = {}) {
 function fallbackSuffix(provenance) {
   return provenance?.fallbackReason &&
     provenance.requestedProvider !== "fallback"
-    ? ` · ${fallbackNames[provenance.fallbackReason] || "недоступен"}`
+    ? ` · ${fallbackNames[provenance.fallbackReason] || t("недоступен")}`
     : "";
 }
 function showProvenance(provenance) {
   if (!provenance) return;
   const provider = provenance.usedProvider || provenance.provider,
     element = $("#ai-status");
-  element.textContent = `Использован: ${providerNames[provider] || "локальные правила"}${fallbackSuffix(provenance)}`;
+  bindTranslation(element, "Использован: {value1}{value2}", { value1: providerNames[provider] || t("локальные правила"), value2: fallbackSuffix(provenance) });
   element.className = `status ${provider !== "fallback" ? "ai" : fallbackSuffix(provenance) ? "fallback" : ""}`.trim();
 }
 // Состояние «Обзора» объявлено до первого разбора адреса: прямая ссылка на
@@ -231,8 +235,8 @@ function updatePageFromHash() {
     // человек не понял бы, подключилось или нет.
     const calendarOutcome = params.get("calendar");
     if (calendarOutcome) {
-      const messages = { connected: "Google Calendar подключён", denied: "Google: доступ не дан", invalid_state: "Подключение Google устарело — попробуйте снова", no_refresh_token: "Google не выдал токен обновления: отзовите доступ Кизуны в аккаунте Google и подключите заново" };
-      toast(messages[calendarOutcome] || `Google: не удалось подключить (${calendarOutcome})`);
+      const messages = { get connected() { return t("Google Calendar подключён"); }, get denied() { return t("Google: доступ не дан"); }, get invalid_state() { return t("Подключение Google устарело — попробуйте снова"); }, get no_refresh_token() { return t("Google не выдал токен обновления: отзовите доступ Кизуны в аккаунте Google и подключите заново"); } };
+      toast(messages[calendarOutcome] || t("Google: не удалось подключить ({calendarOutcome})", { calendarOutcome: calendarOutcome }));
       history.replaceState(null, "", "#settings");
     }
   }
@@ -352,19 +356,19 @@ function shiftDate(date, days) {
 function entryClock(entry) {
   const at = new Date(entry.occurredAt || entry.createdAt);
   if (Number.isNaN(at.getTime())) return null;
-  const time = new Intl.DateTimeFormat("ru-RU", {
-    timeZone: "Europe/Samara",
+  const time = new Intl.DateTimeFormat(getLocale(), {
+    timeZone: getTimeZone(),
     hour: "2-digit",
     minute: "2-digit",
   }).format(at);
   const date = entryDate(entry);
   const day =
     currentDayDate && date === currentDayDate
-      ? "сегодня"
+      ? t("сегодня")
       : currentDayDate && date === shiftDate(currentDayDate, -1)
-        ? "вчера"
-        : new Intl.DateTimeFormat("ru-RU", {
-            timeZone: "Europe/Samara",
+        ? t("вчера")
+        : new Intl.DateTimeFormat(getLocale(), {
+            timeZone: getTimeZone(),
             day: "numeric",
             month: "short",
           }).format(at);
@@ -373,7 +377,7 @@ function entryClock(entry) {
 function scheduleLabel(schedule, on = null) {
   if (!schedule) return null;
   if (schedule.state === "conflict" || (!schedule.date && !schedule.time))
-    return schedule.display || null;
+    return schedule.state === "conflict" ? t("Срок требует уточнения") : null;
   const today = currentDayDate || zoneDate(new Date());
   // У повтора подпись — про показанный день или ближайший экземпляр, а не
   // про первый: «сегодня, 10:00, каждую неделю».
@@ -384,31 +388,29 @@ function scheduleLabel(schedule, on = null) {
   if (shown) {
     dateLabel =
       shown === today
-        ? "сегодня"
+        ? t("сегодня")
         : shown === shiftDate(today, 1)
-          ? "завтра"
+          ? t("завтра")
           : shown === shiftDate(today, -1)
-            ? "вчера"
-            : `${shown.slice(8, 10)}.${shown.slice(5, 7)}${
-                shown.slice(0, 4) === today.slice(0, 4)
-                  ? ""
-                  : `.${shown.slice(0, 4)}`
-              }`;
+            ? t("вчера")
+            : new Intl.DateTimeFormat(getLocale(), {
+                timeZone: "UTC", day: "numeric", month: "short",
+                ...(shown.slice(0, 4) === today.slice(0, 4) ? {} : { year: "numeric" }),
+              }).format(new Date(`${shown}T12:00:00Z`));
   }
   const vague =
     !schedule.time && schedule.display?.includes("после обеда")
-      ? "после обеда"
+      ? t("после обеда")
       : null;
   const words = repeatLabel(schedule.repeat, { until: false });
   return (
     [dateLabel, schedule.time || vague, words].filter(Boolean).join(", ") ||
-    schedule.display ||
     null
   );
 }
 function entryDate(entry) {
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Samara",
+    timeZone: getTimeZone(),
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -441,10 +443,10 @@ async function updateCompletion(projections, complete, button) {
       ),
     );
     // Промах кружком снимается одним нажатием, как удаление и перенос серии.
-    toast(complete ? "Отмечено как готовое" : "Возвращено в работу", complete ? { label: "Вернуть", run: async () => {
+    toast(complete ? t("Отмечено как готовое") : t("Возвращено в работу"), complete ? { get label() { return t("Вернуть"); }, run: async () => {
       try {
         for (const projection of pending) await request(`/api/projections/${projection.id}/undo-complete`, { method: "POST", body: "{}" });
-        toast("Возвращено в работу");
+        toast(t("Возвращено в работу"));
         await load();
         refreshOtherViews();
       } catch (error) { toast(error.message); }
@@ -476,12 +478,12 @@ async function quickDue(entry, days) {
   try {
     await move(date, schedule?.time || null);
     // Перенос — тоже решение на лету: «Вернуть» кладёт прежний срок обратно.
-    toast(date ? `Срок: ${scheduleLabel({ state: "ok", date, time: null })}` : "Срок снят", { label: "Вернуть", run: async () => {
-      try { await move(schedule?.date || null, schedule?.time || null); toast("Срок вернулся"); await load(); }
+    toast(date ? t("Срок: {value1}", { value1: scheduleLabel({ state: "ok", date, time: null }) }) : t("Срок снят"), { get label() { return t("Вернуть"); }, run: async () => {
+      try { await move(schedule?.date || null, schedule?.time || null); toast(t("Срок вернулся")); await load(); }
       catch (error) { toast(error.message); }
     } });
     await load();
-  } catch (error) { toast(error.message || "Срок не изменился"); }
+  } catch (error) { toast(error.message || t("Срок не изменился")); }
 }
 // Клавиши списка, как в Тудуисте: ↑ ↓ или J / K — по делам, E — готово или
 // вернуть, Enter — открыть карточку, T — срок «сегодня» у дела без срока.
@@ -527,7 +529,7 @@ document.addEventListener("keydown", async (event) => {
     let entry = todayState.entries.find((candidate) => candidate.id === id);
     try { if (!entry) entry = (await request(`/api/captures/${encodeURIComponent(id)}`)).entry; }
     catch (error) { toast(error.message); return; }
-    if (scheduleOf(entry)?.date) { toast("Срок у дела уже есть — перенести можно в карточке"); return; }
+    if (scheduleOf(entry)?.date) { toast(t("Срок у дела уже есть — перенести можно в карточке")); return; }
     await quickDue(entry, 0);
     refreshOtherViews();
   }
@@ -581,23 +583,23 @@ function attachRowSwipe(row, { onRight = null, onLeft = null } = {}) {
   row.addEventListener("pointerup", end);
   row.addEventListener("pointercancel", end);
 }
-function quickDueEl(entry, choices = [["сегодня", 0], ["завтра", 1], ["без срока", null]]) {
+function quickDueEl(entry, choices = [[t("сегодня"), 0], [t("завтра"), 1], [t("без срока"), null]]) {
   const wrap = node("div", undefined, `quick-due${choices.length === 1 ? " take-today" : ""}`);
   for (const [label, days] of choices) {
     const button = node("button", label, "quick-due-button");
     button.type = "button";
-    button.title = days === null ? "Снять срок" : `Перенести на ${label}`;
+    button.title = days === null ? t("Снять срок") : t("Перенести на {label}", { label: label });
     button.addEventListener("click", (event) => { event.stopPropagation(); button.disabled = true; quickDue(entry, days); });
     wrap.append(button);
   }
   return wrap;
 }
 // «с вчера», «с 28 сен»: с какого дня дело висит открытым.
-const SHORT_MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+const SHORT_MONTHS = localizedBuiltins(["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]);
 function sinceLabel(date) {
-  if (!date) return "просрочено";
-  if (currentDayDate && date === shiftDate(currentDayDate, -1)) return "со вчера";
-  return `с ${Number(date.slice(8, 10))} ${SHORT_MONTHS[Number(date.slice(5, 7)) - 1] || ""}`.trim();
+  if (!date) return t("просрочено");
+  if (currentDayDate && date === shiftDate(currentDayDate, -1)) return t("со вчера");
+  return t("с {date}", { date: new Intl.DateTimeFormat(getLocale(), { timeZone: "UTC", day: "numeric", month: "short" }).format(new Date(`${date}T12:00:00Z`)) });
 }
 // «0/2» у родителя, как в Todoist: подзадачи отдельными строками не стоят ни в
 // списках «Сегодня» и «Сделано», ни на доске при «Подзадачи: Скрывать» — у дела
@@ -609,9 +611,9 @@ const SUBTASK_GLYPH = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8"
 function paintSubtaskBadge(badge, subtasks) {
   badge.classList.toggle("all-done", subtasks.done >= subtasks.total);
   badge.querySelector(".sub-badge-count").textContent = `${subtasks.done}/${subtasks.total}`;
-  const words = `Подзадачи: сделано ${subtasks.done} из ${subtasks.total}`;
-  badge.title = `${words}. Открыть`;
-  badge.setAttribute("aria-label", `${words}. Открыть подзадачи`);
+  const words = t("Подзадачи: сделано {done} из {total}", { done: subtasks.done, total: subtasks.total });
+  bindTranslation(badge, "{words}. Открыть", { words: words }, "title");
+  bindTranslation(badge, "{words}. Открыть подзадачи", { words: words }, "aria-label");
 }
 function subtaskBadge(subtasks, open) {
   if (!subtasks?.total) return null;
@@ -643,7 +645,7 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
   // закрывает её кружок.
   if (c.entities.schedule?.repeat && on && scheduledOn(entry, on)) card.dataset.occurrence = on;
   if (projections.length) {
-    const label = completed ? "Вернуть в работу" : "Готово",
+    const label = completed ? t("Вернуть в работу") : t("Готово"),
       complete = node("button", undefined, "completion-button");
     complete.type = "button";
     complete.title = label;
@@ -676,7 +678,7 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
     const review = reviewFromEntry(entry);
     cardOccurrence = c.entities.schedule?.repeat && on && scheduledOn(entry, on) ? on : null;
     const list = card.closest("#todo, #journal");
-    pendingCardList = list ? { label: list.id === "journal" ? "Закрыто" : "День", items: rowsAsList([...list.querySelectorAll(".entry[data-capture-id]")]), id: entry.id, occurrence: card.dataset.occurrence || null } : null;
+    pendingCardList = list ? { label: list.id === "journal" ? t("Закрыто") : t("День"), items: rowsAsList([...list.querySelectorAll(".entry[data-capture-id]")]), id: entry.id, occurrence: card.dataset.occurrence || null } : null;
     cardScrollTarget = subtasks ? entry.id : null;
     // Запись из круга открывается перечитанной: обсуждение и исполнитель
     // меняются у другого человека, и показывать вчерашний разговор нельзя.
@@ -686,9 +688,9 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
   title.addEventListener("click", () => openCard());
   card.append(title);
   // Просроченное не переносят в карточке — оно решается прямо в строке.
-  if (overdue && !c.entities.schedule?.repeat && !completed) card.append(quickDueEl(entry, [["сегодня", 0], ["завтра", 1]]));
+  if (overdue && !c.entities.schedule?.repeat && !completed) card.append(quickDueEl(entry, [[t("сегодня"), 0], [t("завтра"), 1]]));
   // Дело из запаса берут на сегодня, не открывая карточку.
-  if (takeToday && !completed) card.append(quickDueEl(entry, [["на сегодня", 0]]));
+  if (takeToday && !completed) card.append(quickDueEl(entry, [[t("на сегодня"), 0]]));
   const subs = subtaskBadge(entry.subtasks, () => openCard({ subtasks: true }));
   if (subs) meta.append(subs);
   const mark = circleOf(entry);
@@ -697,14 +699,14 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
   // есть слежение за реализацией, только без доски со статусами.
   const assignment = entry.assignment || todayState.assignments?.[entry.id] || null;
   if (assignment && assignment.state !== "declined")
-    meta.append(node("span", entry.foreign ? `от ${genitiveName(assignment.assigner?.name) || "автора"}` : `${assignment.assignee?.name || ""} · ${assignmentWord(assignment)}`, "tag assign"));
+    meta.append(node("span", entry.foreign ? t("от {value1}", { value1: genitiveName(assignment.assigner?.name) || t("автора") }) : `${assignment.assignee?.name || ""} · ${assignmentWord(assignment)}`, "tag assign"));
   const due = scheduleLabel(c.entities.schedule, on);
   const repeats = c.entities.schedule?.repeat ? repeatLabel(c.entities.schedule.repeat, { until: false }) : null;
   const dueToday = c.entities.schedule?.repeat ? scheduledOn(entry, currentDayDate) : Boolean(c.entities.schedule?.date) && c.entities.schedule.date === currentDayDate;
   if (overdue && !completed) meta.append(node("span", sinceLabel(c.entities.schedule?.date), "tag due late"));
   else if (repeats && !completed) meta.append(node("span", atTime || dueToday ? repeats : due, "tag due"));
   else if (due && !atTime && !dueToday && !doneAt) meta.append(node("span", due, "tag due"));
-  if (c.priority === "high") meta.append(node("span", "важно", "tag urgent"));
+  if (c.priority === "high") meta.append(bindTranslation(node("span", t("важно"), "tag urgent"), "важно"));
   // Скрепка с числом: по списку видно, что к записи что-то приложено.
   if (entry.attachments?.length) meta.append(node("span", `📎 ${entry.attachments.length}`, "tag files"));
   // Люди из записи — кружками с первой буквой имени.
@@ -724,7 +726,7 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
 // с вкладками и своей полосой дней: «Закрыто» (закрытое кружком и прошедшие
 // встречи) и «День», где дела лежат вместе с календарём. Заметок здесь нет:
 // любая запись — туду, а старые заметки видны в «Обзоре» и в поиске.
-const TODAY_ZONE = "Europe/Samara";
+
 const circlesState = { circles: [], me: null, loading: false, tab: "chat", discussions: [] };
 // Перечитывание разговоров (refreshRoomsQuietly): идёт ли, нужно ли ещё раз и
 // счётчик своих правок, по которому узнаётся устаревший ответ. Объявлено здесь,
@@ -760,12 +762,12 @@ const todayState = {
   calendarLoading: false,
 };
 function zoneMinutes(at) {
-  const parts = new Intl.DateTimeFormat("ru-RU", { timeZone: TODAY_ZONE, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(at);
+  const parts = new Intl.DateTimeFormat(getLocale(), { timeZone: getTimeZone(), hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(at);
   const get = (type) => Number(parts.find((part) => part.type === type)?.value || 0);
   return (get("hour") % 24) * 60 + get("minute");
 }
 const nowMinutes = () => zoneMinutes(new Date());
-const zoneDate = (at) => new Intl.DateTimeFormat("en-CA", { timeZone: TODAY_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
+const zoneDate = (at) => new Intl.DateTimeFormat("en-CA", { timeZone: getTimeZone(), year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
 // Удаление чужого события идёт в чужой календарь: CalDAV и Google отвечают
 // секундами, и всё это время плашка висела «занятой», будто приложение
 // подвисло. Событие убирается с экрана сразу, а запрос летит следом. Пока он в
@@ -840,13 +842,25 @@ function nextRepeatDate(schedule, from) {
   for (let step = 0; step < 800; step += 1) { if (repeatOccursOn(schedule, day)) return day; day = shiftDate(day, 1); }
   return null;
 }
-const REPEAT_WORDS = { daily: ["каждый день", "дня", "дней"], weekly: ["каждую неделю", "недели", "недель"], monthly: ["каждый месяц", "месяца", "месяцев"], yearly: ["каждый год", "года", "лет"] };
+const REPEAT_WORDS = {
+  get daily() { return t("каждый день"); },
+  get weekly() { return t("каждую неделю"); },
+  get monthly() { return t("каждый месяц"); },
+  get yearly() { return t("каждый год"); },
+};
 function repeatLabel(rule, { until = true } = {}) {
   if (!rule?.freq || !REPEAT_WORDS[rule.freq]) return null;
   const count = rule.interval || 1;
-  const [one, few, many] = REPEAT_WORDS[rule.freq];
-  let text = count === 1 ? one : `каждые ${count} ${count < 5 ? few : many}`;
-  if (until && rule.until) text += ` до ${rule.until.slice(8, 10)}.${rule.until.slice(5, 7)}`;
+  const sources = { daily: "каждые {count} дня", weekly: "каждые {count} недели", monthly: "каждые {count} месяца", yearly: "каждые {count} года" };
+  let text;
+  if (count === 1) text = REPEAT_WORDS[rule.freq];
+  else if (getLocale() === "ru") {
+    const category = new Intl.PluralRules("ru").select(count);
+    const words = { daily: ["день", "дня", "дней"], weekly: ["неделю", "недели", "недель"], monthly: ["месяц", "месяца", "месяцев"], yearly: ["год", "года", "лет"] }[rule.freq];
+    const every = category === "one" ? rule.freq === "weekly" ? "каждую" : "каждый" : "каждые";
+    text = `${every} ${count} ${category === "one" ? words[0] : category === "few" ? words[1] : words[2]}`;
+  } else text = t(sources[rule.freq], { count });
+  if (until && rule.until) text += t(" до {date}", { date: calHuman(rule.until) });
   return text;
 }
 // «Готово» и «удалить только этот повтор» у своей серии — одно и то же:
@@ -866,8 +880,8 @@ async function skipOccurrence(target, date, { announce = true } = {}) {
     const without = skip.filter((day) => day !== date);
     await request(`/api/captures/${id}/corrections`, { method: "POST", body: body([...without, date]) });
     await refreshAfterSkip();
-    if (announce) toast(`Повтор ${calHuman(date)} убран, серия осталась`, { label: "Вернуть", run: async () => {
-      try { await request(`/api/captures/${id}/corrections`, { method: "POST", body: body(without) }); await refreshAfterSkip(); toast("Повтор возвращён"); }
+    if (announce) toast(t("Повтор {value1} убран, серия осталась", { value1: calHuman(date) }), { get label() { return t("Вернуть"); }, run: async () => {
+      try { await request(`/api/captures/${id}/corrections`, { method: "POST", body: body(without) }); await refreshAfterSkip(); toast(t("Повтор возвращён")); }
       catch (error) { toast(error.message); }
     } });
   } catch (error) { toast(error.message); }
@@ -882,15 +896,15 @@ async function doneOccurrence(target, date, { announce = true } = {}) {
       const { entry } = await request(`/api/captures/${id}`);
       projectionId = projectionOfType(entry, "task")?.id || null;
     }
-    if (!projectionId) throw new Error("У записи нет дела");
+    if (!projectionId) throw new Error(t("У записи нет дела"));
     await request(`/api/projections/${projectionId}/complete`, { method: "POST", body: JSON.stringify({ occurrence: date }) });
     await refreshAfterSkip();
-    if (announce) toast(`Готово на ${calHuman(date)}, серия осталась`, { label: "Вернуть", run: async () => {
+    if (announce) toast(t("Готово на {value1}, серия осталась", { value1: calHuman(date) }), { get label() { return t("Вернуть"); }, run: async () => {
       try {
         const { entry } = await request(`/api/captures/${id}`);
         await request(`/api/projections/${projectionOfType(entry, "task")?.id || projectionId}/undo-complete`, { method: "POST", body: JSON.stringify({ occurrence: date }) });
         await refreshAfterSkip();
-        toast("Повтор возвращён");
+        toast(t("Повтор возвращён"));
       } catch (error) { toast(error.message); }
     } });
   } catch (error) { toast(error.message); }
@@ -1034,14 +1048,14 @@ function renderToday() {
 // него писать — человек не знает, и уходит, ничего не записав. Три примера
 // подставляются прямо в поле, чтобы первая запись случилась его руками.
 // С первой же записью блок исчезает навсегда.
-const FIRST_STEPS = [
+const FIRST_STEPS = localizedBuiltins([
   "Завтра в 11 созвон с Аней по проекту",
   "Нужно оплатить хостинг до пятницы",
   "Созвонились по проекту, решили начать с детектора",
-];
+]);
 function firstStepNode() {
   const box = node("div", undefined, "today-start");
-  box.append(node("p", "Журнал пустой. Напишите своими словами что угодно — разберётся само. Например:", "start-lead"));
+  box.append(bindTranslation(node("p", t("Журнал пустой. Напишите своими словами что угодно — разберётся само. Например:"), "start-lead"), "Журнал пустой. Напишите своими словами что угодно — разберётся само. Например:"));
   const row = node("div", undefined, "start-row");
   for (const text of FIRST_STEPS) {
     const button = node("button", text, "start-chip");
@@ -1051,7 +1065,7 @@ function firstStepNode() {
   }
   box.append(row);
   // Кроме примеров — обучение: прогоны показывают, как всё устроено, руками.
-  const help = node("a", "Как пользоваться →", "start-help");
+  const help = bindTranslation(node("a", t("Как пользоваться →"), "start-help"), "Как пользоваться →");
   help.href = "#guide";
   box.append(help);
   return box;
@@ -1162,15 +1176,15 @@ async function postponeToTomorrow(entries, button = null) {
       } catch (error) { failure = error; }
     }
     if (moved.length)
-      toast(`Перенесено на завтра: ${moved.length}${failure ? ` из ${tasks.length}` : ""}`, { label: "Вернуть", run: async () => {
+      toast(t("Перенесено на завтра: {length}{value2}", { length: moved.length, value2: failure ? t(" из {value1}", { value1: tasks.length }) : "" }), { get label() { return t("Вернуть"); }, run: async () => {
         try {
           for (const item of moved) await put(item.id, item.before);
-          toast("Сроки вернулись");
+          toast(t("Сроки вернулись"));
           await load();
           refreshOtherViews();
         } catch (error) { toast(error.message); }
       } });
-    else toast(failure?.message || "Не получилось перенести");
+    else toast(failure?.message || t("Не получилось перенести"));
     await load();
     refreshOtherViews();
   } finally {
@@ -1209,7 +1223,7 @@ function dayNavNode(date, { view, onView }) {
     button.type = "button";
     button.dataset.step = String(delta);
     button.title = longDate(target);
-    button.setAttribute("aria-label", `${delta < 0 ? "Предыдущий" : "Следующий"} день, ${longDate(target)}`);
+    bindTranslation(button, "{value1} день, {value2}", { value1: delta < 0 ? t("Предыдущий") : t("Следующий"), value2: longDate(target) }, "aria-label");
     const parts = [node("i", delta < 0 ? "‹" : "›", "daynav-arrow"), node("span", shortDate(target), "daynav-date")];
     if (delta > 0) parts.reverse();
     button.append(...parts);
@@ -1218,9 +1232,9 @@ function dayNavNode(date, { view, onView }) {
   };
   const current = node("div", undefined, "daynav-current");
   current.append(node("b", longDate(date)));
-  if (date === currentDayDate) current.append(node("span", "сегодня", "daynav-mark"));
+  if (date === currentDayDate) current.append(bindTranslation(node("span", t("сегодня"), "daynav-mark"), "сегодня"));
   else {
-    const back = node("button", "сегодня", "daynav-today");
+    const back = bindTranslation(node("button", t("сегодня"), "daynav-today"), "сегодня");
     back.type = "button";
     back.dataset.view = "0";
     back.addEventListener("click", () => onView(0));
@@ -1243,7 +1257,7 @@ function dayCountNode(date) {
     parts.push(plural(todays.length, DEALS));
     const late = todayState.todo.filter((entry) => isOverdue(entry, date)).length;
     wrap.append(document.createTextNode(parts.join(" · ")));
-    if (late) wrap.append(document.createTextNode(" · "), node("em", `${late} просрочено`));
+    if (late) wrap.append(document.createTextNode(" · "), bindTranslation(node("em", t("{late} просрочено", { late: late })), "{late} просрочено", { late: late }));
     return wrap;
   }
   const own = ownEntriesFor(date).filter((entry) => !isClosed(entry));
@@ -1278,8 +1292,8 @@ function paintTabs(date, journalDate) {
   // (#tab-journal, #journal, journalView) — называется он «Закрыто», а «Сделано» —
   // пункт шапки и страница недели.
   const tabs = [
-    ["day", today ? "День" : `День ${shortDate(date)}`, dayCountNode(date)],
-    ["journal", journalToday ? "Закрыто" : `Закрыто ${shortDate(journalDate)}`, node("b", doneCount)],
+    ["day", today ? t("День") : t("День {value1}", { value1: shortDate(date) }), dayCountNode(date)],
+    ["journal", journalToday ? t("Закрыто") : t("Закрыто {value1}", { value1: shortDate(journalDate) }), node("b", doneCount)],
   ];
   for (const [key, label, count] of tabs) {
     const button = node("button", undefined, "drawer-tab");
@@ -1331,16 +1345,16 @@ function eventRow(item, { minutes = null, today = false, pastDay = false } = {})
   const start = minutesOf(item.time);
   const finish = eventFinish(item);
   let className = "external";
-  if (item.allDay) meta.append(node("span", "весь день", "tag"));
+  if (item.allDay) meta.append(bindTranslation(node("span", t("весь день"), "tag"), "весь день"));
   else if (today && start != null) {
     const running = minutes >= start && minutes < finish;
     const soon = !running && start > minutes && start - minutes <= 10;
-    if (running) { className += " now"; meta.append(node("span", `идёт · до ${hm(finish)}`, "tag now")); }
-    else if (soon) meta.append(node("span", `через ${start - minutes} мин`, "tag soon"));
-    else if (minutes >= finish) { className += " past"; meta.append(node("span", "прошла", "tag")); }
-    else meta.append(node("span", `через ${duration(start - minutes)}`, "tag"));
+    if (running) { className += " now"; meta.append(bindTranslation(node("span", t("идёт · до {value1}", { value1: hm(finish) }), "tag now"), "идёт · до {value1}", { value1: hm(finish) })); }
+    else if (soon) meta.append(bindTranslation(node("span", t("через {value1} мин", { value1: start - minutes }), "tag soon"), "через {value1} мин", { value1: start - minutes }));
+    else if (minutes >= finish) { className += " past"; meta.append(bindTranslation(node("span", t("прошла"), "tag"), "прошла")); }
+    else meta.append(bindTranslation(node("span", t("через {value1}", { value1: duration(start - minutes) }), "tag"), "через {value1}", { value1: duration(start - minutes) }));
     if (item.joinUrl && (running || soon)) {
-      const join = node("a", "Присоединиться", "day-join");
+      const join = bindTranslation(node("a", t("Присоединиться"), "day-join"), "Присоединиться");
       join.href = item.joinUrl;
       join.target = "_blank";
       join.rel = "noopener";
@@ -1348,26 +1362,26 @@ function eventRow(item, { minutes = null, today = false, pastDay = false } = {})
     }
   } else if (pastDay) {
     className += " past";
-    if (start != null) meta.append(node("span", "прошла", "tag"));
-  } else if (item.end) meta.append(node("span", `до ${item.end}`, "tag"));
+    if (start != null) meta.append(bindTranslation(node("span", t("прошла"), "tag"), "прошла"));
+  } else if (item.end) meta.append(bindTranslation(node("span", t("до {end}", { end: item.end }), "tag"), "до {end}", { end: item.end }));
   if (item.me?.status === "needs-action" && !pastDay) {
-    const rsvp = node("a", "ответить?", "tag warm");
+    const rsvp = bindTranslation(node("a", t("ответить?"), "tag warm"), "ответить?");
     rsvp.href = "#calendar";
     meta.append(rsvp);
   }
   if (item.calendarName) meta.append(node("span", item.calendarName, "day-event-cal"));
   box.append(dot, node("span", item.title, "day-event-title"), meta);
   if (actions.childNodes.length) box.append(actions);
-  return rowWithTime(item.allDay ? "день" : item.time, box, className);
+  return rowWithTime(item.allDay ? t("день") : item.time, box, className);
 }
 function nowRow(minutes, meetings) {
   const next = meetings.find((meeting) => meeting.start > minutes) || null;
-  const text = next ? `сейчас · свободно ${duration(next.start - minutes)} — в ${hm(next.start)} ${next.title}` : "сейчас · встреч больше нет";
+  const text = next ? t("сейчас · свободно {value1} — в {value2} {title}", { value1: duration(next.start - minutes), value2: hm(next.start), title: next.title }) : t("сейчас · встреч больше нет");
   return rowWithTime(hm(minutes), node("span", text, "day-now-text"), "now-mark");
 }
 function appendMore(container, hidden) {
   if (hidden <= 0) return;
-  const more = node("a", `Ещё ${hidden} — весь список →`, "preview-more");
+  const more = bindTranslation(node("a", t("Ещё {hidden} — весь список →", { hidden: hidden }), "preview-more"), "Ещё {hidden} — весь список →", { hidden: hidden });
   more.href = "#board";
   // Весь список — это доска без фильтра: с умолчанием «сегодня» на ней не оказалось
   // бы как раз тех дел, о которых говорит ссылка.
@@ -1405,18 +1419,18 @@ function pictureInto(holder, url) {
 function circleChip(circle, { small = false } = {}) {
   const chip = node("span", undefined, `tag circle${small ? " small" : ""}`);
   chip.append(node("i", undefined, `circle-dot ${CIRCLE_TONES[circle.color] || "violet"}`), node("span", circle.name));
-  chip.title = `Круг «${circle.name}»`;
+  bindTranslation(chip, "Круг «{name}»", { name: circle.name }, "title");
   return chip;
 }
 const circleOf = (entry) => entry.circle || todayState.circleMarks?.[entry.id] || null;
-const ASSIGNMENT_WORDS = { pending: "ждёт ответа", accepted: "взято", declined: "отказ", done: "сделано" };
+const ASSIGNMENT_WORDS = { get pending() { return t("ждёт ответа"); }, get accepted() { return t("взято"); }, get declined() { return t("отказ"); }, get done() { return t("сделано"); } };
 const assignmentWord = (assignment) => ASSIGNMENT_WORDS[assignment.state] || assignment.state;
 // «От Саши», «от Ани»: имя в строке стоит в родительном падеже, иначе фраза
 // читается как заголовок таблицы. Правило простое и честное — хвост имени;
 // имя, которое не склоняется («Отто», «Мэри»), остаётся как есть.
 function genitiveName(name) {
   const value = String(name || "").trim();
-  if (!value) return value;
+  if (!value || getLocale() !== "ru") return value;
   const last = value.slice(-1).toLowerCase();
   if (last === "ь" || last === "й") return `${value.slice(0, -1)}я`;
   if (last === "я") return `${value.slice(0, -1)}и`;
@@ -1425,15 +1439,15 @@ function genitiveName(name) {
   return `${value}а`;
 }
 async function respondRequest(row, take, button) {
-  const reason = take ? null : (prompt("Почему не вы? Можно не отвечать — причина уйдёт автору.") ?? "").trim();
+  const reason = take ? null : (prompt(t("Почему не вы? Можно не отвечать — причина уйдёт автору.")) ?? "").trim();
   if (button) button.disabled = true;
   try {
     await request(`/api/assignments/${row.id}/respond`, { method: "POST", body: JSON.stringify({ take, ...(reason ? { reason } : {}) }) });
-    toast(take ? "Взяли: дело в вашем дне" : "Вернули автору");
+    toast(take ? t("Взяли: дело в вашем дне") : t("Вернули автору"));
     await load();
   } catch (error) {
     if (button) button.disabled = false;
-    toast(error.message || "Не получилось ответить");
+    toast(error.message || t("Не получилось ответить"));
   }
 }
 function inboxRow(row) {
@@ -1442,32 +1456,32 @@ function inboxRow(row) {
   mark.append(node("i", undefined, row.kind === "call" ? "inbox-bubble" : "inbox-circle"));
   const main = node("div", undefined, "inbox-main");
   const label = row.kind === "request" ? row.title
-    : row.kind === "circle" ? `${row.from?.name || "Вас"} добавил${row.from ? "" : "и"} в круг «${row.circle.name}»`
-    : `${row.from.name} зовёт: «${row.kind === "chat" ? row.title : row.body}»`;
+    : row.kind === "circle" ? t("{value1} добавил{value2} в круг «{name}»", { value1: row.from?.name || t("Вас"), value2: row.from ? "" : t("и"), name: row.circle.name })
+    : t("{name} зовёт: «{value2}»", { name: row.from.name, value2: row.kind === "chat" ? row.title : row.body });
   const open = () => (row.kind === "chat" ? openRoomFromInbox(row.roomId) : row.kind === "circle" ? openCircleFromInbox(row.circle.id) : openSharedCard(row.captureId, { talk: row.kind === "call" }));
   const title = node("button", label, "inbox-title");
   title.type = "button";
   title.addEventListener("click", open);
   const meta = node("div", undefined, "inbox-meta");
-  if (row.kind === "request") meta.append(node("span", `просит ${row.from.name}`, "inbox-who"));
-  else if (row.kind === "chat") meta.append(node("span", `разговор «${row.roomName}»`, "inbox-who"));
-  else if (row.kind === "circle") meta.append(node("span", "общая полка: видно только то, что в неё отдали", "inbox-who"));
-  else meta.append(node("span", `обсуждение «${row.title}»`, "inbox-who"));
+  if (row.kind === "request") meta.append(bindTranslation(node("span", t("просит {name}", { name: row.from.name }), "inbox-who"), "просит {name}", { name: row.from.name }));
+  else if (row.kind === "chat") meta.append(bindTranslation(node("span", t("разговор «{roomName}»", { roomName: row.roomName }), "inbox-who"), "разговор «{roomName}»", { roomName: row.roomName }));
+  else if (row.kind === "circle") meta.append(bindTranslation(node("span", t("общая полка: видно только то, что в неё отдали"), "inbox-who"), "общая полка: видно только то, что в неё отдали"));
+  else meta.append(bindTranslation(node("span", t("обсуждение «{title}»", { title: row.title }), "inbox-who"), "обсуждение «{title}»", { title: row.title }));
   if (row.circle) meta.append(circleChip(row.circle, { small: true }));
-  if (row.due) meta.append(node("span", `срок: ${scheduleLabel({ date: row.due.date, time: row.due.time }) || row.due.date}`, "inbox-due"));
+  if (row.due) meta.append(bindTranslation(node("span", t("срок: {value1}", { value1: scheduleLabel({ date: row.due.date, time: row.due.time }) || row.due.date }), "inbox-due"), "срок: {value1}", { value1: scheduleLabel({ date: row.due.date, time: row.due.time }) || row.due.date }));
   meta.append(node("span", agoWords(row.createdAt) || "", "inbox-ago"));
   main.append(title, meta);
   const acts = node("div", undefined, "inbox-acts");
   if (row.kind === "request") {
-    const take = node("button", "Беру", "inbox-take");
+    const take = bindTranslation(node("button", t("Беру"), "inbox-take"), "Беру");
     take.type = "button";
     take.addEventListener("click", () => respondRequest(row, true, take));
-    const not = node("button", "Не я", "inbox-not");
+    const not = bindTranslation(node("button", t("Не я"), "inbox-not"), "Не я");
     not.type = "button";
     not.addEventListener("click", () => respondRequest(row, false, not));
     acts.append(take, not);
   } else {
-    const openButton = node("button", "Открыть", "inbox-not");
+    const openButton = bindTranslation(node("button", t("Открыть"), "inbox-not"), "Открыть");
     openButton.type = "button";
     openButton.addEventListener("click", open);
     acts.append(openButton);
@@ -1482,12 +1496,12 @@ function inboxFoldedRow(item) {
   const main = node("div", undefined, "inbox-main");
   const title = node("span", undefined, "inbox-title as-text");
   if (item.circle) title.append(circleChip(item.circle, { small: true }));
-  title.append(node("span", ` выключен — ${item.count} ${pluralRu(item.count, "просьба", "просьбы", "просьб")}`));
+  title.append(bindTranslation(node("span", t(" выключен — {count} {value2}", { count: item.count, value2: pluralRu(item.count, t("просьба"), t("просьбы"), t("просьб")) })), " выключен — {count} {value2}", { count: item.count, value2: pluralRu(item.count, t("просьба"), t("просьбы"), t("просьб")) }));
   const meta = node("div", undefined, "inbox-meta");
-  meta.append(node("span", `последняя: ${agoWords(item.lastAt) || ""}${item.from ? ` · от ${item.from.name}` : ""}`, "inbox-who"));
+  meta.append(bindTranslation(node("span", t("последняя: {value1}{value2}", { value1: agoWords(item.lastAt) || "", value2: item.from ? t(" · от {value1}", { value1: item.from.name }) : "" }), "inbox-who"), "последняя: {value1}{value2}", { value1: agoWords(item.lastAt) || "", value2: item.from ? t(" · от {value1}", { value1: item.from.name }) : "" }));
   main.append(title, meta);
   const acts = node("div", undefined, "inbox-acts");
-  const show = node("button", "Включить круг", "inbox-not");
+  const show = bindTranslation(node("button", t("Включить круг"), "inbox-not"), "Включить круг");
   show.type = "button";
   show.addEventListener("click", () => toggleCircleMute(item.circle.id, false));
   acts.append(show);
@@ -1506,7 +1520,7 @@ function paintInbox(container) {
   const rows = (todayState.inbox || []).filter((row) => row.kind === "request"), folded = todayState.inboxFolded || [];
   const invites = bellState.items.filter((item) => item.kind === "invite" && item.waits);
   if (!rows.length && !invites.length && !folded.length) return;
-  container.append(node("div", `к вам · ${rows.length + invites.length + folded.reduce((total, item) => total + item.count, 0)}`, "day-group inbox-group"));
+  container.append(bindTranslation(node("div", t("к вам · {value1}", { value1: rows.length + invites.length + folded.reduce((total, item) => total + item.count, 0) }), "day-group inbox-group"), "к вам · {value1}", { value1: rows.length + invites.length + folded.reduce((total, item) => total + item.count, 0) }));
   const strip = node("div", undefined, "inbox");
   for (const row of rows) strip.append(inboxRow(row));
   for (const item of invites) strip.append(inviteRow(item));
@@ -1522,16 +1536,16 @@ function paintCircleTail(container) {
     const late = open.filter((item) => item.state === "pending" && daysBetween(item.createdAt) >= 2).length;
     const link = node("button", undefined, "day-more");
     link.type = "button";
-    link.append(node("span", `На других ${open.length} ${pluralRu(open.length, "дело", "дела", "дел")}`, "strong"));
-    if (late) link.append(node("span", ` · ${late} ${pluralRu(late, "ждёт", "ждут", "ждут")} ответа второй день`));
-    link.append(node("span", " — в «Кругах» →"));
+    link.append(bindTranslation(node("span", t("На других {length} {value2}", { length: open.length, value2: pluralRu(open.length, t("дело"), t("дела"), t("дел")) }), "strong"), "На других {length} {value2}", { length: open.length, value2: pluralRu(open.length, t("дело"), t("дела"), t("дел")) }));
+    if (late) link.append(bindTranslation(node("span", t(" · {late} {value2} ответа второй день", { late: late, value2: pluralRu(late, t("ждёт"), t("ждут"), t("ждут")) })), " · {late} {value2} ответа второй день", { late: late, value2: pluralRu(late, t("ждёт"), t("ждут"), t("ждут")) }));
+    link.append(bindTranslation(node("span", t(" — в «Кругах» →")), " — в «Кругах» →"));
     link.addEventListener("click", () => { location.hash = "#circles"; });
     container.append(link);
   }
   for (const circle of todayState.mutedCircles || []) {
     const line = node("div", undefined, "day-muted");
-    line.append(circleChip(circle, { small: true }), node("span", ` выключен — ${circle.deeds} ${pluralRu(circle.deeds, "дело", "дела", "дел")}. `));
-    const on = node("button", "Включить", "linklike");
+    line.append(circleChip(circle, { small: true }), bindTranslation(node("span", t(" выключен — {deeds} {value2}. ", { deeds: circle.deeds, value2: pluralRu(circle.deeds, t("дело"), t("дела"), t("дел")) })), " выключен — {deeds} {value2}. ", { deeds: circle.deeds, value2: pluralRu(circle.deeds, t("дело"), t("дела"), t("дел")) }));
+    const on = bindTranslation(node("button", t("Включить"), "linklike"), "Включить");
     on.type = "button";
     on.addEventListener("click", () => toggleCircleMute(circle.id, false));
     line.append(on);
@@ -1543,7 +1557,7 @@ async function toggleCircleMute(circleId, muted) {
     await request(`/api/circles/${circleId}/mute`, { method: "POST", body: JSON.stringify({ muted }) });
     await load();
     if (!$("#circles")?.hidden) await loadCircles();
-  } catch (error) { toast(error.message || "Не получилось"); }
+  } catch (error) { toast(error.message || t("Не получилось")); }
 }
 // Чужая карточка открывается тем же окном, что и своя: запись живёт у автора,
 // а мы читаем её и пишем в обсуждение.
@@ -1552,7 +1566,7 @@ async function openSharedCard(captureId, { talk = false } = {}) {
     const { entry } = await request(`/api/captures/${captureId}`);
     cardTalkOnOpen = talk;
     showCorrection(entry, reviewFromEntry(entry).level === "high" ? undefined : reviewFromEntry(entry));
-  } catch (error) { toast(error.message || "Запись не открылась"); }
+  } catch (error) { toast(error.message || t("Запись не открылась")); }
 }
 function paintDayList(date) {
   const container = $("#todo");
@@ -1561,7 +1575,7 @@ function paintDayList(date) {
   if (date === currentDayDate) { paintTodayList(container); return; }
   const data = todayState.cache.get(date);
   if (!data) {
-    container.append(node("p", "Загружаю…", "empty"));
+    container.append(bindTranslation(node("p", t("Загружаю…"), "empty"), "Загружаю…"));
     ensureDayData(date);
     return;
   }
@@ -1575,7 +1589,7 @@ function shelfHeadEl(text, kind, entries) {
   const movable = entries.filter((entry) => canPostpone(entry));
   if (!movable.length) return label;
   const head = node("div", undefined, "day-head");
-  const act = node("button", "перенести всё на завтра", `day-head-act ${kind}`);
+  const act = bindTranslation(node("button", t("перенести всё на завтра"), `day-head-act ${kind}`), "перенести всё на завтра");
   act.type = "button";
   act.addEventListener("click", () => postponeToTomorrow(movable, act));
   head.append(label, act);
@@ -1608,7 +1622,7 @@ function paintTodayList(container) {
   if (!band.length && !allDay.length && !hours.length) {
     // Пустому журналу «Открытых дел нет» ничего не объясняет: человек видит
     // поле и не знает, что в него писать. Место то же, слова другие.
-    container.append(todayState.entries.length ? node("p", "Открытых дел нет.", "empty") : firstStepNode());
+    container.append(todayState.entries.length ? bindTranslation(node("p", t("Открытых дел нет."), "empty"), "Открытых дел нет.") : firstStepNode());
     appendMore(container, hidden);
     paintCircleTail(container);
     return;
@@ -1618,7 +1632,7 @@ function paintTodayList(container) {
   // через двенадцать строк. Событие на весь день стоит над часами: оно про весь
   // день, а не про какой-то из них.
   if (hours.length || allDay.length) {
-    container.append(node("div", "по часам", "day-group"));
+    container.append(bindTranslation(node("div", t("по часам"), "day-group"), "по часам"));
     for (const item of allDay) container.append(eventRow(item, { minutes, today: true }));
     const meetings = todayMeetings();
     const running = meetings.some((meeting) => minutes >= meeting.start && minutes < meeting.end);
@@ -1634,7 +1648,7 @@ function paintTodayList(container) {
   // Просроченное — своей полосой сразу под часами, а не строкой в общем списке:
   // под встречами оно иначе теряется, а это единственное, что горит.
   if (late.length) {
-    container.append(shelfHeadEl(`просрочено · ${late.length}`, "late", late));
+    container.append(shelfHeadEl(t("просрочено · {length}", { length: late.length }), "late", late));
     const strip = node("div", undefined, "day-late");
     for (const entry of late) strip.append(entryCard(entry, { overdue: true, on: today }));
     container.append(strip);
@@ -1645,15 +1659,15 @@ function paintTodayList(container) {
   const shelf = rest.filter((entry) => order(entry) <= 2);
   const stock = rest.filter((entry) => order(entry) === 3);
   if (shelf.length || stock.length) {
-    container.append(shelfHeadEl(shelf.length ? `на сегодня · ${shelf.length}` : "на сегодня", "today", shelf));
+    container.append(shelfHeadEl(shelf.length ? t("на сегодня · {length}", { length: shelf.length }) : t("на сегодня"), "today", shelf));
     if (shelf.length) {
       const rows = node("div", undefined, "day-rows");
       for (const entry of shelf) rows.append(entryCard(entry, { on: today }));
       container.append(rows);
-    } else container.append(node("p", "Без часа на сегодня ничего — возьмите дело из запаса.", "day-shelf-empty"));
+    } else container.append(bindTranslation(node("p", t("Без часа на сегодня ничего — возьмите дело из запаса."), "day-shelf-empty"), "Без часа на сегодня ничего — возьмите дело из запаса."));
   }
   if (stock.length) {
-    container.append(node("div", `без срока · ${stock.length}`, "day-group stock"));
+    container.append(bindTranslation(node("div", t("без срока · {length}", { length: stock.length }), "day-group stock"), "без срока · {length}", { length: stock.length }));
     const rows = node("div", undefined, "day-rows stock");
     for (const entry of stock) rows.append(entryCard(entry, { on: today, takeToday: true }));
     container.append(rows);
@@ -1675,16 +1689,16 @@ function paintOtherDayList(container, date, data) {
     ...external.filter((item) => !item.allDay && item.time).map((item) => ({ start: minutesOf(item.time), item })),
   ].filter((slot) => slot.start != null).sort((a, b) => a.start - b.start);
   if (!band.length && !allDay.length && !hours.length) {
-    container.append(node("p", pastDay ? "Встреч и дел со сроком не было." : "Встреч и дел со сроком пока нет.", "empty"));
+    container.append(node("p", pastDay ? t("Встреч и дел со сроком не было.") : t("Встреч и дел со сроком пока нет."), "empty"));
     return;
   }
   if (hours.length || allDay.length) {
-    container.append(node("div", "по часам", "day-group"));
+    container.append(bindTranslation(node("div", t("по часам"), "day-group"), "по часам"));
     for (const item of allDay) container.append(eventRow(item, { pastDay }));
     for (const slot of hours) container.append(slot.entry ? rowWithTime(scheduleOf(slot.entry).time, card(slot.entry, true)) : eventRow(slot.item, { pastDay }));
   }
   if (band.length) {
-    container.append(node("div", "дела", "day-group"));
+    container.append(bindTranslation(node("div", t("дела"), "day-group"), "дела"));
     const rows = node("div", undefined, "day-rows");
     for (const entry of band) rows.append(card(entry));
     container.append(rows);
@@ -1717,14 +1731,14 @@ function doneItemRow(item) {
   if (item.projectionId) {
     const button = node("button", undefined, "completion-button");
     button.type = "button";
-    button.title = "Вернуть в работу";
-    button.setAttribute("aria-label", "Вернуть в работу");
+    bindTranslation(button, "Вернуть в работу", "title");
+    bindTranslation(button, "Вернуть в работу", "aria-label");
     button.setAttribute("aria-pressed", "true");
     button.addEventListener("click", async () => {
       button.disabled = true;
       try {
         await request(`/api/projections/${item.projectionId}/undo-complete`, { method: "POST", body: JSON.stringify(item.occurrence ? { occurrence: item.occurrence } : {}) });
-        toast("Возвращено в работу");
+        toast(t("Возвращено в работу"));
         await load();
         refreshOtherViews();
       } catch (error) { toast(error.message); button.disabled = false; }
@@ -1741,7 +1755,7 @@ function doneItemRow(item) {
   const meta = node("div", undefined, "entry-meta");
   const subs = subtaskBadge(item.subtasks, () => openCaptureById(item.id, { subtasks: true }));
   if (subs) meta.append(subs);
-  if (item.occurrence) meta.append(node("span", "повтор", "tag due"));
+  if (item.occurrence) meta.append(bindTranslation(node("span", t("повтор"), "tag due"), "повтор"));
   meta.append(node("span", item.time, "tag time"));
   row.append(title, meta);
   return row;
@@ -1750,10 +1764,10 @@ function autoDoneRow(item, at) {
   const row = node("div", undefined, "entry completed auto-done");
   row.dataset.eventId = item.id;
   const mark = node("span", undefined, "completion-button auto");
-  mark.title = "Прошла по календарю";
+  bindTranslation(mark, "Прошла по календарю", "title");
   const title = node("span", item.title, "entry-title");
   const meta = node("div", undefined, "entry-meta");
-  meta.append(node("span", "прошла по календарю", "tag auto"), node("span", hm(at), "tag time"));
+  meta.append(bindTranslation(node("span", t("прошла по календарю"), "tag auto"), "прошла по календарю"), node("span", hm(at), "tag time"));
   row.append(mark, title, meta);
   return row;
 }
@@ -1762,9 +1776,9 @@ function paintJournal(date) {
   clear(container);
   container.append(dayNavNode(date, { view: todayState.journalView, onView: setJournalView }));
   const rows = doneRows(date);
-  if (!rows) { container.append(node("p", "Загружаю…", "empty")); ensureDayData(date); return; }
+  if (!rows) { container.append(bindTranslation(node("p", t("Загружаю…"), "empty"), "Загружаю…")); ensureDayData(date); return; }
   if (!rows.length) {
-    container.append(node("p", date === currentDayDate ? "Пока нет зафиксированной работы за сегодня." : date < currentDayDate ? "В этот день ничего не записано." : "День ещё не наступил.", "empty"));
+    container.append(node("p", date === currentDayDate ? t("Пока нет зафиксированной работы за сегодня.") : date < currentDayDate ? t("В этот день ничего не записано.") : t("День ещё не наступил."), "empty"));
     return;
   }
   const list = node("div", undefined, "day-rows");
@@ -2039,7 +2053,7 @@ const STATUS_ICONS = {
 function entryStatus(entry, today = currentDayDate) {
   const c = entry.interpretation.classification;
   if (isReportedWork(entry) || isClosed(entry))
-    return { key: "done", label: "Сделано", icon: "done" };
+    return { key: "done", get label() { return t("Сделано"); }, icon: "done" };
   // Статус есть только у дел: заметки, идеи и незакрытые результаты живут без него.
   if (
     !completableProjections(entry).length &&
@@ -2047,10 +2061,10 @@ function entryStatus(entry, today = currentDayDate) {
   )
     return null;
   const date = c.entities.schedule?.date || null;
-  if (!date) return { key: "none", label: "Без срока", icon: "none" };
-  if (today && date < today) return { key: "late", label: "Просрочено", icon: "late" };
-  if (today && date === today) return { key: "today", label: "Сегодня", icon: "clock" };
-  return { key: "ontime", label: "В срок", icon: "clock" };
+  if (!date) return { key: "none", get label() { return t("Без срока"); }, icon: "none" };
+  if (today && date < today) return { key: "late", get label() { return t("Просрочено"); }, icon: "late" };
+  if (today && date === today) return { key: "today", get label() { return t("Сегодня"); }, icon: "clock" };
+  return { key: "ontime", get label() { return t("В срок"); }, icon: "clock" };
 }
 function statusBadge(status) {
   const badge = node("span", undefined, `entry-status st-${status.key}`),
@@ -2090,17 +2104,17 @@ function projectPicker(input) {
   const chip = node("span", undefined, "project-selection");
   const edit = node("button", undefined, "project-selected-name");
   edit.type = "button";
-  edit.title = "Выбрать другой проект";
+  bindTranslation(edit, "Выбрать другой проект", "title");
   const remove = node("button", "×", "project-remove");
   remove.type = "button";
-  remove.setAttribute("aria-label", "Убрать проект");
+  bindTranslation(remove, "Убрать проект", "aria-label");
   const list = node("div", undefined, "project-options");
   list.id = "review-project-options";
   list.setAttribute("role", "listbox");
-  list.setAttribute("aria-label", "Проекты");
+  bindTranslation(list, "Проекты", "aria-label");
   list.hidden = true;
   input.setAttribute("role", "combobox");
-  input.setAttribute("aria-label", "Проект");
+  bindTranslation(input, "Проект", "aria-label");
   input.setAttribute("aria-autocomplete", "list");
   input.setAttribute("aria-controls", list.id);
   input.autocomplete = "off";
@@ -2131,7 +2145,7 @@ function projectPicker(input) {
     active = -1;
     input.removeAttribute("aria-activedescendant");
     options.forEach((name, index) => {
-      const option = node("button", create && index === options.length - 1 ? `Создать проект «${name}»` : name, "project-option");
+      const option = node("button", create && index === options.length - 1 ? t("Создать проект «{name}»", { name: name }) : name, "project-option");
       option.type = "button";
       option.id = `review-project-option-${index}`;
       option.setAttribute("role", "option");
@@ -2141,7 +2155,7 @@ function projectPicker(input) {
       option.addEventListener("click", () => select(name));
       list.append(option);
     });
-    if (!options.length) list.append(node("p", "Введите название нового проекта", "project-options-empty"));
+    if (!options.length) list.append(bindTranslation(node("p", t("Введите название нового проекта"), "project-options-empty"), "Введите название нового проекта"));
     list.hidden = false;
     input.setAttribute("aria-expanded", "true");
   };
@@ -2190,7 +2204,7 @@ function propertyRow(label, control, icon, { clear = null, filled = null } = {})
   if (clear) {
     const reset = node("button", "×", "prop-clear");
     reset.type = "button";
-    reset.title = `Сбросить: ${label.toLowerCase()}`;
+    bindTranslation(reset, "Сбросить: {value1}", { value1: label.toLowerCase() }, "title");
     reset.setAttribute("aria-label", reset.title);
     reset.addEventListener("click", (event) => { event.preventDefault(); clear(); paint(); });
     const paint = () => { reset.hidden = filled ? !filled() : false; };
@@ -2207,9 +2221,9 @@ function propertyRow(label, control, icon, { clear = null, filled = null } = {})
 // снимок доски или счёт прикладывают как есть.
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/heic"]);
 function fileSize(bytes) {
-  if (bytes < 1024) return `${bytes} Б`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} КБ`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+  if (bytes < 1024) return t("{bytes} Б", { bytes: bytes });
+  if (bytes < 1024 * 1024) return t("{value1} КБ", { value1: Math.round(bytes / 1024) });
+  return t("{value1} МБ", { value1: (bytes / (1024 * 1024)).toFixed(1) });
 }
 // Быстрый предпросмотр: картинка открывается прямо здесь, PDF — рамкой,
 // остальное честно предлагается скачать.
@@ -2236,7 +2250,7 @@ function previewAttachment(attachment, src = `/api/attachments/${attachment.id}`
     body.append(frame);
   } else {
     body.append(
-      node("p", `${attachment.contentType || "файл"} · ${fileSize(attachment.size)}`, "preview-plain"),
+      node("p", `${attachment.contentType || t("файл")} · ${fileSize(attachment.size)}`, "preview-plain"),
     );
   }
   if (!dialog.open) dialog.showModal();
@@ -2245,13 +2259,13 @@ function previewAttachment(attachment, src = `/api/attachments/${attachment.id}`
 function attachmentsBlock(entry) {
   const wrap = node("section", undefined, "card-files"),
     head = node("div", undefined, "card-files-head"),
-    label = node("p", "Вложения", "prop-section"),
-    emptyMark = node("span", " · Пока пусто", "attach-empty"),
+    label = bindTranslation(node("p", t("Вложения"), "prop-section"), "Вложения"),
+    emptyMark = bindTranslation(node("span", t(" · Пока пусто"), "attach-empty"), " · Пока пусто"),
     grid = node("div", undefined, "file-grid"),
     input = document.createElement("input"),
-    add = node("button", "Добавить файл", "secondary");
+    add = bindTranslation(node("button", t("Добавить файл"), "secondary"), "Добавить файл");
   label.append(emptyMark);
-  add.title = "Перетащите файл сюда или выберите — до 10 файлов, каждый до 10 МБ.";
+  bindTranslation(add, "Перетащите файл сюда или выберите — до 10 файлов, каждый до 10 МБ.", "title");
   let files = entry.attachments || [];
   input.type = "file";
   input.multiple = true;
@@ -2278,14 +2292,14 @@ function attachmentsBlock(entry) {
         open.append(thumb);
       } else {
         open.append(
-          node("span", attachment.contentType === "application/pdf" ? "PDF" : "ФАЙЛ", "file-kind"),
+          node("span", attachment.contentType === "application/pdf" ? "PDF" : t("ФАЙЛ"), "file-kind"),
         );
       }
       open.append(node("span", attachment.filename, "file-name"));
       open.addEventListener("click", () => previewAttachment(attachment));
       remove.type = "button";
-      remove.title = "Убрать вложение";
-      remove.setAttribute("aria-label", `Убрать ${attachment.filename}`);
+      bindTranslation(remove, "Убрать вложение", "title");
+      bindTranslation(remove, "Убрать {filename}", { filename: attachment.filename }, "aria-label");
       remove.addEventListener("click", async () => {
         remove.disabled = true;
         try {
@@ -2315,7 +2329,7 @@ function attachmentsBlock(entry) {
           body: file,
         });
         const payload = await response.json().catch(() => null);
-        if (!response.ok) throw new Error(payload?.error?.message || "Файл не приложился.");
+        if (!response.ok) throw new Error(payload?.error?.message || t("Файл не приложился."));
         files = payload.attachments;
         paint();
       } catch (error) {
@@ -2367,10 +2381,10 @@ function attachmentsBlock(entry) {
 function assignRow(entry, { onChange }) {
   const wrap = node("div", undefined, "assign-row");
   const select = node("select", undefined, "prop-input assign-pick");
-  select.setAttribute("aria-label", "Исполнитель");
+  bindTranslation(select, "Исполнитель", "aria-label");
   const people = new Map();
   for (const circle of entry.myCircles || []) for (const member of circle.members || []) if (member.id !== (currentUser?.id ?? null)) people.set(member.id, { ...member, circleId: circle.id });
-  select.append(new Option("— никому", ""));
+  select.append(new Option(t("— никому"), ""));
   for (const person of people.values()) select.append(new Option(person.name, person.id));
   select.value = entry.assignment && entry.assignment.state !== "declined" ? entry.assignment.assignee?.id || "" : "";
   const state = node("span", undefined, "assign-state");
@@ -2378,7 +2392,7 @@ function assignRow(entry, { onChange }) {
     clear(state);
     if (!entry.assignment || entry.assignment.state === "declined") {
       if (entry.assignment?.state === "declined")
-        state.append(node("span", `${entry.assignment.assignee?.name || "Не взяли"} ${assignmentWord(entry.assignment)}${entry.assignment.reason ? `: «${entry.assignment.reason}»` : ""}`, "assign-declined"));
+        state.append(node("span", `${entry.assignment.assignee?.name || t("Не взяли")} ${assignmentWord(entry.assignment)}${entry.assignment.reason ? `: «${entry.assignment.reason}»` : ""}`, "assign-declined"));
       return;
     }
     state.append(node("span", `— ${assignmentWord(entry.assignment)}`, "prop-origin"));
@@ -2392,10 +2406,10 @@ function assignRow(entry, { onChange }) {
       entry.assignment = result.assignment;
       entry.circles = result.circles;
       paintState();
-      toast(assigneeId ? `Просьба ушла: ${people.get(assigneeId).name} ответит «беру» или «не я»` : "Исполнитель снят");
+      toast(assigneeId ? t("Просьба ушла: {name} ответит «беру» или «не я»", { name: people.get(assigneeId).name }) : t("Исполнитель снят"));
       onChange?.();
       await load();
-    } catch (error) { toast(error.message || "Не получилось"); }
+    } catch (error) { toast(error.message || t("Не получилось")); }
   });
   wrap.append(select, state);
   return wrap;
@@ -2405,7 +2419,7 @@ function circleRow(entry) {
   const paint = () => {
     clear(wrap);
     const circles = entry.circles || [];
-    if (!circles.length) { wrap.append(node("span", "только у вас", "prop-ghost")); return; }
+    if (!circles.length) { wrap.append(bindTranslation(node("span", t("только у вас"), "prop-ghost"), "только у вас")); return; }
     for (const circle of circles) wrap.append(circleChip(circle));
   };
   paint();
@@ -2413,10 +2427,10 @@ function circleRow(entry) {
 }
 // Позвать можно любого из ваших кругов, но не в пустоту: тому, кто записи или
 // разговора ещё не видит, призыв их открывает — и об этом сказано до отправки.
-const MENTION_GROUPS = { record: "в записи", room: "в разговоре", circle: "в круге", circles: "из ваших кругов", everyone: "все в Кизуне" };
+const MENTION_GROUPS = { get record() { return t("в записи"); }, get room() { return t("в разговоре"); }, get circle() { return t("в круге"); }, get circles() { return t("из ваших кругов"); }, get everyone() { return t("все в Кизуне"); } };
 // Кто и так на месте: этим призыв ничего не открывает, поэтому и приписки у них нет.
 const MENTION_INSIDE = ["record", "room"];
-function mentionPopup(field, callable, onPick, { lead = "", keys = false, note = "увидит запись" } = {}) {
+function mentionPopup(field, callable, onPick, { lead = "", keys = false, note = t("увидит запись") } = {}) {
   const pop = node("div", undefined, "mention-pop");
   pop.hidden = true;
   let items = [], active = 0, from = -1;
@@ -2437,11 +2451,11 @@ function mentionPopup(field, callable, onPick, { lead = "", keys = false, note =
     // В карточке записи люди идут группами: кто запись уже видит, люди из
     // ваших кругов и все остальные — позвать последних значит поделиться.
     let group = null;
-    if (!items.some((person) => person.group)) pop.append(node("p", "призвать", "mention-cap"));
+    if (!items.some((person) => person.group)) pop.append(bindTranslation(node("p", t("призвать"), "mention-cap"), "призвать"));
     items.forEach((person, index) => {
       if (person.group && person.group !== group) {
         group = person.group;
-        pop.append(node("p", MENTION_GROUPS[group] || "призвать", "mention-cap"));
+        pop.append(node("p", MENTION_GROUPS[group] || t("призвать"), "mention-cap"));
       }
       const row = node("button", undefined, `mention-row${index === active ? " on" : ""}`);
       row.type = "button";
@@ -2452,7 +2466,7 @@ function mentionPopup(field, callable, onPick, { lead = "", keys = false, note =
     });
     if (keys) {
       const hint = node("p", undefined, "mention-keys");
-      hint.append(node("kbd", "↑"), " ", node("kbd", "↓"), " выбрать · ", node("kbd", "Enter"), " позвать · ", node("kbd", "Esc"), " закрыть");
+      hint.append(node("kbd", "↑"), " ", node("kbd", "↓"), t(" выбрать · "), node("kbd", "Enter"), t(" позвать · "), node("kbd", "Esc"), t(" закрыть"));
       pop.append(hint);
     }
     pop.hidden = false;
@@ -2531,7 +2545,7 @@ function talkIcon(name, className = "talk-icon") {
   return holder;
 }
 // «Илья», «Илья и Аня», «Илья, Аня и Марк».
-const talkNames = (names) => (names.length > 1 ? `${names.slice(0, -1).join(", ")} и ${names[names.length - 1]}` : names[0] || "");
+const talkNames = (names) => (names.length > 1 ? t("{value1} и {value2}", { value1: names.slice(0, -1).join(", "), value2: names[names.length - 1] }) : names[0] || "");
 function cardDiscussion(entry) {
   let comments = entry.comments || [];
   let participants = entry.participants || [];
@@ -2549,7 +2563,7 @@ function cardDiscussion(entry) {
   const author = mine ? null : entry.author;
   const dock = node("section", undefined, "talk-dock");
   dock.id = "card-talk";
-  dock.setAttribute("aria-label", "Обсуждение");
+  bindTranslation(dock, "Обсуждение", "aria-label");
 
   // Панель разговора: шапка, кто видит, сообщения.
   const panel = node("div", undefined, "talk-panel");
@@ -2565,8 +2579,8 @@ function cardDiscussion(entry) {
   whoMenu.hidden = true;
   const shut = node("button", undefined, "talk-close");
   shut.type = "button";
-  shut.title = "Свернуть · Esc";
-  shut.setAttribute("aria-label", "Свернуть обсуждение");
+  bindTranslation(shut, "Свернуть · Esc", "title");
+  bindTranslation(shut, "Свернуть обсуждение", "aria-label");
   shut.append(talkIcon("down"));
   top.append(head, whoButton, shut);
   const list = node("div", undefined, "thread-list");
@@ -2576,23 +2590,23 @@ function cardDiscussion(entry) {
   const base = node("div", undefined, "talk-base");
   const peek = node("button", undefined, "talk-peek");
   peek.type = "button";
-  peek.title = "Развернуть обсуждение";
+  bindTranslation(peek, "Развернуть обсуждение", "title");
   peek.setAttribute("aria-controls", panel.id);
   const confirm = node("div", undefined, "talk-confirm");
   confirm.hidden = true;
   const composer = node("div", undefined, "thread-composer");
   const field = node("textarea", undefined, "thread-input");
   field.rows = 1;
-  field.setAttribute("aria-label", "Сообщение в обсуждение");
+  bindTranslation(field, "Сообщение в обсуждение", "aria-label");
   const at = node("button", undefined, "talk-at");
   at.type = "button";
   at.append(talkIcon("at"));
-  at.title = "Позвать человека";
-  at.setAttribute("aria-label", "Позвать человека");
+  bindTranslation(at, "Позвать человека", "title");
+  bindTranslation(at, "Позвать человека", "aria-label");
   const send = node("button", undefined, "talk-send");
   send.type = "button";
-  send.title = "Отправить · ⌘ + Enter";
-  send.setAttribute("aria-label", "Отправить");
+  bindTranslation(send, "Отправить · ⌘ + Enter", "title");
+  bindTranslation(send, "Отправить", "aria-label");
   send.append(talkIcon("send"));
   base.append(peek, confirm, composer);
   dock.append(panel, base);
@@ -2609,12 +2623,12 @@ function cardDiscussion(entry) {
   const paintWho = () => {
     const others = seers();
     clear(whoButton);
-    if (!others.length) { whoButton.append(talkIcon("lock"), node("span", "видите только вы")); whoButton.disabled = true; whoMenu.hidden = true; return; }
+    if (!others.length) { whoButton.append(talkIcon("lock"), bindTranslation(node("span", t("видите только вы")), "видите только вы")); whoButton.disabled = true; whoMenu.hidden = true; return; }
     whoButton.disabled = false;
     const faces = node("span", undefined, "talk-faces");
     for (const person of others.slice(0, 4)) faces.append(avatarEl(person, { size: "mini" }));
     const names = others.map((person) => person.name);
-    const words = names.length === 1 ? `вы и ${names[0]}` : names.length <= 3 ? `вы, ${talkNames(names)}` : `вы, ${names[0]} и ещё ${names.length - 1}`;
+    const words = names.length === 1 ? t("вы и {value1}", { value1: names[0] }) : names.length <= 3 ? t("вы, {value1}", { value1: talkNames(names) }) : t("вы, {value1} и ещё {value2}", { value1: names[0], value2: names.length - 1 });
     whoButton.append(faces, node("span", words));
     clear(whoMenu);
     const row = (person, note, action) => {
@@ -2628,35 +2642,35 @@ function cardDiscussion(entry) {
       } else line.append(node("small", note));
       whoMenu.append(line);
     };
-    if (author) row(author, "автор");
+    if (author) row(author, t("автор"));
     for (const person of participants) {
       if (person.id === myId) continue;
-      row(person, mine ? "убрать" : "позван", mine ? () => removePerson(person) : null);
+      row(person, mine ? t("убрать") : t("позван"), mine ? () => removePerson(person) : null);
     }
     const inRecord = new Set(participants.map((person) => person.id));
-    for (const person of callable) if (person.group === "record" && !inRecord.has(person.id) && person.id !== author?.id) row(person, "из круга");
+    for (const person of callable) if (person.group === "record" && !inRecord.has(person.id) && person.id !== author?.id) row(person, t("из круга"));
     if (!mine && participants.some((person) => person.id === myId)) {
-      const leave = node("button", "Не следить — убрать запись у себя", "text-button talk-leave");
+      const leave = bindTranslation(node("button", t("Не следить — убрать запись у себя"), "text-button talk-leave"), "Не следить — убрать запись у себя");
       leave.type = "button";
       leave.addEventListener("click", () => removePerson({ id: myId }, { self: true }));
       whoMenu.append(leave);
     }
-    whoMenu.append(node("p", "Позвать ещё — напишите @имя в сообщении", "talk-people-hint"));
+    whoMenu.append(bindTranslation(node("p", t("Позвать ещё — напишите @имя в сообщении"), "talk-people-hint"), "Позвать ещё — напишите @имя в сообщении"));
   };
   const removePerson = async (person, { self = false } = {}) => {
     try {
       const result = await request(`/api/captures/${entry.id}/people/${person.id}`, { method: "DELETE" });
       if (self) {
-        toast("Запись убрана у вас: новый призыв вернёт её");
+        toast(t("Запись убрана у вас: новый призыв вернёт её"));
         closeCard();
         load();
         return;
       }
       participants = result.participants;
       entry.participants = participants;
-      toast(`${person.name} больше не видит запись`);
+      toast(t("{name} больше не видит запись", { name: person.name }));
       paint();
-    } catch (error) { toast(error.message || "Не получилось"); }
+    } catch (error) { toast(error.message || t("Не получилось")); }
   };
   whoButton.addEventListener("click", () => { whoMenu.hidden = !whoMenu.hidden; });
 
@@ -2691,7 +2705,7 @@ function cardDiscussion(entry) {
     peek.classList.toggle("out", out);
     const text = node("span", undefined, "talk-peek-text");
     if (!out) {
-      const name = node("b", last.author?.name || "Кто-то", "talk-peek-name");
+      const name = node("b", last.author?.name || t("Кто-то"), "talk-peek-name");
       name.style.color = `var(--circle-${kcNameTone(last.author?.id)})`;
       text.append(name);
     }
@@ -2700,7 +2714,7 @@ function cardDiscussion(entry) {
     if (out && typeof last.read === "boolean") time.append(readMark(last.read));
     const bubble = node("span", undefined, "talk-peek-bubble");
     bubble.append(text, time);
-    const label = unread ? `${unread} ${pluralRu(unread, "новое", "новых", "новых")}` : comments.length > 1 ? `ещё ${comments.length - 1}` : "";
+    const label = unread ? `${unread} ${pluralRu(unread, t("новое"), t("новых"), t("новых"))}` : comments.length > 1 ? t("ещё {value1}", { value1: comments.length - 1 }) : "";
     const more = node("span", undefined, `talk-peek-more${unread ? " new" : ""}${label ? "" : " bare"}`);
     if (label) more.append(node("span", label));
     more.append(talkIcon("up"));
@@ -2730,7 +2744,7 @@ function cardDiscussion(entry) {
         const result = await request(`/api/captures/${entry.id}/comments/${comment.id}/reactions`, { method: "POST", body: JSON.stringify({ emoji: reaction.emoji }) });
         comment.reactions = result.reactions;
         paintList();
-      } catch (error) { toast(error.message || "Не получилось"); }
+      } catch (error) { toast(error.message || t("Не получилось")); }
     });
     return chip;
   };
@@ -2739,15 +2753,15 @@ function cardDiscussion(entry) {
     const box = node("div", undefined, "talk-bb");
     box.dataset.id = comment.id;
     if (!group.out && group.first) {
-      const name = node("p", comment.author?.name || "Кто-то", "talk-name");
-      if (author && comment.author?.id === author.id) name.append(node("i", "автор"));
+      const name = node("p", comment.author?.name || t("Кто-то"), "talk-name");
+      if (author && comment.author?.id === author.id) name.append(bindTranslation(node("i", t("автор")), "автор"));
       name.style.color = `var(--circle-${kcNameTone(comment.author?.id)})`;
       box.append(name);
     }
     if (comment.replyTo) {
       const quote = node("div", undefined, "talk-quote");
-      const whose = comment.replyTo.author ? (comment.replyTo.author.id === myId ? "Вы" : comment.replyTo.author.name) : "Сообщение";
-      quote.append(node("b", whose), node("span", comment.replyTo.removed ? "сообщение убрано" : comment.replyTo.body));
+      const whose = comment.replyTo.author ? (comment.replyTo.author.id === myId ? t("Вы") : comment.replyTo.author.name) : t("Сообщение");
+      quote.append(node("b", whose), node("span", comment.replyTo.removed ? t("сообщение убрано") : comment.replyTo.body));
       box.append(quote);
     }
     const meta = node("span", kcClock(comment.createdAt), "talk-meta");
@@ -2763,7 +2777,7 @@ function cardDiscussion(entry) {
     // Из сообщения делается дело: пересказывать в поле то, что уже написано,
     // дороже, чем нажать кнопку.
     if (callable.length || comment.mentions.length) {
-      const deed = node("button", "В дело", "talk-deed");
+      const deed = bindTranslation(node("button", t("В дело"), "talk-deed"), "В дело");
       deed.type = "button";
       deed.addEventListener("click", () => {
         prefillCapture(comment.body.replace(/@[\p{L}\p{N}_-]+/gu, "").trim(), "todo");
@@ -2787,7 +2801,7 @@ function cardDiscussion(entry) {
       if (item.person) {
         group = null;
         const joined = node("p", undefined, "talk-joined");
-        joined.append(avatarEl(item.person, { size: "mini" }), node("span", `${item.person.id === myId ? "Вы" : item.person.name} — в обсуждении`));
+        joined.append(avatarEl(item.person, { size: "mini" }), bindTranslation(node("span", t("{value1} — в обсуждении", { value1: item.person.id === myId ? t("Вы") : item.person.name })), "{value1} — в обсуждении", { value1: item.person.id === myId ? t("Вы") : item.person.name }));
         list.append(joined);
         continue;
       }
@@ -2816,7 +2830,7 @@ function cardDiscussion(entry) {
   const paint = () => {
     const count = comments.length;
     clear(head);
-    head.append(document.createTextNode("Обсуждение"), node("span", String(count), "talk-count"));
+    head.append(document.createTextNode(t("Обсуждение")), node("span", String(count), "talk-count"));
     paintWho();
     paintPeek();
     paintList();
@@ -2826,7 +2840,7 @@ function cardDiscussion(entry) {
     // Пока запись видите только вы, реплика — себе: об этом говорит поле, а не
     // отдельная метка с замком.
     const alone = !seers().length;
-    field.placeholder = count ? "Сообщение" : callable.length ? `Написать${alone ? " себе" : ""} или позвать через @` : alone ? "Написать себе…" : "Написать…";
+    field.placeholder = count ? t("Сообщение") : callable.length ? t("Написать{value1} или позвать через @", { value1: alone ? t(" себе") : "" }) : alone ? t("Написать себе…") : t("Написать…");
     paintField();
     if (!count) dialog.classList.remove("talk-open");
   };
@@ -2840,13 +2854,13 @@ function cardDiscussion(entry) {
     const many = names.length > 1;
     const text = node("div", undefined, "talk-confirm-text");
     text.append(
-      node("b", `${talkNames(names)} пока не ${many ? "видят" : "видит"} эту запись`),
-      node("p", `Отправите с призывом — ${many ? "они увидят" : "увидит"} заголовок, заметки, файлы и весь разговор, включая прошлые сообщения.`),
+      bindTranslation(node("b", t("{value1} пока не {value2} эту запись", { value1: talkNames(names), value2: many ? t("видят") : t("видит") })), "{value1} пока не {value2} эту запись", { value1: talkNames(names), value2: many ? t("видят") : t("видит") }),
+      bindTranslation(node("p", t("Отправите с призывом — {value1} заголовок, заметки, файлы и весь разговор, включая прошлые сообщения.", { value1: many ? t("они увидят") : t("увидит") })), "Отправите с призывом — {value1} заголовок, заметки, файлы и весь разговор, включая прошлые сообщения.", { value1: many ? t("они увидят") : t("увидит") }),
     );
     const acts = node("div", undefined, "talk-confirm-acts");
-    const go = node("button", "Позвать и отправить", "talk-btn is-go");
-    const quiet = node("button", "Без призыва", "talk-btn");
-    const edit = node("button", "Изменить", "talk-btn is-bare");
+    const go = bindTranslation(node("button", t("Позвать и отправить"), "talk-btn is-go"), "Позвать и отправить");
+    const quiet = bindTranslation(node("button", t("Без призыва"), "talk-btn"), "Без призыва");
+    const edit = bindTranslation(node("button", t("Изменить"), "talk-btn is-bare"), "Изменить");
     for (const button of [go, quiet, edit]) button.type = "button";
     go.addEventListener("click", () => submit("yes", body));
     quiet.addEventListener("click", () => submit("no", body));
@@ -2867,7 +2881,7 @@ function cardDiscussion(entry) {
       const data = await response.json().catch(() => null);
       if (response.status === 401) { location.replace("/login"); return; }
       if (response.status === 409 && data?.error?.code === "share_needed") { askShare(data.people || [], body); return; }
-      if (!response.ok) throw new Error(data?.error?.message || "Сообщение не ушло");
+      if (!response.ok) throw new Error(data?.error?.message || t("Сообщение не ушло"));
       confirm.hidden = true;
       comments = [...comments, data.comment];
       entry.comments = comments;
@@ -2878,8 +2892,8 @@ function cardDiscussion(entry) {
       field.style.height = "auto";
       paint();
       setOpen(true, { focus: false });
-      if (data.comment.mentions.length) toast(`Позвали: ${talkNames(data.comment.mentions.map((person) => person.name))}`);
-    } catch (error) { toast(error.message || "Сообщение не ушло"); }
+      if (data.comment.mentions.length) toast(t("Позвали: {value1}", { value1: talkNames(data.comment.mentions.map((person) => person.name)) }));
+    } catch (error) { toast(error.message || t("Сообщение не ушло")); }
     finally { sending = false; paintField(); if (confirm.hidden) field.focus({ preventScroll: true }); }
   };
   send.addEventListener("click", () => submit());
@@ -2916,7 +2930,7 @@ function cardDiscussion(entry) {
     field.selectionStart = field.selectionEnd = start + insert.length;
     field.dispatchEvent(new Event("input"));
   });
-  const pop = mentionPopup(field, callable, paintField, { lead: "Позванный увидит эту запись и разговор", keys: true });
+  const pop = mentionPopup(field, callable, paintField, { get lead() { return t("Позванный увидит эту запись и разговор"); }, keys: true });
   composer.append(field, at, send, pop);
   // Верхняя кромка поля тянется: высота одна на все карточки (kizuna-card-talk-height).
   const grip = node("div", undefined, "talk-resize");
@@ -2971,8 +2985,8 @@ function cardDiscussion(entry) {
 // на сервере со ссылкой supersedes.
 function cardBody(entry) {
   const wrap = node("section", undefined, "card-body"),
-    hint = node("p", "Markdown оформляется прямо в тексте · ⌘/Ctrl + Enter — сохранить · закроете карточку — сохранится само", "card-body-hint"),
-    label = node("p", "Заметка", "prop-section");
+    hint = bindTranslation(node("p", t("Markdown оформляется прямо в тексте · ⌘/Ctrl + Enter — сохранить · закроете карточку — сохранится само"), "card-body-hint"), "Markdown оформляется прямо в тексте · ⌘/Ctrl + Enter — сохранить · закроете карточку — сохранится само"),
+    label = bindTranslation(node("p", t("Заметка"), "prop-section"), "Заметка");
   // Описание пишет разбор из текста записи и кладёт первой версией заметки. Нет
   // заметки — поле пустое, с подсказкой «Описание»: копия исходного текста тут
   // только дублировала бы то, что лежит в свёрнутом «Исходном тексте» ниже.
@@ -2982,8 +2996,8 @@ function cardBody(entry) {
   // не нужны — читать и править можно в одном месте.
   const field = createMarkdownField({
     id: "card-body-editor",
-    ariaLabel: "Описание",
-    placeholder: "Описание",
+    get ariaLabel() { return t("Описание"); },
+    get placeholder() { return t("Описание"); },
     onSubmit: () => save(),
   });
   field.element.classList.add("card-markdown");
@@ -3021,7 +3035,7 @@ function cardBody(entry) {
         body = result.entry.note?.body || "";
         entry.note = result.entry.note;
         field.setValue(body);
-        toast("Заметка сохранена");
+        toast(t("Заметка сохранена"));
         await load();
       } catch (error) {
         toast(error.message);
@@ -3071,7 +3085,7 @@ let cardAdvance = null;
 let cardArmedUntil = 0;
 let cardSnackTimer = null;
 const cardKeys = { toggle: null };
-const CARD_LIST_DONE = { "Сегодня": "На «Сегодня» всё отмечено", "Сделано": "В «Сделано» всё отмечено", "Закрыто": "В «Закрыто» всё отмечено", "День": "В «Дне» всё отмечено", "Доска": "На «Доске» всё отмечено", "Календарь": "В календаре всё отмечено" };
+const CARD_LIST_DONE = { get "Сегодня"() { return t("На «Сегодня» всё отмечено"); }, get "Сделано"() { return t("В «Сделано» всё отмечено"); }, get "Закрыто"() { return t("В «Закрыто» всё отмечено"); }, get "День"() { return t("В «Дне» всё отмечено"); }, get "Доска"() { return t("На «Доске» всё отмечено"); }, get "Календарь"() { return t("В календаре всё отмечено"); } };
 const CARD_TICK_ICON = '<svg class="card-tick-check" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.8 8.4l2.7 2.7 5.7-6.2"/></svg>';
 const CARD_CLOCK_ICON = '<svg class="card-tick-hands" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4.6V8l2.3 1.5"/></svg>';
 const CARD_REPEAT_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.2 7.2A4.6 4.6 0 0 1 11.6 5"/><path d="M12.8 8.8A4.6 4.6 0 0 1 4.4 11"/><path d="M11.8 2.4V5H9.2"/><path d="M4.2 13.6V11h2.6"/></svg>';
@@ -3102,33 +3116,33 @@ function paintCardNav({ finished = false, entry = null } = {}) {
   clear(slot);
   if (cardStack.length) {
     const frame = cardStack.at(-1);
-    const parentTitle = entry?.parent?.title || frame.title || "Без названия";
+    const parentTitle = entry?.parent?.title || frame.title || t("Без названия");
     const back = node("button", undefined, "card-return");
     back.type = "button";
     back.title = cardStack.map((item) => item.title).filter(Boolean).join(" / ") || parentTitle;
-    back.setAttribute("aria-label", `Назад к задаче «${parentTitle}»`);
+    bindTranslation(back, "Назад к задаче «{parentTitle}»", { parentTitle: parentTitle }, "aria-label");
     back.append(node("span", "←", "card-return-arrow"), node("span", parentTitle, "card-return-label"));
     back.addEventListener("click", () => goBackCard());
-    crumb.append(back, node("span", `Уровень ${cardStack.length + 1}`, "card-depth"));
-    close.title = `Вернуться к «${parentTitle}»`;
-    close.setAttribute("aria-label", "Закрыть подзадачу и вернуться к родительской");
+    crumb.append(back, bindTranslation(node("span", t("Уровень {value1}", { value1: cardStack.length + 1 }), "card-depth"), "Уровень {value1}", { value1: cardStack.length + 1 }));
+    bindTranslation(close, "Вернуться к «{parentTitle}»", { parentTitle: parentTitle }, "title");
+    bindTranslation(close, "Закрыть подзадачу и вернуться к родительской", "aria-label");
     return;
   }
   close.title = "";
-  close.setAttribute("aria-label", "Закрыть карточку");
+  bindTranslation(close, "Закрыть карточку", "aria-label");
   const column = node("b", cardMenu.columnName, "card-nav-col");
   column.hidden = !cardMenu.columnName;
   if (!cardList) {
     if (entry) {
       const date = entry.interpretation?.classification?.entities?.schedule?.date;
-      const day = date === (currentDayDate || zoneDate(new Date())) ? "Сегодня" : date ? scheduleLabel({ state: "ok", date }) : "Задача";
+      const day = date === (currentDayDate || zoneDate(new Date())) ? t("Сегодня") : date ? scheduleLabel({ state: "ok", date }) : t("Задача");
       crumb.append(node("i", undefined, "card-crumb-dot"), column, node("span", day, "card-crumb-word"));
     }
     return;
   }
   const nav = node("span", undefined, "card-nav");
   const label = node("span", undefined, "card-nav-crumb");
-  label.append(node("b", cardList.label), document.createTextNode(finished ? " · всё отмечено" : ` · ${cardList.index + 1} из ${cardList.items.length}`));
+  label.append(node("b", cardList.label), document.createTextNode(finished ? t(" · всё отмечено") : t(" · {value1} из {length}", { value1: cardList.index + 1, length: cardList.items.length })));
   nav.append(node("i", undefined, "card-crumb-dot"), label);
   crumb.append(column, nav);
   const step = (direction, label, icon) => {
@@ -3142,7 +3156,7 @@ function paintCardNav({ finished = false, entry = null } = {}) {
     button.addEventListener("click", () => stepCard(direction));
     return button;
   };
-  slot.append(step(-1, "Предыдущее · K", TALK_ICONS.up), step(1, "Следующее · J", TALK_ICONS.down));
+  slot.append(step(-1, t("Предыдущее · K"), TALK_ICONS.up), step(1, t("Следующее · J"), TALK_ICONS.down));
 }
 // Панель «Параметры» выезжает справа из той же карточки: ширина карточки
 // растёт, колонка содержимого остаётся прежней, и всё вместе снова встаёт по
@@ -3231,7 +3245,7 @@ async function renderCardEntry(id, adjustStack = () => {}) {
   await flushCard();
   let entry;
   try { entry = (await request(`/api/captures/${encodeURIComponent(id)}`)).entry; }
-  catch (error) { if (token === cardNavToken) cardSnack(error.message || "Запись не открылась"); return null; }
+  catch (error) { if (token === cardNavToken) cardSnack(error.message || t("Запись не открылась")); return null; }
   if (token !== cardNavToken || !$("#review-dialog").open) return null;
   closeCardSlashMenu?.();
   dropCardTalk();
@@ -3255,7 +3269,7 @@ function cardSnack(text, actions = []) {
     button.addEventListener("click", async () => {
       snack.remove();
       clearTimeout(cardSnackTimer);
-      try { await run(); } catch (error) { cardSnack(error.message || "Не получилось"); }
+      try { await run(); } catch (error) { cardSnack(error.message || t("Не получилось")); }
     });
     snack.append(button);
   }
@@ -3290,7 +3304,7 @@ async function openCardFromList(index, { armed = false } = {}) {
   if (!item) return;
   let entry;
   try { entry = (await request(`/api/captures/${encodeURIComponent(item.id)}`)).entry; }
-  catch (error) { cardSnack(error.message || "Запись не открылась"); return; }
+  catch (error) { cardSnack(error.message || t("Запись не открылась")); return; }
   if (!cardList || !$("#review-dialog").open) return;
   flushCard();
   closeCardSlashMenu?.();
@@ -3357,10 +3371,10 @@ function paintCardFinish() {
   const box = node("div", undefined, "card-finish");
   const mark = node("span", undefined, "card-tick is-done big");
   mark.innerHTML = CARD_TICK_ICON;
-  const close = node("button", "Закрыть", "card-finish-close");
+  const close = bindTranslation(node("button", t("Закрыть"), "card-finish-close"), "Закрыть");
   close.type = "button";
   close.addEventListener("click", () => closeCard());
-  box.append(mark, node("h2", CARD_LIST_DONE[cardList?.label] || "Всё отмечено", "card-finish-title"), node("p", "Открытых дел и встреч в этом списке не осталось.", "card-finish-sub"), close);
+  box.append(mark, node("h2", Object.entries(CARD_LIST_DONE).find(([source]) => t(source) === cardList?.label)?.[1] || t("Всё отмечено"), "card-finish-title"), bindTranslation(node("p", t("Открытых дел и встреч в этом списке не осталось."), "card-finish-sub"), "Открытых дел и встреч в этом списке не осталось."), close);
   area.append(box);
   paintCardNav({ finished: true });
   if (motionAllowed()) appear(area, { shift: 12 });
@@ -3386,12 +3400,12 @@ function cardDoneState(entry, shownOccurrence = cardOccurrence) {
 // Кружок есть у своего дела и встречи и у дела, взятого у человека из круга.
 const cardHasTick = (entry, state) => state.projections.length > 0 && !isReportedWork(entry) && (state.own || state.taken);
 function cardDoneWords(state) {
-  if (state.occurrenceDone) return state.occurrence === state.today ? "Готово на сегодня" : `Готово на ${scheduleLabel({ state: "ok", date: state.occurrence, time: null })}`;
-  const verb = state.meeting ? "Прошла" : "Сделано";
+  if (state.occurrenceDone) return state.occurrence === state.today ? t("Готово на сегодня") : t("Готово на {value1}", { value1: scheduleLabel({ state: "ok", date: state.occurrence, time: null }) });
+  const verb = state.meeting ? t("Прошла") : t("Сделано");
   if (!state.completedAt) return verb;
   const day = notifyDay(state.completedAt);
-  const when = day === state.today ? "сегодня" : day === shiftDate(state.today, -1) ? "вчера" : `${day.slice(8, 10)}.${day.slice(5, 7)}`;
-  return `${verb} ${when} в ${notifyClock(state.completedAt)}`;
+  const when = day === state.today ? t("сегодня") : day === shiftDate(state.today, -1) ? t("вчера") : `${day.slice(8, 10)}.${day.slice(5, 7)}`;
+  return t("{verb} {when} в {value3}", { verb: verb, when: when, value3: notifyClock(state.completedAt) });
 }
 async function setCardDone(entry, state, completing) {
   if (state.occurrence) {
@@ -3407,7 +3421,7 @@ async function setCardDone(entry, state, completing) {
 async function rerenderCard(entryId) {
   let entry;
   try { entry = (await request(`/api/captures/${encodeURIComponent(entryId)}`)).entry; }
-  catch (error) { cardSnack(error.message || "Запись не открылась"); return null; }
+  catch (error) { cardSnack(error.message || t("Запись не открылась")); return null; }
   if (!$("#review-dialog").open) return null;
   flushCard();
   closeCardSlashMenu?.();
@@ -3432,7 +3446,7 @@ async function toggleCardDone(entry, state, saveFirst = null) {
     await saveFirst?.();
     await setCardDone(entry, state, completing);
   } catch (error) {
-    cardSnack(error.message || "Не получилось");
+    cardSnack(error.message || t("Не получилось"));
     await rerenderCard(entry.id);
     return;
   }
@@ -3443,13 +3457,13 @@ async function toggleCardDone(entry, state, saveFirst = null) {
   if (!completing || !cardList || cardStack.length) { await rerenderCard(entry.id); return; }
   const from = cardList.index;
   await rerenderCard(entry.id);
-  const actions = [{ label: "Вернуть", run: async () => {
+  const actions = [{ get label() { return t("Вернуть"); }, run: async () => {
     await setCardDone(entry, state, false);
     await load().catch(() => {});
     refreshOtherViews();
     if (cardList) await openCardFromList(from);
   } }];
-  cardAdvance = setTimeout(() => advanceCardFrom(from, { text: `Готово: «${shortTitle(titleOf(entry), 34)}»`, actions }), 700);
+  cardAdvance = setTimeout(() => advanceCardFrom(from, { text: t("Готово: «{value1}»", { value1: shortTitle(titleOf(entry), 34) }), actions }), 700);
 }
 function cardDoneBlock(entry, state) {
   const block = node("div", undefined, "card-done");
@@ -3467,26 +3481,26 @@ function cardDoneBlock(entry, state) {
   };
   if (state.occurrenceDone) {
     const next = nextRepeatDate(state.schedule, shiftDate(state.occurrence, 1));
-    if (next) line.append(dot(), node("span", `следующий раз ${scheduleLabel({ state: "ok", date: next, time: state.schedule.time || null })}`, "card-done-note"));
+    if (next) line.append(dot(), bindTranslation(node("span", t("следующий раз {value1}", { value1: scheduleLabel({ state: "ok", date: next, time: state.schedule.time || null }) }), "card-done-note"), "следующий раз {value1}", { value1: scheduleLabel({ state: "ok", date: next, time: state.schedule.time || null }) }));
   }
-  if (state.taken && state.assignment?.assigner?.name) line.append(dot(), node("span", `${state.assignment.assigner.name} видит «сделано»`, "card-done-note"));
-  line.append(dot(), link("Вернуть", () => cardKeys.toggle?.()));
+  if (state.taken && state.assignment?.assigner?.name) line.append(dot(), bindTranslation(node("span", t("{name} видит «сделано»", { name: state.assignment.assigner.name }), "card-done-note"), "{name} видит «сделано»", { name: state.assignment.assigner.name }));
+  line.append(dot(), link(t("Вернуть"), () => cardKeys.toggle?.()));
   if (state.occurrenceDone && state.own)
-    line.append(dot(), link("Закрыть всю серию", async () => {
+    line.append(dot(), link(t("Закрыть всю серию"), async () => {
       try {
         for (const projection of state.projections) await request(`/api/projections/${projection.id}/complete`, { method: "POST", body: "{}" });
         cardOccurrence = null;
         await load().catch(() => {});
         refreshOtherViews();
         await rerenderCard(entry.id);
-        cardSnack("Серия закрыта целиком");
-      } catch (error) { cardSnack(error.message || "Не получилось"); }
+        cardSnack(t("Серия закрыта целиком"));
+      } catch (error) { cardSnack(error.message || t("Не получилось")); }
     }));
   block.append(line);
   return block;
 }
 function cardTickButton(entry, state) {
-  const label = state.done ? "Вернуть в работу · E" : state.occurrence ? "Готово на этот день · E" : state.meeting ? "Прошла · E" : "Готово · E";
+  const label = state.done ? t("Вернуть в работу · E") : state.occurrence ? t("Готово на этот день · E") : state.meeting ? t("Прошла · E") : t("Готово · E");
   const button = node("button", undefined, "card-tick");
   button.type = "button";
   button.title = label;
@@ -3531,9 +3545,9 @@ function cardPath(ancestors) {
   // Не <nav>: общий стиль шапки уводит любой nav в центр страницы.
   const nav = node("div", undefined, "card-path");
   nav.setAttribute("role", "navigation");
-  nav.setAttribute("aria-label", "Путь к задаче");
+  bindTranslation(nav, "Путь к задаче", "aria-label");
   const step = (item, container = nav) => {
-    const button = node("button", item.title || "Без названия", "card-path-step");
+    const button = node("button", item.title || t("Без названия"), "card-path-step");
     button.type = "button";
     button.title = item.title || "";
     button.addEventListener("click", () => jumpToAncestor(item.id));
@@ -3546,7 +3560,7 @@ function cardPath(ancestors) {
     // Длинный путь сворачивается: корень › … › родитель, середина — в меню.
     const menu = node("details", undefined, "card-path-menu");
     const summary = node("summary", "…");
-    summary.setAttribute("aria-label", "Показать промежуточные задачи");
+    bindTranslation(summary, "Показать промежуточные задачи", "aria-label");
     const list = node("div", undefined, "card-path-list");
     for (const item of ancestors.slice(1, -1)) step(item, list);
     menu.append(summary, list);
@@ -3559,7 +3573,7 @@ function cardPath(ancestors) {
   step(ancestors.at(-1));
   return nav;
 }
-const stepsWord = (count) => (count % 10 === 1 && count % 100 !== 11 ? "шага" : "шагов");
+const stepsWord = (count) => (count % 10 === 1 && count % 100 !== 11 ? t("шага") : t("шагов"));
 // Колонка содержимого докручивается до раздела сама, а не через scrollIntoView:
 // тот крутит ещё и внешние обёртки окна (overflow: hidden программно всё равно
 // прокручивается), и вместе с разделом уезжает верхняя строка карточки.
@@ -3582,12 +3596,12 @@ function cardSubtasks(entry, { halo, caption }) {
   const lead = node("div", undefined, "subhead-lead");
   const count = node("span", undefined, "subtask-count");
   count.setAttribute("aria-live", "polite");
-  count.title = "Выполнено конечных шагов на всех уровнях";
-  lead.append(node("b", "Подзадачи"), count);
+  bindTranslation(count, "Выполнено конечных шагов на всех уровнях", "title");
+  lead.append(bindTranslation(node("b", t("Подзадачи")), "Подзадачи"), count);
   const actions = node("div", undefined, "subtask-actions");
   const views = node("div", undefined, "steps-view");
   views.setAttribute("role", "group");
-  views.setAttribute("aria-label", "Вид подзадач");
+  bindTranslation(views, "Вид подзадач", "aria-label");
   const viewButton = (view, label) => {
     const button = node("button", label, "steps-view-button");
     button.type = "button";
@@ -3595,8 +3609,8 @@ function cardSubtasks(entry, { halo, caption }) {
     button.addEventListener("click", () => { cardStepView = view; paint(); });
     return button;
   };
-  views.append(viewButton("list", "Список"), viewButton("map", "Карта"));
-  const add = node("button", "＋ Подзадача", "subtask-add");
+  views.append(viewButton("list", t("Список")), viewButton("map", t("Карта")));
+  const add = bindTranslation(node("button", t("＋ Подзадача"), "subtask-add"), "＋ Подзадача");
   add.type = "button";
   add.hidden = !own;
   actions.append(views, add);
@@ -3605,22 +3619,22 @@ function cardSubtasks(entry, { halo, caption }) {
   list.id = "card-subtask-list";
   const map = node("div", undefined, "metric-tree");
   map.id = "card-subtask-map";
-  map.setAttribute("aria-label", "Карта подзадач");
+  bindTranslation(map, "Карта подзадач", "aria-label");
   const composer = node("form", undefined, "subtask-composer");
   composer.hidden = true;
   const input = node("input");
-  input.setAttribute("aria-label", "Название новой подзадачи");
-  input.placeholder = "Что нужно сделать?";
+  bindTranslation(input, "Название новой подзадачи", "aria-label");
+  bindTranslation(input, "Что нужно сделать?", "placeholder");
   input.autocomplete = "off";
   input.maxLength = 500;
-  const submit = node("button", "Добавить", "subtask-submit");
+  const submit = bindTranslation(node("button", t("Добавить"), "subtask-submit"), "Добавить");
   submit.type = "submit";
   const cancel = node("button", "×", "subtask-cancel");
   cancel.type = "button";
-  cancel.setAttribute("aria-label", "Отменить добавление");
+  bindTranslation(cancel, "Отменить добавление", "aria-label");
   composer.append(input, submit, cancel);
   const next = node("div", undefined, "task-next");
-  const nextLabel = node("span", "Дальше", "next-label");
+  const nextLabel = bindTranslation(node("span", t("Дальше"), "next-label"), "Дальше");
   const nextLink = node("button", undefined, "next-step-link");
   nextLink.type = "button";
   next.append(nextLabel, nextLink);
@@ -3653,7 +3667,7 @@ function cardSubtasks(entry, { halo, caption }) {
       // говорят об одном дне.
       const state = cardDoneState(child, item.occurrence || null);
       if (state.done !== done) await setCardDone(child, state, done);
-    } catch (error) { cardSnack(error.message || "Не получилось"); }
+    } catch (error) { cardSnack(error.message || t("Не получилось")); }
     pending.delete(item.id);
     await refresh();
     load().catch(() => {});
@@ -3668,7 +3682,7 @@ function cardSubtasks(entry, { halo, caption }) {
     // Читатель круга видит шаг, но не отмечает; пока отметка уходит — кнопка
     // закрыта, чтобы второй щелчок не обогнал первый.
     box.disabled = !item.canComplete || pending.has(item.id);
-    if (!item.canComplete) box.title = "Отметить может автор или тот, кто взял дело";
+    if (!item.canComplete) bindTranslation(box, "Отметить может автор или тот, кто взял дело", "title");
     box.addEventListener("change", () => {
       box.disabled = true;
       setDone(item, box.checked, () => section.querySelector(`[data-check-id="${CSS.escape(item.id)}"]`)?.focus({ preventScroll: true }));
@@ -3679,7 +3693,7 @@ function cardSubtasks(entry, { halo, caption }) {
   const openButton = (item, className) => {
     const button = node("button", undefined, className);
     button.type = "button";
-    button.setAttribute("aria-label", `Открыть подзадачу «${item.title}»`);
+    bindTranslation(button, "Открыть подзадачу «{title}»", { title: item.title }, "aria-label");
     button.addEventListener("click", () => openSubtaskCard(item.id, item.occurrence || null));
     return button;
   };
@@ -3694,13 +3708,13 @@ function cardSubtasks(entry, { halo, caption }) {
       open.append(name);
       if (item.children.length) {
         const meta = node("span", `${item.leafDone} / ${item.leafTotal}`, "subtask-meta");
-        meta.title = "Выполнено конечных шагов";
+        bindTranslation(meta, "Выполнено конечных шагов", "title");
         open.append(meta);
       }
       const arrow = node("span", "›", "subtask-arrow");
       arrow.setAttribute("aria-hidden", "true");
       open.append(arrow);
-      row.append(check(item, "subtask-check", "Выполнить"), open);
+      row.append(check(item, "subtask-check", t("Выполнить")), open);
       list.append(row);
     }
   };
@@ -3719,7 +3733,7 @@ function cardSubtasks(entry, { halo, caption }) {
       if (branch) {
         fold.textContent = expanded ? "⌄" : "›";
         fold.setAttribute("aria-expanded", String(expanded));
-        fold.setAttribute("aria-label", `${expanded ? "Свернуть" : "Раскрыть"} «${item.title}»`);
+        fold.setAttribute("aria-label", `${expanded ? t("Свернуть") : t("Раскрыть")} «${item.title}»`);
         fold.addEventListener("click", () => {
           if (cardCollapsed.has(item.id)) cardCollapsed.delete(item.id);
           else cardCollapsed.add(item.id);
@@ -3736,10 +3750,10 @@ function cardSubtasks(entry, { halo, caption }) {
       if (branch) {
         status = node("span", undefined, "branch-dial");
         status.style.setProperty("--branch-progress", `${(item.leafDone / item.leafTotal) * 100}%`);
-        status.title = `${item.leafDone} из ${item.leafTotal} ${stepsWord(item.leafTotal)}`;
+        bindTranslation(status, "{leafDone} из {leafTotal} {value3}", { leafDone: item.leafDone, leafTotal: item.leafTotal, value3: stepsWord(item.leafTotal) }, "title");
         status.setAttribute("role", "img");
         status.setAttribute("aria-label", status.title);
-      } else status = check(item, "tree-check", "Выполнить шаг");
+      } else status = check(item, "tree-check", t("Выполнить шаг"));
       const open = openButton(item, "tree-open");
       const title = node("span", item.title, "tree-title");
       if (item.done && !branch) title.classList.add("done");
@@ -3758,8 +3772,8 @@ function cardSubtasks(entry, { halo, caption }) {
     if (fill) fill.style.strokeDashoffset = hasChildren ? String(100 - (tree.done / tree.total) * 100) : "100";
     caption.hidden = !hasChildren;
     if (hasChildren) {
-      caption.textContent = `${tree.done} из ${tree.total} ${stepsWord(tree.total)} · посмотреть карту ↘`;
-      caption.setAttribute("aria-label", `Выполнено ${tree.done} из ${tree.total} ${stepsWord(tree.total)}. Показать карту`);
+      bindTranslation(caption, "{done} из {total} {value3} · посмотреть карту ↘", { done: tree.done, total: tree.total, value3: stepsWord(tree.total) });
+      bindTranslation(caption, "Выполнено {done} из {total} {value3}. Показать карту", { done: tree.done, total: tree.total, value3: stepsWord(tree.total) }, "aria-label");
     }
     if (!tree) return;
     count.textContent = hasChildren ? `${tree.done} / ${tree.total}` : "";
@@ -3777,15 +3791,15 @@ function cardSubtasks(entry, { halo, caption }) {
     if (!hasChildren) {
       clear(list);
       clear(map);
-      list.append(node("p", "Разбейте задачу на небольшие шаги", "subtask-empty"));
+      list.append(bindTranslation(node("p", t("Разбейте задачу на небольшие шаги"), "subtask-empty"), "Разбейте задачу на небольшие шаги"));
     } else if (showMap) paintMap();
     else paintList();
     const remaining = tree.total - tree.done;
     next.hidden = !hasChildren;
-    nextLabel.textContent = tree.next ? "Дальше" : "Все шаги выполнены";
+    nextLabel.textContent = tree.next ? t("Дальше") : t("Все шаги выполнены");
     nextLink.hidden = !tree.next;
     nextLink.textContent = tree.next ? `${tree.next.title} ↗` : "";
-    nextLink.title = tree.next ? `Открыть «${tree.next.title}»` : "";
+    nextLink.title = tree.next ? t("Открыть «{title}»", { title: tree.next.title }) : "";
     nextLink.onclick = tree.next ? () => openSubtaskCard(tree.next.id, tree.nodes.find((item) => item.id === tree.next.id)?.occurrence || null) : null;
     next.classList.toggle("all-done", hasChildren && !remaining);
     // Пришли по метке «0/2» — раздел уже нарисован, карточка встаёт на нём.
@@ -3826,7 +3840,7 @@ function cardSubtasks(entry, { halo, caption }) {
       input.focus();
       load().catch(() => {});
       refreshOtherViews();
-    } catch (error) { cardSnack(error.message || "Подзадача не добавилась"); }
+    } catch (error) { cardSnack(error.message || t("Подзадача не добавилась")); }
     finally { submit.disabled = false; }
   });
   refresh();
@@ -3865,7 +3879,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   // Заголовок правится на месте: клик превращает его в поле, Enter сохраняет
   // уточнением (правда человека — факт), Escape возвращает как было.
   const cardTitle = markdownNode("h2", c.summary, "card-title", { inline: true, firstLine: true });
-  cardTitle.title = "Изменить заголовок";
+  bindTranslation(cardTitle, "Изменить заголовок", "title");
   cardTitle.tabIndex = 0;
   // Правки свойств, ещё не ушедшие на сервер (форма собирается ниже).
   let pendingProps = () => null;
@@ -3903,7 +3917,7 @@ function showReview(entry, review, undoGroupId, provenance) {
             method: "POST",
             body: JSON.stringify({ patch: { ...(pendingProps() || {}), summary: value } }),
           });
-          toast("Заголовок обновлён");
+          toast(t("Заголовок обновлён"));
           load();
           if (token !== cardNavToken || cardEntryId !== entry.id || !$("#review-dialog").open || !editor.isConnected) return;
           const review = reviewFromEntry(result.entry);
@@ -3977,9 +3991,9 @@ function showReview(entry, review, undoGroupId, provenance) {
   if ((entry.parent && !cardStack.length) || (deedParts.length && !wantsSubtasks)) {
     const origin = node("p", undefined, "card-origin");
     const link = (id, text) => { const button = node("button", text, "text-button"); button.type = "button"; button.addEventListener("click", () => openCaptureById(id)); return button; };
-    if (entry.parent) origin.append(document.createTextNode(outcomeOfDeed ? "Итог дела " : stepOfDeed ? "Подзадача дела " : "Отделено от записи "), link(entry.parent.id, `«${entry.parent.title}»`));
+    if (entry.parent) origin.append(document.createTextNode(outcomeOfDeed ? t("Итог дела ") : stepOfDeed ? t("Подзадача дела ") : t("Отделено от записи ")), link(entry.parent.id, `«${entry.parent.title}»`));
     else {
-      origin.append(document.createTextNode(`Из этой записи ${plural(deedParts.length, DEALS)}: `));
+      origin.append(document.createTextNode(t("Из этой записи {value1}: ", { value1: plural(deedParts.length, DEALS) })));
       deedParts.forEach((part, index) => {
         if (index) origin.append(document.createTextNode(", "));
         origin.append(link(part.id, part.title));
@@ -3990,7 +4004,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   // Заметка и идея — это ещё и страница в разделе «Заметки»: там у неё место
   // в дереве, ссылки и страницы внутри.
   if (entry.mine !== false && ["note", "idea_question"].includes(entry.interpretation.classification.primaryType)) {
-    const asPage = node("a", "Открыть как страницу", "card-page-link");
+    const asPage = bindTranslation(node("a", t("Открыть как страницу"), "card-page-link"), "Открыть как страницу");
     asPage.href = `#notes?page=${encodeURIComponent(entry.id)}`;
     asPage.addEventListener("click", () => closeCard());
     area.append(asPage);
@@ -4011,7 +4025,7 @@ function showReview(entry, review, undoGroupId, provenance) {
     followUp = document.createElement("input"),
     doneToggle = node("button", undefined, "completion-button");
   type.id = "review-primary-type";
-  type.setAttribute("aria-label", "Тип записи");
+  bindTranslation(type, "Тип записи", "aria-label");
   for (const [value, label] of Object.entries(typeNames)) {
     const option = node("option", label);
     option.value = value;
@@ -4032,8 +4046,8 @@ function showReview(entry, review, undoGroupId, provenance) {
   end.type = "time";
   end.id = "review-end";
   end.value = c.entities.schedule?.end || "";
-  end.title = "Окончание";
-  end.setAttribute("aria-label", "Окончание");
+  bindTranslation(end, "Окончание", "title");
+  bindTranslation(end, "Окончание", "aria-label");
   const paintEnd = () => { end.hidden = !time.value; if (!time.value) end.value = ""; };
   time.addEventListener("input", paintEnd);
   paintEnd();
@@ -4041,7 +4055,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   // в час напоминаний у дела без времени. Пусто — как в настройках.
   const remind = node("select", undefined, "review-remind");
   remind.id = "review-remind";
-  remind.setAttribute("aria-label", "Напомнить");
+  bindTranslation(remind, "Напомнить", "aria-label");
   const storedRemind = c.entities.schedule?.remind;
   let remindChoice = storedRemind === undefined || storedRemind === null ? "" : String(storedRemind);
   const paintRemind = () => {
@@ -4049,9 +4063,9 @@ function showReview(entry, review, undoGroupId, provenance) {
     const current = !timed && /^\d+$/.test(remindChoice) ? "0" : remindChoice;
     clear(remind);
     const options = timed
-      ? [["", `как в настройках (${remindDefaultLabel()})`], ["off", "не напоминать"], ["0", "в момент начала"], ["5", "за 5 минут"], ["15", "за 15 минут"], ["30", "за 30 минут"], ["60", "за час"], ["120", "за 2 часа"], ["1440", "за день"]]
-      : [["", `как в настройках (${remindHourLabel()})`], ["off", "не напоминать"], ["0", `в ${remindHourValue()}`]];
-    if (current && !options.some(([value]) => value === current)) options.push([current, `за ${current} мин`]);
+      ? [["", t("как в настройках ({value1})", { value1: remindDefaultLabel() })], ["off", t("не напоминать")], ["0", t("в момент начала")], ["5", t("за 5 минут")], ["15", t("за 15 минут")], ["30", t("за 30 минут")], ["60", t("за час")], ["120", t("за 2 часа")], ["1440", t("за день")]]
+      : [["", t("как в настройках ({value1})", { value1: remindHourLabel() })], ["off", t("не напоминать")], ["0", t("в {value1}", { value1: remindHourValue() })]];
+    if (current && !options.some(([value]) => value === current)) options.push([current, t("за {current} мин", { current: current })]);
     for (const [value, label] of options) { const option = node("option", label); option.value = value; option.selected = value === current; remind.append(option); }
   };
   remind.addEventListener("change", () => { remindChoice = remind.value; });
@@ -4061,35 +4075,35 @@ function showReview(entry, review, undoGroupId, provenance) {
   // Без даты повторять нечего — выбор закрыт.
   const repeat = node("select", undefined, "review-repeat");
   repeat.id = "review-repeat";
-  repeat.setAttribute("aria-label", "Повтор");
+  bindTranslation(repeat, "Повтор", "aria-label");
   const storedRepeat = c.entities.schedule?.repeat || null;
   const repeatKey = (rule) => (rule ? `${rule.freq}:${rule.interval || 1}` : "");
-  const repeatOptions = [["", "не повторять"], ["daily:1", "каждый день"], ["weekly:1", "каждую неделю"], ["weekly:2", "каждые 2 недели"], ["monthly:1", "каждый месяц"], ["yearly:1", "каждый год"]];
+  const repeatOptions = [["", t("не повторять")], ["daily:1", t("каждый день")], ["weekly:1", t("каждую неделю")], ["weekly:2", t("каждые 2 недели")], ["monthly:1", t("каждый месяц")], ["yearly:1", t("каждый год")]];
   if (storedRepeat && !repeatOptions.some(([value]) => value === repeatKey(storedRepeat))) repeatOptions.push([repeatKey(storedRepeat), repeatLabel(storedRepeat, { until: false })]);
   for (const [value, label] of repeatOptions) { const option = node("option", label); option.value = value; option.selected = value === repeatKey(storedRepeat); repeat.append(option); }
   const until = node("input");
-  until.type = "date"; until.id = "review-repeat-until"; until.value = storedRepeat?.until || ""; until.title = "Последний день повтора"; until.setAttribute("aria-label", "Повторять до");
+  until.type = "date"; until.id = "review-repeat-until"; until.value = storedRepeat?.until || ""; bindTranslation(until, "Последний день повтора", "title"); bindTranslation(until, "Повторять до", "aria-label");
   const untilWrap = node("span", undefined, "review-until");
-  untilWrap.append(node("span", "до", "review-end-label"), until);
+  untilWrap.append(bindTranslation(node("span", t("до"), "review-end-label"), "до"), until);
   const paintRepeat = () => { repeat.disabled = !date.value; if (!date.value) repeat.value = ""; untilWrap.hidden = !repeat.value; if (!repeat.value) until.value = ""; };
   repeat.addEventListener("change", paintRepeat);
   date.addEventListener("input", paintRepeat);
   paintRepeat();
   const repeatRow = node("span", undefined, "review-repeat-row");
-  repeatRow.append(node("span", "повторять", "review-end-label"), repeat, untilWrap);
+  repeatRow.append(bindTranslation(node("span", t("повторять"), "review-end-label"), "повторять"), repeat, untilWrap);
   // Напоминание — тоже подписанная строка панели.
   const remindWrap = node("span", undefined, "review-remind-row");
-  remindWrap.append(node("span", "напомнить", "review-end-label"), remind);
+  remindWrap.append(bindTranslation(node("span", t("напомнить"), "review-end-label"), "напомнить"), remind);
   project.id = "review-project";
   project.value = c.entities.projects[0] || "";
-  project.placeholder = "Найти или создать проект";
+  bindTranslation(project, "Найти или создать проект", "placeholder");
   const projectChoice = projectPicker(project);
   people.id = "review-people";
   people.value = (c.entities.people || []).join(", ");
-  people.placeholder = "Например, Анна, BE";
+  bindTranslation(people, "Например, Анна, BE", "placeholder");
   followUp.id = "review-follow-up";
   followUp.value = c.entities.followUp || "";
-  followUp.placeholder = "Следующее действие";
+  bindTranslation(followUp, "Следующее действие", "placeholder");
   // Признак «уже сделано» ставила только модель, и исправить её решение было
   // нечем: заметка, принятая за отчёт, навсегда оставалась в «Сделано».
   let done = Boolean(c.completed);
@@ -4097,7 +4111,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   doneToggle.type = "button";
   const paintDone = () => {
     doneToggle.setAttribute("aria-pressed", String(done));
-    doneToggle.title = done ? "Отметить как незавершённое" : "Отметить как сделанное";
+    doneToggle.title = done ? t("Отметить как незавершённое") : t("Отметить как сделанное");
     doneToggle.setAttribute("aria-label", doneToggle.title);
     doneToggle.classList.toggle("is-done", done);
   };
@@ -4120,39 +4134,39 @@ function showReview(entry, review, undoGroupId, provenance) {
   const scheduleRow = node("div", undefined, "review-schedule");
   // Начало и конец — две подписанные колонки одной строки панели.
   const startWrap = node("span", undefined, "review-start");
-  startWrap.append(node("span", "начало", "review-end-label"), time);
+  startWrap.append(bindTranslation(node("span", t("начало"), "review-end-label"), "начало"), time);
   const endWrap = node("span", undefined, "review-end");
-  endWrap.append(node("span", "до", "review-end-label"), end);
+  endWrap.append(bindTranslation(node("span", t("до"), "review-end-label"), "до"), end);
   scheduleRow.append(date, startWrap, endWrap, remindWrap, repeatRow);
   // Сброс уходит на сервер сразу: «без даты» — это решение, а не правка на
   // полпути, и ждать закрытия карточки ему незачем.
   let saveProps = () => {};
   const clearAndSave = (apply) => { apply(); saveProps(); };
-  const scheduleWrap = propertyRow("Срок", scheduleRow, "schedule", { clear: () => clearAndSave(() => { date.value = ""; time.value = ""; end.value = ""; remindChoice = ""; repeat.value = ""; until.value = ""; paintEnd(); paintRemind(); paintRepeat(); }), filled: () => Boolean(date.value || time.value) }),
-    peopleWrap = propertyRow("Участники", people, "people", { clear: () => clearAndSave(() => { people.value = ""; }), filled: () => Boolean(people.value.trim()) }),
-    followUpWrap = propertyRow("Далее", followUp, "next", { clear: () => clearAndSave(() => { followUp.value = ""; }), filled: () => Boolean(followUp.value.trim()) });
+  const scheduleWrap = propertyRow(t("Срок"), scheduleRow, "schedule", { clear: () => clearAndSave(() => { date.value = ""; time.value = ""; end.value = ""; remindChoice = ""; repeat.value = ""; until.value = ""; paintEnd(); paintRemind(); paintRepeat(); }), filled: () => Boolean(date.value || time.value) }),
+    peopleWrap = propertyRow(t("Участники"), people, "people", { clear: () => clearAndSave(() => { people.value = ""; }), filled: () => Boolean(people.value.trim()) }),
+    followUpWrap = propertyRow(t("Далее"), followUp, "next", { clear: () => clearAndSave(() => { followUp.value = ""; }), filled: () => Boolean(followUp.value.trim()) });
   const props = node("div", undefined, "props");
   const columnSelect = node("select", undefined, "side-column");
   columnSelect.id = "review-column";
-  columnSelect.setAttribute("aria-label", "Колонка");
-  const columnRow = propertyRow("Колонка", columnSelect, "project");
+  bindTranslation(columnSelect, "Колонка", "aria-label");
+  const columnRow = propertyRow(t("Колонка"), columnSelect, "project");
   columnRow.hidden = true;
   // Круг и исполнитель — свойства записи, а не отдельная форма: дело уходит
   // человеку фразой, а здесь его правят, когда разбор не угадал.
   const hasCircles = (entry.myCircles || []).some((circle) => (circle.members || []).length > 1);
-  const circleWrap = propertyRow("Круг", circleRow(entry), "project"),
-    assignWrap = entry.mine === false ? null : propertyRow("Исполнитель", assignRow(entry, { onChange: () => {} }), "people");
+  const circleWrap = propertyRow(t("Круг"), circleRow(entry), "project"),
+    assignWrap = entry.mine === false ? null : propertyRow(t("Исполнитель"), assignRow(entry, { onChange: () => {} }), "people");
   props.append(
     columnRow,
     scheduleWrap,
-    propertyRow("Проект", projectChoice.element, "project"),
+    propertyRow(t("Проект"), projectChoice.element, "project"),
     ...(entry.circles?.length ? [circleWrap] : []),
     ...(assignWrap && (hasCircles || entry.assignment) ? [assignWrap] : []),
     peopleWrap,
     followUpWrap,
     // У дела и встречи «сделано» — кружок у названия; строка остаётся у заметки,
     // идеи и результата, где она делает запись итогом.
-    ...(["task", "meeting_event"].includes(c.primaryType) ? [] : [propertyRow("Сделано", doneToggle, "done")]),
+    ...(["task", "meeting_event"].includes(c.primaryType) ? [] : [propertyRow(t("Сделано"), doneToggle, "done")]),
   );
   props.id = "review-props";
   const updateVisibility = () => {
@@ -4178,19 +4192,19 @@ function showReview(entry, review, undoGroupId, provenance) {
     clear(chips);
     if (!scheduleWrap.hidden) {
       const due = scheduleLabel({ state: "ok", date: date.value || null, time: time.value || null });
-      chips.append(chip("schedule", due ? `${due}${time.value && end.value ? `–${end.value}` : ""}` : "Назначить день", { quiet: !due, target: date, label: "Срок" }));
+      chips.append(chip("schedule", due ? `${due}${time.value && end.value ? `–${end.value}` : ""}` : t("Назначить день"), { quiet: !due, target: date, get label() { return t("Срок"); } }));
       if (date.value) {
-        const remindText = remind.value === "off" ? "Без напоминания" : remind.value ? `Напомнить ${remind.selectedOptions[0]?.textContent || ""}` : "Напомнить";
-        chips.append(chip("bell", remindText, { quiet: !remind.value, target: remind, label: "Напомнить" }));
+        const remindText = remind.value === "off" ? t("Без напоминания") : remind.value ? t("Напомнить {value1}", { value1: remind.selectedOptions[0]?.textContent || "" }) : t("Напомнить");
+        chips.append(chip("bell", remindText, { quiet: !remind.value, target: remind, get label() { return t("Напомнить"); } }));
       }
-      if (repeat.value) chips.append(chip("repeat", `${repeat.selectedOptions[0]?.textContent || "повтор"}${until.value ? ` до ${until.value.slice(8, 10)}.${until.value.slice(5, 7)}` : ""}`, { target: repeat, label: "Повтор" }));
+      if (repeat.value) chips.append(chip("repeat", `${repeat.selectedOptions[0]?.textContent || t("повтор")}${until.value ? t(" до {value1}.{value2}", { value1: until.value.slice(8, 10), value2: until.value.slice(5, 7) }) : ""}`, { target: repeat, get label() { return t("Повтор"); } }));
     }
     if (!peopleWrap.hidden) {
       const who = people.value.trim() || doneState.assignment?.assignee?.name || "";
-      chips.append(chip("people", who || "Человек", { quiet: !who, target: people, label: "Участники" }));
+      chips.append(chip("people", who || t("Человек"), { quiet: !who, target: people, get label() { return t("Участники"); } }));
     }
-    if (project.value.trim()) chips.append(chip("project", project.value.trim(), { target: projectChoice.focusTarget(), label: "Проект" }));
-    if (!followUpWrap.hidden && followUp.value.trim()) chips.append(chip("next", `далее: ${followUp.value.trim()}`, { target: followUp, label: "Далее" }));
+    if (project.value.trim()) chips.append(chip("project", project.value.trim(), { target: projectChoice.focusTarget(), get label() { return t("Проект"); } }));
+    if (!followUpWrap.hidden && followUp.value.trim()) chips.append(chip("next", t("далее: {value1}", { value1: followUp.value.trim() }), { target: followUp, get label() { return t("Далее"); } }));
     chips.hidden = !chips.childElementCount;
   };
   type.addEventListener("change", () => {
@@ -4242,13 +4256,13 @@ function showReview(entry, review, undoGroupId, provenance) {
         const result = await request(`/api/captures/${entry.id}/corrections`, {
           method: "POST",
           body: JSON.stringify({
-            patch: { ...patch, note: "Пользователь исправил классификацию" },
+            patch: { ...patch, get note() { return t("Пользователь исправил классификацию"); } },
           }),
         });
         toast(
           result.review.level === "high" || result.review.safeNote
-            ? "Уточнение сохранено"
-            : "Нужно ещё одно уточнение",
+            ? t("Уточнение сохранено")
+            : t("Нужно ещё одно уточнение"),
         );
         await load();
       } catch (error) {
@@ -4276,7 +4290,7 @@ function showReview(entry, review, undoGroupId, provenance) {
     // когда это было и когда набрано.
     const typedDay = entry.createdAt ? entryDate({ createdAt: entry.createdAt }) : null;
     const moved = typedDay && entry.occurredAt && typedDay !== entryDate(entry);
-    const stamp = node("p", moved ? `Было: ${written} · записано ${entryClock({ createdAt: entry.createdAt })}` : `Записано: ${written}`, "card-written card-footer-line");
+    const stamp = node("p", moved ? t("Было: {written} · записано {value2}", { written: written, value2: entryClock({ createdAt: entry.createdAt }) }) : t("Записано: {written}", { written: written }), "card-written card-footer-line");
     stamp.prepend(propIcon("written"));
     footerRow.append(stamp);
   }
@@ -4284,7 +4298,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   area.append(footer);
 
   const source = node("details", undefined, "card-source");
-  const sourceSummary = node("summary", "Источник и версия");
+  const sourceSummary = bindTranslation(node("summary", t("Источник и версия")), "Источник и версия");
   sourceSummary.prepend(propIcon("source"));
   sourceSummary.append(propIcon("chevron"));
   source.append(sourceSummary);
@@ -4294,26 +4308,26 @@ function showReview(entry, review, undoGroupId, provenance) {
   const noteBody = entry.note?.body ?? (entry.raw || "");
   const sameAsRaw = noteBody.trim() === (sourceText || "").trim();
   const raw = node("div", undefined, "review-raw");
-  if (sameAsRaw) raw.append(node("p", "Исходная запись совпадает с заметками.", "entry-meta"));
-  else raw.append(node("p", "Исходная запись:", "source-label"), markdownNode("div", sourceText, undefined));
+  if (sameAsRaw) raw.append(bindTranslation(node("p", t("Исходная запись совпадает с заметками."), "entry-meta"), "Исходная запись совпадает с заметками."));
+  else raw.append(bindTranslation(node("p", t("Исходная запись:"), "source-label"), "Исходная запись:"), markdownNode("div", sourceText, undefined));
   const provider = provenance?.usedProvider || entry.interpretation.provider;
   // Источник раскрывается листом над строкой подвала и не распирает её.
   const sourceBody = node("div", undefined, "card-source-body");
   sourceBody.append(
     raw,
     node("p", cardFromWords(entry), "entry-meta"),
-    node(
+    bindTranslation(node(
       "p",
-      `Версия ${entry.interpretation.version} · ${providerNames[provider] || "исправлено вами"}${fallbackSuffix(provenance)}`,
+      t("Версия {version} · {value2}{value3}", { version: entry.interpretation.version, value2: providerNames[provider] || t("исправлено вами"), value3: fallbackSuffix(provenance) }),
       "entry-meta",
-    ),
+    ), "Версия {version} · {value2}{value3}", { version: entry.interpretation.version, value2: providerNames[provider] || t("исправлено вами"), value3: fallbackSuffix(provenance) }),
   );
   source.append(sourceBody);
   footerRow.append(source);
 
   // Удаление живёт внизу карточки, отдельно от правок: это не «ещё одно
   // уточнение», а выход из журнала.
-  const remove = node("button", "Удалить запись", "card-delete");
+  const remove = bindTranslation(node("button", t("Удалить запись"), "card-delete"), "Удалить запись");
   remove.type = "button";
   remove.prepend(propIcon("trash"));
   const deleteRecord = async () => {
@@ -4325,13 +4339,13 @@ function showReview(entry, review, undoGroupId, provenance) {
       await request(`/api/captures/${entry.id}`, { method: "DELETE" });
       closeCard();
       await load();
-      toast("Запись удалена", {
-        label: "Вернуть",
+      toast(t("Запись удалена"), {
+        get label() { return t("Вернуть"); },
         run: async () => {
           try {
             await request(`/api/captures/${entry.id}/restore`, { method: "POST" });
             await load();
-            toast("Запись возвращена");
+            toast(t("Запись возвращена"));
           } catch (error) {
             toast(error.message);
           }
@@ -4349,8 +4363,8 @@ function showReview(entry, review, undoGroupId, provenance) {
   remove.addEventListener("click", () => {
     if (!occurrence) { deleteRecord(); return; }
     const ask = node("div", undefined, "card-delete-ask");
-    ask.append(node("span", `Запись повторяется. Убрать только ${calHuman(occurrence)} или удалить всю серию?`));
-    const only = node("button", "Только этот повтор", "danger"), all = node("button", "Всю серию", "danger"), cancel = node("button", "Отмена");
+    ask.append(bindTranslation(node("span", t("Запись повторяется. Убрать только {value1} или удалить всю серию?", { value1: calHuman(occurrence) })), "Запись повторяется. Убрать только {value1} или удалить всю серию?", { value1: calHuman(occurrence) }));
+    const only = bindTranslation(node("button", t("Только этот повтор"), "danger"), "Только этот повтор"), all = bindTranslation(node("button", t("Всю серию"), "danger"), "Всю серию"), cancel = bindTranslation(node("button", t("Отмена")), "Отмена");
     for (const button of [only, all, cancel]) button.type = "button";
     only.addEventListener("click", async () => {
       for (const button of [only, all, cancel]) button.disabled = true;
@@ -4371,7 +4385,7 @@ function showReview(entry, review, undoGroupId, provenance) {
     remove.hidden = true;
     const author = entry.author?.name || entry.assignment?.assigner?.name;
     const called = !entry.assignment && (entry.participants || []).some((person) => person.id === currentUser?.id);
-    const line = node("p", `${author ? `Автор записи — ${author}. ` : ""}${called ? "Вас позвали в обсуждение: запись видна вам, правит её автор." : "Правит её автор: что нужно поменять — скажите в обсуждении."}`, "card-foreign");
+    const line = node("p", `${author ? t("Автор записи — {author}. ", { author: author }) : ""}${called ? t("Вас позвали в обсуждение: запись видна вам, правит её автор.") : t("Правит её автор: что нужно поменять — скажите в обсуждении.")}`, "card-foreign");
     chips.after(line);
   }
   // Отправить встречу во внешний календарь можно только отсюда, кнопкой:
@@ -4407,7 +4421,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   markOpenCard();
 }
 function cardFromWords(entry) {
-  const from = { telegram: "Telegram", telegram_forward: "Telegram, пересланное", notes: "Заметки" }[entry.origin] || "Поле записи";
+  const from = { telegram: "Telegram", get telegram_forward() { return t("Telegram, пересланное"); }, get notes() { return t("Заметки"); } }[entry.origin] || t("Поле записи");
   const when = entryClock(entry);
   return when ? `${from} · ${when}` : from;
 }
@@ -4439,9 +4453,9 @@ async function fillCardColumn(entry, { columnRow, columnSelect }) {
   if (!info || !columnSelect.isConnected || cardMenu.entryId !== entry.id) return;
   clear(columnSelect);
   if (!info.column) {
-    columnSelect.append(new Option("Закрыто", ""));
+    columnSelect.append(new Option(t("Закрыто"), ""));
     columnSelect.disabled = true;
-    cardMenu.columnName = "Закрыто";
+    cardMenu.columnName = t("Закрыто");
   } else {
     for (const column of info.columns) {
       const option = new Option(column.name, column.id);
@@ -4456,7 +4470,7 @@ async function fillCardColumn(entry, { columnRow, columnSelect }) {
         await boardMoveRequest({ captureId: entry.id, columnId: columnSelect.value, index: 100000 });
         cardMenu.columnName = target?.name || "";
         paintCardCrumb();
-        toast(`Дело в колонке «${target?.name || ""}»`);
+        toast(t("Дело в колонке «{value1}»", { value1: target?.name || "" }));
         if (boardState.data) request(boardUrl()).then((data) => { boardState.data = data; if (!$("#board")?.hidden) { boardState.stamp = JSON.stringify(data); renderBoard(data); } }).catch(() => {});
       } catch (error) {
         columnSelect.value = info.column.id;
@@ -4494,7 +4508,7 @@ async function reclassifyEntry(entry) {
       result.undoGroupId,
       result.provenance,
     );
-    toast("Запись разобрана заново");
+    toast(t("Запись разобрана заново"));
     await load();
   } catch (error) {
     toast(error.message);
@@ -4506,19 +4520,19 @@ async function undoGroup(undoGroupId) {
       method: "POST",
       body: JSON.stringify({ undoGroupId }),
     });
-    toast(result.reverted ? "Последнее действие отменено" : "Уже отменено");
+    toast(result.reverted ? t("Последнее действие отменено") : t("Уже отменено"));
     await load();
   } catch (error) {
     toast(error.message);
   }
 }
 function captureState(job) {
-  if (job.state === "succeeded") return "Готово";
-  if (job.state === "failed") return "Не удалось разобрать";
-  if (job.state === "cancelled") return "Отменено";
+  if (job.state === "succeeded") return t("Готово");
+  if (job.state === "failed") return t("Не удалось разобрать");
+  if (job.state === "cancelled") return t("Отменено");
   if (job.state === "running" || job.stage === "classifying")
-    return "ИИ разбирает запись";
-  return job.stage === "saved" ? "Запись сохранена" : "В очереди";
+    return t("ИИ разбирает запись");
+  return job.stage === "saved" ? t("Запись сохранена") : t("В очереди");
 }
 function terminal(job) {
   return ["succeeded", "failed", "cancelled"].includes(job.state);
@@ -4578,34 +4592,34 @@ function renderCaptureProgress(job, record) {
   );
   if (record.duplicateCaptureId)
     card.append(
-      node(
+      bindTranslation(node(
         "p",
-        "Похожая запись уже есть в журнале — возможно, дубль.",
+        t("Похожая запись уже есть в журнале — возможно, дубль."),
         "progress-raw",
-      ),
+      ), "Похожая запись уже есть в журнале — возможно, дубль."),
     );
   if (job.parts?.length) {
     // Дела, отделённые от записи, показываются сразу: подтверждения заранее
     // приложение не спрашивает нигде, но даёт отменить сделанное.
     const parts = node("p", undefined, "progress-raw progress-parts");
-    parts.append(document.createTextNode(`Отделил ${plural(job.parts.length, DEALS)}: ${job.parts.map((part) => `«${part.title}»`).join(", ")}`));
+    parts.append(document.createTextNode(t("Отделил {value1}: {value2}", { value1: plural(job.parts.length, DEALS), value2: job.parts.map((part) => `«${part.title}»`).join(", ") })));
     card.append(parts);
   }
   if (job.state === "failed")
     card.append(
-      node("p", "Запись сохранена, но не классифицирована.", "progress-raw"),
+      bindTranslation(node("p", t("Запись сохранена, но не классифицирована."), "progress-raw"), "Запись сохранена, но не классифицирована."),
     );
   if (job.state === "cancelled")
     card.append(
-      node(
+      bindTranslation(node(
         "p",
-        "Классификация отменена; исходная запись сохранена.",
+        t("Классификация отменена; исходная запись сохранена."),
         "progress-raw",
-      ),
+      ), "Классификация отменена; исходная запись сохранена."),
     );
   const actions = node("div", undefined, "progress-actions");
   if (job.parts?.length) {
-    const drop = node("button", job.parts.length === 1 ? "Убрать дело" : "Убрать дела", "text-button");
+    const drop = node("button", job.parts.length === 1 ? t("Убрать дело") : t("Убрать дела"), "text-button");
     drop.type = "button";
     drop.addEventListener("click", async () => {
       drop.disabled = true;
@@ -4615,8 +4629,8 @@ function renderCaptureProgress(job, record) {
         job.parts = [];
         renderCaptureProgress(job, record);
         await load();
-        toast(`${plural(removed.length, DEALS)} убрано из журнала`, { label: "Вернуть", run: async () => {
-          try { for (const part of removed) await request(`/api/captures/${part.id}/restore`, { method: "POST" }); await load(); toast("Вернул"); }
+        toast(t("{value1} убрано из журнала", { value1: plural(removed.length, DEALS) }), { get label() { return t("Вернуть"); }, run: async () => {
+          try { for (const part of removed) await request(`/api/captures/${part.id}/restore`, { method: "POST" }); await load(); toast(t("Вернул")); }
           catch (error) { toast(error.message); }
         } });
       } catch (error) { toast(error.message); drop.disabled = false; }
@@ -4624,23 +4638,23 @@ function renderCaptureProgress(job, record) {
     actions.append(drop);
   }
   if (!terminal(job)) {
-    const cancel = node("button", "Отменить классификацию", "text-button");
+    const cancel = bindTranslation(node("button", t("Отменить классификацию"), "text-button"), "Отменить классификацию");
     cancel.addEventListener("click", () => cancelCapture(record, cancel));
     actions.append(cancel);
   } else if (job.retryable) {
     const retry = node(
       "button",
       record.provider === "fallback"
-        ? "Повторить локальную классификацию"
-        : "Повторить с тем же провайдером (может использовать лимит)",
+        ? t("Повторить локальную классификацию")
+        : t("Повторить с тем же провайдером (может использовать лимит)"),
       "text-button",
     );
     retry.addEventListener("click", () => retryCapture(job, record, retry));
     actions.append(retry);
   }
   if (terminal(job)) {
-    const close = node("button", "Закрыть уведомление", "notification-close");
-    close.setAttribute("aria-label", "Закрыть уведомление");
+    const close = bindTranslation(node("button", t("Закрыть уведомление"), "notification-close"), "Закрыть уведомление");
+    bindTranslation(close, "Закрыть уведомление", "aria-label");
     close.addEventListener("click", () => removeCapture(record));
     actions.append(close);
   }
@@ -4656,7 +4670,7 @@ function reviewFromEntry(entry) {
   if (c.unclassified)
     return {
       level: "low",
-      question: "Запись сохранена без разбора: укажите тип.",
+      get question() { return t("Запись сохранена без разбора: укажите тип."); },
       field: "type",
       safeNote: true,
     };
@@ -4686,12 +4700,12 @@ function layToast(record, job) {
   const parts = job.parts || [];
   const clip = (text) => `«${String(text || "").slice(0, 60)}»`;
   // «Сделал X, надо Y»: отчёт закрыт, дела из него — на сегодня; считаем раздельно.
-  if (classification?.completed === true && parts.length) return `Легло: 1 сделано, ${parts.length} на сегодня — ${parts.map((part) => clip(part.title)).join(", ")}`;
+  if (classification?.completed === true && parts.length) return t("Легло: 1 сделано, {length} на сегодня — {value2}", { length: parts.length, value2: parts.map((part) => clip(part.title)).join(", ") });
   // Пачка дел: родитель не туду, в списках только отделившиеся дела.
-  if (parts.length) return `Легло: ${plural(parts.length, ["туду", "туду", "туду"])} · ${scheduleLabel(classification?.entities.schedule) || "сегодня"} — ${parts.map((part) => clip(part.title)).join(", ")}`;
-  const when = classification?.completed === true ? "сделано" : scheduleLabel(classification?.entities.schedule) || "сегодня";
+  if (parts.length) return t("Легло: {value1} · {value2} — {value3}", { value1: plural(parts.length, [t("туду"), t("туду"), t("туду")]), value2: scheduleLabel(classification?.entities.schedule) || t("сегодня"), value3: parts.map((part) => clip(part.title)).join(", ") });
+  const when = classification?.completed === true ? t("сделано") : scheduleLabel(classification?.entities.schedule) || t("сегодня");
   const title = (classification?.summary || record.raw || "").split("\n")[0].slice(0, 80);
-  return !title ? `Легло: 1 туду · ${when}` : `Легло: «${title}» · ${when}`;
+  return !title ? t("Легло: 1 туду · {when}", { when: when }) : t("Легло: «{title}» · {when}", { title: title, when: when });
 }
 async function pollCapture(record) {
   if (!activeCapture(record)) return;
@@ -4714,7 +4728,7 @@ async function pollCapture(record) {
   } catch {
     if (!activeCapture(record)) return;
     activeCapture(record).delay = Math.min(activeCapture(record).delay * 2, 5000);
-    toast("Не удалось проверить статус классификации. Повторим автоматически.");
+    toast(t("Не удалось проверить статус классификации. Повторим автоматически."));
   } finally {
     if (activeCapture(record) && !activeCapture(record).terminal)
       scheduleCapturePoll(record);
@@ -4760,7 +4774,7 @@ async function retryCapture(job, record, button) {
       body: "{}",
     });
     if (!activeCapture(record) || !safeCaptureEnvelope(retry))
-      throw new Error("Сервер не подтвердил повторную классификацию.");
+      throw new Error(t("Сервер не подтвердил повторную классификацию."));
     removeCapture(record);
     startCapturePolling({ ...record, jobId: retry.jobId, statusUrl: retry.statusUrl });
   } catch (error) {
@@ -4777,8 +4791,8 @@ async function retryCapture(job, record, button) {
 // Enter отправляет, Shift+Enter переносит строку. Поле растёт вместе с текстом.
 const captureField = createMarkdownField({
   id: "capture-input",
-  ariaLabel: "Новая запись",
-  placeholder: "Что нужно сделать?",
+  get ariaLabel() { return t("Новая запись"); },
+  get placeholder() { return t("Что нужно сделать?"); },
   submitOnEnter: false,
   onSubmit: () => $("#capture-form").requestSubmit(),
 });
@@ -4799,7 +4813,7 @@ function captureModifier(platform = navigator.platform || "", agent = navigator.
   return "Ctrl";
 }
 const CAPTURE_MOD = captureModifier();
-$("#capture-submit").title = `Сохранить запись — ${CAPTURE_MOD}+Enter`;
+bindTranslation($("#capture-submit"), "Сохранить запись — {CAPTURE_MOD}+Enter", { CAPTURE_MOD: CAPTURE_MOD }, "title");
 
 // Лист: карточка выходит на передний план и вписывается в окно листом A4.
 // DOM не перестраивается — переключаются два класса, поэтому текст, каретка и
@@ -4814,7 +4828,7 @@ function setCaptureLarge(large) {
   document.body.classList.toggle("capture-large-open", large);
   appear(form, { shift: large ? 12 : 6, base: large ? "translate(-50%, -50%)" : "" });
   expandButton.setAttribute("aria-pressed", String(large));
-  const label = large ? "Свернуть поле — Esc" : "Увеличить поле";
+  const label = large ? t("Свернуть поле — Esc") : t("Увеличить поле");
   expandButton.setAttribute("aria-label", label);
   expandButton.title = label;
   captureField.focus();
@@ -4995,7 +5009,7 @@ $("#capture-form").addEventListener("submit", async (event) => {
         body: JSON.stringify(withProvider({ raw })),
       });
     if (result.response.status !== 202 || !safeCaptureEnvelope(result.data))
-      throw new Error("Сервер не подтвердил асинхронное сохранение.");
+      throw new Error(t("Сервер не подтвердил асинхронное сохранение."));
     captureField.clear();
     if (captureLarge()) setCaptureLarge(false);
     startCapturePolling({ ...result.data, raw, provider: provider || "fallback" });
@@ -5003,7 +5017,7 @@ $("#capture-form").addEventListener("submit", async (event) => {
     // Потолок исчерпан — запись сохранится, но разберут её правила. Сказать об
     // этом надо сразу: иначе человек решит, что разбор сломался.
     if (result.data.spend && !result.data.spend.allowed)
-      toast("Потолок расходов исчерпан: запись сохранена, но разобрана по правилам");
+      toast(t("Потолок расходов исчерпан: запись сохранена, но разобрана по правилам"));
   } catch (error) {
     toast(error.message);
   } finally {
@@ -5023,7 +5037,7 @@ $("#memory-form").addEventListener("submit", async (event) => {
   memoryController = new AbortController();
   input.disabled = true;
   button.disabled = true;
-  area.append(node("p", "Ищем в памяти…", "entry-meta"));
+  area.append(bindTranslation(node("p", t("Ищем в памяти…"), "entry-meta"), "Ищем в памяти…"));
   try {
     const result = await request("/api/memory/answer", {
       method: "POST",
@@ -5037,8 +5051,8 @@ $("#memory-form").addEventListener("submit", async (event) => {
       node(
         "strong",
         result.provenance.usedProvider === "fallback"
-          ? "Поиск по памяти"
-          : "Ответ памяти",
+          ? t("Поиск по памяти")
+          : t("Ответ памяти"),
       ),
       markdownNode("div", result.answer, undefined),
     );
@@ -5048,7 +5062,7 @@ $("#memory-form").addEventListener("submit", async (event) => {
       result.citationIds.includes(source.captureId),
     )) {
       const card = node("div", undefined, "source");
-      card.append(node("strong", "Источник"), markdownNode("div", source.snippet, undefined, { inline: true }));
+      card.append(bindTranslation(node("strong", t("Источник")), "Источник"), markdownNode("div", source.snippet, undefined, { inline: true }));
       sources.append(card);
     }
     area.append(sources);
@@ -5103,7 +5117,7 @@ async function status() {
     const info = data.providers[id],
       option = node(
         "option",
-        `${providerNames[id]}${info?.available ? "" : " — недоступен"}`,
+        `${providerNames[id]}${info?.available ? "" : t(" — недоступен")}`,
       );
     option.value = id;
     option.disabled = id !== "fallback" && !info?.available;
@@ -5121,8 +5135,8 @@ async function status() {
       data.providers[selectedProvider()]?.available,
     element = $("#ai-status");
   element.textContent = available
-    ? `Выбран: ${providerNames[selectedProvider()]}`
-    : `Выбран: ${providerNames[selectedProvider()]} — недоступен`;
+    ? t("Выбран: {value1}", { value1: providerNames[selectedProvider()] })
+    : t("Выбран: {value1} — недоступен", { value1: providerNames[selectedProvider()] });
   element.className = !available
     ? "status fallback"
     : selectedProvider() === "fallback"
@@ -5160,7 +5174,7 @@ async function bootstrap() {
       resumeCapture();
       syncPushSubscription();
     } catch {
-      toast("Не удалось загрузить данные. Повторим при восстановлении сети.");
+      toast(t("Не удалось загрузить данные. Повторим при восстановлении сети."));
     } finally {
       bootstrapInFlight = false;
     }
@@ -5183,6 +5197,8 @@ const SETTING_FIELDS = [
   "remindHour",
   "quietHours",
   "theme",
+  "locale",
+  "requestedTimeZone",
   "modelTemperature",
   "modelMaxTokens",
   "modelReasoning",
@@ -5190,30 +5206,44 @@ const SETTING_FIELDS = [
 ];
 const SECRET_FIELDS = ["openaiKey", "geminiKey", "openrouterKey", "googleClientSecret", "telegramBotToken"];
 let appSettings = {};
+let settingsPreferenceSaveQueue = Promise.resolve();
+let timeZoneSaveRevision = 0;
+let pendingTimeZoneChoice = null;
+let localeSaveRevision = 0;
+let pendingLocaleChoice = null;
 function settingInput(name) {
   return document.getElementById(`setting-${name}`);
 }
-function paintSettings(payload) {
-  appSettings = payload.settings || {};
+function paintSettings(payload, { updatedFields = null, submittedValues = null } = {}) {
+  const settings = payload.settings || {};
+  appSettings = updatedFields
+    ? { ...appSettings, ...Object.fromEntries(updatedFields.filter(name => Object.hasOwn(settings, name)).map(name => [name, settings[name]])) }
+    : settings;
+  initLocale(pendingLocaleChoice === null ? appSettings : { ...appSettings, locale: pendingLocaleChoice });
+  if (!updatedFields || updatedFields.some(name => ["requestedTimeZone", "detectedTimeZone", "timeZone"].includes(name))) {
+    initTimeZone({ ...payload, settings: appSettings }, pendingTimeZoneChoice);
+    paintTimeZoneSetting();
+  }
   for (const name of SETTING_FIELDS) {
     const input = settingInput(name);
-    if (!input) continue;
-    const value = appSettings[name];
+    if (!input || (updatedFields && !updatedFields.includes(name))) continue;
+    const value = name === "locale" && pendingLocaleChoice !== null ? pendingLocaleChoice : name === "requestedTimeZone" && pendingTimeZoneChoice !== null ? pendingTimeZoneChoice : appSettings[name];
+    const hasNewDraft = submittedValues && Object.hasOwn(submittedValues, name) && input.value !== submittedValues[name];
     if (SECRET_FIELDS.includes(name)) {
       // Поле ключа всегда пустое: показывать нечего, а подпись рядом говорит,
       // настроен он и откуда взялся.
-      if (document.activeElement !== input) input.value = "";
+      if (!hasNewDraft && document.activeElement !== input) input.value = "";
       const state = document.getElementById(`state-${name}`);
       if (state)
         state.textContent = value?.configured
-          ? `${value.hint}${value.fromEnvironment ? " · из .env" : ""}`
-          : "не настроен";
+          ? `${value.hint}${value.fromEnvironment ? t(" · из .env") : ""}`
+          : t("не настроен");
       continue;
     }
     // Поле, в котором человек сейчас печатает, не трогаем: автосохранение
     // соседней настройки не должно отбирать недописанный текст и каретку.
     const next = String(value ?? "");
-    if (document.activeElement !== input && input.value !== next) input.value = next;
+    if (!hasNewDraft && document.activeElement !== input && input.value !== next) input.value = next;
   }
   const editable = new Set(payload.editable || SETTING_FIELDS);
   for (const name of SETTING_FIELDS) {
@@ -5240,21 +5270,21 @@ function paintSettings(payload) {
 }
 // Расходы: сколько ушло токенов и денег. Показываем три окна — сутки, неделя,
 // всё время, — потому что «сколько я трачу» это вопрос про темп, а не про сумму.
-const usageKinds = { classify: "разбор", answer: "память" };
+const usageKinds = { get classify() { return t("разбор"); }, get answer() { return t("память"); } };
 function money(value) {
   if (!value) return "$0";
   return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
 }
 function tokens(value) {
-  if (value >= 1000000) return `${(value / 1000000).toFixed(1)} млн`;
-  if (value >= 1000) return `${Math.round(value / 1000)} тыс.`;
+  if (value >= 1000000) return t("{value1} млн", { value1: (value / 1000000).toFixed(1) });
+  if (value >= 1000) return t("{value1} тыс.", { value1: Math.round(value / 1000) });
   return String(value);
 }
 function usageRow(title, slice) {
   const row = node("div", undefined, "usage-row");
   row.append(
     node("span", title, "usage-when"),
-    node("span", `${slice.calls} вызовов`, "usage-calls"),
+    bindTranslation(node("span", t("{calls} вызовов", { calls: slice.calls }), "usage-calls"), "{calls} вызовов", { calls: slice.calls }),
     node("span", `${tokens(slice.inputTokens)} → ${tokens(slice.outputTokens)}`, "usage-tokens"),
     node("span", money(slice.costUsd), "usage-money"),
   );
@@ -5267,10 +5297,10 @@ function paintSpend(spend) {
   const line = $("#spend-state");
   if (!line || !spend) return;
   const money = (value) => `$${value < 0.01 && value > 0 ? value.toFixed(4) : value.toFixed(2)}`;
-  const parts = [`За ${spend.month} потрачено ${money(spend.totalUsd)}`];
-  if (spend.limitUsd === null) parts.push("потолка нет");
-  else parts.push(spend.allowed ? `осталось ${money(spend.remainingUsd)} из ${money(spend.limitUsd)}` : `потолок ${money(spend.limitUsd)} исчерпан`);
-  if (spend.unpriced) parts.push(`${spend.unpriced} вызовов без цены в сумму не вошли`);
+  const parts = [t("За {month} потрачено {value2}", { month: spend.month, value2: money(spend.totalUsd) })];
+  if (spend.limitUsd === null) parts.push(t("потолка нет"));
+  else parts.push(spend.allowed ? t("осталось {value1} из {value2}", { value1: money(spend.remainingUsd), value2: money(spend.limitUsd) }) : t("потолок {value1} исчерпан", { value1: money(spend.limitUsd) }));
+  if (spend.unpriced) parts.push(t("{unpriced} вызовов без цены в сумму не вошли", { unpriced: spend.unpriced }));
   line.textContent = parts.join(" · ");
   line.classList.toggle("quota-exhausted", !spend.allowed);
 }
@@ -5285,9 +5315,9 @@ async function loadUsage() {
   }
   paintSpend(data.spend);
   clear(box);
-  box.append(usageRow("За сутки", data.day), usageRow("За неделю", data.week), usageRow("Всего", data.total));
+  box.append(usageRow(t("За сутки"), data.day), usageRow(t("За неделю"), data.week), usageRow(t("Всего"), data.total));
   if (!data.total.calls) {
-    box.append(node("p", "Пока ничего не потрачено.", "empty"));
+    box.append(bindTranslation(node("p", t("Пока ничего не потрачено."), "empty"), "Пока ничего не потрачено."));
     return;
   }
   // Разбивка по моделям: видно, что именно съедает деньги.
@@ -5297,7 +5327,7 @@ async function loadUsage() {
       node("span", `${providerNames[row.provider] || row.provider} · ${row.model || "—"}`, "usage-when"),
       node("span", `${row.calls}`, "usage-calls"),
       node("span", `${tokens(row.inputTokens)} → ${tokens(row.outputTokens)}`, "usage-tokens"),
-      node("span", row.unpriced ? `${money(row.costUsd)} · ${row.unpriced} без цены` : money(row.costUsd), "usage-money"),
+      node("span", row.unpriced ? t("{value1} · {unpriced} без цены", { value1: money(row.costUsd), unpriced: row.unpriced }) : money(row.costUsd), "usage-money"),
     );
     box.append(line);
   }
@@ -5306,7 +5336,7 @@ async function loadUsage() {
 // Память правит разбор молча, поэтому её показывают целиком: видно, откуда
 // правило взялось, и любое можно стереть. Без этого «помощник что-то запомнил»
 // было бы страшнее, чем полезно.
-const MEMORY_SOURCES = { correction: "из поправки", voice: "сказано голосом", manual: "записано руками", import: "перенесено" };
+const MEMORY_SOURCES = { get correction() { return t("из поправки"); }, get voice() { return t("сказано голосом"); }, get manual() { return t("записано руками"); }, get import() { return t("перенесено"); } };
 async function loadMemory() {
   const wrap = $("#memory-list");
   if (!wrap) return;
@@ -5324,19 +5354,19 @@ function paintMemory({ memories = [], canShare = false } = {}) {
   const sharedRow = $("#memory-shared-row");
   if (sharedRow) sharedRow.hidden = !canShare;
   if (!memories.length) {
-    wrap.append(node("p", "Пока ничего: помощник запомнит первое же, что вы поправите или попросите запомнить.", "setting-hint"));
+    wrap.append(bindTranslation(node("p", t("Пока ничего: помощник запомнит первое же, что вы поправите или попросите запомнить."), "setting-hint"), "Пока ничего: помощник запомнит первое же, что вы поправите или попросите запомнить."));
     return;
   }
   for (const memory of memories) {
     const row = node("div", undefined, `memory-item${memory.scope === "shared" ? " is-shared" : ""}`);
     row.append(node("span", memory.body, "memory-body"));
-    const marks = [memory.scope === "shared" ? "общее" : null, MEMORY_SOURCES[memory.source] || memory.source].filter(Boolean);
+    const marks = [memory.scope === "shared" ? t("общее") : null, MEMORY_SOURCES[memory.source] || memory.source].filter(Boolean);
     row.append(node("span", marks.join(" · "), "memory-meta"));
-    const forget = calButton("Забыть", "secondary memory-forget", async () => {
+    const forget = calButton(t("Забыть"), "secondary memory-forget", async () => {
       forget.disabled = true;
       try {
         paintMemory(await request(`/api/agent/memory/${memory.id}`, { method: "DELETE" }));
-        toast("Забыл");
+        toast(t("Забыл"));
       } catch (error) { forget.disabled = false; toast(error.message); }
     });
     // Общее правило человек видит, но стереть его может только тот, кому
@@ -5354,27 +5384,118 @@ async function rememberRule() {
   try {
     paintMemory(await request("/api/agent/memory", { method: "POST", body: JSON.stringify({ text, scope: shared ? "shared" : "user" }) }));
     input.value = "";
-    toast(shared ? "Запомнил для всех" : "Запомнил");
+    toast(shared ? t("Запомнил для всех") : t("Запомнил"));
   } catch (error) { toast(error.message); }
 }
+
+function paintTimeZoneSetting() {
+  const input = settingInput("requestedTimeZone");
+  if (!input) return;
+  const selected = pendingTimeZoneChoice ?? appSettings.requestedTimeZone ?? "system";
+  if (input.options.length < 2) {
+    const zones = new Set(["UTC", getTimeZone(), ...(Intl.supportedValuesOf?.("timeZone") || [])].map(normalizeTimeZone).filter(Boolean));
+    for (const zone of [...zones].sort()) input.append(new Option(zone, zone));
+  }
+  if (selected !== "system" && ![...input.options].some(option => option.value === selected)) input.append(new Option(selected, selected));
+  input.value = selected;
+  const effective = $("#setting-effectiveTimeZone");
+  if (effective) effective.textContent = getTimeZone();
+}
+async function persistTimeZone(choice, { detectionOnly = false } = {}) {
+  const revision = ++timeZoneSaveRevision;
+  const detectedTimeZone = getDetectedTimeZone(appSettings.detectedTimeZone);
+  if (!detectionOnly) {
+    pendingTimeZoneChoice = choice;
+    setTimeZone(choice);
+    paintTimeZoneSetting();
+  }
+  settingsPreferenceSaveQueue = settingsPreferenceSaveQueue.then(async () => {
+    try {
+      const patch = { ...(detectionOnly ? {} : { requestedTimeZone: choice }), ...(detectedTimeZone ? { detectedTimeZone } : {}) };
+      const payload = await request("/api/settings", { method: "PUT", body: JSON.stringify(patch) });
+      appSettings = { ...appSettings, requestedTimeZone: payload.settings.requestedTimeZone, detectedTimeZone: payload.settings.detectedTimeZone };
+      if (revision !== timeZoneSaveRevision) return;
+      pendingTimeZoneChoice = null;
+      initTimeZone({ ...payload, settings: appSettings });
+      paintTimeZoneSetting();
+      announceTimeZoneSaved();
+      load().catch(() => {});
+      const page = location.hash.slice(1).split("?")[0];
+      if (page === "board") loadBoard({ force: true });
+      if (page === "calendar") loadCalendar();
+      if (page === "done") loadDone({ fresh: true });
+    } catch (error) {
+      if (revision !== timeZoneSaveRevision) return;
+      pendingTimeZoneChoice = null;
+      initTimeZone({ settings: appSettings });
+      paintTimeZoneSetting();
+      toast(error.message);
+    }
+  });
+  return settingsPreferenceSaveQueue;
+}
+function detectChangedTimeZone() {
+  if (!Object.hasOwn(appSettings, "requestedTimeZone") || pendingTimeZoneChoice !== null) return;
+  const detected = getDetectedTimeZone(appSettings.detectedTimeZone);
+  if (detected && detected !== appSettings.detectedTimeZone) persistTimeZone(appSettings.requestedTimeZone, { detectionOnly: true });
+}
+settingInput("requestedTimeZone")?.addEventListener("change", event => persistTimeZone(event.target.value));
+window.addEventListener("focus", detectChangedTimeZone);
+window.addEventListener("pagent:systemtimezonechange", detectChangedTimeZone);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) detectChangedTimeZone(); });
 
 async function loadSettings() {
   if (!settingInput("timeZone")) return;
   try {
-    paintSettings(await request("/api/settings"));
+    const localeRevision = localeSaveRevision;
+    const timeZoneRevision = timeZoneSaveRevision;
+    const submittedValues = Object.fromEntries(SETTING_FIELDS.map(name => [name, settingInput(name)?.value]));
+    const payload = await request("/api/settings");
+    // An initial GET can finish after a choice was already acknowledged.
+    // Retain those committed preferences and any edits made while it loaded.
+    if (localeSaveRevision !== localeRevision && Object.hasOwn(appSettings, "locale")) {
+      payload.settings = { ...payload.settings, locale: appSettings.locale, detectedLocale: appSettings.detectedLocale };
+    }
+    if (timeZoneSaveRevision !== timeZoneRevision) {
+      payload.timeZone = undefined;
+      if (Object.hasOwn(appSettings, "requestedTimeZone")) payload.settings = { ...payload.settings, requestedTimeZone: appSettings.requestedTimeZone, detectedTimeZone: appSettings.detectedTimeZone };
+    }
+    paintSettings(payload, { submittedValues });
+    const detectedLocale = getDetectedLocale(appSettings.detectedLocale);
+    const detectedTimeZone = getDetectedTimeZone(appSettings.detectedTimeZone);
+    const patch = {};
+    if (detectedLocale && appSettings.detectedLocale !== detectedLocale) patch.detectedLocale = detectedLocale;
+    if (detectedTimeZone && appSettings.detectedTimeZone !== detectedTimeZone) patch.detectedTimeZone = detectedTimeZone;
+    if (Object.keys(patch).length) {
+      const detectionTimeZoneRevision = timeZoneSaveRevision;
+      settingsPreferenceSaveQueue = settingsPreferenceSaveQueue.then(async () => {
+        try {
+          const detected = await request("/api/settings", { method: "PUT", body: JSON.stringify(patch) });
+          if (timeZoneSaveRevision !== detectionTimeZoneRevision) detected.timeZone = undefined;
+          paintSettings(detected, { updatedFields: Object.keys(patch) });
+          if (Object.hasOwn(patch, "detectedTimeZone") && timeZoneSaveRevision === detectionTimeZoneRevision && pendingTimeZoneChoice === null) announceTimeZoneSaved();
+        } catch {
+          // Device detection must not prevent a later explicit choice saving.
+        }
+      });
+      await settingsPreferenceSaveQueue;
+    }
     loadUsage();
   } catch {
     // Настройки не открылись — приложение всё равно работает на прежних.
   }
 }
-async function saveSettings(patch, { announce = "Настройки сохранены" } = {}) {
+async function saveSettings(patch, { announce = t("Настройки сохранены") } = {}) {
   const status = $("#settings-status");
-  status.textContent = "Сохраняем…";
+  bindTranslation(status, "Сохраняем…");
+  const updatedFields = Object.keys(patch);
+  const submittedValues = Object.fromEntries(updatedFields.map(name => [name, settingInput(name)?.value]));
   try {
     paintSettings(
       await request("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
+      { updatedFields, submittedValues },
     );
-    status.textContent = "Сохранено";
+    bindTranslation(status, "Сохранено");
     if (announce) toast(announce);
     // Новый токен бота — раздел «Telegram» ждёт, пока бот выйдет на связь.
     if (Object.hasOwn(patch, "telegramBotToken")) loadTelegram();
@@ -5402,7 +5523,7 @@ function autosaveSetting(name, input) {
   saveSettings({ [name]: value }, { announce: null });
 }
 for (const name of SETTING_FIELDS) {
-  if (name === "theme") continue;
+  if (name === "theme" || name === "locale" || name === "requestedTimeZone" || name === "timeZone") continue;
   const input = settingInput(name);
   if (!input) continue;
   input.addEventListener("change", () => {
@@ -5436,13 +5557,13 @@ $("#reset-button").addEventListener("click", () =>
 $("#reset-submit").addEventListener("click", async (event) => {
   event.preventDefault();
   if ($("#reset-confirmation").value !== "СБРОСИТЬ КИЗУНА") {
-    toast("Введите точную фразу подтверждения");
+    toast(t("Введите точную фразу подтверждения"));
     return;
   }
   try {
     await request("/api/reset", {
       method: "POST",
-      body: JSON.stringify({ confirmation: "СБРОСИТЬ КИЗУНА" }),
+      body: JSON.stringify({ get confirmation() { return t("СБРОСИТЬ КИЗУНА"); } }),
     });
     $("#reset-dialog").close();
     $("#reset-confirmation").value = "";
@@ -5450,7 +5571,7 @@ $("#reset-submit").addEventListener("click", async (event) => {
     for (const record of [...activeCaptures.values()]) removeCapture(record);
     localStorage.removeItem(activeCaptureStorageKey);
     $("#capture-notifications").replaceChildren();
-    toast("Локальный журнал очищен");
+    toast(t("Локальный журнал очищен"));
     await load();
   } catch (error) {
     toast(error.message);
@@ -5572,9 +5693,9 @@ document.addEventListener("pointerdown", (event) => {
 // весь экран, и окно всегда модальное.
 const CARD_MODE_KEY = "kizuna-card-mode";
 const CARD_MODES = {
-  center: { words: "по центру", icon: '<rect x="3" y="4" width="18" height="16" rx="2"/><rect x="7" y="8" width="10" height="8" rx="1"/>' },
-  side: { words: "сбоку", icon: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M13 4v16"/>' },
-  full: { words: "во весь экран", icon: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 13h6"/>' },
+  center: { get words() { return t("по центру"); }, icon: '<rect x="3" y="4" width="18" height="16" rx="2"/><rect x="7" y="8" width="10" height="8" rx="1"/>' },
+  side: { get words() { return t("сбоку"); }, icon: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M13 4v16"/>' },
+  full: { get words() { return t("во весь экран"); }, icon: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 13h6"/>' },
 };
 function readCardMode() {
   try {
@@ -5639,7 +5760,7 @@ function setCardMode(next) {
     if (dialog.open && dialog.matches(":modal") !== cardNeedsModal(next)) reopenCardDialog(dialog);
     markOpenCard();
   });
-  if (dialog.open && next !== prev) cardSnack(`Карточки открываются ${CARD_MODES[next].words}`);
+  if (dialog.open && next !== prev) cardSnack(t("Карточки открываются {words}", { words: CARD_MODES[next].words }));
 }
 // Меню режимов: значок в верхней строке рядом с «Параметры». Закрывается
 // выбором, щелчком мимо, Esc и уходом фокуса; стрелки ходят по пунктам.
@@ -5721,7 +5842,7 @@ for (const grip of document.querySelectorAll("#review-dialog .card-resize")) {
   grip.addEventListener("dblclick", () => {
     writeCardSize($("#review-dialog").dataset.mode === "side" ? { sw: null } : { w: null, h: null });
     jumpCardSize(paintCardSize);
-    cardSnack("Размер по умолчанию");
+    cardSnack(t("Размер по умолчанию"));
   });
   grip.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
@@ -5912,7 +6033,7 @@ let currentUser = null;
 let resolveAccountKnown = () => {};
 const accountKnown = new Promise((resolve) => { resolveAccountKnown = resolve; });
 
-const roleNames = { admin: "администратор", user: "пользователь" };
+const roleNames = { get admin() { return t("администратор"); }, get user() { return t("пользователь"); } };
 
 async function loadAccount() {
   try {
@@ -5926,13 +6047,17 @@ async function loadAccount() {
   $("#account-email").textContent = currentUser.email;
   $("#account-role").textContent = roleNames[currentUser.role] || currentUser.role;
   $("#account-admin-link").hidden = currentUser.role !== "admin";
-  const line = $("#account-summary-line");
-  if (line)
-    line.textContent = `${currentUser.email} · ${roleNames[currentUser.role]} · вход защищён ${currentUser.twoFactorEnabled ? "паролем и вторым фактором" : "только паролем"}`;
+  paintAccountSummary();
   const nameInput = $("#setting-name");
   if (nameInput && document.activeElement !== nameInput) nameInput.value = currentUser.name || "";
   paintAvatarPicker();
   paintTotp();
+}
+function paintAccountSummary() {
+  if (!currentUser) return;
+  const line = $("#account-summary-line");
+  if (line)
+    bindTranslation(line, "{email} · {value2} · вход защищён {value3}", { email: currentUser.email, value2: roleNames[currentUser.role], value3: currentUser.twoFactorEnabled ? t("паролем и вторым фактором") : t("только паролем") });
 }
 // Значок в шапке — то же лицо, что видят люди в круге: картинка, если она
 // выбрана, иначе две буквы адреса.
@@ -5947,6 +6072,24 @@ function paintAccountChip() {
 // Персонаж из набора или своя картинка; «Буква» возвращает кружок с началом
 // имени. Картинку ужимает браузер — на сервер уходит квадрат 256 px, а не
 // двенадцать мегапикселей с телефона.
+const AVATAR_PRESET_LABELS = localizedBuiltins({
+  "cat": "Кот",
+  "fox": "Кицунэ",
+  "tanuki": "Тануки",
+  "panda": "Панда",
+  "penguin": "Пингвин",
+  "frog": "Лягушка",
+  "owl": "Сова",
+  "bunny": "Зайка",
+  "shiba": "Сиба",
+  "octopus": "Осьминожка",
+  "onigiri": "Онигири",
+  "ghost": "Привидение",
+  "bear": "Мишка",
+  "robot": "Робот",
+  "dino": "Динозаврик",
+  "whale": "Кит"
+});
 const AVATAR_SIDE = 256;
 let avatarPresets = null;
 async function paintAvatarPicker() {
@@ -5971,9 +6114,9 @@ async function paintAvatarPicker() {
     button.addEventListener("click", onPick);
     grid.append(button);
   };
-  choice("Буква имени", avatarEl({ ...currentUser, avatar: null }), !currentUser.avatar, () => chooseAvatar(null));
+  choice(t("Буква имени"), avatarEl({ ...currentUser, avatar: null }), !currentUser.avatar, () => chooseAvatar(null));
   for (const preset of avatarPresets)
-    choice(preset.label, avatarEl({ name: preset.label, avatar: preset.url }), currentUser.avatar === preset.url, () => chooseAvatar(preset.id));
+    choice(AVATAR_PRESET_LABELS[preset.id] || preset.label, avatarEl({ name: AVATAR_PRESET_LABELS[preset.id] || preset.label, avatar: preset.url }), currentUser.avatar === preset.url, () => chooseAvatar(preset.id));
 }
 async function avatarSaved(result, message) {
   currentUser = { ...currentUser, ...result.me };
@@ -5986,8 +6129,8 @@ async function avatarSaved(result, message) {
 async function chooseAvatar(presetId) {
   try {
     const result = await request("/api/account/avatar", { method: "PUT", body: JSON.stringify({ preset: presetId }) });
-    await avatarSaved(result, presetId ? "Аватар выбран" : "Снова буква имени");
-  } catch (error) { toast(error.message || "Аватар не сохранился"); }
+    await avatarSaved(result, presetId ? t("Аватар выбран") : t("Снова буква имени"));
+  } catch (error) { toast(error.message || t("Аватар не сохранился")); }
 }
 // Квадрат по центру картинки: лицо на фото обычно в середине, а кружок всё
 // равно срежет углы. Картинка читается обычным <img>: createImageBitmap
@@ -6028,10 +6171,10 @@ $("#avatar-file")?.addEventListener("change", async (event) => {
     const image = await squareAvatar(file);
     const response = await fetch("/api/account/avatar/image", { method: "POST", headers: { "Content-Type": image.type }, body: image });
     const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result.error?.message || "Картинка не загрузилась");
-    await avatarSaved(result, "Картинка поставлена");
+    if (!response.ok) throw new Error(result.error?.message || t("Картинка не загрузилась"));
+    await avatarSaved(result, t("Картинка поставлена"));
   } catch (error) {
-    toast(error instanceof DOMException ? "Это не похоже на картинку" : error.message || "Картинка не загрузилась");
+    toast(error instanceof DOMException ? t("Это не похоже на картинку") : error.message || t("Картинка не загрузилась"));
   }
 });
 // Имя сохраняется само, когда поле отпустили: отдельной кнопки «Сохранить» в
@@ -6040,9 +6183,9 @@ $("#setting-name")?.addEventListener("change", async (event) => {
   try {
     const result = await request("/api/account", { method: "PATCH", body: JSON.stringify({ name: event.target.value }) });
     if (currentUser) currentUser.name = result.me.name;
-    toast(`Вас будут звать «${result.me.name}»`);
+    toast(t("Вас будут звать «{name}»", { name: result.me.name }));
     await load();
-  } catch (error) { toast(error.message || "Имя не сохранилось"); }
+  } catch (error) { toast(error.message || t("Имя не сохранилось")); }
 });
 
 async function logout(everywhere = false) {
@@ -6078,8 +6221,8 @@ function paintThemeButton() {
   const button = $("#theme-toggle");
   if (!button) return;
   button.innerHTML = window.pagentTheme.icon();
-  button.title = `Тема: ${window.pagentTheme.label()}`;
-  button.setAttribute("aria-label", `Тема оформления: ${window.pagentTheme.label()}`);
+  bindTranslation(button, "Тема: {value1}", { value1: t(window.pagentTheme.label()) }, "title");
+  bindTranslation(button, "Тема оформления: {value1}", { value1: t(window.pagentTheme.label()) }, "aria-label");
   const field = settingInput("theme");
   if (field) field.value = window.pagentTheme.read();
 }
@@ -6107,8 +6250,8 @@ function paintTotp() {
   if (!state || !currentUser) return;
   const on = currentUser.twoFactorEnabled;
   state.textContent = on
-    ? "Включён. При входе после пароля спрашивается код из приложения."
-    : "Выключен. Вход защищён только паролем.";
+    ? t("Включён. При входе после пароля спрашивается код из приложения.")
+    : t("Выключен. Вход защищён только паролем.");
   $("#totp-start").hidden = on;
   $("#totp-disable").hidden = !on;
   $("#totp-recovery").hidden = !on;
@@ -6138,7 +6281,7 @@ $("#totp-confirm")?.addEventListener("click", async () => {
     showRecoveryCodes(result.recoveryCodes);
     $("#totp-code").value = "";
     await loadAccount();
-    toast("Второй фактор включён");
+    toast(t("Второй фактор включён"));
   } catch (error) {
     toast(error.message);
   }
@@ -6159,13 +6302,13 @@ $("#totp-disable-submit")?.addEventListener("click", async (event) => {
     $("#totp-disable-dialog").close();
     $("#totp-codes").hidden = true;
     await loadAccount();
-    toast("Второй фактор выключен");
+    toast(t("Второй фактор выключен"));
   } catch (error) {
     toast(error.message);
   }
 });
 $("#totp-recovery")?.addEventListener("click", async () => {
-  const password = prompt("Пароль, чтобы выпустить новые резервные коды:");
+  const password = prompt(t("Пароль, чтобы выпустить новые резервные коды:"));
   if (!password) return;
   try {
     const result = await request("/api/auth/totp/recovery-codes", {
@@ -6173,7 +6316,7 @@ $("#totp-recovery")?.addEventListener("click", async () => {
       body: JSON.stringify({ password }),
     });
     showRecoveryCodes(result.recoveryCodes);
-    toast("Прежние резервные коды больше не работают");
+    toast(t("Прежние резервные коды больше не работают"));
   } catch (error) {
     toast(error.message);
   }
@@ -6185,7 +6328,7 @@ $("#password-submit")?.addEventListener("click", async (event) => {
   event.preventDefault();
   const current = $("#password-current").value,
     next = $("#password-new").value;
-  if (next !== $("#password-repeat").value) return toast("Пароли не совпадают");
+  if (next !== $("#password-repeat").value) return toast(t("Пароли не совпадают"));
   try {
     await request("/api/auth/password", {
       method: "POST",
@@ -6194,7 +6337,7 @@ $("#password-submit")?.addEventListener("click", async (event) => {
     for (const id of ["#password-current", "#password-new", "#password-repeat"])
       $(id).value = "";
     $("#password-dialog").close();
-    toast("Пароль сменён, остальные входы закрыты");
+    toast(t("Пароль сменён, остальные входы закрыты"));
   } catch (error) {
     toast(error.message);
   }
@@ -6202,10 +6345,10 @@ $("#password-submit")?.addEventListener("click", async (event) => {
 
 // ── администрирование ────────────────────────────────────────────────────────
 const statusNames = {
-  pending: "ждёт подтверждения",
-  active: "работает",
-  blocked: "заблокирован",
-  rejected: "отклонён",
+  get pending() { return t("ждёт подтверждения"); },
+  get active() { return t("работает"); },
+  get blocked() { return t("заблокирован"); },
+  get rejected() { return t("отклонён"); },
 };
 async function adminAction(userId, action, body) {
   try {
@@ -6227,14 +6370,14 @@ function adminButton(label, className, handler) {
 // Человек живёт в приложении или уже нет: две недели тишины — тот же порог,
 // по которому «Обзор» считает проект заглохшим.
 const SLEEPING_AFTER_DAYS = 14;
-const DAYS_WORDS = ["день", "дня", "дней"];
+const DAYS_WORDS = localizedBuiltins(["день", "дня", "дней"]);
 function daysBetween(iso) { return iso ? Math.floor((Date.now() - Date.parse(iso)) / 86400000) : null; }
 function agoWords(iso) {
   const days = daysBetween(iso);
   if (days === null) return null;
-  if (days <= 0) return "сегодня";
-  if (days === 1) return "вчера";
-  return `${plural(days, DAYS_WORDS)} назад`;
+  if (days <= 0) return t("сегодня");
+  if (days === 1) return t("вчера");
+  return t("{value1} назад", { value1: plural(days, DAYS_WORDS) });
 }
 // Полоса дней: сколько записей в каждый из последних тридцати. Высота — от
 // самого плотного дня этого человека: полоса про его ритм, а не про то, кто
@@ -6249,7 +6392,7 @@ function activityBand(activity, dates) {
     // пунктирной линейкой, а не провалом в работе.
     if (count) bar.style.height = `${30 + Math.round((count / top) * 70)}%`;
     else bar.style.height = "4px";
-    bar.title = `${dates?.[index] || ""}: ${plural(count, ["запись", "записи", "записей"])}`;
+    bar.title = `${dates?.[index] || ""}: ${plural(count, [t("запись"), t("записи"), t("записей")])}`;
     band.append(bar);
   });
   return band;
@@ -6261,12 +6404,12 @@ function activityLine(activity, dates) {
   wrap.append(activityBand(activity, dates));
   const facts = [];
   const last = agoWords(activity.lastCaptureAt);
-  facts.push(last ? `последняя запись ${last}` : "записей нет");
-  facts.push(`за 30 дней ${plural(activity.capturesPeriod, ["запись", "записи", "записей"])}`);
-  facts.push(`за неделю ${activity.capturesWeek}`);
-  if (activity.completedPeriod) facts.push(`закрыто ${plural(activity.completedPeriod, DEALS)}`);
-  facts.push(activity.calendars ? `календарь ${activity.calendars}` : "без календаря");
-  facts.push(activity.pushDevices ? `уведомления ${activity.pushDevices}` : "без уведомлений");
+  facts.push(last ? t("последняя запись {last}", { last: last }) : t("записей нет"));
+  facts.push(t("за 30 дней {value1}", { value1: plural(activity.capturesPeriod, [t("запись"), t("записи"), t("записей")]) }));
+  facts.push(t("за неделю {capturesWeek}", { capturesWeek: activity.capturesWeek }));
+  if (activity.completedPeriod) facts.push(t("закрыто {value1}", { value1: plural(activity.completedPeriod, DEALS) }));
+  facts.push(activity.calendars ? t("календарь {calendars}", { calendars: activity.calendars }) : t("без календаря"));
+  facts.push(activity.pushDevices ? t("уведомления {pushDevices}", { pushDevices: activity.pushDevices }) : t("без уведомлений"));
   wrap.append(node("p", facts.join(" · "), "admin-user-facts admin-user-activity"));
   return wrap;
 }
@@ -6276,9 +6419,9 @@ function activityTag(user) {
   const activity = user.activity;
   if (!activity || user.status !== "active") return null;
   const silence = [activity.lastCaptureAt, user.lastLoginAt].map(daysBetween).filter((days) => days !== null);
-  if (!activity.lastCaptureAt) return node("span", "ни одной записи", "admin-tag admin-state-new");
+  if (!activity.lastCaptureAt) return bindTranslation(node("span", t("ни одной записи"), "admin-tag admin-state-new"), "ни одной записи");
   const quiet = silence.length ? Math.min(...silence) : null;
-  if (quiet !== null && quiet >= SLEEPING_AFTER_DAYS) return node("span", `молчит ${plural(quiet, DAYS_WORDS)}`, "admin-tag admin-state-asleep");
+  if (quiet !== null && quiet >= SLEEPING_AFTER_DAYS) return bindTranslation(node("span", t("молчит {value1}", { value1: plural(quiet, DAYS_WORDS) }), "admin-tag admin-state-asleep"), "молчит {value1}", { value1: plural(quiet, DAYS_WORDS) });
   return null;
 }
 function userRow(user, { lastAdmin = false, days = null } = {}) {
@@ -6300,11 +6443,11 @@ function userRow(user, { lastAdmin = false, days = null } = {}) {
   const cap = user.monthlyLimitUsd;
   const capped = cap !== null && cap !== undefined;
   const facts = [
-    `записей ${user.captureCount ?? 0}`,
-    `в этом месяце $${spent.toFixed(2)}${capped ? ` из $${cap}` : " (потолок общий)"}`,
+    t("записей {value1}", { value1: user.captureCount ?? 0 }),
+    t("в этом месяце ${value1}{value2}", { value1: spent.toFixed(2), value2: capped ? t(" из ${value1}", { value1: cap }) : t(" (потолок общий)") }),
   ];
-  if (user.blockedReason) facts.push(`причина: ${user.blockedReason}`);
-  if (user.lastLoginAt) facts.push(`входил ${new Date(user.lastLoginAt).toLocaleString("ru-RU")}`);
+  if (user.blockedReason) facts.push(t("причина: {blockedReason}", { blockedReason: user.blockedReason }));
+  if (user.lastLoginAt) facts.push(t("входил {value1}", { value1: new Date(user.lastLoginAt).toLocaleString(getLocale(), { timeZone: getTimeZone() }) }));
   const factsLine = node("p", facts.join(" · "), "admin-user-facts");
   if (capped && spent >= cap) factsLine.classList.add("quota-exhausted");
   row.append(factsLine);
@@ -6312,34 +6455,34 @@ function userRow(user, { lastAdmin = false, days = null } = {}) {
 
   const actions = node("div", null, "admin-user-actions");
   if (user.status === "pending") {
-    actions.append(adminButton("Одобрить", "primary", () => adminAction(user.id, "approve")));
-    actions.append(adminButton("Отклонить", "secondary", () => adminAction(user.id, "reject")));
+    actions.append(adminButton(t("Одобрить"), "primary", () => adminAction(user.id, "approve")));
+    actions.append(adminButton(t("Отклонить"), "secondary", () => adminAction(user.id, "reject")));
   }
   if (user.status === "rejected")
-    actions.append(adminButton("Всё-таки пустить", "secondary", () => adminAction(user.id, "approve")));
+    actions.append(adminButton(t("Всё-таки пустить"), "secondary", () => adminAction(user.id, "approve")));
   // Последнего администратора не закрыть и не разжаловать: иначе приложение
   // осталось бы без хозяина. Сервер это тоже проверяет — здесь просто не
   // предлагаем того, что всё равно не выйдет.
   if (user.status === "active" && !lastAdmin)
     actions.append(
-      adminButton("Заблокировать", "danger", () => {
-        const reason = prompt(`Причина блокировки ${user.email} (необязательно):`);
+      adminButton(t("Заблокировать"), "danger", () => {
+        const reason = prompt(t("Причина блокировки {email} (необязательно):", { email: user.email }));
         if (reason === null) return;
         adminAction(user.id, "block", { reason });
       }),
     );
   if (user.status === "blocked")
-    actions.append(adminButton("Разблокировать", "secondary", () => adminAction(user.id, "unblock")));
+    actions.append(adminButton(t("Разблокировать"), "secondary", () => adminAction(user.id, "unblock")));
   if (user.status === "active" && !lastAdmin)
     actions.append(
       adminButton(
-        user.role === "admin" ? "Снять администратора" : "Сделать администратором",
+        user.role === "admin" ? t("Снять администратора") : t("Сделать администратором"),
         "secondary",
         () => adminAction(user.id, "role", { role: user.role === "admin" ? "user" : "admin" }),
       ),
     );
   if (user.twoFactorEnabled)
-    actions.append(adminButton("Сбросить 2FA", "secondary", () => adminAction(user.id, "reset-2fa")));
+    actions.append(adminButton(t("Сбросить 2FA"), "secondary", () => adminAction(user.id, "reset-2fa")));
   row.append(actions);
 
   // Пределы правятся полями, а не вопросом в модальном окне: их два, они
@@ -6359,9 +6502,9 @@ function userRow(user, { lastAdmin = false, days = null } = {}) {
     limits.append(wrap);
     return input;
   };
-  const monthly = field("Потолок, $/мес", "общий", user.monthlyLimitUsd, "monthlyLimitUsd", "1");
+  const monthly = field(t("Потолок, $/мес"), t("общий"), user.monthlyLimitUsd, "monthlyLimitUsd", "1");
   limits.append(
-    adminButton("Сохранить пределы", "secondary", () =>
+    adminButton(t("Сохранить пределы"), "secondary", () =>
       adminAction(user.id, "limits", {
         monthlyLimitUsd: monthly.value.trim(),
       }),
@@ -6397,18 +6540,18 @@ async function loadAdmin() {
   clear(events);
   try {
     const log = await request("/api/admin/auth-events?limit=25");
-    if (!log.events.length) events.append(node("p", "Пока пусто.", "empty"));
+    if (!log.events.length) events.append(bindTranslation(node("p", t("Пока пусто."), "empty"), "Пока пусто."));
     for (const event of log.events) {
       const line = node("div", null, "admin-event");
       line.append(
-        node("span", new Date(event.createdAt).toLocaleString("ru-RU"), "admin-event-when"),
+        node("span", new Date(event.createdAt).toLocaleString(getLocale(), { timeZone: getTimeZone() }), "admin-event-when"),
         node("span", event.email || "—", "admin-event-who"),
         node("span", `${event.event} · ${event.result}`, "admin-event-what"),
       );
       events.append(line);
     }
   } catch {
-    events.append(node("p", "Журнал входов не открылся.", "empty"));
+    events.append(bindTranslation(node("p", t("Журнал входов не открылся."), "empty"), "Журнал входов не открылся."));
   }
 }
 
@@ -6419,8 +6562,8 @@ loadAccount();
 // строка открывает карточку записи, всё названо словом. Данные считает сервер
 // одним запросом; здесь только отрисовка.
 const REPORT_TYPES = ["task", "meeting_event", "note", "outcome_decision", "idea_question"];
-const reportLegendNames = { task: "Задачи", meeting_event: "Встречи", note: "Заметки", outcome_decision: "Решения", idea_question: "Вопросы" };
-const correctionFieldNames = { schedule: "срок", primaryType: "тип", project: "проект", projects: "проекты", people: "люди", followUp: "следующий шаг", tags: "теги", priority: "важность", summary: "формулировка" };
+const reportLegendNames = { get task() { return t("Задачи"); }, get meeting_event() { return t("Встречи"); }, get note() { return t("Заметки"); }, get outcome_decision() { return t("Решения"); }, get idea_question() { return t("Вопросы"); } };
+const correctionFieldNames = { get schedule() { return t("срок"); }, get primaryType() { return t("тип"); }, get project() { return t("проект"); }, get projects() { return t("проекты"); }, get people() { return t("люди"); }, get followUp() { return t("следующий шаг"); }, get tags() { return t("теги"); }, get priority() { return t("важность"); }, get summary() { return t("формулировка"); } };
 function pluralRu(count, one, few, many) {
   const mod10 = count % 10, mod100 = count % 100;
   if (mod10 === 1 && mod100 !== 11) return one;
@@ -6431,10 +6574,10 @@ function pluralRu(count, one, few, many) {
 // зависит от пояса браузера, а время конкретных событий форматируется в поясе
 // журнала, который присылает сервер.
 function reportDateLabel(date, options = { day: "numeric", month: "short" }) {
-  return new Intl.DateTimeFormat("ru-RU", { timeZone: "UTC", ...options }).format(new Date(`${date}T12:00:00Z`));
+  return new Intl.DateTimeFormat(getLocale(), { timeZone: "UTC", ...options }).format(new Date(`${date}T12:00:00Z`));
 }
 function reportTimeLabel(at, timeZone) {
-  return new Intl.DateTimeFormat("ru-RU", { timeZone, hour: "2-digit", minute: "2-digit" }).format(new Date(at));
+  return new Intl.DateTimeFormat(getLocale(), { timeZone, hour: "2-digit", minute: "2-digit" }).format(new Date(at));
 }
 function reportCounter({ num, cap, sub, cls = "" }) {
   const box = node("div", undefined, "report-counter");
@@ -6457,7 +6600,7 @@ async function openReportEntry(captureId, { occurrence = null, subtasks = false 
   try {
     const { entries } = await request("/api/entries?limit=100");
     const entry = entries.find((candidate) => candidate.id === captureId);
-    if (!entry) { toast("Запись не нашлась среди последних ста."); return; }
+    if (!entry) { toast(t("Запись не нашлась среди последних ста.")); return; }
     const review = reviewFromEntry(entry);
     cardScrollTarget = subtasks ? captureId : null;
     showCorrection(entry, review.level === "high" ? undefined : review);
@@ -6467,7 +6610,7 @@ async function openReportEntry(captureId, { occurrence = null, subtasks = false 
 }
 function reportItem({ captureId, title, type = null, meta = null, metaCls = "" }) {
   const item = node("li", undefined, undefined);
-  item.title = "Откроется карточка записи";
+  bindTranslation(item, "Откроется карточка записи", "title");
   if (type) item.append(node("i", undefined, `report-dot ${type}`));
   item.append(node("span", String(title).split("\n")[0], "t"));
   if (meta) item.append(node("span", meta, `meta ${metaCls}`.trim()));
@@ -6492,7 +6635,7 @@ function reportBar({ name, caption = null, share, value, cost = false }) {
   return row;
 }
 function reportPulseCard(pulse, captionText) {
-  const card = reportCard("Пульс", { right: captionText });
+  const card = reportCard(t("Пульс"), { right: captionText });
   const chart = node("div", undefined, "report-chart"),
     labels = node("div", undefined, "report-chart-labels");
   const max = Math.max(...pulse.columns.map((column) => column.total), 1);
@@ -6532,58 +6675,58 @@ function renderReportsLife(area, data) {
   clear(area);
   const c = data.counters;
   const counters = node("div", undefined, "report-counters");
-  const periodNames = { week: "за неделю", month: "за месяц", all: "за всё время" };
-  const prevNames = { week: "прошлая неделя", month: "прошлый месяц" };
+  const periodNames = { get week() { return t("за неделю"); }, get month() { return t("за месяц"); }, get all() { return t("за всё время"); } };
+  const prevNames = { get week() { return t("прошлая неделя"); }, get month() { return t("прошлый месяц"); } };
   counters.append(
-    reportCounter({ num: c.done, cls: c.done ? "good" : "", cap: pluralRu(c.done, "задача сделана", "задачи сделано", "задач сделано"), sub: periodNames[data.period] }),
-    reportCounter({ num: c.captures, cap: pluralRu(c.captures, "новая запись", "новые записи", "новых записей"), sub: c.capturesPrev === null ? "с самого начала" : `${prevNames[data.period]} — ${c.capturesPrev}` }),
-    reportCounter({ num: c.overdue, cls: c.overdue ? "bad" : "", cap: "просрочено", sub: c.overdue ? `старейшей — ${c.overdueOldestDays} ${pluralRu(c.overdueOldestDays, "день", "дня", "дней")}` : "хвостов нет" }),
-    reportCounter({ num: c.questions, cap: pluralRu(c.questions, "вопрос без ответа", "вопроса без ответа", "вопросов без ответа"), sub: c.questions ? `старейшему — ${c.questionsOldestDays} ${pluralRu(c.questionsOldestDays, "день", "дня", "дней")}` : "всё отвечено" }),
+    reportCounter({ num: c.done, cls: c.done ? "good" : "", cap: pluralRu(c.done, t("задача сделана"), t("задачи сделано"), t("задач сделано")), sub: periodNames[data.period] }),
+    reportCounter({ num: c.captures, cap: pluralRu(c.captures, t("новая запись"), t("новые записи"), t("новых записей")), sub: c.capturesPrev === null ? t("с самого начала") : `${prevNames[data.period]} — ${c.capturesPrev}` }),
+    reportCounter({ num: c.overdue, cls: c.overdue ? "bad" : "", get cap() { return t("просрочено"); }, sub: c.overdue ? t("старейшей — {overdueOldestDays} {value2}", { overdueOldestDays: c.overdueOldestDays, value2: pluralRu(c.overdueOldestDays, t("день"), t("дня"), t("дней")) }) : t("хвостов нет") }),
+    reportCounter({ num: c.questions, cap: pluralRu(c.questions, t("вопрос без ответа"), t("вопроса без ответа"), t("вопросов без ответа")), sub: c.questions ? t("старейшему — {questionsOldestDays} {value2}", { questionsOldestDays: c.questionsOldestDays, value2: pluralRu(c.questionsOldestDays, t("день"), t("дня"), t("дней")) }) : t("всё отвечено") }),
   );
   area.append(counters);
 
   const pulseCaption = data.pulse.unit === "week"
-    ? "записи по неделям"
-    : `записи по дням, ${reportDateLabel(data.from)} — ${reportDateLabel(shiftDate(data.to, -1))}`;
+    ? t("записи по неделям")
+    : t("записи по дням, {value1} — {value2}", { value1: reportDateLabel(data.from), value2: reportDateLabel(shiftDate(data.to, -1)) });
   area.append(reportPulseCard(data.pulse, pulseCaption));
 
   const tails = node("div", undefined, "report-grid-3");
-  const overdueCard = reportCard("Просрочено", { right: String(data.overdue.length || ""), hint: "Задачи со сроком в прошлом" });
+  const overdueCard = reportCard(t("Просрочено"), { right: String(data.overdue.length || ""), get hint() { return t("Задачи со сроком в прошлом"); } });
   overdueCard.append(reportItemList(data.overdue.map((row) => ({
     captureId: row.captureId, title: row.title, type: "task",
-    meta: row.daysLate === 1 ? "вчера" : `${row.daysLate} ${pluralRu(row.daysLate, "день", "дня", "дней")}`, metaCls: "bad",
-  })), "Хвостов нет."));
-  const questionsCard = reportCard("Без ответа", { right: String(data.questions.length || ""), hint: "Открытые вопросы и идеи" });
+    meta: row.daysLate === 1 ? t("вчера") : `${row.daysLate} ${pluralRu(row.daysLate, t("день"), t("дня"), t("дней"))}`, metaCls: "bad",
+  })), t("Хвостов нет.")));
+  const questionsCard = reportCard(t("Без ответа"), { right: String(data.questions.length || ""), get hint() { return t("Открытые вопросы и идеи"); } });
   questionsCard.append(reportItemList(data.questions.map((row) => ({
     captureId: row.captureId, title: row.title, type: "idea_question",
     meta: reportDateLabel(row.createdAt.slice(0, 10)),
-  })), "Открытых вопросов нет."));
-  const silentCard = reportCard("Встречи без следа", { right: String(data.silentMeetings.length || ""), hint: "Прошли, но итог не записан" });
+  })), t("Открытых вопросов нет.")));
+  const silentCard = reportCard(t("Встречи без следа"), { right: String(data.silentMeetings.length || ""), get hint() { return t("Прошли, но итог не записан"); } });
   silentCard.append(reportItemList(data.silentMeetings.map((row) => ({
     captureId: row.captureId, title: row.title, type: "meeting_event",
     meta: reportDateLabel(row.date),
-  })), "У всех встреч есть след."));
+  })), t("У всех встреч есть след.")));
   tails.append(overdueCard, questionsCard, silentCard);
   area.append(tails);
 
   const slices = node("div", undefined, "report-grid-2");
-  const projectsCard = reportCard("Проекты", { right: "по числу записей" });
+  const projectsCard = reportCard(t("Проекты"), { get right() { return t("по числу записей"); } });
   if (data.projects.length) {
     const bars = node("div", undefined, "report-bars");
     const max = Math.max(...data.projects.map((row) => row.count), 1);
     for (const row of data.projects) bars.append(reportBar({ name: row.name, share: row.count / max, value: String(row.count) }));
     projectsCard.append(bars);
   } else {
-    projectsCard.append(node("p", "В записях периода проектов нет.", "report-empty"));
+    projectsCard.append(bindTranslation(node("p", t("В записях периода проектов нет."), "report-empty"), "В записях периода проектов нет."));
   }
   if (data.stalled.length) {
     const stale = node("div", undefined, "report-stale");
-    stale.append(node("p", "Заглохло", "lbl"));
+    stale.append(bindTranslation(node("p", t("Заглохло"), "lbl"), "Заглохло"));
     for (const row of data.stalled)
-      stale.append(node("div", `${row.name} — ${row.daysQuiet} ${pluralRu(row.daysQuiet, "день", "дня", "дней")} без записей`, "row"));
+      stale.append(bindTranslation(node("div", t("{name} — {daysQuiet} {value3} без записей", { name: row.name, daysQuiet: row.daysQuiet, value3: pluralRu(row.daysQuiet, t("день"), t("дня"), t("дней")) }), "row"), "{name} — {daysQuiet} {value3} без записей", { name: row.name, daysQuiet: row.daysQuiet, value3: pluralRu(row.daysQuiet, t("день"), t("дня"), t("дней")) }));
     projectsCard.append(stale);
   }
-  const peopleCard = reportCard("Люди и теги");
+  const peopleCard = reportCard(t("Люди и теги"));
   const chips = (rows, formatName) => {
     const wrap = node("div", undefined, "report-chips");
     for (const row of rows) {
@@ -6593,30 +6736,30 @@ function renderReportsLife(area, data) {
     }
     return wrap;
   };
-  peopleCard.append(data.people.length ? chips(data.people, (name) => name) : node("p", "Людей в записях периода нет.", "report-empty"));
-  peopleCard.append(node("p", "Теги", "report-chip-lbl"));
-  peopleCard.append(data.tags.length ? chips(data.tags, (name) => `#${name}`) : node("p", "Тегов пока нет.", "report-empty"));
+  peopleCard.append(data.people.length ? chips(data.people, (name) => name) : bindTranslation(node("p", t("Людей в записях периода нет."), "report-empty"), "Людей в записях периода нет."));
+  peopleCard.append(bindTranslation(node("p", t("Теги"), "report-chip-lbl"), "Теги"));
+  peopleCard.append(data.tags.length ? chips(data.tags, (name) => `#${name}`) : bindTranslation(node("p", t("Тегов пока нет."), "report-empty"), "Тегов пока нет."));
   slices.append(projectsCard, peopleCard);
   area.append(slices);
 
-  const discipline = reportCard("Дисциплина", { right: "по закрытым записям периода" });
+  const discipline = reportCard(t("Дисциплина"), { get right() { return t("по закрытым записям периода"); } });
   if (!data.discipline.closed) {
-    discipline.append(node("p", "В этом периоде ничего не закрыто.", "report-empty"));
+    discipline.append(bindTranslation(node("p", t("В этом периоде ничего не закрыто."), "report-empty"), "В этом периоде ничего не закрыто."));
   } else {
     const facts = node("div", undefined, "report-facts");
     if (data.discipline.medianDays !== null) {
       const fact = node("div", undefined, "report-fact");
-      fact.append(node("b", `${String(data.discipline.medianDays).replace(".", ",")} ${pluralRu(Math.round(data.discipline.medianDays) || 1, "день", "дня", "дней")}`));
-      fact.append(document.createTextNode("живёт дело — от записи до «готово» (медиана)"));
+      fact.append(node("b", `${String(data.discipline.medianDays).replace(".", ",")} ${pluralRu(Math.round(data.discipline.medianDays) || 1, t("день"), t("дня"), t("дней"))}`));
+      fact.append(document.createTextNode(t("живёт дело — от записи до «готово» (медиана)")));
       facts.append(fact);
     }
     if (data.discipline.withDue) {
       const fact = node("div", undefined, "report-fact");
-      fact.append(node("b", `${data.discipline.onTime} из ${data.discipline.withDue}`));
-      fact.append(document.createTextNode("дел со сроком закрыты вовремя"));
+      fact.append(bindTranslation(node("b", t("{onTime} из {withDue}", { onTime: data.discipline.onTime, withDue: data.discipline.withDue })), "{onTime} из {withDue}", { onTime: data.discipline.onTime, withDue: data.discipline.withDue }));
+      fact.append(document.createTextNode(t("дел со сроком закрыты вовремя")));
       facts.append(fact);
     }
-    if (!facts.childNodes.length) facts.append(node("p", "Закрытых дел со сроком в периоде нет.", "report-empty"));
+    if (!facts.childNodes.length) facts.append(bindTranslation(node("p", t("Закрытых дел со сроком в периоде нет."), "report-empty"), "Закрытых дел со сроком в периоде нет."));
     discipline.append(facts);
   }
   area.append(discipline);
@@ -6626,14 +6769,14 @@ function renderReportsService(area, data) {
   const service = data.service;
   const counters = node("div", undefined, "report-counters");
   counters.append(
-    reportCounter({ num: money(service.usage.costUsd), cap: "потрачено на разбор", sub: service.usage.unpriced ? `${service.usage.unpriced} ${pluralRu(service.usage.unpriced, "вызов", "вызова", "вызовов")} без цены` : "по данным провайдеров" }),
-    reportCounter({ num: service.usage.calls, cap: pluralRu(service.usage.calls, "вызов модели", "вызова модели", "вызовов модели"), sub: service.quality.failed ? `${service.quality.failed} неудачных` : "все удались" }),
-    reportCounter({ num: service.quality.corrections, cap: pluralRu(service.quality.corrections, "правка после модели", "правки после модели", "правок после модели"), sub: service.quality.topField ? `чаще всего — ${correctionFieldNames[service.quality.topField.field] || service.quality.topField.field}` : "правок не было" }),
+    reportCounter({ num: money(service.usage.costUsd), get cap() { return t("потрачено на разбор"); }, sub: service.usage.unpriced ? t("{unpriced} {value2} без цены", { unpriced: service.usage.unpriced, value2: pluralRu(service.usage.unpriced, t("вызов"), t("вызова"), t("вызовов")) }) : t("по данным провайдеров") }),
+    reportCounter({ num: service.usage.calls, cap: pluralRu(service.usage.calls, t("вызов модели"), t("вызова модели"), t("вызовов модели")), sub: service.quality.failed ? t("{failed} неудачных", { failed: service.quality.failed }) : t("все удались") }),
+    reportCounter({ num: service.quality.corrections, cap: pluralRu(service.quality.corrections, t("правка после модели"), t("правки после модели"), t("правок после модели")), sub: service.quality.topField ? t("чаще всего — {value1}", { value1: correctionFieldNames[service.quality.topField.field] || service.quality.topField.field }) : t("правок не было") }),
   );
   area.append(counters);
 
   const grid = node("div", undefined, "report-grid-2");
-  const usageCard = reportCard("Расходы на модели", { right: "за период" });
+  const usageCard = reportCard(t("Расходы на модели"), { get right() { return t("за период"); } });
   if (service.usage.rows.length) {
     const bars = node("div", undefined, "report-bars");
     const max = Math.max(...service.usage.rows.map((row) => row.costUsd), 0.0001);
@@ -6641,14 +6784,14 @@ function renderReportsService(area, data) {
       bars.append(reportBar({ name: providerNames[row.provider] || row.provider, caption: row.model || null, share: row.costUsd / max, value: money(row.costUsd), cost: true }));
     usageCard.append(bars);
   } else {
-    usageCard.append(node("p", "В этом периоде модели не вызывались.", "report-empty"));
+    usageCard.append(bindTranslation(node("p", t("В этом периоде модели не вызывались."), "report-empty"), "В этом периоде модели не вызывались."));
   }
-  const qualityCard = reportCard("Качество разбора");
+  const qualityCard = reportCard(t("Качество разбора"));
   const rows = [
-    ["Правок после модели", service.quality.corrections],
-    ["Переразборов моделью", service.quality.reclassified],
-    ["Ждут разбора сейчас", service.quality.pendingNow],
-    ["Неудачных разборов", service.quality.failed],
+    [t("Правок после модели"), service.quality.corrections],
+    [t("Переразборов моделью"), service.quality.reclassified],
+    [t("Ждут разбора сейчас"), service.quality.pendingNow],
+    [t("Неудачных разборов"), service.quality.failed],
   ];
   const list = node("ul", undefined, "report-items");
   for (const [label, value] of rows) {
@@ -6662,7 +6805,7 @@ function renderReportsService(area, data) {
   area.append(grid);
 
   if (service.quality.providers.length) {
-    const accuracy = reportCard("Точность по провайдерам", { right: "правки на разбор — меньше лучше" });
+    const accuracy = reportCard(t("Точность по провайдерам"), { get right() { return t("правки на разбор — меньше лучше"); } });
     const bars = node("div", undefined, "report-bars");
     for (const row of service.quality.providers)
       bars.append(reportBar({ name: providerNames[row.provider] || row.provider, share: row.parses ? row.corrections / row.parses : 0, value: `${row.corrections}/${row.parses}` }));
@@ -6676,38 +6819,38 @@ function renderReportsDay(area, data) {
   const weekday = reportDateLabel(data.date, { weekday: "short" });
   const label = `${weekday}, ${reportDateLabel(data.date)}`;
   $("#reports-day-label").textContent =
-    data.date === data.latest ? `сегодня — ${label}` : data.date === shiftDate(data.latest, -1) ? `вчера — ${label}` : label;
+    data.date === data.latest ? t("сегодня — {label}", { label: label }) : data.date === shiftDate(data.latest, -1) ? t("вчера — {label}", { label: label }) : label;
   $("#reports-day-prev").disabled = !data.hasOlder;
   $("#reports-day-next").disabled = data.date >= data.latest;
   const counters = node("div", undefined, "report-counters");
   const times = data.feed.map((row) => reportTimeLabel(row.at, data.timeZone));
   counters.append(
-    reportCounter({ num: data.done.length, cls: data.done.length ? "good" : "", cap: pluralRu(data.done.length, "дело сделано", "дела сделано", "дел сделано"), sub: data.done.length ? null : "в этот день — ничего" }),
-    reportCounter({ num: data.feed.length, cap: pluralRu(data.feed.length, "новая запись", "новые записи", "новых записей"), sub: times.length > 1 ? `с ${times[0]} до ${times.at(-1)}` : null }),
-    reportCounter({ num: data.meetings, cap: pluralRu(data.meetings, "встреча", "встречи", "встреч"), sub: null }),
-    reportCounter({ num: data.missed.length, cls: data.missed.length ? "bad" : "", cap: "не успел", sub: data.missed.length ? "срок был в этот день" : "хвостов не осталось" }),
+    reportCounter({ num: data.done.length, cls: data.done.length ? "good" : "", cap: pluralRu(data.done.length, t("дело сделано"), t("дела сделано"), t("дел сделано")), sub: data.done.length ? null : t("в этот день — ничего") }),
+    reportCounter({ num: data.feed.length, cap: pluralRu(data.feed.length, t("новая запись"), t("новые записи"), t("новых записей")), sub: times.length > 1 ? t("с {value1} до {value2}", { value1: times[0], value2: times.at(-1) }) : null }),
+    reportCounter({ num: data.meetings, cap: pluralRu(data.meetings, t("встреча"), t("встречи"), t("встреч")), sub: null }),
+    reportCounter({ num: data.missed.length, cls: data.missed.length ? "bad" : "", get cap() { return t("не успел"); }, sub: data.missed.length ? t("срок был в этот день") : t("хвостов не осталось") }),
   );
   area.append(counters);
 
   const grid = node("div", undefined, "report-grid-2");
-  const doneCard = reportCard("Сделано", { right: String(data.done.length || ""), hint: "Зафиксированная работа за этот день — как во вкладке «Закрыто»" });
+  const doneCard = reportCard(t("Сделано"), { right: String(data.done.length || ""), get hint() { return t("Зафиксированная работа за этот день — как во вкладке «Закрыто»"); } });
   doneCard.append(reportItemList(data.done.map((row) => ({
     captureId: row.captureId, title: row.title, type: row.type,
     meta: reportTimeLabel(row.at, data.timeZone), metaCls: "ok",
-  })), "За этот день работа не зафиксирована."));
-  const missedCard = reportCard("Не успел", { right: String(data.missed.length || ""), hint: "Срок был в этот день, к вечеру не закрыто" });
+  })), t("За этот день работа не зафиксирована.")));
+  const missedCard = reportCard(t("Не успел"), { right: String(data.missed.length || ""), get hint() { return t("Срок был в этот день, к вечеру не закрыто"); } });
   missedCard.append(reportItemList(data.missed.map((row) => ({
     captureId: row.captureId, title: row.title, type: "task",
-    meta: row.closedLater ? "закрыто позже" : "теперь в «Просрочено»", metaCls: row.closedLater ? "" : "bad",
-  })), "Всё со сроком на этот день — закрыто."));
+    meta: row.closedLater ? t("закрыто позже") : t("теперь в «Просрочено»"), metaCls: row.closedLater ? "" : "bad",
+  })), t("Всё со сроком на этот день — закрыто.")));
   grid.append(doneCard, missedCard);
   area.append(grid);
 
-  const feedCard = reportCard("Записано за день", { right: String(data.feed.length || ""), hint: "Все записи дня по времени" });
+  const feedCard = reportCard(t("Записано за день"), { right: String(data.feed.length || ""), get hint() { return t("Все записи дня по времени"); } });
   feedCard.append(reportItemList(data.feed.map((row) => ({
     captureId: row.captureId, title: row.title, type: row.type,
     meta: reportTimeLabel(row.at, data.timeZone),
-  })), "Записей в этот день нет."));
+  })), t("Записей в этот день нет.")));
   area.append(feedCard);
 }
 function reportsView(tab) {
@@ -6719,7 +6862,7 @@ async function loadReports() {
   $("#reports-period").hidden = tab === "day";
   $("#reports-daynav").hidden = tab !== "day";
   const area = reportsView(tab);
-  if (!area.childNodes.length) area.append(node("p", "Считаем…", "empty"));
+  if (!area.childNodes.length) area.append(bindTranslation(node("p", t("Считаем…"), "empty"), "Считаем…"));
   try {
     if (tab === "day") {
       const query = reportsState.dayDate ? `?date=${reportsState.dayDate}` : "";
@@ -6769,9 +6912,9 @@ function pastedImages(data) {
 // в списке вложений снимки различались.
 function shotName(file) {
   if (file.name && !/^image\.\w+$/i.test(file.name)) return file.name;
-  const stamp = new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date()).replaceAll(":", "-");
+  const stamp = new Intl.DateTimeFormat(getLocale(), { timeZone: getTimeZone(), hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date()).replaceAll(":", "-");
   const extension = (file.type.split("/")[1] || "png").replace("jpeg", "jpg");
-  return `снимок-${stamp}.${extension}`;
+  return t("снимок-{stamp}.{extension}", { stamp: stamp, extension: extension });
 }
 function namedShot(file) {
   return new File([file], shotName(file), { type: file.type });
@@ -6790,8 +6933,8 @@ function paintCaptureShots() {
     // Миниатюра в 52px — лишь знак, что снимок на месте: разглядеть его можно
     // по клику, в том же просмотре, что и у вложений карточки.
     open.type = "button";
-    open.title = "Открыть снимок";
-    open.setAttribute("aria-label", `Открыть ${shot.file.name}`);
+    bindTranslation(open, "Открыть снимок", "title");
+    bindTranslation(open, "Открыть {name}", { name: shot.file.name }, "aria-label");
     open.addEventListener("click", () =>
       previewAttachment(
         { id: null, filename: shot.file.name, contentType: shot.file.type, size: shot.file.size },
@@ -6800,8 +6943,8 @@ function paintCaptureShots() {
     );
     open.append(image);
     remove.type = "button";
-    remove.title = "Убрать снимок";
-    remove.setAttribute("aria-label", `Убрать ${shot.file.name}`);
+    bindTranslation(remove, "Убрать снимок", "title");
+    bindTranslation(remove, "Убрать {name}", { name: shot.file.name }, "aria-label");
     remove.addEventListener("click", () => {
       URL.revokeObjectURL(shot.url);
       pendingShots.splice(pendingShots.indexOf(shot), 1);
@@ -6813,8 +6956,8 @@ function paintCaptureShots() {
 }
 function queueShots(files) {
   for (const file of files) {
-    if (pendingShots.length >= SHOT_LIMIT) { toast(`До ${SHOT_LIMIT} снимков на запись.`); break; }
-    if (file.size > SHOT_SIZE_LIMIT) { toast("Снимок больше 10 МБ не приложится."); continue; }
+    if (pendingShots.length >= SHOT_LIMIT) { toast(t("До {SHOT_LIMIT} снимков на запись.", { SHOT_LIMIT: SHOT_LIMIT })); break; }
+    if (file.size > SHOT_SIZE_LIMIT) { toast(t("Снимок больше 10 МБ не приложится.")); continue; }
     const named = namedShot(file);
     pendingShots.push({ file: named, url: URL.createObjectURL(named) });
   }
@@ -6840,7 +6983,7 @@ async function uploadPendingShots(captureId) {
         body: shot.file,
       });
       const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(payload?.error?.message || "Снимок не приложился.");
+      if (!response.ok) throw new Error(payload?.error?.message || t("Снимок не приложился."));
     } catch (error) {
       toast(error.message);
     } finally {
@@ -6869,7 +7012,8 @@ async function uploadPendingShots(captureId) {
 // стоят непустые группы и те, что он добавил через «+ Колонка» (kizuna-board-shown).
 // Логика фильтра, порядка и заведённых колонок — в public/board-model.js, здесь —
 // хранение и рисунок.
-const BOARD_FIELDS = Object.fromEntries(Object.entries(FILTER_FIELDS).filter(([key]) => key !== "status"));
+const BOARD_FIELDS = Object.fromEntries(Object.keys(FILTER_FIELDS).filter(key => key !== "status").map(key => [key, null]));
+for (const key of Object.keys(BOARD_FIELDS)) Object.defineProperty(BOARD_FIELDS, key, { enumerable: true, get: () => FILTER_FIELDS[key] });
 const BOARD_VIEWS = ["board", "list"];
 const BOARD_VIEW_KEY = "kizuna-board-view";
 const BOARD_GROUPS_KEY = "kizuna-board-groups";
@@ -6882,8 +7026,8 @@ const BOARD_SHOWN_KEY = "kizuna-board-shown";
 const BOARD_SUBS_KEY = "kizuna-board-subtasks";
 // Порядок групп фиксированный: у дня и источника — свой, у человека и
 // проекта — по алфавиту, «без …» всегда последним.
-const BOARD_DAYS = [["late", "просрочено"], ["today", "сегодня"], ["tomorrow", "завтра"], ["week", "на неделе"], ["later", "позже"], ["none", "без срока"]];
-const BOARD_SOURCES = [["telegram", "Telegram"], ["notes", "Заметки"], ["field", "Поле"]];
+const BOARD_DAYS = localizedBuiltins([["late", "просрочено"], ["today", "сегодня"], ["tomorrow", "завтра"], ["week", "на неделе"], ["later", "позже"], ["none", "без срока"]]);
+const BOARD_SOURCES = localizedBuiltins([["telegram", "Telegram"], ["notes", "Заметки"], ["field", "Поле"]]);
 // Срок, который получает дело, брошенное в группу-день: через сколько дней от
 // сегодня. «Просрочено» срока не назначает, «без срока» его снимает.
 const BOARD_DAY_DROP = { today: 0, tomorrow: 1, week: 2, later: 14 };
@@ -6982,7 +7126,7 @@ const chatState = { rooms: [], messages: [], more: false, loading: false, drafts
 window.addEventListener("kizuna:before-update", (event) => {
   if (typeof event.detail?.block !== "function") return;
   if (Object.values(chatState.drafts).some((text) => text.trim())) {
-    event.detail.block("В «Кругах» есть неотправленный текст. Отправьте или очистите его перед обновлением.");
+    event.detail.block(t("В «Кругах» есть неотправленный текст. Отправьте или очистите его перед обновлением."));
   }
 });
 const kc = {
@@ -6992,7 +7136,7 @@ const kc = {
 };
 const KC_REACTIONS = ["👍", "❤️", "🔥", "🙏", "👀", "✅"];
 // Тип записи — цвет и слово для строки обсуждения.
-const KC_KIND = { todo: ["violet", "дело"], meeting: ["orange", "встреча"], outcome: ["blue", "результат"], note: ["teal", "заметка"], idea: ["pink", "идея"] };
+const KC_KIND = localizedBuiltins({ todo: ["violet", "дело"], meeting: ["orange", "встреча"], outcome: ["blue", "результат"], note: ["teal", "заметка"], idea: ["pink", "идея"] });
 const KC_NAME_TONES = ["violet", "blue", "teal", "orange", "pink", "red"];
 function kcStored(key, fallback) {
   try { const value = localStorage.getItem(key); return value === null ? fallback : JSON.parse(value); } catch { return fallback; }
@@ -7052,7 +7196,7 @@ function kcReadMark(read) {
     ? '<svg viewBox="0 0 16 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m1.4 6.4 2.6 2.6L9.4 3.4M7.4 8.6l.4.4 5.4-5.6"/></svg>'
     : '<svg viewBox="0 0 16 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3 6.4 2.6 2.6L11 3.4"/></svg>';
   holder.setAttribute("role", "img");
-  holder.setAttribute("aria-label", read ? "прочитано" : "отправлено");
+  holder.setAttribute("aria-label", read ? t("прочитано") : t("отправлено"));
   return holder;
 }
 // Разметка собирается узлами: имена, названия и сообщения — чужой текст.
@@ -7087,20 +7231,20 @@ function kcNameTone(personId) {
 // Время в пузыре и в списке — только часы: день уже сказан плашкой над
 // сообщениями или словом «вчера».
 function kcClock(iso) {
-  try { return new Intl.DateTimeFormat("ru-RU", { timeZone: TODAY_ZONE, hour: "2-digit", minute: "2-digit" }).format(new Date(iso)); } catch { return ""; }
+  try { return new Intl.DateTimeFormat(getLocale(), { timeZone: getTimeZone(), hour: "2-digit", minute: "2-digit" }).format(new Date(iso)); } catch { return ""; }
 }
 function kcWhen(iso) {
   if (!iso) return "";
   const day = zoneDate(new Date(iso));
   const today = currentDayDate || zoneDate(new Date());
   if (day === today) return kcClock(iso);
-  if (day === shiftDate(today, -1)) return "вчера";
+  if (day === shiftDate(today, -1)) return t("вчера");
   return reportDateLabel(day, { day: "numeric", month: "short" });
 }
 function kcDayLabel(day) {
   const today = currentDayDate || zoneDate(new Date());
-  if (day === today) return "Сегодня";
-  if (day === shiftDate(today, -1)) return "Вчера";
+  if (day === today) return t("Сегодня");
+  if (day === shiftDate(today, -1)) return t("Вчера");
   return reportDateLabel(day, { weekday: "long", day: "numeric", month: "long" });
 }
 const kcDue = (due) => (due?.date ? `${reportDateLabel(due.date, { day: "numeric", month: "short" })}${due.time ? `, ${due.time}` : ""}` : "");
@@ -7193,7 +7337,7 @@ async function kcOpen(key) {
       if (changed && unread) kc.newFrom = kcNewFrom(chatState.messages, unread);
     } catch (error) {
       chatState.messages = [];
-      toast(error.message || "Разговор не открылся");
+      toast(error.message || t("Разговор не открылся"));
     } finally { chatState.loading = false; }
     if (unread) load().catch(() => {});
   } else {
@@ -7210,7 +7354,7 @@ async function kcOpen(key) {
       if (changed && unread) kc.newFrom = kcNewFrom(kc.talk.comments, unread);
     } catch (error) {
       kc.talk = { captureId, comments: [], callable: [], participants: [] };
-      toast(error.message || "Обсуждение не открылось");
+      toast(error.message || t("Обсуждение не открылось"));
     } finally { chatState.loading = false; }
   }
   renderCircles({ toBottom: true });
@@ -7249,7 +7393,7 @@ async function loadCircles({ then = null } = {}) {
     }
   } catch (error) {
     const body = $("#circles-body");
-    if (body) { clear(body); body.append(node("p", error.message || "Не удалось загрузить круги", "empty")); }
+    if (body) { clear(body); body.append(node("p", error.message || t("Не удалось загрузить круги"), "empty")); }
   } finally {
     circlesState.loading = false;
     const again = circlesState.again;
@@ -7357,7 +7501,7 @@ const kcTabCount = (where) => kcThreads().filter((item) => kcWhereOf(item) === w
 function kcTabs() {
   const tabs = kcEl("div", "kc-tabs");
   tabs.setAttribute("role", "tablist");
-  tabs.setAttribute("aria-label", "Круги");
+  bindTranslation(tabs, "Круги", "aria-label");
   const tab = (where, face, label, { tone = "", muted = false } = {}) => {
     const on = kc.circle === where;
     const count = kcTabCount(where);
@@ -7369,8 +7513,8 @@ function kcTabs() {
     return button;
   };
   for (const circle of circlesState.circles) tabs.append(tab(circle.id, kcCircleSeal(circle, ""), circle.name, { tone: kcTone(circle.color), muted: circle.muted }));
-  if (kcThreads().some((item) => kcWhereOf(item) === "none")) tabs.append(tab("none", kcEl("span", "kc-tab-doc", kcIcon("doc")), "Без круга"));
-  tabs.append(kcButton("kc-tab add", [kcIcon("plus"), kcEl("span", "kc-tab-name", "Круг")], () => kcModalOpen("circle"), { "aria-label": "Новый круг", title: "Новый круг" }));
+  if (kcThreads().some((item) => kcWhereOf(item) === "none")) tabs.append(tab("none", kcEl("span", "kc-tab-doc", kcIcon("doc")), t("Без круга")));
+  tabs.append(kcButton("kc-tab add", [kcIcon("plus"), kcEl("span", "kc-tab-name", t("Круг"))], () => kcModalOpen("circle"), { get "aria-label"() { return t("Новый круг"); }, get title() { return t("Новый круг"); } }));
   return tabs;
 }
 // Вкладка открывает разговор, на котором в этом круге остановились, иначе —
@@ -7396,14 +7540,14 @@ function kcTable(current, circle) {
   if (!kc.table) return null;
   const seats = kcEl("div", "kc-seats");
   if (circle) {
-    seats.setAttribute("aria-label", `Люди круга «${circle.name}»`);
+    bindTranslation(seats, "Люди круга «{name}»", { name: circle.name }, "aria-label");
     for (const member of circle.members) seats.append(kcSeat(member, circle, current));
-    seats.append(kcButton("kc-seat add", [kcEl("span", "kc-seat-plus", kcIcon("personAdd")), kcEl("span", "kc-seat-who", kcEl("b", null, "Позвать"), kcEl("small", null, "из Кизуны или ссылкой"))], () => kcInfoOpen("invite")));
+    seats.append(kcButton("kc-seat add", [kcEl("span", "kc-seat-plus", kcIcon("personAdd")), kcEl("span", "kc-seat-who", kcEl("b", null, t("Позвать")), kcEl("small", null, t("из Кизуны или ссылкой")))], () => kcInfoOpen("invite")));
   } else if (current?.kind === "talk") {
-    seats.setAttribute("aria-label", "Участники обсуждения");
+    bindTranslation(seats, "Участники обсуждения", "aria-label");
     for (const person of kcTalkPeople(current)) seats.append(kcSeat(person, null, current));
   } else return null;
-  return kcEl("div", "kc-band", seats, kcButton("kc-icon kc-band-fold", kcIcon("chevUp"), () => kcSetTable(false), { "aria-label": "Свернуть людей", title: "Свернуть людей" }));
+  return kcEl("div", "kc-band", seats, kcButton("kc-icon kc-band-fold", kcIcon("chevUp"), () => kcSetTable(false), { get "aria-label"() { return t("Свернуть людей"); }, get title() { return t("Свернуть людей"); } }));
 }
 function kcSetTable(open) {
   kc.table = open;
@@ -7421,15 +7565,15 @@ function kcSeat(person, circle, current) {
   const joinedToday = Boolean(person.joinedAt) && zoneDate(new Date(person.joinedAt)) === today;
   const line = next
     ? [kcEl("span", "kc-seat-deed", kcIcon("todo"), kcEl("span", null, next.title)),
-      kcEl("small", late ? "late" : null, late ? "просрочено" : next.due?.date ? kcDue(next.due) : next.state === "pending" ? "ждёт ответа" : "без срока", rest ? ` · ещё ${rest}` : "")]
-    : kcEl("small", null, !circle ? (person.id === current?.talk?.author?.id ? "автор записи" : "в обсуждении") : away ? "не в этой комнате" : joinedToday && person.role !== "owner" ? "в круге с сегодня" : "дел в круге нет");
-  const face = kcButton("kc-seat-face", avatarEl(person), () => (circle ? kcInfoOpen("person", person.id) : kcInfoOpen("main")), { "aria-label": `${person.name}: карточка`, title: person.name });
+      kcEl("small", late ? "late" : null, late ? t("просрочено") : next.due?.date ? kcDue(next.due) : next.state === "pending" ? t("ждёт ответа") : t("без срока"), rest ? t(" · ещё {rest}", { rest: rest }) : "")]
+    : kcEl("small", null, !circle ? (person.id === current?.talk?.author?.id ? t("автор записи") : t("в обсуждении")) : away ? t("не в этой комнате") : joinedToday && person.role !== "owner" ? t("в круге с сегодня") : t("дел в круге нет"));
+  const face = kcButton("kc-seat-face", avatarEl(person), () => (circle ? kcInfoOpen("person", person.id) : kcInfoOpen("main")), { "aria-label": t("{name}: карточка", { name: person.name }), title: person.name });
   const seat = kcEl("div", `kc-seat${away ? " away" : ""}`, face,
-    kcEl("span", "kc-seat-who", kcEl("b", null, kcEl("span", null, me ? "Вы" : person.name), person.role === "owner" ? kcEl("i", null, "хозяин") : null), line));
-  if (!me && !away && current) seat.append(kcButton("kc-seat-at", "@", () => kcInsertCall(person.name), { "aria-label": `Позвать ${person.name} в разговор`, title: `@${person.name}` }));
+    kcEl("span", "kc-seat-who", kcEl("b", null, kcEl("span", null, me ? t("Вы") : person.name), person.role === "owner" ? kcEl("i", null, t("хозяин")) : null), line));
+  if (!me && !away && current) seat.append(kcButton("kc-seat-at", "@", () => kcInsertCall(person.name), { "aria-label": t("Позвать {name} в разговор", { name: person.name }), title: `@${person.name}` }));
   // Дело человеку — прямо отсюда: карточка открывается с готовым полем, писать
   // в него можно сразу.
-  if (!me && circle) seat.append(kcButton("kc-seat-todo", kcIcon("todo"), () => { kc.deedFocus = true; kcInfoOpen("person", person.id); }, { "aria-label": `Поручить дело: ${person.name}`, title: "Поручить дело" }));
+  if (!me && circle) seat.append(kcButton("kc-seat-todo", kcIcon("todo"), () => { kc.deedFocus = true; kcInfoOpen("person", person.id); }, { "aria-label": t("Поручить дело: {name}", { name: person.name }), get title() { return t("Поручить дело"); } }));
   seat.dataset.person = person.id;
   return seat;
 }
@@ -7442,8 +7586,8 @@ function kcFaces(people, max = 4) {
 // «вы, Аня и Лёша» — кто видит комнату: вы первым, дальше по порядку прихода.
 function kcNames(people) {
   const mine = (person) => person.id === currentUser?.id;
-  const names = [...people.filter(mine), ...people.filter((person) => !mine(person))].map((person) => (mine(person) ? "вы" : person.name));
-  return names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} и ${names.at(-1)}`;
+  const names = [...people.filter(mine), ...people.filter((person) => !mine(person))].map((person) => (mine(person) ? t("вы") : person.name));
+  return names.length < 2 ? names.join("") : t("{value1} и {value2}", { value1: names.slice(0, -1).join(", "), value2: names.at(-1) });
 }
 
 // ── разговоры круга чипами ──
@@ -7459,18 +7603,18 @@ function kcThreadsRow(current, circle, context) {
   const hidden = talks.filter((item) => !shown.includes(item));
   const chips = kcEl("div", "kc-chips", [...rooms, ...shown].map(kcChip));
   chips.setAttribute("role", "tablist");
-  chips.setAttribute("aria-label", "Разговоры");
+  bindTranslation(chips, "Разговоры", "aria-label");
   if (hidden.length) {
     const waiting = hidden.some((item) => item.unread || item.called);
-    const more = kcButton(`kc-chip more${kc.talks ? " on" : ""}`, [kcIcon("doc"), kcEl("span", "kc-chip-name", `Записи · ${hidden.length}`), waiting ? kcEl("span", "kc-dot") : null],
+    const more = kcButton(`kc-chip more${kc.talks ? " on" : ""}`, [kcIcon("doc"), kcEl("span", "kc-chip-name", t("Записи · {length}", { length: hidden.length })), waiting ? kcEl("span", "kc-dot") : null],
       () => { kc.talks = !kc.talks; kc.menu = false; kc.ctx = null; renderCircles(); }, { "aria-haspopup": "menu", "aria-expanded": String(kc.talks) });
     more.dataset.kcMenu = "1";
     chips.append(more);
   }
-  if (circle && circle.members.length > 1) chips.append(kcButton("kc-chip add", [kcIcon("plus"), kcEl("span", "kc-chip-name", "Разговор")], () => kcModalOpen("room", { circleId: circle.id }), { title: "Новый разговор в круге" }));
+  if (circle && circle.members.length > 1) chips.append(kcButton("kc-chip add", [kcIcon("plus"), kcEl("span", "kc-chip-name", t("Разговор"))], () => kcModalOpen("room", { circleId: circle.id }), { get title() { return t("Новый разговор в круге"); } }));
   const row = kcEl("div", "kc-threads", chips);
   const people = circle ? circle.members : current?.kind === "talk" ? kcTalkPeople(current) : [];
-  if (!kc.table && people.length) row.append(kcButton("kc-folded", [kcFaces(people, 5), kcEl("span", "kc-wide", `${people.length} ${pluralRu(people.length, "человек", "человека", "человек")}`), kcIcon("chevDown")], () => kcSetTable(true), { "aria-label": "Показать людей", title: "Показать людей" }));
+  if (!kc.table && people.length) row.append(kcButton("kc-folded", [kcFaces(people, 5), kcEl("span", "kc-wide", `${people.length} ${pluralRu(people.length, t("человек"), t("человека"), t("человек"))}`), kcIcon("chevDown")], () => kcSetTable(true), { get "aria-label"() { return t("Показать людей"); }, get title() { return t("Показать людей"); } }));
   if (context) row.append(kcMenuToggle());
   if (kc.menu && context) row.append(kcHeadMenu(context));
   if (kc.talks && hidden.length) row.append(kcTalksMenu(hidden));
@@ -7483,20 +7627,20 @@ function kcChip(item) {
     const kind = KC_KIND[item.talk.kind] ? item.talk.kind : "note";
     lead = kcEl("span", `kc-chip-kind tone-${KC_KIND[kind][0]}`, kcIcon(kind));
     name = item.talk.title;
-    title = `Обсуждение записи «${name}»`;
+    title = t("Обсуждение записи «{name}»", { name: name });
   } else if (item.room.kind === "general") {
     lead = kcIcon("chats");
-    name = "Общий";
-    title = "Общий разговор круга — его видят все, кто в круге";
+    name = t("Общий");
+    title = t("Общий разговор круга — его видят все, кто в круге");
   } else if (item.room.everyone) {
     lead = kcEl("span", "kc-chip-hash", "#");
     name = item.room.name;
-    title = `«${name}» — видит весь круг`;
+    title = t("«{name}» — видит весь круг", { name: name });
   } else {
     lead = kcIcon("lock");
     name = item.room.name;
     faces = kcFaces(item.room.members.filter((member) => member.id !== currentUser?.id), 3);
-    title = `«${name}» — видят только ${kcNames(item.room.members)}`;
+    title = t("«{name}» — видят только {value2}", { name: name, value2: kcNames(item.room.members) });
   }
   const counts = [];
   if (item.called && !on) counts.push(kcEl("span", "kc-cnt at", "@"));
@@ -7508,7 +7652,7 @@ function kcChip(item) {
 function kcTalksMenu(items) {
   const menu = kcEl("div", "kc-menu kc-talks-menu");
   menu.setAttribute("role", "menu");
-  menu.setAttribute("aria-label", "Обсуждения записей");
+  bindTranslation(menu, "Обсуждения записей", "aria-label");
   for (const item of items) {
     const kind = KC_KIND[item.talk.kind] ? item.talk.kind : "note";
     menu.append(kcButton("kc-menu-item", [
@@ -7530,7 +7674,7 @@ function kcTalkPeople(item) {
   return [...people.values()];
 }
 const kcMenuToggle = () => {
-  const button = kcButton("kc-icon", kcIcon("dots"), () => { kc.menu = !kc.menu; kc.ctx = null; kc.talks = false; renderCircles(); }, { "aria-label": "Ещё", title: "Ещё", "aria-pressed": String(kc.menu), "aria-haspopup": "menu" });
+  const button = kcButton("kc-icon", kcIcon("dots"), () => { kc.menu = !kc.menu; kc.ctx = null; kc.talks = false; renderCircles(); }, { get "aria-label"() { return t("Ещё"); }, get title() { return t("Ещё"); }, "aria-pressed": String(kc.menu), "aria-haspopup": "menu" });
   button.dataset.kcMenu = "1";
   return button;
 };
@@ -7538,14 +7682,14 @@ function kcPinned(item) {
   if (item.kind !== "room" || !item.room.pinned) return null;
   const pinned = item.room.pinned;
   const bar = kcEl("div", "kc-pinned");
-  const jump = kcButton("kc-pinned-main", [kcEl("span", "kc-pinned-bar"), kcEl("span", "kc-pinned-text", kcEl("b", null, "Закреплённое сообщение"), kcEl("span", null, pinned.body))], () => {
+  const jump = kcButton("kc-pinned-main", [kcEl("span", "kc-pinned-bar"), kcEl("span", "kc-pinned-text", kcEl("b", null, t("Закреплённое сообщение")), kcEl("span", null, pinned.body))], () => {
     const target = document.querySelector(`#kc-msgs [data-id="${CSS.escape(pinned.id)}"]`);
-    if (!target) { toast("Сообщение выше — прокрутите разговор"); return; }
+    if (!target) { toast(t("Сообщение выше — прокрутите разговор")); return; }
     target.scrollIntoView({ block: "center", behavior: motionAllowed() ? "smooth" : "auto" });
     target.classList.add("flash");
     setTimeout(() => target.classList.remove("flash"), 1400);
   });
-  bar.append(jump, kcButton("kc-icon", kcIcon("close"), () => kcPin(item, null), { "aria-label": "Открепить", title: "Открепить" }));
+  bar.append(jump, kcButton("kc-icon", kcIcon("close"), () => kcPin(item, null), { get "aria-label"() { return t("Открепить"); }, get title() { return t("Открепить"); } }));
   return bar;
 }
 // Над обсуждением записи — сама запись строкой: что это за дело и когда, и
@@ -7555,16 +7699,16 @@ function kcRecordBar(item) {
   const [, word] = KC_KIND[talk.kind] || KC_KIND.note;
   const open = () => openSharedCard(talk.captureId, { talk: true });
   return kcEl("div", "kc-pinned kc-record",
-    kcButton("kc-pinned-main", [kcEl("span", "kc-pinned-bar"), kcEl("span", "kc-pinned-text", kcEl("b", null, `Запись · ${word}${talk.due?.date ? ` · до ${kcDue(talk.due)}` : ""}`), kcEl("span", null, talk.title))], open, { "aria-label": `Запись «${talk.title}»` }),
-    kcButton("kc-btn sm", [kcIcon("doc"), kcEl("span", "kc-wide", "Открыть карточку")], open, { "aria-label": "Открыть карточку" }));
+    kcButton("kc-pinned-main", [kcEl("span", "kc-pinned-bar"), kcEl("span", "kc-pinned-text", kcEl("b", null, t("Запись · {word}{value2}", { word: word, value2: talk.due?.date ? t(" · до {value1}", { value1: kcDue(talk.due) }) : "" })), kcEl("span", null, talk.title))], open, { "aria-label": t("Запись «{title}»", { title: talk.title }) }),
+    kcButton("kc-btn sm", [kcIcon("doc"), kcEl("span", "kc-wide", t("Открыть карточку"))], open, { get "aria-label"() { return t("Открыть карточку"); } }));
 }
 function kcChatPane(item, circle) {
   const section = kcEl("section", "kc-chat-pane");
-  section.setAttribute("aria-label", "Разговор");
+  bindTranslation(section, "Разговор", "aria-label");
   const alone = circle && circle.members.length === 1 && (!item || (item.kind === "room" && item.room.kind === "general"));
   if (alone) { section.append(kcAlone(circle)); return section; }
   if (!item) {
-    section.append(kcEl("div", "kc-empty-chat", kcEl("p", "kc-pill", "Выберите разговор — где ждут, стоит число")));
+    section.append(kcEl("div", "kc-empty-chat", kcEl("p", "kc-pill", t("Выберите разговор — где ждут, стоит число"))));
     return section;
   }
   const pinned = item.kind === "talk" ? kcRecordBar(item) : kcPinned(item);
@@ -7573,7 +7717,7 @@ function kcChatPane(item, circle) {
   list.id = "kc-msgs";
   list.setAttribute("role", "log");
   const column = kcEl("div", "kc-col");
-  if (chatState.loading) column.append(kcEl("p", "kc-pill", "Читаю…"));
+  if (chatState.loading) column.append(kcEl("p", "kc-pill", t("Читаю…")));
   else {
     const start = kcStart(item);
     if (start) column.append(start);
@@ -7590,33 +7734,33 @@ function kcChatPane(item, circle) {
 function kcStart(item) {
   if (item.kind === "talk") {
     const talk = kc.talk?.captureId === item.talk.captureId ? kc.talk : null;
-    return kcEl("p", "kc-start", `Начало обсуждения записи «${item.talk.title}»`, talk && !talk.comments.length ? " — пока тихо: напишите и позовите, кто нужен, через @имя" : "");
+    return kcEl("p", "kc-start", t("Начало обсуждения записи «{title}»", { title: item.talk.title }), talk && !talk.comments.length ? t(" — пока тихо: напишите и позовите, кто нужен, через @имя") : "");
   }
   if (chatState.more) return null;
   const room = item.room, circle = item.circle;
   const since = reportDateLabel(zoneDate(new Date(room.kind === "general" ? circle.createdAt : room.createdAt)), { day: "numeric", month: "long" });
-  const who = room.kind === "general" || room.everyone ? "видит весь круг" : `видят только ${kcNames(room.members)}`;
-  return kcEl("p", "kc-start", room.kind === "general" ? `Начало разговора круга «${circle.name}» · с ${since} · ${who}` : `Начало разговора «${room.name}» · с ${since} · ${who}`);
+  const who = room.kind === "general" || room.everyone ? t("видит весь круг") : t("видят только {value1}", { value1: kcNames(room.members) });
+  return kcEl("p", "kc-start", room.kind === "general" ? t("Начало разговора круга «{name}» · с {since} · {who}", { name: circle.name, since: since, who: who }) : t("Начало разговора «{name}» · с {since} · {who}", { name: room.name, since: since, who: who }));
 }
 // Круг из одного: вместо пустого разговора — позвать людей прямо здесь.
 function kcAlone(circle) {
   return kcEl("div", `kc-alone ${kcTone(circle.color)}`,
     kcEl("div", "kc-alone-card",
-      kcEl("h3", null, "В круге пока только вы"),
-      kcEl("p", "kc-hint", "Разговор оживёт, когда позовёте людей. Позванные увидят только то, что вы отдадите в круг."),
+      kcEl("h3", null, t("В круге пока только вы")),
+      kcEl("p", "kc-hint", t("Разговор оживёт, когда позовёте людей. Позванные увидят только то, что вы отдадите в круг.")),
       kcInviteEl(circle)));
 }
 function kcRoomMessages(list, item) {
   const owner = item.circle.members.find((member) => member.role === "owner")?.id;
-  kcBubbles(list, chatState.messages, { owner, ownerWord: "хозяин" });
+  kcBubbles(list, chatState.messages, { owner, get ownerWord() { return t("хозяин"); } });
 }
 function kcTalkMessages(list, item) {
   const talk = kc.talk?.captureId === item.talk.captureId ? kc.talk : { comments: [], participants: [] };
   // «Аня — в обсуждении» стоит там, где человека позвали: видно, с какого
   // места он читает разговор вместе со всеми.
-  const joins = talk.participants.map((person) => ({ id: `join:${person.id}`, kind: "line", createdAt: person.addedAt, text: `${person.id === currentUser?.id ? "Вы" : person.name} — в обсуждении` }));
+  const joins = talk.participants.map((person) => ({ id: `join:${person.id}`, kind: "line", createdAt: person.addedAt, text: t("{value1} — в обсуждении", { value1: person.id === currentUser?.id ? t("Вы") : person.name }) }));
   const items = [...talk.comments, ...joins].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-  kcBubbles(list, items, { owner: item.talk.author?.id, ownerWord: "автор" });
+  kcBubbles(list, items, { owner: item.talk.author?.id, get ownerWord() { return t("автор"); } });
 }
 const kcAuthorOf = (message) => (message.kind === "deed" ? message.deed.assigner : message.author);
 function kcBubbles(list, items, { owner, ownerWord }) {
@@ -7625,9 +7769,9 @@ function kcBubbles(list, items, { owner, ownerWord }) {
     const message = items[index];
     const messageDay = zoneDate(new Date(message.createdAt));
     if (messageDay !== day) { day = messageDay; list.append(kcEl("div", "kc-pill kc-day", kcDayLabel(day))); }
-    if (message.id === kc.newFrom) list.append(kcEl("div", "kc-unread-bar", "Непрочитанные сообщения"));
+    if (message.id === kc.newFrom) list.append(kcEl("div", "kc-unread-bar", t("Непрочитанные сообщения")));
     if (message.kind !== "said" && message.kind !== "deed") {
-      list.append(kcEl("div", "kc-pill", message.kind === "line" ? message.text : `${message.author?.name || "Кто-то"} ${message.body}`));
+      list.append(kcEl("div", "kc-pill", message.kind === "line" ? message.text : `${message.author?.name || t("Кто-то")} ${message.body}`));
       index += 1;
       continue;
     }
@@ -7651,7 +7795,7 @@ function kcBubbles(list, items, { owner, ownerWord }) {
   }
 }
 function kcQuote(replyTo) {
-  const quote = kcButton("kc-quote", [kcEl("b", null, replyTo.author ? (replyTo.author.id === currentUser?.id ? "Вы" : replyTo.author.name) : "Сообщение"), kcEl("span", null, replyTo.removed ? "сообщение убрано" : replyTo.body)], () => {
+  const quote = kcButton("kc-quote", [kcEl("b", null, replyTo.author ? (replyTo.author.id === currentUser?.id ? t("Вы") : replyTo.author.name) : t("Сообщение")), kcEl("span", null, replyTo.removed ? t("сообщение убрано") : replyTo.body)], () => {
     const target = document.querySelector(`#kc-msgs [data-id="${CSS.escape(replyTo.id)}"]`);
     if (!target) return;
     target.scrollIntoView({ block: "center", behavior: motionAllowed() ? "smooth" : "auto" });
@@ -7665,7 +7809,7 @@ function kcBubble(message, { first, mine, owner, ownerWord }) {
   const bubble = kcEl("div", "kc-bb");
   bubble.dataset.id = message.id;
   if (!mine && first) {
-    const name = kcEl("span", "kc-name", kcEl("span", null, message.author?.name || "Кто-то"), message.author?.id && message.author.id === owner ? kcEl("i", null, ownerWord) : null);
+    const name = kcEl("span", "kc-name", kcEl("span", null, message.author?.name || t("Кто-то")), message.author?.id && message.author.id === owner ? kcEl("i", null, ownerWord) : null);
     name.style.color = `var(--circle-${kcNameTone(message.author?.id)})`;
     bubble.append(name);
   }
@@ -7677,9 +7821,9 @@ function kcBubble(message, { first, mine, owner, ownerWord }) {
   if (reactions.length) bubble.append(text, kcEl("div", "kc-reacts", reactions.map((reaction) => kcReactChip(message, reaction)), meta));
   else { text.append(meta); bubble.append(text); }
   bubble.addEventListener("contextmenu", (event) => { event.preventDefault(); kcCtxOpen(message.id, event.clientX, event.clientY); });
-  const more = kcButton("kc-bb-act", kcIcon("dots"), (event) => { const box = event.currentTarget.getBoundingClientRect(); kcCtxOpen(message.id, box.left, box.bottom + 4); }, { "aria-label": "Ещё" });
+  const more = kcButton("kc-bb-act", kcIcon("dots"), (event) => { const box = event.currentTarget.getBoundingClientRect(); kcCtxOpen(message.id, box.left, box.bottom + 4); }, { get "aria-label"() { return t("Ещё"); } });
   more.dataset.kcMenu = "1";
-  return kcEl("div", "kc-bb-wrap", bubble, kcEl("span", "kc-bb-acts", kcButton("kc-bb-act", kcIcon("reply"), () => kcReplyTo(message), { "aria-label": "Ответить" }), more));
+  return kcEl("div", "kc-bb-wrap", bubble, kcEl("span", "kc-bb-acts", kcButton("kc-bb-act", kcIcon("reply"), () => kcReplyTo(message), { get "aria-label"() { return t("Ответить"); } }), more));
 }
 function kcReactChip(message, reaction) {
   const faces = reaction.count <= 2 && reaction.people?.length ? kcEl("span", "kc-react-faces", reaction.people.slice(0, 2).map((person) => avatarEl(person, { size: "mini" }))) : kcEl("span", null, String(reaction.count));
@@ -7688,17 +7832,17 @@ function kcReactChip(message, reaction) {
 }
 function kcDeedBubble(message) {
   const deed = message.deed;
-  const [stateClass, stateWord] = { pending: ["wait", "ждёт ответа"], accepted: ["took", "взято"], declined: ["back", "отказ"], done: ["done", "сделано"] }[deed.state] || ["wait", deed.state];
+  const [stateClass, stateWord] = { pending: ["wait", t("ждёт ответа")], accepted: ["took", t("взято")], declined: ["back", t("отказ")], done: ["done", t("сделано")] }[deed.state] || ["wait", deed.state];
   const me = currentUser?.id;
   const bubble = kcEl("div", "kc-bb kc-deed",
-    kcEl("span", "kc-deed-kind", kcIcon("todo"), "Дело"),
+    kcEl("span", "kc-deed-kind", kcIcon("todo"), t("Дело")),
     kcButton("kc-deed-title", deed.title, () => openSharedCard(deed.captureId)),
-    kcEl("div", "kc-deed-meta", avatarEl(deed.assigner, { size: "mini" }), deed.assigner?.id === me ? "вы" : deed.assigner?.name, " → ", avatarEl(deed.assignee, { size: "mini" }), deed.forMe ? "вам" : deed.assignee?.name, deed.due?.date ? ` · до ${kcDue(deed.due)}` : ""),
+    kcEl("div", "kc-deed-meta", avatarEl(deed.assigner, { size: "mini" }), deed.assigner?.id === me ? t("вы") : deed.assigner?.name, " → ", avatarEl(deed.assignee, { size: "mini" }), deed.forMe ? t("вам") : deed.assignee?.name, deed.due?.date ? t(" · до {value1}", { value1: kcDue(deed.due) }) : ""),
     kcEl("div", "kc-reacts", kcEl("span", `kc-state ${stateClass}`, stateWord), kcEl("span", "kc-meta", kcClock(message.createdAt))));
   bubble.dataset.id = message.id;
   const wrap = kcEl("div", "kc-bb-wrap", bubble);
   if (!(deed.forMe && deed.state === "pending")) return wrap;
-  return [wrap, kcEl("div", "kc-kbd-row", kcButton("kc-kbd", "Беру", () => kcRespond(deed, true)), kcButton("kc-kbd", "Не я", () => kcRespond(deed, false)))];
+  return [wrap, kcEl("div", "kc-kbd-row", kcButton("kc-kbd", t("Беру"), () => kcRespond(deed, true)), kcButton("kc-kbd", t("Не я"), () => kcRespond(deed, false)))];
 }
 function kcFindMessage(item, id) {
   if (item.kind === "room") return chatState.messages.find((message) => message.id === id) || null;
@@ -7717,31 +7861,31 @@ function kcComposer(item) {
     const strangers = kc.share.people.filter((person) => person.inCircle === false);
     wrap.append(kcEl("div", "kc-share",
       kc.share.join
-        ? kcEl("p", null, kcEl("b", null, `${names.join(", ")} ещё не в этом разговоре`),
-          `: ${many ? "увидят" : "увидит"} его целиком, включая прошлые сообщения${strangers.length ? `. ${strangers.map((person) => person.name).join(", ")} ${strangers.length > 1 ? "войдут" : "войдёт"} и в круг «${item.circle?.name || ""}»: люди круга, общие дела и разговоры` : ""}.`)
-        : kcEl("p", null, kcEl("b", null, `${names.join(", ")} ${many ? "получат" : "получит"} доступ к этой записи`), ": заголовок, заметки, файлы и всё обсуждение."),
+        ? kcEl("p", null, kcEl("b", null, t("{value1} ещё не в этом разговоре", { value1: names.join(", ") })),
+          t(": {value1} его целиком, включая прошлые сообщения{value2}.", { value1: many ? t("увидят") : t("увидит"), value2: strangers.length ? t(". {value1} {value2} и в круг «{value3}»: люди круга, общие дела и разговоры", { value1: strangers.map((person) => person.name).join(", "), value2: strangers.length > 1 ? t("войдут") : t("войдёт"), value3: item.circle?.name || "" }) : "" }))
+        : kcEl("p", null, kcEl("b", null, t("{value1} {value2} доступ к этой записи", { value1: names.join(", "), value2: many ? t("получат") : t("получит") })), t(": заголовок, заметки, файлы и всё обсуждение.")),
       kcEl("div", "kc-share-acts",
-        kcButton("kc-btn sm primary", "Позвать и отправить", () => kcSend(item, "yes")),
-        kcButton("kc-btn sm", "Отправить без призыва", () => kcSend(item, "no")),
-        kcButton("kc-btn sm ghost", "Изменить", () => { kc.share = null; kc.focusField = true; renderCircles(); }))));
+        kcButton("kc-btn sm primary", t("Позвать и отправить"), () => kcSend(item, "yes")),
+        kcButton("kc-btn sm", t("Отправить без призыва"), () => kcSend(item, "no")),
+        kcButton("kc-btn sm ghost", t("Изменить"), () => { kc.share = null; kc.focusField = true; renderCircles(); }))));
   }
   const target = kc.reply?.chat === key ? kcFindMessage(item, kc.reply.id) : null;
   if (target) {
     wrap.append(kcEl("div", "kc-replybar", kcIcon("reply"),
-      kcEl("span", "kc-replybar-q", kcEl("b", null, `Ответ: ${target.author?.id === currentUser?.id ? "себе" : target.author?.name || ""}`), kcEl("span", null, target.body)),
-      kcButton("kc-icon", kcIcon("close"), () => { kc.reply = null; kc.focusField = true; renderCircles(); }, { "aria-label": "Отменить ответ" })));
+      kcEl("span", "kc-replybar-q", kcEl("b", null, t("Ответ: {value1}", { value1: target.author?.id === currentUser?.id ? t("себе") : target.author?.name || "" })), kcEl("span", null, target.body)),
+      kcButton("kc-icon", kcIcon("close"), () => { kc.reply = null; kc.focusField = true; renderCircles(); }, { get "aria-label"() { return t("Отменить ответ"); } })));
   }
   const field = kcEl("textarea");
   field.id = "kc-field";
   field.rows = 1;
-  field.placeholder = "Сообщение";
-  field.setAttribute("aria-label", `Сообщение в «${item.title}»`);
+  bindTranslation(field, "Сообщение", "placeholder");
+  bindTranslation(field, "Сообщение в «{title}»", { title: item.title }, "aria-label");
   field.value = chatState.drafts[key] || "";
   const callable = item.kind === "room" ? kcRoomCallable(item) : kc.talk?.captureId === item.talk.captureId ? kc.talk.callable : [];
-  const send = kcButton("kc-send", kcIcon("send"), () => kcSend(item), { "aria-label": "Отправить" });
+  const send = kcButton("kc-send", kcIcon("send"), () => kcSend(item), { get "aria-label"() { return t("Отправить"); } });
   send.disabled = !field.value.trim();
   const changed = () => { chatState.drafts[key] = field.value; send.disabled = !field.value.trim(); kcAutosize(field); };
-  const pop = mentionPopup(field, callable, changed, { note: item.kind === "room" ? "позовём сюда" : "увидит запись" });
+  const pop = mentionPopup(field, callable, changed, { note: item.kind === "room" ? t("позовём сюда") : t("увидит запись") });
   field.addEventListener("input", changed);
   field.addEventListener("keydown", (event) => {
     if (event.defaultPrevented) return;
@@ -7755,7 +7899,7 @@ function kcComposer(item) {
     field.focus();
     field.setSelectionRange(position + insert.length, position + insert.length);
     field.dispatchEvent(new Event("input"));
-  }, { "aria-label": "Позвать через @", title: "Позвать через @" });
+  }, { get "aria-label"() { return t("Позвать через @"); }, get title() { return t("Позвать через @"); } });
   wrap.append(pop, at, kcEl("div", "kc-field", field), send);
   return wrap;
 }
@@ -7806,12 +7950,12 @@ async function kcSend(item, share = null) {
       // Позвали того, кого в разговоре нет: над полем встаёт выбор — позвать
       // (и, если человек не в круге, привести в круг) или отправить молча.
       if (response.status === 409 && result?.error?.code === "join_needed") { kc.share = { chat: key, body, people: result.people || [], join: true }; renderCircles(); return; }
-      if (!response.ok) throw new Error(result?.error?.message || "Сообщение не ушло");
+      if (!response.ok) throw new Error(result?.error?.message || t("Сообщение не ушло"));
       kcEdited();
       if (kc.chat === key && !chatState.messages.some((message) => message.id === result.message.id)) chatState.messages = [...chatState.messages, result.message];
       const room = chatState.rooms.find((entry) => entry.id === item.room.id);
       if (result.room && room) Object.assign(room, result.room, { unread: 0 });
-      if (result.called?.length) toast(`Позвали: ${result.called.map((person) => person.name).join(", ")}`);
+      if (result.called?.length) toast(t("Позвали: {value1}", { value1: result.called.map((person) => person.name).join(", ") }));
       // Позвали того, кого здесь не было, — состав разговора и круга изменился.
       if (share === "yes") loadCircles();
     } else {
@@ -7821,7 +7965,7 @@ async function kcSend(item, share = null) {
       // Позвать того, кто запись ещё не видит, — значит поделиться ею: над
       // полем встаёт выбор, молча журнал не открывается никому.
       if (response.status === 409 && data?.error?.code === "share_needed") { kc.share = { chat: key, body, people: data.people || [] }; renderCircles(); return; }
-      if (!response.ok) throw new Error(data?.error?.message || "Сообщение не ушло");
+      if (!response.ok) throw new Error(data?.error?.message || t("Сообщение не ушло"));
       kcEdited();
       if (kc.talk?.captureId === item.talk.captureId) {
         if (!kc.talk.comments.some((comment) => comment.id === data.comment.id)) kc.talk.comments = kcTalkItems([...kc.talk.comments, data.comment]);
@@ -7829,7 +7973,7 @@ async function kcSend(item, share = null) {
       }
       const talk = (circlesState.discussions || []).find((entry) => entry.captureId === item.talk.captureId) || item.talk;
       talk.last = { body: data.comment.body.slice(0, 160), at: data.comment.createdAt, author: data.comment.author };
-      if (data.comment.mentions.length) toast(`Позвали: ${data.comment.mentions.map((person) => person.name).join(", ")}`);
+      if (data.comment.mentions.length) toast(t("Позвали: {value1}", { value1: data.comment.mentions.map((person) => person.name).join(", ") }));
     }
     kc.share = null;
     kc.reply = null;
@@ -7838,7 +7982,7 @@ async function kcSend(item, share = null) {
     kc.focusField = true;
     renderCircles({ toBottom: true });
   } catch (error) {
-    toast(error.message || "Сообщение не ушло");
+    toast(error.message || t("Сообщение не ушло"));
     if (send) send.disabled = false;
   }
 }
@@ -7863,37 +8007,37 @@ function kcContextMenu(item) {
   menu.setAttribute("role", "menu");
   menu.style.left = `${kc.ctx.x}px`;
   menu.style.top = `${kc.ctx.y}px`;
-  menu.append(kcEl("div", "kc-ctx-reacts", KC_REACTIONS.map((emoji) => kcButton(`kc-ctx-react${(message.reactions || []).some((reaction) => reaction.emoji === emoji && reaction.mine) ? " on" : ""}`, emoji, () => kcReact(message, emoji), { "aria-label": `Реакция ${emoji}` }))));
+  menu.append(kcEl("div", "kc-ctx-reacts", KC_REACTIONS.map((emoji) => kcButton(`kc-ctx-react${(message.reactions || []).some((reaction) => reaction.emoji === emoji && reaction.mine) ? " on" : ""}`, emoji, () => kcReact(message, emoji), { "aria-label": t("Реакция {emoji}", { emoji: emoji }) }))));
   menu.append(
-    kcMenuRow("reply", "Ответить", () => kcReplyTo(message)),
-    kcMenuRow("deed", "В дело", () => { location.hash = "#today"; prefillCapture(message.body.replace(/@[\p{L}\p{N}_-]+/gu, "").trim(), "todo"); }),
-    kcMenuRow("copy", "Скопировать текст", async () => {
-      try { await navigator.clipboard.writeText(message.body); toast("Текст скопирован"); } catch { toast("Скопировать не получилось"); }
+    kcMenuRow("reply", t("Ответить"), () => kcReplyTo(message)),
+    kcMenuRow("deed", t("В дело"), () => { location.hash = "#today"; prefillCapture(message.body.replace(/@[\p{L}\p{N}_-]+/gu, "").trim(), "todo"); }),
+    kcMenuRow("copy", t("Скопировать текст"), async () => {
+      try { await navigator.clipboard.writeText(message.body); toast(t("Текст скопирован")); } catch { toast(t("Скопировать не получилось")); }
       renderCircles();
     }));
   if (item.kind === "room") {
     const pinned = item.room.pinned?.id === message.id;
-    menu.append(kcMenuRow("pin", pinned ? "Открепить" : "Закрепить", () => kcPin(item, pinned ? null : message.id)));
-    if (mine) menu.append(kcMenuRow("trash", "Убрать", () => kcRemove(item, message), { danger: true }));
+    menu.append(kcMenuRow("pin", pinned ? t("Открепить") : t("Закрепить"), () => kcPin(item, pinned ? null : message.id)));
+    if (mine) menu.append(kcMenuRow("trash", t("Убрать"), () => kcRemove(item, message), { danger: true }));
   }
   return menu;
 }
 function kcHeadMenu(item) {
   const menu = kcEl("div", "kc-menu kc-head-menu");
   menu.setAttribute("role", "menu");
-  menu.append(kcMenuRow("people", "Информация", () => kcInfoOpen("main")));
+  menu.append(kcMenuRow("people", t("Информация"), () => kcInfoOpen("main")));
   if (item.kind === "room") {
     const circle = item.circle;
     const subset = item.room.kind === "room" && !item.room.everyone;
-    if (subset) menu.append(kcMenuRow("personAdd", "Позвать в комнату", () => kcInfoOpen("roomadd")));
-    if (circle.members.length > 1) menu.append(kcMenuRow("plus", "Новый разговор", () => kcModalOpen("room", { circleId: circle.id })));
-    menu.append(kcMenuRow("muted", circle.muted ? "Снова показывать в дне" : "Не показывать в дне", () => toggleCircleMute(circle.id, !circle.muted)));
-    menu.append(kcMenuRow("bound", "Граница круга", () => kcInfoOpen("bound")));
-    if (subset) menu.append(kcMenuRow("exit", "Выйти из комнаты", () => kcLeaveRoom(item.room), { danger: true }));
-    menu.append(circle.role === "owner" ? kcMenuRow("exit", "Распустить круг", () => kcDissolve(circle), { danger: true }) : kcMenuRow("exit", "Покинуть круг", () => kcLeaveCircle(circle), { danger: true }));
+    if (subset) menu.append(kcMenuRow("personAdd", t("Позвать в комнату"), () => kcInfoOpen("roomadd")));
+    if (circle.members.length > 1) menu.append(kcMenuRow("plus", t("Новый разговор"), () => kcModalOpen("room", { circleId: circle.id })));
+    menu.append(kcMenuRow("muted", circle.muted ? t("Снова показывать в дне") : t("Не показывать в дне"), () => toggleCircleMute(circle.id, !circle.muted)));
+    menu.append(kcMenuRow("bound", t("Граница круга"), () => kcInfoOpen("bound")));
+    if (subset) menu.append(kcMenuRow("exit", t("Выйти из комнаты"), () => kcLeaveRoom(item.room), { danger: true }));
+    menu.append(circle.role === "owner" ? kcMenuRow("exit", t("Распустить круг"), () => kcDissolve(circle), { danger: true }) : kcMenuRow("exit", t("Покинуть круг"), () => kcLeaveCircle(circle), { danger: true }));
   } else {
-    menu.append(kcMenuRow("doc", "Открыть карточку", () => openSharedCard(item.talk.captureId, { talk: true })));
-    if (!item.talk.mine && (kc.talk?.participants || []).some((person) => person.id === currentUser?.id)) menu.append(kcMenuRow("exit", "Не следить", () => kcUnfollow(item), { danger: true }));
+    menu.append(kcMenuRow("doc", t("Открыть карточку"), () => openSharedCard(item.talk.captureId, { talk: true })));
+    if (!item.talk.mine && (kc.talk?.participants || []).some((person) => person.id === currentUser?.id)) menu.append(kcMenuRow("exit", t("Не следить"), () => kcUnfollow(item), { danger: true }));
   }
   return menu;
 }
@@ -7908,7 +8052,7 @@ async function kcReact(message, emoji) {
     const current = kcCurrent();
     const target = (current && kcFindMessage(current, message.id)) || message;
     target.reactions = result.reactions;
-  } catch (error) { toast(error.message || "Реакция не встала"); }
+  } catch (error) { toast(error.message || t("Реакция не встала")); }
   renderCircles();
 }
 async function kcPin(item, messageId) {
@@ -7916,8 +8060,8 @@ async function kcPin(item, messageId) {
     const result = await request(`/api/rooms/${item.room.id}/pin`, { method: "POST", body: JSON.stringify(messageId ? { messageId } : {}) });
     kcEdited();
     Object.assign(chatState.rooms.find((entry) => entry.id === item.room.id) || item.room, result.room, { unread: 0 });
-    toast(messageId ? "Сообщение закреплено — его видят все в разговоре" : "Сообщение откреплено");
-  } catch (error) { toast(error.message || "Не получилось"); }
+    toast(messageId ? t("Сообщение закреплено — его видят все в разговоре") : t("Сообщение откреплено"));
+  } catch (error) { toast(error.message || t("Не получилось")); }
   renderCircles();
 }
 async function kcRemove(item, message) {
@@ -7927,61 +8071,61 @@ async function kcRemove(item, message) {
     chatState.messages = chatState.messages.filter((entry) => entry.id !== message.id);
     const room = chatState.rooms.find((entry) => entry.id === item.room.id) || item.room;
     if (room.pinned?.id === message.id) room.pinned = null;
-    toast("Сообщение убрано");
-  } catch (error) { toast(error.message || "Не получилось"); }
+    toast(t("Сообщение убрано"));
+  } catch (error) { toast(error.message || t("Не получилось")); }
   renderCircles();
 }
 async function kcRespond(deed, take) {
-  const reason = take ? "" : (prompt("Почему не вы? Можно не отвечать — причина уйдёт автору.") ?? "").trim();
+  const reason = take ? "" : (prompt(t("Почему не вы? Можно не отвечать — причина уйдёт автору.")) ?? "").trim();
   try {
     await request(`/api/assignments/${deed.assignmentId}/respond`, { method: "POST", body: JSON.stringify({ take, ...(reason ? { reason } : {}) }) });
     kcEdited();
-    toast(take ? "Взято — дело в вашем дне" : "Вернули автору");
+    toast(take ? t("Взято — дело в вашем дне") : t("Вернули автору"));
     await refreshRoomsQuietly();
     load().catch(() => {});
-  } catch (error) { toast(error.message || "Не получилось ответить"); }
+  } catch (error) { toast(error.message || t("Не получилось ответить")); }
 }
 async function kcLeaveRoom(room) {
-  if (!confirm(`Выйти из комнаты «${room.name}»? Она пропадёт из списка, а разговор останется у остальных.`)) return;
+  if (!confirm(t("Выйти из комнаты «{name}»? Она пропадёт из списка, а разговор останется у остальных.", { name: room.name }))) return;
   try {
     await request(`/api/rooms/${room.id}/leave`, { method: "POST", body: JSON.stringify({}) });
     const general = chatState.rooms.find((item) => item.circleId === room.circleId && item.kind === "general");
     kc.chat = general ? `room:${general.id}` : null;
     kc.info = null;
     await loadCircles();
-  } catch (error) { toast(error.message || "Не получилось"); }
+  } catch (error) { toast(error.message || t("Не получилось")); }
 }
 async function kcDissolve(circle) {
-  if (!confirm(`Распустить круг «${circle.name}»? Записи останутся у авторов, но из круга уйдут, а неотвеченные просьбы снимутся.`)) return;
+  if (!confirm(t("Распустить круг «{name}»? Записи останутся у авторов, но из круга уйдут, а неотвеченные просьбы снимутся.", { name: circle.name }))) return;
   try {
     await request(`/api/circles/${circle.id}`, { method: "DELETE" });
     kc.chat = null;
     kc.info = null;
     await loadCircles();
     await load();
-    toast(`Круг «${circle.name}» распущен`);
-  } catch (error) { toast(error.message || "Не получилось"); }
+    toast(t("Круг «{name}» распущен", { name: circle.name }));
+  } catch (error) { toast(error.message || t("Не получилось")); }
 }
 async function kcLeaveCircle(circle) {
-  if (!confirm(`Покинуть круг «${circle.name}»? Взятые дела останутся у вас — вы их взяли.`)) return;
+  if (!confirm(t("Покинуть круг «{name}»? Взятые дела останутся у вас — вы их взяли.", { name: circle.name }))) return;
   try {
     await request(`/api/circles/${circle.id}/leave`, { method: "POST", body: JSON.stringify({}) });
     kc.chat = null;
     kc.info = null;
     await loadCircles();
     await load();
-    toast("Вы вышли из круга");
-  } catch (error) { toast(error.message || "Не получилось"); }
+    toast(t("Вы вышли из круга"));
+  } catch (error) { toast(error.message || t("Не получилось")); }
 }
 async function kcUnfollow(item) {
   try {
     await request(`/api/captures/${item.talk.captureId}/people/${currentUser.id}`, { method: "DELETE" });
-    toast("Запись убрана у вас: новый призыв вернёт её");
+    toast(t("Запись убрана у вас: новый призыв вернёт её"));
     kc.chat = null;
     kc.info = null;
     await loadCircles();
     load().catch(() => {});
-  } catch (error) { toast(error.message || "Не получилось"); }
+  } catch (error) { toast(error.message || t("Не получилось")); }
 }
 
 // ── «Информация»: люди, ссылка и граница круга ──
@@ -8002,24 +8146,24 @@ function kcInfoClose() {
 }
 function kcInfo(item) {
   const aside = kcEl("aside", "kc-info");
-  aside.setAttribute("aria-label", "Информация");
+  bindTranslation(aside, "Информация", "aria-label");
   const head = (title, back = false) => kcEl("div", "kc-info-head",
-    back ? kcButton("kc-icon", kcIcon("back"), () => { kc.info = "main"; renderCircles(); }, { "aria-label": "Назад" }) : null,
+    back ? kcButton("kc-icon", kcIcon("back"), () => { kc.info = "main"; renderCircles(); }, { get "aria-label"() { return t("Назад"); } }) : null,
     kcEl("h3", null, title),
-    kcButton("kc-icon", kcIcon("close"), kcInfoClose, { "aria-label": "Закрыть" }));
+    kcButton("kc-icon", kcIcon("close"), kcInfoClose, { get "aria-label"() { return t("Закрыть"); } }));
   const body = kcEl("div", "kc-info-body");
   if (item.kind === "talk") {
-    aside.append(head("Информация"), body);
+    aside.append(head(t("Информация")), body);
     kcTalkInfo(body, item);
     return aside;
   }
   const circle = item.circle;
   const member = kc.info === "person" ? circle.members.find((person) => person.id === kc.person) : null;
-  if (kc.info === "invite") { aside.append(head(`Позвать в «${circle.name}»`, true), body); body.append(kcInviteEl(circle)); }
-  else if (kc.info === "bound") { aside.append(head("Граница круга", true), body); body.append(kcBoundEl()); }
+  if (kc.info === "invite") { aside.append(head(t("Позвать в «{name}»", { name: circle.name }), true), body); body.append(kcInviteEl(circle)); }
+  else if (kc.info === "bound") { aside.append(head(t("Граница круга"), true), body); body.append(kcBoundEl()); }
   else if (member) { aside.append(head(member.name, true), body); body.append(kcPersonEl(item, member)); }
-  else if (kc.info === "roomadd" && item.room.kind === "room") { aside.append(head(`Позвать в «${item.room.name}»`, true), body); body.append(kcRoomAddEl(item)); }
-  else { aside.append(head("Информация"), body); body.append(...kcCircleInfo(item)); }
+  else if (kc.info === "roomadd" && item.room.kind === "room") { aside.append(head(t("Позвать в «{name}»", { name: item.room.name }), true), body); body.append(kcRoomAddEl(item)); }
+  else { aside.append(head(t("Информация")), body); body.append(...kcCircleInfo(item)); }
   return aside;
 }
 function kcRow(icon, title, sub, onClick, { accent = false, danger = false, side = null } = {}) {
@@ -8032,14 +8176,14 @@ function kcCircleInfo(item) {
   const profile = kcEl("div", `kc-profile ${kcTone(circle.color)}`,
     kcCircleSeal(circle, "big"),
     kcEl("b", null, circle.name),
-    kcEl("small", null, `${people} ${pluralRu(people, "участник", "участника", "участников")} · ${open ? `${open} ${pluralRu(open, "открытое дело", "открытых дела", "открытых дел")}` : "дел нет"}`));
+    kcEl("small", null, `${people} ${pluralRu(people, t("участник"), t("участника"), t("участников"))} · ${open ? `${open} ${pluralRu(open, t("открытое дело"), t("открытых дела"), t("открытых дел"))}` : t("дел нет")}`));
   const fresh = circlesState.links?.get(circle.id);
   const invite = circle.invite && !circle.invite.expired ? circle.invite : null;
-  const link = kcRow("link", fresh ? kcEl("code", null, fresh) : invite ? "Ссылка-приглашение" : "Завести ссылку-приглашение",
-    invite ? `живёт до ${reportDateLabel(invite.expiresAt.slice(0, 10), { day: "numeric", month: "short" })} · вошли по ней: ${invite.uses}` : "одна на круг, 7 дней, для любого числа людей",
+  const link = kcRow("link", fresh ? kcEl("code", null, fresh) : invite ? t("Ссылка-приглашение") : t("Завести ссылку-приглашение"),
+    invite ? t("живёт до {value1} · вошли по ней: {uses}", { value1: reportDateLabel(invite.expiresAt.slice(0, 10), { day: "numeric", month: "short" }), uses: invite.uses }) : t("одна на круг, 7 дней, для любого числа людей"),
     () => (fresh ? kcCopyLink(fresh) : kcInfoOpen("invite")), { side: fresh ? kcIcon("copy") : kcIcon("chev") });
   // «Показывать в дне» — личное и обратимое: остальные ничего не замечают.
-  const show = kcEl("label", "kc-row kc-switch", kcIcon("bell"), kcEl("span", "kc-row-text", kcEl("span", "kc-row-title", "Показывать в дне"), kcEl("span", "kc-row-sub", "на доске и в календаре — только у вас")));
+  const show = kcEl("label", "kc-row kc-switch", kcIcon("bell"), kcEl("span", "kc-row-text", kcEl("span", "kc-row-title", t("Показывать в дне")), kcEl("span", "kc-row-sub", t("на доске и в календаре — только у вас"))));
   const box = kcEl("input");
   box.type = "checkbox";
   box.id = `kc-show-${circle.id}`;
@@ -8048,18 +8192,18 @@ function kcCircleInfo(item) {
   show.append(box, kcEl("span", "kc-track"));
   // Фото ставит и убирает хозяин — как имя и цвет круга.
   const photo = circle.role !== "owner" ? [] : [
-    kcRow("camera", circle.photo ? "Сменить фото" : "Поставить фото", "вместо буквы на знаке круга — видят все в круге", () => kcPickPhoto((image) => kcSaveCirclePhoto(circle, image))),
-    circle.photo ? kcRow("trash", "Убрать фото", "на знаке снова будет буква", () => kcRemoveCirclePhoto(circle)) : null,
+    kcRow("camera", circle.photo ? t("Сменить фото") : t("Поставить фото"), t("вместо буквы на знаке круга — видят все в круге"), () => kcPickPhoto((image) => kcSaveCirclePhoto(circle, image))),
+    circle.photo ? kcRow("trash", t("Убрать фото"), t("на знаке снова будет буква"), () => kcRemoveCirclePhoto(circle)) : null,
   ];
-  const settings = kcEl("div", "kc-sect", link, show, kcRow("bound", "Граница круга", "что видят участники", () => kcInfoOpen("bound"), { side: kcIcon("chev") }), photo);
-  const members = kcEl("div", "kc-sect", kcEl("p", "kc-sect-cap", `${people} ${pluralRu(people, "участник", "участника", "участников")}`), kcRow("personAdd", "Позвать людей", null, () => kcInfoOpen("invite"), { accent: true }));
+  const settings = kcEl("div", "kc-sect", link, show, kcRow("bound", t("Граница круга"), t("что видят участники"), () => kcInfoOpen("bound"), { side: kcIcon("chev") }), photo);
+  const members = kcEl("div", "kc-sect", kcEl("p", "kc-sect-cap", `${people} ${pluralRu(people, t("участник"), t("участника"), t("участников"))}`), kcRow("personAdd", t("Позвать людей"), null, () => kcInfoOpen("invite"), { accent: true }));
   for (const member of circle.members) {
     const deeds = member.openDeeds || 0;
-    members.append(kcButton("kc-row kc-person", [avatarEl(member), kcEl("span", "kc-row-text", kcEl("span", "kc-row-title", member.id === currentUser?.id ? `${member.name} · вы` : member.name), kcEl("span", "kc-row-sub", deeds ? `${deeds} ${pluralRu(deeds, "открытое дело", "открытых дела", "открытых дел")}` : "открытых дел нет")), member.role === "owner" ? kcEl("span", "kc-row-side", "хозяин") : null], () => kcInfoOpen("person", member.id)));
+    members.append(kcButton("kc-row kc-person", [avatarEl(member), kcEl("span", "kc-row-text", kcEl("span", "kc-row-title", member.id === currentUser?.id ? t("{name} · вы", { name: member.name }) : member.name), kcEl("span", "kc-row-sub", deeds ? `${deeds} ${pluralRu(deeds, t("открытое дело"), t("открытых дела"), t("открытых дел"))}` : t("открытых дел нет"))), member.role === "owner" ? kcEl("span", "kc-row-side", t("хозяин")) : null], () => kcInfoOpen("person", member.id)));
   }
   const leave = kcEl("div", "kc-sect", circle.role === "owner"
-    ? kcRow("exit", "Распустить круг", null, () => kcDissolve(circle), { danger: true })
-    : kcRow("exit", "Покинуть круг", null, () => kcLeaveCircle(circle), { danger: true }));
+    ? kcRow("exit", t("Распустить круг"), null, () => kcDissolve(circle), { danger: true })
+    : kcRow("exit", t("Покинуть круг"), null, () => kcLeaveCircle(circle), { danger: true }));
   return [profile, settings, members, leave];
 }
 // Фото круга. Картинку ужимает браузер тем же квадратом 256 px, что и лицо
@@ -8080,7 +8224,7 @@ function kcPickPhoto(onImage) {
     input.value = "";
     if (!file) return;
     try { await onImage(await squareAvatar(file)); }
-    catch (error) { toast(error instanceof DOMException ? "Это не похоже на картинку" : error.message || "Фото не поставилось"); }
+    catch (error) { toast(error instanceof DOMException ? t("Это не похоже на картинку") : error.message || t("Фото не поставилось")); }
   };
   input.click();
 }
@@ -8088,7 +8232,7 @@ async function kcUploadCirclePhoto(circleId, image) {
   const response = await fetch(`/api/circles/${encodeURIComponent(circleId)}/photo`, { method: "POST", headers: { "Content-Type": image.type }, body: image });
   if (response.status === 401) { location.replace("/login"); return null; }
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.error?.message || "Фото не поставилось");
+  if (!response.ok) throw new Error(result.error?.message || t("Фото не поставилось"));
   return result.circle;
 }
 function kcPutCircle(circle) {
@@ -8100,18 +8244,18 @@ async function kcSaveCirclePhoto(circle, image) {
   const saved = await kcUploadCirclePhoto(circle.id, image);
   if (!saved) return;
   kcPutCircle(saved);
-  toast("Фото круга поставлено");
+  toast(t("Фото круга поставлено"));
 }
 async function kcRemoveCirclePhoto(circle) {
   try {
     const result = await request(`/api/circles/${encodeURIComponent(circle.id)}/photo`, { method: "DELETE" });
     kcPutCircle(result.circle);
-    toast("На знаке круга снова буква");
-  } catch (error) { toast(error.message || "Фото не убралось"); }
+    toast(t("На знаке круга снова буква"));
+  } catch (error) { toast(error.message || t("Фото не убралось")); }
 }
 async function kcCopyLink(url) {
-  try { await navigator.clipboard.writeText(url); toast("Ссылка скопирована — передайте её сами: писем приложение не шлёт"); }
-  catch { toast("Скопируйте ссылку вручную"); }
+  try { await navigator.clipboard.writeText(url); toast(t("Ссылка скопирована — передайте её сами: писем приложение не шлёт")); }
+  catch { toast(t("Скопируйте ссылку вручную")); }
 }
 // Ссылка у круга одна и работает для многих. Показывается она один раз — сам
 // токен на сервере не хранится; забыли — обновите, прежняя сразу перестанет
@@ -8122,8 +8266,8 @@ async function kcMakeLink(circle) {
     const invite = await request(`/api/circles/${circle.id}/invite`, { method: "POST", body: JSON.stringify({}) });
     (circlesState.links ||= new Map()).set(circle.id, invite.url);
     circle.invite = { createdAt: new Date().toISOString(), expiresAt: invite.expiresAt, uses: 0, expired: false };
-    toast(refresh ? "Новая ссылка готова, прежняя больше не работает" : "Ссылка заведена — она видна только сейчас");
-  } catch (error) { toast(error.message || "Приглашение не создалось"); }
+    toast(refresh ? t("Новая ссылка готова, прежняя больше не работает") : t("Ссылка заведена — она видна только сейчас"));
+  } catch (error) { toast(error.message || t("Приглашение не создалось")); }
   renderCircles();
 }
 // Ответы на поиск приходят в любом порядке: список меняется только ответом на
@@ -8149,7 +8293,7 @@ async function kcSearchPeople() {
   } catch (error) {
     if (turn !== kcSearchTurn || kc.invite !== state) return;
     state.people = [];
-    state.error = error.message || "Поиск не удался";
+    state.error = error.message || t("Поиск не удался");
   }
   renderCircles();
 }
@@ -8160,23 +8304,23 @@ function kcInviteEl(circle) {
   const input = kcEl("input");
   input.id = "kc-invite-q";
   input.type = "search";
-  input.placeholder = "Имя или почта";
+  bindTranslation(input, "Имя или почта", "placeholder");
   input.value = state.query;
-  input.setAttribute("aria-label", `Найти человека для круга «${circle.name}»`);
+  bindTranslation(input, "Найти человека для круга «{name}»", { name: circle.name }, "aria-label");
   input.addEventListener("input", () => { state.query = input.value; clearTimeout(kcSearchTimer); kcSearchTimer = setTimeout(kcSearchPeople, 220); });
   search.append(input);
   const found = kcEl("div", "kc-people");
-  if (state.people === null) found.append(kcEl("p", "kc-hint", "Ищу…"));
-  else if (!state.people.length) found.append(kcEl("p", "kc-hint", state.error || (state.all ? "Никого не нашлось. Если человека ещё нет в Кизуне — дайте ему ссылку ниже." : "В круге уже все, кто есть в Кизуне. Нового человека зовите ссылкой ниже.")));
+  if (state.people === null) found.append(kcEl("p", "kc-hint", t("Ищу…")));
+  else if (!state.people.length) found.append(kcEl("p", "kc-hint", state.error || (state.all ? t("Никого не нашлось. Если человека ещё нет в Кизуне — дайте ему ссылку ниже.") : t("В круге уже все, кто есть в Кизуне. Нового человека зовите ссылкой ниже."))));
   for (const person of state.people || []) {
-    found.append(kcButton("kc-row kc-person", [avatarEl(person), kcEl("span", "kc-row-text", kcEl("span", "kc-row-title", person.name), kcEl("span", "kc-row-sub", person.email)), kcEl("span", "kc-row-side accent", "Позвать")], async (event) => {
+    found.append(kcButton("kc-row kc-person", [avatarEl(person), kcEl("span", "kc-row-text", kcEl("span", "kc-row-title", person.name), kcEl("span", "kc-row-sub", person.email)), kcEl("span", "kc-row-side accent", t("Позвать"))], async (event) => {
       event.currentTarget.disabled = true;
       try {
         await request(`/api/circles/${circle.id}/members`, { method: "POST", body: JSON.stringify({ userId: person.id }) });
-        toast(`${person.name} в круге «${circle.name}» — узнает строкой «к вам»`);
+        toast(t("{name} в круге «{name2}» — узнает строкой «к вам»", { name: person.name, name2: circle.name }));
         state.people = state.people.filter((entry) => entry.id !== person.id);
         await loadCircles({ then: () => (kc.chat ? kcOpen(kc.chat) : renderCircles()) });
-      } catch (error) { toast(error.message || "Не получилось добавить"); }
+      } catch (error) { toast(error.message || t("Не получилось добавить")); }
     }));
   }
   const fresh = circlesState.links?.get(circle.id);
@@ -8184,24 +8328,24 @@ function kcInviteEl(circle) {
   const card = kcEl("div", `kc-linkcard ${kcTone(circle.color)}`,
     kcEl("div", "kc-linkrow",
       kcEl("code", fresh ? null : "masked", fresh || "kizuna.app/#join/••••••••••"),
-      fresh ? kcButton("kc-btn sm primary", [kcIcon("copy"), "Скопировать"], () => kcCopyLink(fresh)) : kcButton(`kc-btn sm${invite ? "" : " primary"}`, invite ? "Обновить" : "Завести ссылку", () => kcMakeLink(circle))),
-    fresh ? kcEl("p", "kc-hint", "Ссылка видна только сейчас — сохраните её.") : null,
-    kcEl("p", "kc-hint", invite ? `Живёт до ${reportDateLabel(invite.expiresAt.slice(0, 10), { day: "numeric", month: "long" })} · вошли по ней: ${invite.uses}` : "Одна на круг · 7 дней · для любого числа людей"));
-  wrap.append(kcEl("p", "kc-sect-cap", "Из Кизуны"), search, found, kcEl("p", "kc-hint", "Позванный узнает строкой «к вам» и может выйти в одно нажатие."), kcEl("p", "kc-sect-cap", "Ещё нет в Кизуне"), card);
+      fresh ? kcButton("kc-btn sm primary", [kcIcon("copy"), t("Скопировать")], () => kcCopyLink(fresh)) : kcButton(`kc-btn sm${invite ? "" : " primary"}`, invite ? t("Обновить") : t("Завести ссылку"), () => kcMakeLink(circle))),
+    fresh ? kcEl("p", "kc-hint", t("Ссылка видна только сейчас — сохраните её.")) : null,
+    kcEl("p", "kc-hint", invite ? t("Живёт до {value1} · вошли по ней: {uses}", { value1: reportDateLabel(invite.expiresAt.slice(0, 10), { day: "numeric", month: "long" }), uses: invite.uses }) : t("Одна на круг · 7 дней · для любого числа людей")));
+  wrap.append(kcEl("p", "kc-sect-cap", t("Из Кизуны")), search, found, kcEl("p", "kc-hint", t("Позванный узнает строкой «к вам» и может выйти в одно нажатие.")), kcEl("p", "kc-sect-cap", t("Ещё нет в Кизуне")), card);
   return wrap;
 }
 function kcBoundEl() {
   return kcEl("div", "kc-sub",
     kcEl("div", "kc-bound",
-      kcEl("div", "kc-bound-in", kcEl("h4", null, kcIcon("eye"), "Видит круг"), kcEl("ul", null,
-        kcEl("li", null, kcEl("b", null, "Записи с исполнителем"), " из круга"),
-        kcEl("li", null, kcEl("b", null, "Записи, где позвали"), " участника"),
-        kcEl("li", null, kcEl("b", null, "Разговоры"), " круга и комнат"))),
-      kcEl("div", "kc-bound-out", kcEl("h4", null, kcIcon("lock"), "Остаётся вашим"), kcEl("ul", null,
-        kcEl("li", null, "День, заметки, «Сделано»"),
-        kcEl("li", null, "Голос и расход на модели"),
-        kcEl("li", null, "Всё, что не отдали в круг")))),
-    kcEl("p", "kc-hint", kcEl("b", null, "Правит запись автор"), ", исполнитель закрывает дело и пишет в обсуждение. ", kcEl("b", null, "Разбор моделью"), " считается тому, кто записал."));
+      kcEl("div", "kc-bound-in", kcEl("h4", null, kcIcon("eye"), t("Видит круг")), kcEl("ul", null,
+        kcEl("li", null, kcEl("b", null, t("Записи с исполнителем")), t(" из круга")),
+        kcEl("li", null, kcEl("b", null, t("Записи, где позвали")), t(" участника")),
+        kcEl("li", null, kcEl("b", null, t("Разговоры")), t(" круга и комнат")))),
+      kcEl("div", "kc-bound-out", kcEl("h4", null, kcIcon("lock"), t("Остаётся вашим")), kcEl("ul", null,
+        kcEl("li", null, t("День, заметки, «Сделано»")),
+        kcEl("li", null, t("Голос и расход на модели")),
+        kcEl("li", null, t("Всё, что не отдали в круг"))))),
+    kcEl("p", "kc-hint", kcEl("b", null, t("Правит запись автор")), t(", исполнитель закрывает дело и пишет в обсуждение. "), kcEl("b", null, t("Разбор моделью")), t(" считается тому, кто записал.")));
 }
 function kcPersonEl(item, member) {
   const circle = item.circle;
@@ -8210,22 +8354,22 @@ function kcPersonEl(item, member) {
   const today = currentDayDate || zoneDate(new Date());
   const deeds = member.deeds || [];
   const list = kcEl("div", "kc-deeds");
-  if (!deeds.length) list.append(kcEl("p", "kc-hint", "Открытых дел в этом круге нет."));
+  if (!deeds.length) list.append(kcEl("p", "kc-hint", t("Открытых дел в этом круге нет.")));
   for (const deed of deeds) {
     const late = deed.due?.date && deed.due.date < today;
-    list.append(kcButton("kc-deed-row", [kcIcon("todo"), kcEl("span", "kc-deed-row-title", deed.title), kcEl("small", late ? "late" : null, late ? "просрочено" : deed.due?.date ? kcDue(deed.due) : deed.state === "pending" ? "ждёт ответа" : "")], () => openSharedCard(deed.captureId)));
+    list.append(kcButton("kc-deed-row", [kcIcon("todo"), kcEl("span", "kc-deed-row-title", deed.title), kcEl("small", late ? "late" : null, late ? t("просрочено") : deed.due?.date ? kcDue(deed.due) : deed.state === "pending" ? t("ждёт ответа") : "")], () => openSharedCard(deed.captureId)));
   }
   const more = (member.openDeeds || 0) - deeds.length;
   const acts = me ? null : kcEl("div", "kc-person-acts",
-    kcButton("kc-btn sm tone", "@ Позвать в разговоре", () => { kcInfoClose(); kcInsertCall(member.name); }));
+    kcButton("kc-btn sm tone", t("@ Позвать в разговоре"), () => { kcInfoClose(); kcInsertCall(member.name); }));
   const avatar = avatarEl(member);
   avatar.classList.add("huge");
   return kcEl("div", `kc-sub ${kcTone(circle.color)}`,
-    kcEl("div", "kc-person-head", avatar, kcEl("div", null, kcEl("b", null, me ? `${member.name} · вы` : member.name), kcEl("small", null, `${member.role === "owner" ? "хозяин круга" : "участник"}${since ? ` · в круге с ${since}` : ""}`))),
-    kcEl("p", "kc-sect-cap", `Дела в этом круге · ${member.openDeeds || 0}`),
+    kcEl("div", "kc-person-head", avatar, kcEl("div", null, kcEl("b", null, me ? t("{name} · вы", { name: member.name }) : member.name), kcEl("small", null, `${member.role === "owner" ? t("хозяин круга") : t("участник")}${since ? t(" · в круге с {since}", { since: since }) : ""}`))),
+    kcEl("p", "kc-sect-cap", t("Дела в этом круге · {value1}", { value1: member.openDeeds || 0 })),
     me ? null : kcDeedForm(circle, member),
     list,
-    more > 0 ? kcEl("p", "kc-hint", `и ещё ${more} — на доске`) : null,
+    more > 0 ? kcEl("p", "kc-hint", t("и ещё {more} — на доске", { more: more })) : null,
     acts);
 }
 
@@ -8237,9 +8381,9 @@ function kcDeedForm(circle, member) {
   const field = kcEl("input");
   field.id = "kc-deed-field";
   field.type = "text";
-  field.placeholder = "Что поручить";
-  field.setAttribute("aria-label", `Дело для ${member.name}`);
-  const send = kcEl("button", "kc-btn sm primary", "Отдать");
+  bindTranslation(field, "Что поручить", "placeholder");
+  bindTranslation(field, "Дело для {name}", { name: member.name }, "aria-label");
+  const send = kcEl("button", "kc-btn sm primary", t("Отдать"));
   send.type = "submit";
   form.append(field, send);
   form.addEventListener("submit", async (event) => {
@@ -8247,38 +8391,38 @@ function kcDeedForm(circle, member) {
     const raw = field.value.trim();
     if (!raw || send.disabled) return;
     send.disabled = true;
-    send.textContent = "Отдаю…";
+    bindTranslation(send, "Отдаю…");
     try {
       const created = await request("/api/captures", { method: "POST", body: JSON.stringify({ raw, primaryType: "todo" }) });
       await request(`/api/captures/${created.entry.id}/assign`, { method: "POST", body: JSON.stringify({ assigneeId: member.id, circleId: circle.id }) });
       field.value = "";
-      toast(`Просьба ушла: ${member.name} ответит «беру» или «не я»`);
+      toast(t("Просьба ушла: {name} ответит «беру» или «не я»", { name: member.name }));
       kc.deedFocus = true;
       loadCircles();
       load();
     } catch (error) {
-      toast(error.message || "Дело не ушло");
+      toast(error.message || t("Дело не ушло"));
     } finally {
       send.disabled = false;
-      send.textContent = "Отдать";
+      bindTranslation(send, "Отдать");
     }
   });
-  return kcEl("div", "kc-deed-add", form, kcEl("p", "kc-hint", "Срок называйте словами: «прислать смету до пятницы»."));
+  return kcEl("div", "kc-deed-add", form, kcEl("p", "kc-hint", t("Срок называйте словами: «прислать смету до пятницы».")));
 }
 function kcRoomAddEl(item) {
   const inRoom = new Set(item.room.members.map((person) => person.id));
   const rest = item.circle.members.filter((person) => !inRoom.has(person.id));
-  const wrap = kcEl("div", "kc-sub", kcEl("p", "kc-hint", `Комнату видят только те, кто в ней. Позвать можно людей круга «${item.circle.name}».`));
+  const wrap = kcEl("div", "kc-sub", kcEl("p", "kc-hint", t("Комнату видят только те, кто в ней. Позвать можно людей круга «{name}».", { name: item.circle.name })));
   const people = kcEl("div", "kc-people");
-  if (!rest.length) people.append(kcEl("p", "kc-hint", "В комнате уже весь круг."));
+  if (!rest.length) people.append(kcEl("p", "kc-hint", t("В комнате уже весь круг.")));
   for (const person of rest) {
-    people.append(kcButton("kc-row kc-person", [avatarEl(person), kcEl("span", "kc-row-text", kcEl("span", "kc-row-title", person.name), kcEl("span", "kc-row-sub", person.email)), kcEl("span", "kc-row-side accent", "Позвать")], async (event) => {
+    people.append(kcButton("kc-row kc-person", [avatarEl(person), kcEl("span", "kc-row-text", kcEl("span", "kc-row-title", person.name), kcEl("span", "kc-row-sub", person.email)), kcEl("span", "kc-row-side accent", t("Позвать"))], async (event) => {
       event.currentTarget.disabled = true;
       try {
         await request(`/api/rooms/${item.room.id}/members`, { method: "POST", body: JSON.stringify({ userId: person.id }) });
-        toast(`${person.name} в комнате «${item.room.name}»`);
+        toast(t("{name} в комнате «{name2}»", { name: person.name, name2: item.room.name }));
         await loadCircles({ then: () => (kc.chat ? kcOpen(kc.chat) : renderCircles()) });
-      } catch (error) { toast(error.message || "Не получилось"); }
+      } catch (error) { toast(error.message || t("Не получилось")); }
     }));
   }
   wrap.append(people);
@@ -8289,17 +8433,17 @@ function kcTalkInfo(body, item) {
   const kind = KC_KIND[talk.kind] ? talk.kind : "note";
   const people = kcTalkPeople(item);
   const seal = kcSeal(kcIcon(kind), `tone-${KC_KIND[kind][0]}`, "round big");
-  body.append(kcEl("div", `kc-profile tone-${KC_KIND[kind][0]}`, seal, kcEl("b", null, talk.title), kcEl("small", null, `обсуждение записи · ${people.length} ${pluralRu(people.length, "участник", "участника", "участников")}`)));
-  body.append(kcEl("div", "kc-sect", kcRow("doc", "Открыть карточку записи", null, () => openSharedCard(talk.captureId, { talk: true }), { accent: true })));
-  const list = kcEl("div", "kc-sect", kcEl("p", "kc-sect-cap", `${people.length} ${pluralRu(people.length, "участник", "участника", "участников")}`));
+  body.append(kcEl("div", `kc-profile tone-${KC_KIND[kind][0]}`, seal, kcEl("b", null, talk.title), kcEl("small", null, t("обсуждение записи · {length} {value2}", { length: people.length, value2: pluralRu(people.length, t("участник"), t("участника"), t("участников")) }))));
+  body.append(kcEl("div", "kc-sect", kcRow("doc", t("Открыть карточку записи"), null, () => openSharedCard(talk.captureId, { talk: true }), { accent: true })));
+  const list = kcEl("div", "kc-sect", kcEl("p", "kc-sect-cap", `${people.length} ${pluralRu(people.length, t("участник"), t("участника"), t("участников"))}`));
   for (const person of people) {
-    const role = person.id === talk.author?.id ? "автор" : (kc.talk?.participants || []).some((entry) => entry.id === person.id) ? "позван" : "из круга";
-    list.append(kcEl("div", "kc-row kc-person", avatarEl(person), kcEl("span", "kc-row-text", kcEl("span", "kc-row-title", person.id === currentUser?.id ? `${person.name} · вы` : person.name), kcEl("span", "kc-row-sub", person.email || "")), kcEl("span", "kc-row-side", role)));
+    const role = person.id === talk.author?.id ? t("автор") : (kc.talk?.participants || []).some((entry) => entry.id === person.id) ? t("позван") : t("из круга");
+    list.append(kcEl("div", "kc-row kc-person", avatarEl(person), kcEl("span", "kc-row-text", kcEl("span", "kc-row-title", person.id === currentUser?.id ? t("{name} · вы", { name: person.name }) : person.name), kcEl("span", "kc-row-sub", person.email || "")), kcEl("span", "kc-row-side", role)));
   }
   body.append(list);
-  body.append(kcEl("p", "kc-hint kc-pad", "Позвать ещё — напишите @имя в сообщении."));
+  body.append(kcEl("p", "kc-hint kc-pad", t("Позвать ещё — напишите @имя в сообщении.")));
   if (!talk.mine && (kc.talk?.participants || []).some((person) => person.id === currentUser?.id))
-    body.append(kcEl("div", "kc-sect", kcRow("exit", "Не следить", "запись уйдёт из ваших «Обсуждений»", () => kcUnfollow(item), { danger: true })));
+    body.append(kcEl("div", "kc-sect", kcRow("exit", t("Не следить"), t("запись уйдёт из ваших «Обсуждений»"), () => kcUnfollow(item), { danger: true })));
 }
 
 // ── новый круг и новая комната ──
@@ -8325,7 +8469,7 @@ function kcModal() {
   input.value = modal.name;
   input.autocomplete = "off";
   if (modal.kind === "circle") {
-    const letter = document.createTextNode(kcInitial(modal.name || "Круг"));
+    const letter = document.createTextNode(kcInitial(modal.name || t("Круг")));
     // Фото можно поставить сразу, как у новой группы в Телеграме, или потом —
     // в «Информации». Уходит на сервер, когда круг заведён.
     const preview = kcButton("kc-photo-pick", [pictureInto(kcSeal(letter, kcTone(modal.color), "big"), modal.photo?.url), kcEl("span", "kc-photo-badge", kcIcon("camera"))], () => kcPickPhoto((image) => {
@@ -8333,21 +8477,21 @@ function kcModal() {
       if (modal.photo) URL.revokeObjectURL(modal.photo.url);
       modal.photo = { image, url: URL.createObjectURL(image) };
       renderCircles();
-    }), { "aria-label": "Фото круга", title: modal.photo ? "Сменить фото" : "Поставить фото" });
-    const title = kcEl("b", null, modal.name.trim() || "Новый круг");
-    input.placeholder = "«Дача», «Книжный клуб», «Релиз»";
-    input.setAttribute("aria-label", "Название круга");
-    input.addEventListener("input", () => { modal.name = input.value; letter.textContent = kcInitial(input.value || "Круг"); title.textContent = input.value.trim() || "Новый круг"; });
+    }), { get "aria-label"() { return t("Фото круга"); }, title: modal.photo ? t("Сменить фото") : t("Поставить фото") });
+    const title = kcEl("b", null, modal.name.trim() || t("Новый круг"));
+    bindTranslation(input, "«Дача», «Книжный клуб», «Релиз»", "placeholder");
+    bindTranslation(input, "Название круга", "aria-label");
+    input.addEventListener("input", () => { modal.name = input.value; letter.textContent = kcInitial(input.value || t("Круг")); title.textContent = input.value.trim() || t("Новый круг"); });
     const tones = kcEl("div", "kc-tones");
     for (const color of Object.keys(CIRCLE_TONES)) {
-      tones.append(kcButton(`kc-tone-pick ${kcTone(color)}`, null, () => { modal.color = color; renderCircles(); }, { "aria-pressed": String(modal.color === color), "aria-label": { violet: "фиолетовый", blue: "синий", teal: "бирюзовый", orange: "янтарный", pink: "розовый", red: "коралловый" }[color] }));
+      tones.append(kcButton(`kc-tone-pick ${kcTone(color)}`, null, () => { modal.color = color; renderCircles(); }, { "aria-pressed": String(modal.color === color), "aria-label": { get violet() { return t("фиолетовый"); }, get blue() { return t("синий"); }, get teal() { return t("бирюзовый"); }, get orange() { return t("янтарный"); }, get pink() { return t("розовый"); }, get red() { return t("коралловый"); } }[color] }));
     }
     box.append(
-      kcEl("div", "kc-modal-head", kcEl("h3", null, "Новый круг", kcEl("small", null, "Люди, граница и разговор — больше ничего")), kcButton("kc-icon", kcIcon("close"), close, { "aria-label": "Закрыть" })),
-      kcEl("div", `kc-modal-preview ${kcTone(modal.color)}`, preview, kcEl("div", null, title, kcEl("small", null, "людей позовёте следующим шагом"))),
-      kcEl("label", "kc-field-label", kcEl("span", null, "Название"), input),
-      kcEl("div", "kc-field-label", kcEl("span", null, "Цвет"), tones),
-      kcEl("div", "kc-modal-acts", kcButton("kc-btn ghost", "Отмена", close), kcEl("button", "kc-btn primary", "Завести круг")));
+      kcEl("div", "kc-modal-head", kcEl("h3", null, t("Новый круг"), kcEl("small", null, t("Люди, граница и разговор — больше ничего"))), kcButton("kc-icon", kcIcon("close"), close, { get "aria-label"() { return t("Закрыть"); } })),
+      kcEl("div", `kc-modal-preview ${kcTone(modal.color)}`, preview, kcEl("div", null, title, kcEl("small", null, t("людей позовёте следующим шагом")))),
+      kcEl("label", "kc-field-label", kcEl("span", null, t("Название")), input),
+      kcEl("div", "kc-field-label", kcEl("span", null, t("Цвет")), tones),
+      kcEl("div", "kc-modal-acts", kcButton("kc-btn ghost", t("Отмена"), close), kcEl("button", "kc-btn primary", t("Завести круг"))));
     box.lastElementChild.lastElementChild.type = "submit";
     box.addEventListener("submit", (event) => { event.preventDefault(); kcCreateCircle(); });
   } else {
@@ -8355,13 +8499,13 @@ function kcModal() {
     if (!circle) return null;
     // Новый разговор видит весь круг — или только позванные, и тогда это комната.
     const everyone = modal.everyone !== false;
-    input.placeholder = "«Смета», «Релиз»";
-    input.setAttribute("aria-label", "Название разговора");
+    bindTranslation(input, "«Смета», «Релиз»", "placeholder");
+    bindTranslation(input, "Название разговора", "aria-label");
     input.addEventListener("input", () => { modal.name = input.value; });
     const who = kcEl("div", "kc-seg");
     who.setAttribute("role", "radiogroup");
-    who.setAttribute("aria-label", "Кто видит");
-    for (const [value, label] of [[true, `Весь круг · ${circle.members.length} ${pluralRu(circle.members.length, "человек", "человека", "человек")}`], [false, "Только позванные"]])
+    bindTranslation(who, "Кто видит", "aria-label");
+    for (const [value, label] of [[true, t("Весь круг · {length} {value2}", { length: circle.members.length, value2: pluralRu(circle.members.length, t("человек"), t("человека"), t("человек")) })], [false, t("Только позванные")]])
       who.append(kcButton("kc-seg-item", label, () => { modal.everyone = value; renderCircles(); }, { role: "radio", "aria-checked": String(everyone === value) }));
     const people = kcEl("div", "kc-people");
     for (const person of circle.members.filter((entry) => entry.id !== currentUser?.id)) {
@@ -8372,11 +8516,11 @@ function kcModal() {
       }, { "aria-pressed": String(chosen) }));
     }
     box.append(...[
-      kcEl("div", "kc-modal-head", kcEl("h3", null, `Разговор в «${circle.name}»`, kcEl("small", null, "Отдельный разговор в круге — под задачу, событие или тему")), kcButton("kc-icon", kcIcon("close"), close, { "aria-label": "Закрыть" })),
-      kcEl("label", "kc-field-label", kcEl("span", null, "Название"), input),
-      kcEl("div", "kc-field-label", kcEl("span", null, "Кто видит"), who),
-      everyone ? null : kcEl("div", "kc-field-label", kcEl("span", null, "Кого позвать"), people),
-      kcEl("div", "kc-modal-acts", kcButton("kc-btn ghost", "Отмена", close), kcEl("button", "kc-btn primary", "Завести разговор")),
+      kcEl("div", "kc-modal-head", kcEl("h3", null, t("Разговор в «{name}»", { name: circle.name }), kcEl("small", null, t("Отдельный разговор в круге — под задачу, событие или тему"))), kcButton("kc-icon", kcIcon("close"), close, { get "aria-label"() { return t("Закрыть"); } })),
+      kcEl("label", "kc-field-label", kcEl("span", null, t("Название")), input),
+      kcEl("div", "kc-field-label", kcEl("span", null, t("Кто видит")), who),
+      everyone ? null : kcEl("div", "kc-field-label", kcEl("span", null, t("Кого позвать")), people),
+      kcEl("div", "kc-modal-acts", kcButton("kc-btn ghost", t("Отмена"), close), kcEl("button", "kc-btn primary", t("Завести разговор"))),
     ].filter(Boolean));
     box.lastElementChild.lastElementChild.type = "submit";
     box.addEventListener("submit", (event) => { event.preventDefault(); kcCreateRoom(circle); });
@@ -8386,7 +8530,7 @@ function kcModal() {
 async function kcCreateCircle() {
   const { name, color } = kc.modal;
   const clean = name.trim();
-  if (!clean) { toast("Назовите круг — «Дача», «Книжный клуб»"); $("#kc-modal-name")?.focus(); return; }
+  if (!clean) { toast(t("Назовите круг — «Дача», «Книжный клуб»")); $("#kc-modal-name")?.focus(); return; }
   try {
     const result = await request("/api/circles", { method: "POST", body: JSON.stringify({ name: clean, color }) });
     const photo = kc.modal?.photo;
@@ -8394,7 +8538,7 @@ async function kcCreateCircle() {
     // Круг уже заведён: не встало фото — круг остаётся, фото ставится в «Информации».
     if (photo) {
       try { await kcUploadCirclePhoto(result.circle.id, photo.image); }
-      catch (error) { toast(error.message || "Фото не поставилось — поставьте его в «Информации»"); }
+      catch (error) { toast(error.message || t("Фото не поставилось — поставьте его в «Информации»")); }
       finally { URL.revokeObjectURL(photo.url); }
     }
     await loadCircles({ then: async () => {
@@ -8402,29 +8546,29 @@ async function kcCreateCircle() {
       if (room) await kcOpen(`room:${room.id}`);
     } });
     load().catch(() => {});
-    toast(`Круг «${clean}» заведён — позовите людей`);
-  } catch (error) { toast(error.message || "Круг не завёлся"); }
+    toast(t("Круг «{clean}» заведён — позовите людей", { clean: clean }));
+  } catch (error) { toast(error.message || t("Круг не завёлся")); }
 }
 async function kcCreateRoom(circle) {
   const { name, people } = kc.modal;
   const everyone = kc.modal.everyone !== false;
   const clean = name.trim();
-  if (!clean) { toast("Назовите разговор — «Смета», «Релиз»"); $("#kc-modal-name")?.focus(); return; }
-  if (!everyone && !people.length) { toast("Позовите хотя бы одного человека — или отдайте разговор всему кругу"); return; }
+  if (!clean) { toast(t("Назовите разговор — «Смета», «Релиз»")); $("#kc-modal-name")?.focus(); return; }
+  if (!everyone && !people.length) { toast(t("Позовите хотя бы одного человека — или отдайте разговор всему кругу")); return; }
   try {
     const result = await request(`/api/circles/${circle.id}/rooms`, { method: "POST", body: JSON.stringify(everyone ? { name: clean, everyone: true } : { name: clean, members: people }) });
     kc.modal = null;
     await loadCircles({ then: () => kcOpen(`room:${result.room.id}`) });
-    toast(everyone ? `Разговор «${result.room.name}» заведён — его видит весь круг` : `Комната «${result.room.name}» заведена — её видят только позванные`);
-  } catch (error) { toast(error.message || "Разговор не завёлся"); }
+    toast(everyone ? t("Разговор «{name}» заведён — его видит весь круг", { name: result.room.name }) : t("Комната «{name}» заведена — её видят только позванные", { name: result.room.name }));
+  } catch (error) { toast(error.message || t("Разговор не завёлся")); }
 }
 function kcEmptyPage() {
   const page = kcEl("div", "kc kc-empty-page",
     kcEl("div", "kc-empty-card",
       kcSeal(kcIcon("people"), "tone-violet", "round big"),
-      kcEl("h3", null, "Кругов пока нет"),
-      kcEl("p", null, "Круг — это люди, граница и разговор. Заведите первый и позовите того, с кем есть общее дело. Обсуждения записей тоже появятся здесь."),
-      kcButton("kc-btn primary", [kcIcon("plus"), "Завести круг"], () => kcModalOpen("circle"))));
+      kcEl("h3", null, t("Кругов пока нет")),
+      kcEl("p", null, t("Круг — это люди, граница и разговор. Заведите первый и позовите того, с кем есть общее дело. Обсуждения записей тоже появятся здесь.")),
+      kcButton("kc-btn primary", [kcIcon("plus"), t("Завести круг")], () => kcModalOpen("circle"))));
   const modal = kcModal();
   if (modal) page.append(modal);
   return page;
@@ -8455,7 +8599,7 @@ async function openInvite(token) {
   updatePageFromHash();
   let peek;
   try { peek = await request(`/api/circles/invite/${encodeURIComponent(token)}`); }
-  catch (error) { toast(error.message || "Приглашение не найдено"); return; }
+  catch (error) { toast(error.message || t("Приглашение не найдено")); return; }
   kc.joining = { token, peek };
   renderCircles();
 }
@@ -8465,24 +8609,24 @@ function kcInviteCard() {
   const name = node("h3", undefined, "circle-name");
   name.append(node("i", undefined, `circle-dot big ${CIRCLE_TONES[peek.circle.color] || "violet"}`), node("span", peek.circle.name));
   card.append(name);
-  card.append(node("p", `${peek.invitedBy} зовёт вас в круг «${peek.circle.name}». Сейчас там ${peek.members} ${pluralRu(peek.members, "человек", "человека", "человек")}.`, "invite-lead"));
-  card.append(node("p", "Войдёте — участники круга увидят записи, которые вы туда отдадите, и вы увидите их. Журнал, заметки и расход остаются личными.", "invite-hint"));
-  const accept = node("button", "Войти в круг", "mini primary");
+  card.append(bindTranslation(node("p", t("{invitedBy} зовёт вас в круг «{name}». Сейчас там {members} {value4}.", { invitedBy: peek.invitedBy, name: peek.circle.name, members: peek.members, value4: pluralRu(peek.members, t("человек"), t("человека"), t("человек")) }), "invite-lead"), "{invitedBy} зовёт вас в круг «{name}». Сейчас там {members} {value4}.", { invitedBy: peek.invitedBy, name: peek.circle.name, members: peek.members, value4: pluralRu(peek.members, t("человек"), t("человека"), t("человек")) }));
+  card.append(bindTranslation(node("p", t("Войдёте — участники круга увидят записи, которые вы туда отдадите, и вы увидите их. Журнал, заметки и расход остаются личными."), "invite-hint"), "Войдёте — участники круга увидят записи, которые вы туда отдадите, и вы увидите их. Журнал, заметки и расход остаются личными."));
+  const accept = bindTranslation(node("button", t("Войти в круг"), "mini primary"), "Войти в круг");
   accept.type = "button";
   accept.addEventListener("click", async () => {
     accept.disabled = true;
     try {
       const result = await request(`/api/circles/invite/${encodeURIComponent(token)}/accept`, { method: "POST", body: JSON.stringify({}) });
       kc.joining = null;
-      toast(`Вы в круге «${peek.circle.name}»`);
+      toast(t("Вы в круге «{name}»", { name: peek.circle.name }));
       await loadCircles({ then: async () => {
         const room = chatState.rooms.find((item) => item.circleId === (result.circle?.id || peek.circle.id) && item.kind === "general");
         if (room) await kcOpen(`room:${room.id}`);
       } });
       await load();
-    } catch (error) { toast(error.message || "Не получилось войти"); accept.disabled = false; }
+    } catch (error) { toast(error.message || t("Не получилось войти")); accept.disabled = false; }
   });
-  const skip = node("button", "Не сейчас", "mini");
+  const skip = bindTranslation(node("button", t("Не сейчас"), "mini"), "Не сейчас");
   skip.type = "button";
   skip.addEventListener("click", () => { kc.joining = null; loadCircles(); });
   const acts = node("div", undefined, "circle-tools");
@@ -8501,10 +8645,10 @@ async function completeBoardCard(card, element, button) {
   try {
     for (const projectionId of card.projectionIds)
       await request(`/api/projections/${projectionId}/complete`, { method: "POST", body: "{}" });
-    toast("Отмечено как готовое", { label: "Вернуть", run: async () => {
+    toast(t("Отмечено как готовое"), { get label() { return t("Вернуть"); }, run: async () => {
       try {
         for (const projectionId of card.projectionIds) await request(`/api/projections/${projectionId}/undo-complete`, { method: "POST", body: "{}" });
-        toast("Возвращено в работу");
+        toast(t("Возвращено в работу"));
         loadBoard();
         load().catch(() => {});
       } catch (error) { toast(error.message); }
@@ -8524,7 +8668,7 @@ async function reopenBoardCard(card, button) {
   try {
     for (const projectionId of card.projectionIds)
       await request(`/api/projections/${projectionId}/undo-complete`, { method: "POST", body: "{}" });
-    toast("Возвращено в работу");
+    toast(t("Возвращено в работу"));
     loadBoard();
     load().catch(() => {});
   } catch (error) {
@@ -8562,7 +8706,7 @@ function boardClosedWhen(card) {
   if (!card.closedAt) return "";
   const today = boardState.data?.today || currentDayDate;
   const day = notifyDay(card.closedAt);
-  const word = day === today ? "сегодня" : day === shiftDate(today, -1) ? "вчера" : `${day.slice(8, 10)}.${day.slice(5, 7)}`;
+  const word = day === today ? t("сегодня") : day === shiftDate(today, -1) ? t("вчера") : `${day.slice(8, 10)}.${day.slice(5, 7)}`;
   return `${word} ${notifyClock(card.closedAt)}`;
 }
 // Кружок «готово»: у открытого дела закрывает его, у закрытого — возвращает в
@@ -8571,7 +8715,7 @@ function boardDoneButton(card, element, closed) {
   const done = node("button", undefined, `board-done${closed ? " is-done" : ""}${card.type === "meeting_event" && !closed ? " meeting" : ""}`);
   done.type = "button";
   if (card.type === "meeting_event" && !closed) done.innerHTML = BOARD_CLOCK;
-  done.title = closed ? "Вернуть в работу" : "Готово";
+  done.title = closed ? t("Вернуть в работу") : t("Готово");
   done.setAttribute("aria-label", `${done.title}: ${card.title}`);
   done.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -8585,7 +8729,7 @@ function boardDoneButton(card, element, closed) {
 const boardOpenRows = () => [...$("#board").querySelectorAll(".board-card[data-capture-id]:not(.closed), .board-row[data-capture-id]:not(.closed)")];
 // Карточка записи: по названию — с начала, по метке «0/2» — на «Подзадачах».
 function openBoardCard(card, element, { subtasks = false } = {}) {
-  pendingCardList = { label: "Доска", items: rowsAsList(boardOpenRows()), id: card.captureId, occurrence: element.dataset.occurrence || null };
+  pendingCardList = { get label() { return t("Доска"); }, items: rowsAsList(boardOpenRows()), id: card.captureId, occurrence: element.dataset.occurrence || null };
   // Подзадач нет среди последних ста записей журнала, где ищет openReportEntry:
   // карточка подзадачи читается по номеру.
   if (card.subtask) { cardOccurrence = null; openCaptureById(card.captureId, { subtasks }); }
@@ -8635,9 +8779,9 @@ function boardSubtaskMap(card, element) {
 // «↳ Родитель» у подзадачи, вставшей на доску своей карточкой: мелкая метка под
 // названием, как остальные метки дела, — чьей частью она является.
 function boardParentLabel(card) {
-  const title = (card.parentTitle || "").split("\n")[0] || "Без названия";
+  const title = (card.parentTitle || "").split("\n")[0] || t("Без названия");
   const label = node("span", `↳ ${title}`, "btag parent");
-  label.title = `Подзадача: ${title}`;
+  bindTranslation(label, "Подзадача: {title}", { title: title }, "title");
   return label;
 }
 // Срок одной меткой: «со вчера» у просроченного, дата — если не сегодня, час —
@@ -8645,7 +8789,7 @@ function boardParentLabel(card) {
 function boardDueTag(card) {
   const today = boardState.data?.today || currentDayDate;
   const date = card.due?.date || null;
-  if (date && date < today) return node("span", "со вчера", "btag due late");
+  if (date && date < today) return bindTranslation(node("span", t("со вчера"), "btag due late"), "со вчера");
   if (date && date > today) return node("span", scheduleLabel({ state: "ok", date, time: card.due.time }), "btag due");
   if (card.due?.time) return node("span", card.due.time, "btag due soon");
   return null;
@@ -8678,15 +8822,15 @@ function boardCardEl(card, { closed = false, draggable = !closed } = {}) {
     // даёт «Вернуть», как в карточке.
     const remove = node("button", "×", "board-remove");
     remove.type = "button";
-    remove.title = "Удалить дело";
-    remove.setAttribute("aria-label", `Удалить: ${card.title}`);
+    bindTranslation(remove, "Удалить дело", "title");
+    bindTranslation(remove, "Удалить: {title}", { title: card.title }, "aria-label");
     remove.addEventListener("click", async (event) => {
       event.stopPropagation();
       remove.disabled = true;
       try {
         await request(`/api/captures/${card.captureId}`, { method: "DELETE" });
         element.remove();
-        toast("Дело удалено", { label: "Вернуть", run: async () => { try { await request(`/api/captures/${card.captureId}/restore`, { method: "POST" }); toast("Дело возвращено"); } catch (error) { toast(error.message); } loadBoard(); } });
+        toast(t("Дело удалено"), { get label() { return t("Вернуть"); }, run: async () => { try { await request(`/api/captures/${card.captureId}/restore`, { method: "POST" }); toast(t("Дело возвращено")); } catch (error) { toast(error.message); } loadBoard(); } });
         loadBoard();
         load();
       } catch (error) { toast(error.message); remove.disabled = false; }
@@ -8768,8 +8912,8 @@ function boardHeadTools(element, { menu = null, plus = true } = {}) {
   if (plus) {
     const add = node("button", "+", "board-col-plus");
     add.type = "button";
-    add.title = "Добавить дело";
-    add.setAttribute("aria-label", "Добавить дело в колонку");
+    bindTranslation(add, "Добавить дело", "title");
+    bindTranslation(add, "Добавить дело в колонку", "aria-label");
     add.addEventListener("click", () => element.querySelector(".board-add-button")?.click());
     tools.append(add);
   }
@@ -8857,7 +9001,7 @@ function boardDoneColumnEl(closed, field, rest, data) {
   element.dataset.columnId = "done";
   const head = node("div", undefined, "board-col-head");
   const pill = node("span", undefined, "board-pill");
-  const link = node("a", "Закрыто", "board-col-name");
+  const link = bindTranslation(node("a", t("Закрыто"), "board-col-name"), "Закрыто");
   link.href = "#done";
   // Ссылку браузер тянет сам, как адрес; тянуться должна колонка.
   link.draggable = false;
@@ -8866,7 +9010,7 @@ function boardDoneColumnEl(closed, field, rest, data) {
   boardLaneDrag(element, head, field, DONE_LANE);
   const list = node("div", undefined, "board-cards");
   list.append(...boardBoxes(closed, rest, data, { closed: true, draggable: false }));
-  if (!closed.length) list.append(node("p", "Закрытое появится здесь", "board-done-empty"));
+  if (!closed.length) list.append(bindTranslation(node("p", t("Закрытое появится здесь"), "board-done-empty"), "Закрытое появится здесь"));
   element.addEventListener("dragover", (event) => {
     if (boardState.drag?.type !== "card") return;
     event.preventDefault();
@@ -8902,7 +9046,7 @@ function boardColumnEl(column, cards, rest, data) {
     input.value = column.name;
     input.className = "board-col-input";
     input.maxLength = 40;
-    input.setAttribute("aria-label", "Название колонки");
+    bindTranslation(input, "Название колонки", "aria-label");
     head.querySelector(".board-pill").replaceWith(input);
     head.draggable = false;
     input.focus();
@@ -8924,18 +9068,18 @@ function boardColumnEl(column, cards, rest, data) {
   // Меню колонки: переименовать или удалить (дела уедут в первую колонку).
   const menu = node("details", undefined, "board-menu");
   const summary = node("summary", "⋯");
-  summary.setAttribute("aria-label", `Меню колонки ${column.name}`);
+  bindTranslation(summary, "Меню колонки {name}", { name: column.name }, "aria-label");
   const popover = node("div", undefined, "board-menu-popover");
-  const renameButton = node("button", "Переименовать");
+  const renameButton = bindTranslation(node("button", t("Переименовать")), "Переименовать");
   renameButton.type = "button";
   renameButton.addEventListener("click", () => { menu.removeAttribute("open"); rename(); });
-  const removeColumn = node("button", "Удалить колонку");
+  const removeColumn = bindTranslation(node("button", t("Удалить колонку")), "Удалить колонку");
   removeColumn.type = "button";
   removeColumn.addEventListener("click", async () => {
     menu.removeAttribute("open");
     try {
       const result = await request(`/api/board/columns/${column.id}`, { method: "DELETE" });
-      toast(result.moved ? `Колонка удалена, дел перенесено: ${result.moved}` : "Колонка удалена");
+      toast(result.moved ? t("Колонка удалена, дел перенесено: {moved}", { moved: result.moved }) : t("Колонка удалена"));
     } catch (error) { toast(error.message); }
     loadBoard();
   });
@@ -8978,24 +9122,24 @@ const boardCreateDeed = (raw, extra = {}) => request("/api/captures", { method: 
 // он встаёт первым среди людей дела, чтобы оно осталось в этой колонке;
 // проект — проектом дела. В «просрочено» и «без срока», в «Откуда» и в
 // «Закрыто» приглашения нет: срок и источник так не назначить.
-const BOARD_INVITE_DAY = { today: "на сегодня", tomorrow: "на завтра", week: "на неделе", later: "позже" };
+const BOARD_INVITE_DAY = { get today() { return t("на сегодня"); }, get tomorrow() { return t("на завтра"); }, get week() { return t("на неделе"); }, get later() { return t("позже"); } };
 function boardInviteFor(field, group, data) {
   const key = `${field}:${group.key ?? FILTER_NONE}`;
   if (field === "col") {
     const { column } = group;
-    return { key, label: `+ Дело в «${column.name}»`, create: async (raw) => {
+    return { key, label: t("+ Дело в «{name}»", { name: column.name }), create: async (raw) => {
       const created = await boardCreateDeed(raw);
       await boardMoveRequest({ captureId: created.entry.id, columnId: column.id, index: 100000 });
     } };
   }
   if (field === "day") {
     if (!(group.key in BOARD_INVITE_DAY)) return null;
-    return { key, label: `+ Дело ${BOARD_INVITE_DAY[group.key]}`, create: (raw) => boardCreateDeed(raw, { due: { date: shiftDate(data.today, BOARD_DAY_DROP[group.key]) } }) };
+    return { key, label: t("+ Дело {value1}", { value1: BOARD_INVITE_DAY[group.key] }), create: (raw) => boardCreateDeed(raw, { due: { date: shiftDate(data.today, BOARD_DAY_DROP[group.key]) } }) };
   }
   if (field === "who") {
     const name = group.key;
-    if (name === null) return { key, label: "+ Дело без человека", create: (raw) => boardCreateDeed(raw) };
-    return { key, label: `+ Дело — ${name}`, create: async (raw) => {
+    if (name === null) return { key, get label() { return t("+ Дело без человека"); }, create: (raw) => boardCreateDeed(raw) };
+    return { key, label: t("+ Дело — {name}", { name: name }), create: async (raw) => {
       const created = await boardCreateDeed(raw);
       const others = (created.entry.interpretation?.classification?.entities?.people || []).filter((person) => person !== name);
       await request(`/api/captures/${created.entry.id}/corrections`, { method: "POST", body: JSON.stringify({ at: Date.now(), patch: { people: [name, ...others] } }) });
@@ -9003,8 +9147,8 @@ function boardInviteFor(field, group, data) {
   }
   if (field === "proj") {
     const name = group.key;
-    if (name === null) return { key, label: "+ Дело без проекта", create: (raw) => boardCreateDeed(raw) };
-    return { key, label: `+ Дело — ${name}`, create: async (raw) => {
+    if (name === null) return { key, get label() { return t("+ Дело без проекта"); }, create: (raw) => boardCreateDeed(raw) };
+    return { key, label: t("+ Дело — {name}", { name: name }), create: async (raw) => {
       const created = await boardCreateDeed(raw);
       await request(`/api/captures/${created.entry.id}/corrections`, { method: "POST", body: JSON.stringify({ at: Date.now(), patch: { project: name } }) });
     } };
@@ -9023,7 +9167,7 @@ function boardAdderEl(invite) {
   button.title = invite.label;
   const input = document.createElement("input");
   input.type = "text";
-  input.placeholder = "Что сделать?";
+  bindTranslation(input, "Что сделать?", "placeholder");
   input.hidden = true;
   const adderKey = invite.key;
   const open = ({ focus = true } = {}) => {
@@ -9068,11 +9212,11 @@ function boardAdderEl(invite) {
 // записи со стороны, от правки в другой вкладке.
 function boardGhostColumnEl(restore = null) {
   const element = node("section", undefined, "board-column ghost");
-  const button = node("button", "+ Колонка", "board-add-button");
+  const button = bindTranslation(node("button", t("+ Колонка"), "board-add-button"), "+ Колонка");
   button.type = "button";
   const input = document.createElement("input");
   input.type = "text";
-  input.placeholder = "Название колонки";
+  bindTranslation(input, "Название колонки", "placeholder");
   input.maxLength = 40;
   input.hidden = true;
   if (restore) { button.hidden = true; input.hidden = false; input.value = restore.draft; }
@@ -9133,7 +9277,7 @@ function boardGroups(items, field, data, keepEmpty = false, extra = []) {
     // Человек и проект — первый из названных; кому и куда не названо — последней группой.
     const valueOf = (card) => (field === "who" ? card.people : card.projects)?.[0] || null;
     const names = [...new Set([...items.map(valueOf).filter(Boolean), ...extra.filter((key) => key !== FILTER_NONE)])].sort((left, right) => left.localeCompare(right, "ru"));
-    groups = [...names, null].map((name) => ({ key: name, label: name ?? (field === "who" ? "Без человека" : "Без проекта"), items: items.filter((card) => valueOf(card) === name) }));
+    groups = [...names, null].map((name) => ({ key: name, label: name ?? (field === "who" ? t("Без человека") : t("Без проекта")), items: items.filter((card) => valueOf(card) === name) }));
   }
   return groups.filter((group) => group.items.length || (typeof keepEmpty === "function" ? keepEmpty(group) : keepEmpty));
 }
@@ -9153,7 +9297,7 @@ function boardBoxes(items, fields, data, { draggable = true, closed = false } = 
   });
 }
 // «по дню», «по человеку»… — для подсказки пустой доски: «Колонок по дню пока нет».
-const BOARD_BY = { day: "по дню", who: "по человеку", proj: "по проекту", src: "по источнику" };
+const BOARD_BY = { get day() { return t("по дню"); }, get who() { return t("по человеку"); }, get proj() { return t("по проекту"); }, get src() { return t("по источнику"); } };
 // Значения поля, которых на доске ещё нет колонкой, — из них человек выбирает в
 // «+ Колонка»: все дни и источники, люди и проекты из карточек, «Без человека» и
 // «Без проекта». Показанные (непустые и заведённые) не предлагаются.
@@ -9164,7 +9308,7 @@ function boardGroupChoices(field, all, visible) {
   else {
     const cards = [...all.columns.flatMap((column) => column.cards), ...(all.closed || [])];
     const names = [...new Set(cards.flatMap((card) => (field === "who" ? card.people : card.projects) || []))].sort((left, right) => left.localeCompare(right, "ru"));
-    list = [...names.map((name) => ({ key: name, label: name })), { key: FILTER_NONE, label: field === "who" ? "Без человека" : "Без проекта" }];
+    list = [...names.map((name) => ({ key: name, label: name })), { key: FILTER_NONE, label: field === "who" ? t("Без человека") : t("Без проекта") }];
   }
   return list.filter((item) => !visible.includes(item.key));
 }
@@ -9185,8 +9329,8 @@ function boardSetPick(open, { focus = false } = {}) {
 // доске нет вовсе: «+ Колонка» говорит, что делать.
 function boardGroupGhostEl(field, choices, lonely) {
   const element = node("section", undefined, `board-column ghost pick${lonely ? " lonely" : ""}${boardState.pickOpen ? " is-open" : ""}`);
-  if (lonely) element.append(node("p", `Колонок ${BOARD_BY[field]} пока нет — добавьте нужные через «+ Колонка»`, "board-lanes-hint"));
-  const button = node("button", "+ Колонка", "board-add-button");
+  if (lonely) element.append(bindTranslation(node("p", t("Колонок {value1} пока нет — добавьте нужные через «+ Колонка»", { value1: BOARD_BY[field] }), "board-lanes-hint"), "Колонок {value1} пока нет — добавьте нужные через «+ Колонка»", { value1: BOARD_BY[field] }));
+  const button = bindTranslation(node("button", t("+ Колонка"), "board-add-button"), "+ Колонка");
   button.type = "button";
   button.setAttribute("aria-haspopup", "true");
   button.setAttribute("aria-expanded", String(boardState.pickOpen));
@@ -9194,7 +9338,7 @@ function boardGroupGhostEl(field, choices, lonely) {
   const list = node("div", undefined, "board-pick-list");
   list.hidden = !boardState.pickOpen;
   list.setAttribute("role", "group");
-  list.setAttribute("aria-label", "Какую колонку добавить");
+  bindTranslation(list, "Какую колонку добавить", "aria-label");
   for (const { key, label } of choices) {
     const item = node("button", label, "board-pick-item");
     item.type = "button";
@@ -9235,23 +9379,23 @@ function boardRemoveGroup(field, key, label, count) {
   boardState.shown[field] = (boardState.shown[field] || []).filter((item) => item !== key);
   boardRememberShown();
   renderBoard(boardState.data);
-  if (count) toast(`Колонка «${label}» уйдёт, когда в ней не останется дел`);
+  if (count) toast(t("Колонка «{label}» уйдёт, когда в ней не останется дел", { label: label }));
 }
 // Меню колонки-группы: только «Убрать колонку» и сказанное словами, что будет с
 // колонкой, в которой есть дела.
 function boardGroupMenu(element, field, group) {
   const menu = node("details", undefined, "board-menu");
   const summary = node("summary", "⋯");
-  summary.setAttribute("aria-label", `Меню колонки ${group.label}`);
+  bindTranslation(summary, "Меню колонки {label}", { label: group.label }, "aria-label");
   const popover = node("div", undefined, "board-menu-popover");
-  const remove = node("button", "Убрать колонку");
+  const remove = bindTranslation(node("button", t("Убрать колонку")), "Убрать колонку");
   remove.type = "button";
-  remove.title = "Колонка скроется, пока в ней пусто. Если в ней есть дела, она останется, пока они в ней есть.";
+  bindTranslation(remove, "Колонка скроется, пока в ней пусто. Если в ней есть дела, она останется, пока они в ней есть.", "title");
   remove.addEventListener("click", () => {
     menu.removeAttribute("open");
     boardRemoveGroup(field, group.key ?? FILTER_NONE, group.label, element.querySelectorAll(".board-card").length);
   });
-  popover.append(remove, node("p", group.items.length ? "В колонке есть дела: она останется, пока они в ней." : "Вернуть колонку можно через «+ Колонка».", "board-menu-note"));
+  popover.append(remove, node("p", group.items.length ? t("В колонке есть дела: она останется, пока они в ней.") : t("Вернуть колонку можно через «+ Колонка»."), "board-menu-note"));
   menu.append(summary, popover);
   return menu;
 }
@@ -9305,7 +9449,7 @@ async function boardChangeDue(card, date) {
       // обратно — два разных действия, а не повтор одного
       body: JSON.stringify({ at: Date.now(), patch: { schedule: { date, time: date ? card.due?.time || null : null } } }),
     });
-    toast(date ? `Срок: ${scheduleLabel({ state: "ok", date, time: null })}` : "Срок снят");
+    toast(date ? t("Срок: {value1}", { value1: scheduleLabel({ state: "ok", date, time: null }) }) : t("Срок снят"));
   } catch (error) {
     toast(error.message);
   }
@@ -9334,7 +9478,7 @@ function boardListNodes(items, fields, depth, data, keepEmpty = false, closed = 
 // «Закрыто» — заголовок-ссылка на страницу «Сделано» с числом закрытых.
 function boardDoneHead(count, className) {
   const head = node("div", undefined, className);
-  const link = node("a", "Закрыто");
+  const link = bindTranslation(node("a", t("Закрыто")), "Закрыто");
   link.href = "#done";
   head.append(link, " ", node("span", `· ${count}`, "n"));
   return head;
@@ -9371,7 +9515,7 @@ function boardFilterValues(field) {
   if (field === "status") return FILTER_STATUSES;
   const cards = data ? [...data.columns.flatMap((column) => column.cards), ...(data.closed || [])] : [];
   const names = [...new Set(cards.flatMap((card) => (field === "who" ? card.people : card.projects) || []))].sort((left, right) => left.localeCompare(right, "ru"));
-  return [...names.map((name) => [name, name]), [FILTER_NONE, "пусто"]];
+  return [...names.map((name) => [name, name]), [FILTER_NONE, t("пусто")]];
 }
 function boardFilterSelect(part, label, options, value) {
   const select = node("select");
@@ -9393,7 +9537,7 @@ function boardCondEl(condition, index) {
   // подменяется молча: остаётся в списке, и условие видно.
   for (const value of condition.values)
     if (!options.some(([key]) => key === value))
-      options.push([value, !boardState.data ? "…" : condition.field === "col" ? "колонка удалена" : value]);
+      options.push([value, !boardState.data ? "…" : condition.field === "col" ? t("колонка удалена") : value]);
   const names = new Map(options);
   const nth = index + 1;
   const open = boardState.valsOpen === boardCondKey(condition);
@@ -9401,21 +9545,21 @@ function boardCondEl(condition, index) {
   const button = node("button", undefined, `board-vals-btn${condition.values.length ? "" : " is-empty"}`);
   button.type = "button";
   button.dataset.part = "values";
-  button.title = "Выбрать значения";
+  bindTranslation(button, "Выбрать значения", "title");
   button.setAttribute("aria-haspopup", "true");
   button.setAttribute("aria-expanded", String(open));
-  button.setAttribute("aria-label", `Значения условия ${nth}: ${condition.values.map((value) => names.get(value)).join(" или ") || "не выбраны"}`);
-  if (!condition.values.length) button.append("значения");
+  bindTranslation(button, "Значения условия {nth}: {value2}", { nth: nth, value2: condition.values.map((value) => names.get(value)).join(t(" или ")) || t("не выбраны") }, "aria-label");
+  if (!condition.values.length) button.append(t("значения"));
   condition.values.forEach((value, at) => {
-    if (at) button.append(" ", node("span", "или", "board-or"), " ");
+    if (at) button.append(" ", bindTranslation(node("span", t("или"), "board-or"), "или"), " ");
     button.append(names.get(value));
   });
   // Под кнопкой — список с галочками: отметили два значения — получили «или».
   const pop = node("div", undefined, "board-vals-pop");
   pop.hidden = !open;
   pop.setAttribute("role", "group");
-  pop.setAttribute("aria-label", `Значения условия ${nth}`);
-  pop.append(node("p", condition.op === "!=" ? "Ни одно из отмеченных" : "Любое из отмеченных", "board-vals-cap"));
+  bindTranslation(pop, "Значения условия {nth}", { nth: nth }, "aria-label");
+  pop.append(node("p", condition.op === "!=" ? t("Ни одно из отмеченных") : t("Любое из отмеченных"), "board-vals-cap"));
   for (const [key, name] of options) {
     const row = node("label", undefined, "board-val");
     const box = document.createElement("input");
@@ -9425,17 +9569,17 @@ function boardCondEl(condition, index) {
     row.append(box, node("span", name));
     pop.append(row);
   }
-  if (!options.length) pop.append(node("p", "Значений пока нет", "board-vals-none"));
+  if (!options.length) pop.append(bindTranslation(node("p", t("Значений пока нет"), "board-vals-none"), "Значений пока нет"));
   const vals = node("span", undefined, "board-vals");
   vals.append(button, pop);
   const remove = node("button", "×", "board-cond-x");
   remove.type = "button";
   remove.dataset.remove = String(index);
-  remove.title = "Убрать условие";
-  remove.setAttribute("aria-label", `Убрать условие ${nth}: ${FILTER_FIELDS[condition.field]}`);
+  bindTranslation(remove, "Убрать условие", "title");
+  bindTranslation(remove, "Убрать условие {nth}: {value2}", { nth: nth, value2: FILTER_FIELDS[condition.field] }, "aria-label");
   chip.append(
-    boardFilterSelect("field", `Поле условия ${nth}`, Object.entries(FILTER_FIELDS), condition.field),
-    boardFilterSelect("op", `Оператор условия ${nth}`, BOARD_FILTER_OPS, condition.op),
+    boardFilterSelect("field", t("Поле условия {nth}", { nth: nth }), Object.entries(FILTER_FIELDS), condition.field),
+    boardFilterSelect("op", t("Оператор условия {nth}", { nth: nth }), BOARD_FILTER_OPS, condition.op),
     vals,
     remove,
   );
@@ -9471,45 +9615,45 @@ function paintBoardFilter() {
   // Строка пересобирается, только когда поменялись условия или то, из чего
   // выбирают: доска перечитывается и сама по себе, и это не должно закрывать
   // открытый список и сбивать фокус.
-  const conditions = JSON.stringify(boardState.filter);
+  const conditions = `${getLocale()}:${JSON.stringify(boardState.filter)}`;
   const key = JSON.stringify([conditions, ["col", "who", "proj"].map((field) => boardFilterValues(field))]);
   if (row.dataset.key === key || (row.contains(document.activeElement) && row.dataset.conditions === conditions)) return;
   row.dataset.key = key;
   row.dataset.conditions = conditions;
   clear(row);
-  row.append(node("span", "Фильтр", "board-bar-label"));
+  row.append(bindTranslation(node("span", t("Фильтр"), "board-bar-label"), "Фильтр"));
   boardState.filter.forEach((condition, index) => {
-    if (index) row.append(node("span", "и", "board-and"));
+    if (index) row.append(bindTranslation(node("span", t("и"), "board-and"), "и"));
     row.append(boardCondEl(condition, index));
   });
-  const add = node("button", "+ условие", "board-cond-add");
+  const add = bindTranslation(node("button", t("+ условие"), "board-cond-add"), "+ условие");
   add.type = "button";
   add.dataset.add = "1";
-  const today = node("button", "Сегодня", "board-filter-today");
+  const today = bindTranslation(node("button", t("Сегодня"), "board-filter-today"), "Сегодня");
   today.type = "button";
   today.dataset.today = "1";
-  today.title = "Вернуть фильтр по умолчанию: сегодняшнее и просроченное";
+  bindTranslation(today, "Вернуть фильтр по умолчанию: сегодняшнее и просроченное", "title");
   today.setAttribute("aria-pressed", String(sameFilter(boardState.filter, defaultFilter())));
-  const clearAll = node("button", "Сбросить", "board-filter-clear");
+  const clearAll = bindTranslation(node("button", t("Сбросить"), "board-filter-clear"), "Сбросить");
   clearAll.type = "button";
   clearAll.dataset.clear = "1";
-  clearAll.title = "Снять все условия";
+  bindTranslation(clearAll, "Снять все условия", "title");
   clearAll.hidden = !boardState.filter.length;
   // Подзадачи на доске и в списке: показывать отдельными карточками или оставить
   // у родителя одну полоску с числом. Помнится в браузере, «Сбросить» его не трогает.
   // Сегменты — те же, что у «Вида»: нажатый залит тёмным, светлый текст.
   const subs = node("span", undefined, "board-subs");
   subs.setAttribute("role", "group");
-  subs.setAttribute("aria-label", "Подзадачи на доске");
+  bindTranslation(subs, "Подзадачи на доске", "aria-label");
   const segments = node("span", undefined, "board-seg");
-  for (const [mode, label] of [["show", "Показывать"], ["hide", "Скрывать"]]) {
+  for (const [mode, label] of [["show", t("Показывать")], ["hide", t("Скрывать")]]) {
     const button = node("button", label, "board-subs-btn");
     button.type = "button";
     button.dataset.subs = mode;
     button.setAttribute("aria-pressed", String(boardState.subs === mode));
     segments.append(button);
   }
-  subs.append(node("span", "Подзадачи", "board-subs-label"), segments);
+  subs.append(bindTranslation(node("span", t("Подзадачи"), "board-subs-label"), "Подзадачи"), segments);
   const tail = node("span", undefined, "board-filter-tail");
   tail.append(subs, today, clearAll);
   row.append(add, tail);
@@ -9550,7 +9694,7 @@ function paintBoardBar() {
   const box = $("#board-grp");
   // Уровни пересобираются, только когда они поменялись: доска перечитывается и
   // сама по себе, и это не должно сбивать фокус и закрывать открытый список.
-  const key = boardState.groups.join(",");
+  const key = `${getLocale()}:${boardState.groups.join(",")}`;
   if (box.dataset.key === key) return;
   box.dataset.key = key;
   clear(box);
@@ -9560,23 +9704,23 @@ function paintBoardBar() {
     level.style.setProperty("--fc", boardTint(field));
     const select = node("select");
     select.dataset.level = String(index);
-    select.setAttribute("aria-label", `Группировка ${index + 1}`);
+    bindTranslation(select, "Группировка {value1}", { value1: index + 1 }, "aria-label");
     for (const [key, name] of Object.entries(BOARD_FIELDS)) { const option = new Option(name, key); option.selected = key === field; select.append(option); }
     const remove = node("button", "×", "board-lv-remove");
     remove.type = "button";
     remove.dataset.remove = String(index);
-    remove.title = "Убрать уровень";
-    remove.setAttribute("aria-label", `Убрать уровень ${index + 1}: ${BOARD_FIELDS[field]}`);
+    bindTranslation(remove, "Убрать уровень", "title");
+    bindTranslation(remove, "Убрать уровень {value1}: {value2}", { value1: index + 1, value2: BOARD_FIELDS[field] }, "aria-label");
     level.append(node("i", String(index + 1)), select, remove);
     box.append(level);
   });
   if (boardState.groups.length < Object.keys(BOARD_FIELDS).length) {
-    const add = node("button", "+ ещё", "board-lv-add");
+    const add = bindTranslation(node("button", t("+ ещё"), "board-lv-add"), "+ ещё");
     add.type = "button";
     add.dataset.add = "1";
     box.append(add);
   }
-  if (!boardState.groups.length) box.append(node("span", "без группировки — один поток", "board-lv-none"));
+  if (!boardState.groups.length) box.append(bindTranslation(node("span", t("без группировки — один поток"), "board-lv-none"), "без группировки — один поток"));
 }
 // Вид или группировка сменились: запомнить и перерисовать. Открытое поле
 // быстрого дела не переезжает — колонки, где оно стояло, уже другие.
@@ -9636,7 +9780,7 @@ function paintBoardSegments(columns) {
     button.type = "button";
     button.setAttribute("role", "tab");
     button.setAttribute("aria-selected", String(index === boardState.mobileColumn));
-    button.append(node("span", name ? name.textContent : column.classList.contains("ghost") ? "+ Колонка" : "…", "board-pill"));
+    button.append(node("span", name ? name.textContent : column.classList.contains("ghost") ? t("+ Колонка") : "…", "board-pill"));
     const count = column.querySelector(".board-col-count");
     if (count) button.append(node("span", count.textContent, "board-col-count"));
     button.addEventListener("click", () => {
@@ -9649,6 +9793,7 @@ function paintBoardSegments(columns) {
   });
 }
 function renderBoard(source) {
+  boardState.locale = getLocale();
   const lanes = $("#board-columns"), flat = $("#board-flat");
   // Перерисовка приходит и посреди набора нового дела (доразбор записи после
   // быстрого добавления перечитывает доску). Снятие поля из DOM даёт blur, а
@@ -9698,7 +9843,7 @@ function renderBoard(source) {
   else if (first) {
     const own = boardState.shown[first] || [];
     for (const group of boardGroups(open, first, data, (group) => own.includes(group.key ?? FILTER_NONE), own)) shown.push({ key: group.key ?? FILTER_NONE, element: boardGroupColumnEl(group, first, rest, data) });
-  } else shown.push({ key: "all", element: boardGroupColumnEl({ key: "all", label: "Все дела", items: open }, null, [], data) });
+  } else shown.push({ key: "all", element: boardGroupColumnEl({ key: "all", get label() { return t("Все дела"); }, items: open }, null, [], data) });
   for (const lane of boardOrderedLanes(field, shown)) lanes.append(lane.element);
   if (first === "col") {
     lanes.append(boardGhostColumnEl(ghost));
@@ -9936,7 +10081,7 @@ function boardPatchSubtasks(data, stamp) {
 // когда экран нужно вернуть к данным, даже если те не менялись (отмена правки).
 async function loadBoard({ force = false } = {}) {
   const wrap = $("#board-columns");
-  if (!wrap.childNodes.length) wrap.append(node("p", "Собираем доску…", "empty"));
+  if (!wrap.childNodes.length) wrap.append(bindTranslation(node("p", t("Собираем доску…"), "empty"), "Собираем доску…"));
   // Первый разбор адреса зовёт доску раньше, чем модуль дошёл до boardState: читаем его уже после микрозадачи.
   await null;
   const subs = boardState.subs;
@@ -9948,8 +10093,9 @@ async function loadBoard({ force = false } = {}) {
     // бы ISO-строкой вместо «завтра» и «05.09».
     currentDayDate ||= data.today;
     const stamp = JSON.stringify(data);
-    if (!force && stamp === boardState.stamp) return;
-    if (!force && boardPatchSubtasks(data, stamp)) return;
+    const localeChanged = boardState.locale !== getLocale();
+    if (!force && !localeChanged && stamp === boardState.stamp) return;
+    if (!force && !localeChanged && boardPatchSubtasks(data, stamp)) return;
     boardState.stamp = stamp;
     boardState.data = data;
     renderBoard(data);
@@ -9974,10 +10120,10 @@ async function loadBoard({ force = false } = {}) {
 // с понедельника четыре недели назад по сегодня; фраза, строка и чипы считаются
 // на клиенте по последним семи дням. Страница помнит только выбранный день.
 // Открывается из заголовка колонки «Закрыто» на доске и по адресу #done.
-const DONE_WEEKDAYS = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
+const DONE_WEEKDAYS = localizedBuiltins(["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]);
 function doneDayWord(date, today) {
-  if (date === today) return "Сегодня";
-  if (date === shiftDate(today, -1)) return "Вчера";
+  if (date === today) return t("Сегодня");
+  if (date === shiftDate(today, -1)) return t("Вчера");
   return DONE_WEEKDAYS[new Date(`${date}T12:00:00Z`).getUTCDay()];
 }
 // Понедельник недели, в которую попадает дата. Функция, а не const: страница
@@ -9992,16 +10138,16 @@ async function reopenDoneItem(item, button) {
     if (item.occurrence && item.projectionId) {
       // Закрыт один день повтора: возвращается он, а не вся запись.
       await request(`/api/projections/${item.projectionId}/undo-complete`, { method: "POST", body: JSON.stringify({ occurrence: item.occurrence }) });
-      toast("Возвращено в работу");
+      toast(t("Возвращено в работу"));
       load().catch(() => {});
       await loadDone();
       return;
     }
     const { entry } = await request(`/api/captures/${encodeURIComponent(item.id)}`);
     const closed = completableProjections(entry).filter((projection) => projection.completion?.completed);
-    if (!closed.length) throw new Error("Это старая запись о сделанном: возвращать в работу нечего");
+    if (!closed.length) throw new Error(t("Это старая запись о сделанном: возвращать в работу нечего"));
     for (const projection of closed) await request(`/api/projections/${projection.id}/undo-complete`, { method: "POST", body: "{}" });
-    toast("Возвращено в работу");
+    toast(t("Возвращено в работу"));
     load().catch(() => {});
     await loadDone();
   } catch (error) {
@@ -10015,18 +10161,18 @@ function doneRowEl(item) {
   if (!item.auto) row.dataset.captureId = item.id;
   const mark = node(item.auto || old ? "span" : "button", undefined, `completion-button${item.auto ? " auto" : old ? " static" : ""}`);
   mark.setAttribute("aria-pressed", "true");
-  if (item.auto) mark.title = "Прошла по календарю";
+  if (item.auto) bindTranslation(mark, "Прошла по календарю", "title");
   else if (!old) {
     mark.type = "button";
-    mark.title = "Вернуть в работу";
-    mark.setAttribute("aria-label", `Вернуть в работу: ${item.title}`);
+    bindTranslation(mark, "Вернуть в работу", "title");
+    bindTranslation(mark, "Вернуть в работу: {title}", { title: item.title }, "aria-label");
     mark.addEventListener("click", () => reopenDoneItem(item, mark));
   }
   row.append(mark);
   // Карточка листается по дням страницы; по метке «0/2» — сразу на «Подзадачах».
   const openItem = ({ subtasks = false } = {}) => {
     const list = row.closest(".done-days");
-    pendingCardList = list ? { label: "Сделано", items: rowsAsList([...list.querySelectorAll(".entry[data-capture-id]")]), id: item.id, occurrence: null } : null;
+    pendingCardList = list ? { get label() { return t("Сделано"); }, items: rowsAsList([...list.querySelectorAll(".entry[data-capture-id]")]), id: item.id, occurrence: null } : null;
     openReportEntry(item.id, { subtasks });
   };
   if (item.auto) row.append(node("span", item.title, "entry-title"));
@@ -10039,14 +10185,14 @@ function doneRowEl(item) {
   const meta = node("div", undefined, "entry-meta");
   const subs = item.auto ? null : subtaskBadge(item.subtasks, () => openItem({ subtasks: true }));
   if (subs) meta.append(subs);
-  if (item.auto) meta.append(node("span", "прошла по календарю", "tag auto"));
+  if (item.auto) meta.append(bindTranslation(node("span", t("прошла по календарю"), "tag auto"), "прошла по календарю"));
   else if (item.column && !old) meta.append(node("span", item.column, "tag done-where"));
   meta.append(node("span", item.time, "tag time"));
   row.append(meta);
   return row;
 }
 const DONE_WEEKS = 5;
-const DONE_MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+const DONE_MONTHS = localizedBuiltins(["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]);
 const doneState = { data: null, selected: null, list: null };
 // Подписи недель слева от клеток: «31 авг –» — неделя перешла в другой месяц,
 // «7–13 сен» — месяц назван, когда он сменился, дальше «14–20» без него.
@@ -10085,7 +10231,7 @@ function paintDoneList() {
     const head = node("h3", undefined, `shelf-head done-day${tone}`);
     head.append(document.createTextNode(title), document.createTextNode(" "), node("span", `· ${count}`, "shelf-n"));
     if (all) {
-      const back = node("button", "Все дни", "done-all");
+      const back = bindTranslation(node("button", t("Все дни"), "done-all"), "Все дни");
       back.type = "button";
       back.addEventListener("click", showAllDoneDays);
       head.append(back);
@@ -10101,9 +10247,9 @@ function paintDoneList() {
     // Сегодняшний день — тот же список, что на полке «Сегодня» внизу недели.
     const items = itemsOn.get(selected) || [];
     const isToday = selected === today;
-    list.append(shelf(isToday ? "Сегодня" : longDate(selected), items.length, { tone: isToday ? " today" : "", all: true }));
+    list.append(shelf(isToday ? t("Сегодня") : longDate(selected), items.length, { tone: isToday ? " today" : "", all: true }));
     if (items.length) list.append(rowsOf(items));
-    else list.append(node("p", isToday ? "Пока ничего." : "В этот день ничего не сделано.", "empty"));
+    else list.append(node("p", isToday ? t("Пока ничего.") : t("В этот день ничего не сделано."), "empty"));
     return;
   }
   const from = shiftDate(today, -6);
@@ -10111,7 +10257,7 @@ function paintDoneList() {
     if (day.date < from || day.date > today || !day.items.length) continue;
     list.append(shelf(doneDayWord(day.date, today), day.items.length, { tone: day.date === today ? " today" : "" }), rowsOf(day.items));
   }
-  if (!list.childNodes.length) list.append(node("p", "Пока ничего. Первый кружок — сюда.", "empty"));
+  if (!list.childNodes.length) list.append(bindTranslation(node("p", t("Пока ничего. Первый кружок — сюда."), "empty"), "Пока ничего. Первый кружок — сюда."));
 }
 function selectDoneDay(date) {
   doneState.selected = doneState.selected === date ? null : date;
@@ -10130,7 +10276,7 @@ function paintDone(data) {
   const page = $("#done");
   clear(page);
   const heading = node("div", undefined, "page-heading");
-  heading.append(node("h2", "Сделано"));
+  heading.append(bindTranslation(node("h2", t("Сделано")), "Сделано"));
   page.append(heading);
 
   const today = data.today;
@@ -10149,11 +10295,11 @@ function paintDone(data) {
 
   const summary = node("div", undefined, "done-summary");
   const line = node("p", undefined, "done-line");
-  line.append("За неделю сделано ", node("b", String(weekItems.length)), ", из них встреч ", node("b", String(meetings)), " · сегодня ", node("b", String(countOn(today)), "g"));
+  line.append(t("За неделю сделано "), node("b", String(weekItems.length)), t(", из них встреч "), node("b", String(meetings)), t(" · сегодня "), node("b", String(countOn(today)), "g"));
 
   const strip = node("div", undefined, "done-strip");
   strip.setAttribute("role", "group");
-  strip.setAttribute("aria-label", "Последние семь дней");
+  bindTranslation(strip, "Последние семь дней", "aria-label");
   for (const date of week) {
     const n = countOn(date);
     const button = node("button", undefined, `done-wd${date === today ? " today" : ""}${n ? "" : " z"}`);
@@ -10175,13 +10321,13 @@ function paintDone(data) {
     chips.append(element);
   };
   for (const [name, n] of [...byColumn].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ru"))) chip(name, n);
-  if (meetings) chip("Встречи", meetings, "done-chip meet");
+  if (meetings) chip(t("Встречи"), meetings, "done-chip meet");
   summary.append(line, strip, chips);
 
   const rhythm = node("div", undefined, "done-rhythm");
   const grid = node("div", undefined, "done-grid");
   grid.setAttribute("role", "group");
-  grid.setAttribute("aria-label", `Ритм за ${DONE_WEEKS} недель`);
+  bindTranslation(grid, "Ритм за {DONE_WEEKS} недель", { DONE_WEEKS: DONE_WEEKS }, "aria-label");
   grid.append(node("span"));
   for (const name of CAL_DOW) grid.append(node("span", name, "done-grid-hd"));
   const labels = doneWeekLabels(mondays);
@@ -10194,7 +10340,7 @@ function paintDone(data) {
       if (date > today) {
         cell.classList.add("future");
         cell.disabled = true;
-        cell.setAttribute("aria-label", `${longDate(date)} · ещё не наступил`);
+        bindTranslation(cell, "{value1} · ещё не наступил", { value1: longDate(date) }, "aria-label");
       } else {
         const level = doneLevel(countOn(date));
         if (level) cell.classList.add(level);
@@ -10206,7 +10352,7 @@ function paintDone(data) {
       grid.append(cell);
     }
   });
-  rhythm.append(node("p", `Ритм · ${DONE_WEEKS} недель`, "done-cap"), grid);
+  rhythm.append(bindTranslation(node("p", t("Ритм · {DONE_WEEKS} недель", { DONE_WEEKS: DONE_WEEKS }), "done-cap"), "Ритм · {DONE_WEEKS} недель", { DONE_WEEKS: DONE_WEEKS }), grid);
 
   const top = node("div", undefined, "done-top");
   top.append(summary, rhythm);
@@ -10225,7 +10371,7 @@ function paintDone(data) {
 // #done по адресу функция стартует раньше, чем модуль до них дошёл.
 async function loadDone({ fresh = false } = {}) {
   const page = $("#done");
-  if (!page.childNodes.length) page.append(node("p", "Считаем сделанное…", "empty"));
+  if (!page.childNodes.length) page.append(bindTranslation(node("p", t("Считаем сделанное…"), "empty"), "Считаем сделанное…"));
   try {
     const range = (today) => `from=${shiftDate(weekMonday(today), -28)}&to=${today}`;
     const guess = currentDayDate || zoneDate(new Date());
@@ -10250,9 +10396,9 @@ const CAL_HOUR_PX = 48;
 const CAL_H0 = 6;
 const CAL_H1 = 23;
 const CAL_STEP = 15;
-const CAL_DOW = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"];
-const CAL_MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
-const CAL_MONTHS_G = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
+const CAL_DOW = localizedBuiltins(["пн", "вт", "ср", "чт", "пт", "сб", "вс"]);
+const CAL_MONTHS = localizedBuiltins(["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]);
+const CAL_MONTHS_G = localizedBuiltins(["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"]);
 const CAL_PHONE = window.matchMedia("(max-width: 760px)");
 const calState = { mode: "week", anchor: null, days: 7, data: null, hidden: new Set(), seq: 0, drag: null, pop: null, popAnchorId: null, scrollTop: null, gridScroll: null, search: "" };
 try {
@@ -10290,7 +10436,7 @@ function calRange() {
 function calTitle() {
   const { from, to } = calRange();
   const a = calParse(from), b = calParse(to);
-  if (calState.mode === "day") return calHuman(from) + (from === calToday() ? " · сегодня" : "");
+  if (calState.mode === "day") return calHuman(from) + (from === calToday() ? t(" · сегодня") : "");
   if (calState.mode === "month") { const d = calParse(calState.anchor || calToday()); return `${CAL_MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`; }
   if (a.getUTCMonth() === b.getUTCMonth()) return `${a.getUTCDate()}–${b.getUTCDate()} ${CAL_MONTHS_G[a.getUTCMonth()]} ${a.getUTCFullYear()}`;
   return `${a.getUTCDate()} ${CAL_MONTHS_G[a.getUTCMonth()]} – ${b.getUTCDate()} ${CAL_MONTHS_G[b.getUTCMonth()]}`;
@@ -10339,7 +10485,7 @@ async function loadCalendar() {
   const wrap = $("#calendar-view");
   const { from, to } = calRange();
   const seq = ++calState.seq;
-  if (!wrap.childNodes.length) wrap.append(node("p", "Собираем календарь…", "empty"));
+  if (!wrap.childNodes.length) wrap.append(bindTranslation(node("p", t("Собираем календарь…"), "empty"), "Собираем календарь…"));
   try {
     const data = await request(`/api/calendar?from=${from}&to=${to}`);
     if (seq !== calState.seq) return;
@@ -10373,26 +10519,26 @@ function calSourcesEl() {
     if (extra) button.append(node("small", extra));
     return button;
   };
-  wrap.append(chip("kind:task", "Дела", "var(--type-todo)"), chip("kind:meeting", "Встречи", "var(--type-meeting)"));
+  wrap.append(chip("kind:task", t("Дела"), "var(--type-todo)"), chip("kind:meeting", t("Встречи"), "var(--type-meeting)"));
   for (const account of data.accounts) {
     if (account.disabled) continue;
-    wrap.append(chip(`account:${account.id}`, account.label, account.color || "var(--n-72)", account.syncError ? "ошибка" : account.mode === "busy" ? "занято" : null));
+    wrap.append(chip(`account:${account.id}`, account.label, account.color || "var(--n-72)", account.syncError ? t("ошибка") : account.mode === "busy" ? t("занято") : null));
   }
   // Круги встают в ту же полосу: нажатие вычёркивает круг из недели, как
   // вычёркивает чужой календарь. Это взгляд, а не решение — выключают круг
   // на его странице.
   for (const circle of todayState.circles || [])
-    wrap.append(chip(`circle:${circle.id}`, circle.name, `var(--circle-${CIRCLE_TONES[circle.color] || "violet"})`, circle.muted ? "выключен" : null));
+    wrap.append(chip(`circle:${circle.id}`, circle.name, `var(--circle-${CIRCLE_TONES[circle.color] || "violet"})`, circle.muted ? t("выключен") : null));
   return wrap;
 }
 function calToolbarEl() {
   const top = node("div", undefined, "cal-top");
   const nav = node("span", undefined, "cal-nav");
-  nav.append(calButton("‹", "cal-nav-btn", () => calStep(-1)), calButton("Сегодня", "cal-nav-today", () => { calState.anchor = calToday(); loadCalendar(); }), calButton("›", "cal-nav-btn", () => calStep(1)));
+  nav.append(calButton("‹", "cal-nav-btn", () => calStep(-1)), calButton(t("Сегодня"), "cal-nav-today", () => { calState.anchor = calToday(); loadCalendar(); }), calButton("›", "cal-nav-btn", () => calStep(1)));
   const title = node("h3", calTitle(), "cal-title");
   const seg = node("div", undefined, "cal-seg");
   seg.setAttribute("role", "group");
-  for (const [mode, label, key] of [["day", "День", "D"], ["week", "Неделя", "W"], ["month", "Месяц", "M"]]) {
+  for (const [mode, label, key] of [["day", t("День"), "D"], ["week", t("Неделя"), "W"], ["month", t("Месяц"), "M"]]) {
     const button = calButton(undefined, undefined, () => { setCalendarMode(mode); if (mode === "week") calState.days = 7; loadCalendar(); });
     button.append(node("span", label), node("kbd", key));
     button.setAttribute("aria-pressed", String(calState.mode === mode));
@@ -10414,12 +10560,12 @@ function calChipEl(item, { overdue = false } = {}) {
     chip.dataset.own = "1";
     chip.dataset.occ = item.date;
     const box = calButton(undefined, `cal-box${item.kind === "meeting" ? " meeting" : ""}${item.done ? " is-done" : ""}`, (event) => { event.stopPropagation(); toggleCalendarDone(item); });
-    box.title = item.recurring ? "Готово: убрать этот повтор, серия останется" : item.done ? "Вернуть в работу" : "Готово";
+    box.title = item.recurring ? t("Готово: убрать этот повтор, серия останется") : item.done ? t("Вернуть в работу") : t("Готово");
     if (item.kind === "meeting" && !item.done) box.innerHTML = BOARD_CLOCK;
     chip.append(box);
   } else if (item.color) chip.style.setProperty("--cal-c", item.color);
   chip.append(node("span", item.title, "cal-chip-title"));
-  if (item.kind !== "external" && item.recurring) { const repeat = node("i", "⟳", "cal-chip-repeat"); repeat.title = item.repeat || "Повторяется"; chip.append(repeat); }
+  if (item.kind !== "external" && item.recurring) { const repeat = node("i", "⟳", "cal-chip-repeat"); repeat.title = item.repeat || t("Повторяется"); chip.append(repeat); }
   chip.title = item.recurring && item.repeat ? `${item.title} · ${item.repeat}` : item.title;
   chip.addEventListener("click", () => openCalendarItem(item));
   return chip;
@@ -10479,7 +10625,7 @@ function calEventEl(item, place = null) {
   // как дело «без времени»: открывать карточку ради одного нажатия незачем.
   if (item.kind !== "external") {
     const box = calButton(undefined, `cal-box${item.kind === "meeting" ? " meeting" : ""}${item.done ? " is-done" : ""}`, (event) => { event.stopPropagation(); toggleCalendarDone(item); });
-    box.title = item.recurring ? "Готово: убрать этот повтор, серия останется" : item.done ? "Вернуть в работу" : "Готово";
+    box.title = item.recurring ? t("Готово: убрать этот повтор, серия останется") : item.done ? t("Вернуть в работу") : t("Готово");
     box.setAttribute("aria-label", `${box.title}: ${item.title}`);
     box.draggable = false;
     if (item.kind === "meeting" && !item.done) box.innerHTML = BOARD_CLOCK;
@@ -10490,11 +10636,11 @@ function calEventEl(item, place = null) {
   const sub = item.kind === "external" ? item.calendarName || item.source : [item.project, ...(item.people || [])].filter(Boolean).join(" · ");
   if (sub) element.append(node("small", sub));
   // Повтор — значком в правом верхнем углу, как в Apple.
-  if (item.repeat || item.recurring) { const repeat = node("i", "⟳", "cal-ev-repeat"); repeat.title = item.repeat || "Повторяется"; element.append(repeat); }
+  if (item.repeat || item.recurring) { const repeat = node("i", "⟳", "cal-ev-repeat"); repeat.title = item.repeat || t("Повторяется"); element.append(repeat); }
   if (item.joinUrl && height >= 34) {
-    const join = node("a", "К звонку", "cal-join");
+    const join = bindTranslation(node("a", t("К звонку"), "cal-join"), "К звонку");
     join.href = item.joinUrl; join.target = "_blank"; join.rel = "noopener";
-    join.title = `Открыть видеовстречу: ${popHost(item.joinUrl) || "ссылка"}`;
+    bindTranslation(join, "Открыть видеовстречу: {value1}", { value1: popHost(item.joinUrl) || t("ссылка") }, "title");
     join.addEventListener("click", (event) => event.stopPropagation());
     element.append(join);
   }
@@ -10535,7 +10681,7 @@ function fitCalendarHeight() {
 window.addEventListener("resize", () => { if (!$("#calendar")?.hidden) fitCalendarHeight(); });
 function calResizeEl() {
   const grip = node("div", undefined, "cal-resize");
-  grip.title = "Потяните, чтобы изменить высоту. Двойной клик — по высоте окна";
+  bindTranslation(grip, "Потяните, чтобы изменить высоту. Двойной клик — по высоте окна", "title");
   grip.setAttribute("aria-hidden", "true");
   grip.addEventListener("dblclick", () => {
     try { localStorage.removeItem(CAL_HEIGHT.key); } catch {}
@@ -10583,7 +10729,7 @@ function calGridEl(dates) {
   head.append(node("div", undefined, "cal-corner"));
   const lane = node("div", undefined, "cal-wk");
   lane.style.setProperty("--days", String(dates.length));
-  lane.append(node("div", "без времени", "cal-nt-label"));
+  lane.append(bindTranslation(node("div", t("без времени"), "cal-nt-label"), "без времени"));
   const scroll = node("div", undefined, "cal-scroll");
   const grid = node("div", undefined, "cal-grid");
   grid.style.setProperty("--days", String(dates.length));
@@ -10626,25 +10772,25 @@ function calAgendaEl(date) {
   const aside = node("aside", undefined, "cal-agenda");
   const overdue = date === calToday() ? (calState.data.overdue || []).filter(calOwnVisible).map((item) => ({ ...item, overdue: true })) : [];
   const noTime = own.filter((item) => item.time === null).concat(overdue, external.filter((item) => item.allDay));
-  aside.append(node("h4", `Без времени · ${noTime.length}`));
-  if (!noTime.length) aside.append(node("p", "пусто", "cal-free"));
+  aside.append(bindTranslation(node("h4", t("Без времени · {length}", { length: noTime.length })), "Без времени · {length}", { length: noTime.length }));
+  if (!noTime.length) aside.append(bindTranslation(node("p", t("пусто"), "cal-free"), "пусто"));
   for (const item of noTime) aside.append(calChipEl(item));
-  aside.append(node("h4", "По часам"));
+  aside.append(bindTranslation(node("h4", t("По часам")), "По часам"));
   const timed = own.filter((item) => item.time !== null).concat(external.filter((item) => !item.allDay)).sort((a, b) => calMinutes(a.time) - calMinutes(b.time));
-  if (!timed.length) aside.append(node("p", "свободный день", "cal-free"));
+  if (!timed.length) aside.append(bindTranslation(node("p", t("свободный день"), "cal-free"), "свободный день"));
   let cursor = 9 * 60;
   for (const item of timed) {
     const start = calMinutes(item.time);
-    if (start - cursor >= 60) aside.append(node("p", `свободно ${Math.floor((start - cursor) / 60)} ч${(start - cursor) % 60 ? ` ${(start - cursor) % 60} мин` : ""}`, "cal-free"));
+    if (start - cursor >= 60) aside.append(bindTranslation(node("p", t("свободно {value1} ч{value2}", { value1: Math.floor((start - cursor) / 60), value2: (start - cursor) % 60 ? t(" {value1} мин", { value1: (start - cursor) % 60 }) : "" }), "cal-free"), "свободно {value1} ч{value2}", { value1: Math.floor((start - cursor) / 60), value2: (start - cursor) % 60 ? t(" {value1} мин", { value1: (start - cursor) % 60 }) : "" }));
     const waiting = calAwaitingAnswer(item);
     const row = node("div", undefined, `cal-row ${item.kind}${item.done ? " done" : ""}${waiting ? " unanswered" : ""}`);
     row.append(node("time", item.time));
     const text = node("span", item.title, "cal-row-title");
-    const meta = node("small", item.kind === "external" ? `${item.source}${waiting ? " · без ответа" : ""}` : `до ${calEndOf(item)}${item.project ? ` · ${item.project}` : ""}`);
+    const meta = node("small", item.kind === "external" ? `${item.source}${waiting ? t(" · без ответа") : ""}` : t("до {value1}{value2}", { value1: calEndOf(item), value2: item.project ? ` · ${item.project}` : "" }));
     const body = node("span", undefined, "cal-row-body");
     body.append(text, meta);
     row.append(body);
-    if (item.joinUrl) { const join = node("a", "К звонку", "cal-join"); join.href = item.joinUrl; join.target = "_blank"; join.rel = "noopener"; join.title = `Открыть видеовстречу: ${popHost(item.joinUrl) || "ссылка"}`; join.addEventListener("click", (event) => event.stopPropagation()); row.append(join); }
+    if (item.joinUrl) { const join = bindTranslation(node("a", t("К звонку"), "cal-join"), "К звонку"); join.href = item.joinUrl; join.target = "_blank"; join.rel = "noopener"; bindTranslation(join, "Открыть видеовстречу: {value1}", { value1: popHost(item.joinUrl) || t("ссылка") }, "title"); join.addEventListener("click", (event) => event.stopPropagation()); row.append(join); }
     row.addEventListener("click", () => openCalendarItem(item));
     aside.append(row);
     cursor = Math.max(cursor, calMinutes(calEndOf(item)));
@@ -10673,7 +10819,7 @@ function calMonthEl() {
       if (item.time !== null) chip.prepend(node("span", item.time, "cal-chip-time"));
       cell.append(chip);
     }
-    if (items.length > 3) cell.append(node("div", `ещё ${items.length - 3}`, "cal-more"));
+    if (items.length > 3) cell.append(bindTranslation(node("div", t("ещё {value1}", { value1: items.length - 3 }), "cal-more"), "ещё {value1}", { value1: items.length - 3 }));
     wrap.append(cell);
   }
   return wrap;
@@ -10703,7 +10849,7 @@ function renderCalendar() {
   const samePlace = anchorBefore && anchorAfter && Math.abs(anchorBefore.top - anchorAfter.top) < 1 && Math.abs(anchorBefore.left - anchorAfter.left) < 1;
   if (calState.pop && !samePlace) closeCalendarPop();
   const hint = node("p", undefined, "cal-hint");
-  hint.append(node("kbd", "D"), node("kbd", "W"), node("kbd", "M"), document.createTextNode(" виды · "), node("kbd", "T"), document.createTextNode(" сегодня · "), node("kbd", "←"), node("kbd", "→"), document.createTextNode(" листать · "), node("kbd", "1"), document.createTextNode("–"), node("kbd", "7"), document.createTextNode(" дней · тяните дела, встречи и чужие события, клик по пустому месту — новая запись"));
+  hint.append(node("kbd", "D"), node("kbd", "W"), node("kbd", "M"), document.createTextNode(t(" виды · ")), node("kbd", "T"), document.createTextNode(t(" сегодня · ")), node("kbd", "←"), node("kbd", "→"), document.createTextNode(t(" листать · ")), node("kbd", "1"), document.createTextNode("–"), node("kbd", "7"), document.createTextNode(t(" дней · тяните дела, встречи и чужие события, клик по пустому месту — новая запись")));
   wrap.append(hint);
   fitCalendarHeight();
 }
@@ -10742,7 +10888,7 @@ function openCalendarItem(item) {
     // и листается, и ведёт к следующему после «Готово».
     const own = [...(calState.data?.overdue || []), ...(calState.data?.items || [])].filter(calOwnVisible)
       .sort((left, right) => left.date.localeCompare(right.date) || (left.time || "99:99").localeCompare(right.time || "99:99"));
-    pendingCardList = { label: "Календарь", items: own.map((candidate) => ({ id: candidate.id, occurrence: candidate.recurring ? candidate.date : null })), id: item.id, occurrence: item.recurring ? item.date : null };
+    pendingCardList = { get label() { return t("Календарь"); }, items: own.map((candidate) => ({ id: candidate.id, occurrence: candidate.recurring ? candidate.date : null })), id: item.id, occurrence: item.recurring ? item.date : null };
     openReportEntry(item.id, { occurrence: item.recurring ? item.date : null });
     return;
   }
@@ -10803,7 +10949,7 @@ function calPopFit(pop) {
 // Плашка чужого события — как в Календаре macOS: заголовок и календарь,
 // откуда событие, когда и как повторяется, участники с ответами, ссылка на
 // видеовстречу и на само событие, мой ответ организатору с комментарием.
-const POP_STATUS = { accepted: ["✓", "принято"], declined: ["✕", "отклонено"], tentative: ["?", "под вопросом"], "needs-action": ["·", "без ответа"], delegated: ["→", "передано"] };
+const POP_STATUS = localizedBuiltins({ accepted: ["✓", "принято"], declined: ["✕", "отклонено"], tentative: ["?", "под вопросом"], "needs-action": ["·", "без ответа"], delegated: ["→", "передано"] });
 function popStatusIcon(status) {
   const [glyph, label] = POP_STATUS[status] || POP_STATUS["needs-action"];
   const icon = node("i", glyph, `pop-st ${status}`);
@@ -10834,21 +10980,21 @@ function showExternalEvent(item) {
   // Экземпляр повтора по CalDAV в другой календарь не переезжает — только серия.
   if ((item.movable ?? item.editable) && writable.length > 1) {
     const select = node("select");
-    select.setAttribute("aria-label", "Календарь события");
+    bindTranslation(select, "Календарь события", "aria-label");
     for (const calendar of writable) { const option = node("option", calendar.name); option.value = calendar.id; option.selected = calendar.id === item.calendarId; select.append(option); }
     select.addEventListener("change", async () => {
       select.disabled = true;
-      try { await request(`/api/calendar/external/${encodeURIComponent(item.id)}/move`, { method: "POST", body: JSON.stringify({ calendarId: select.value }) }); toast(`Перенесено в календарь «${select.selectedOptions[0].textContent}»`); closeCalendarPop(); await loadCalendar(); }
+      try { await request(`/api/calendar/external/${encodeURIComponent(item.id)}/move`, { method: "POST", body: JSON.stringify({ calendarId: select.value }) }); toast(t("Перенесено в календарь «{textContent}»", { textContent: select.selectedOptions[0].textContent })); closeCalendarPop(); await loadCalendar(); }
       catch (error) { toast(error.message); select.disabled = false; }
     });
     calPick.append(select);
   } else calPick.append(node("span", item.calendarName || item.source));
   head.append(calPick);
   if (item.editable) {
-    title.title = "Переименовать"; title.tabIndex = 0;
+    bindTranslation(title, "Переименовать", "title"); title.tabIndex = 0;
     const rename = () => {
       const input = node("input", undefined, "cal-pop-rename");
-      input.type = "text"; input.value = item.title; input.maxLength = 300; input.setAttribute("aria-label", "Название события");
+      input.type = "text"; input.value = item.title; input.maxLength = 300; bindTranslation(input, "Название события", "aria-label");
       title.replaceWith(input); input.focus(); input.select();
       let done = false;
       const finish = async (save) => {
@@ -10856,7 +11002,7 @@ function showExternalEvent(item) {
         const next = input.value.trim();
         if (!save || !next || next === item.title) { input.replaceWith(title); return; }
         input.disabled = true;
-        try { await patch({ title: next }, `Переименовано в ${item.source}`); } catch { input.replaceWith(title); }
+        try { await patch({ title: next }, t("Переименовано в {source}", { source: item.source })); } catch { input.replaceWith(title); }
       };
       input.addEventListener("keydown", (keyEvent) => { if (keyEvent.key === "Enter") { keyEvent.preventDefault(); finish(true); } else if (keyEvent.key === "Escape") { keyEvent.preventDefault(); finish(false); } });
       input.addEventListener("blur", () => finish(true));
@@ -10869,12 +11015,12 @@ function showExternalEvent(item) {
   const host = popHost(item.href);
   const source = popSection("pop-row");
   source.append(node("span", `${item.source}${host ? ` · ${host}` : ""}`, "pop-src"));
-  if (item.href) { const open = node("a", "Открыть", "cal-pop-btn small"); open.href = item.href; open.target = "_blank"; open.rel = "noopener"; source.append(open); }
+  if (item.href) { const open = bindTranslation(node("a", t("Открыть"), "cal-pop-btn small"), "Открыть"); open.href = item.href; open.target = "_blank"; open.rel = "noopener"; source.append(open); }
   pop.append(source);
   // ── когда ──
   const when = popSection();
   const year = calParse(item.date).getUTCFullYear();
-  const whenText = item.allDay ? `${calHuman(item.date)} ${year} · весь день${item.days > 1 ? ` · ${item.days} дн.` : ""}` : `${calHuman(item.date)} ${year}  ${item.time} – ${item.end}`;
+  const whenText = item.allDay ? t("{value1} {year} · весь день{value3}", { value1: calHuman(item.date), year: year, value3: item.days > 1 ? t(" · {value1} дн.", { value1: item.days }) : "" }) : `${calHuman(item.date)} ${year}  ${item.time} – ${item.end}`;
   when.append(node("div", whenText, "pop-when"));
   if (item.repeat) { const repeat = node("div", undefined, "pop-repeat"); repeat.append(node("span", item.repeat), node("i", "⟳", "pop-repeat-icon")); when.append(repeat); }
   if (item.location) when.append(node("div", item.location, "pop-loc"));
@@ -10888,7 +11034,7 @@ function showExternalEvent(item) {
       const name = node("span", attendee.name || attendee.email);
       name.title = attendee.email;
       row.append(name);
-      const marks = [attendee.organizer ? "организатор" : null, attendee.self ? "вы" : null, attendee.optional ? "необязательно" : null].filter(Boolean);
+      const marks = [attendee.organizer ? t("организатор") : null, attendee.self ? t("вы") : null, attendee.optional ? t("необязательно") : null].filter(Boolean);
       if (marks.length) row.append(node("small", `(${marks.join(", ")})`));
       people.append(row);
     }
@@ -10899,7 +11045,7 @@ function showExternalEvent(item) {
     const video = popSection("pop-link");
     const link = node("a", item.joinUrl.replace(/^https?:\/\//, ""));
     link.href = item.joinUrl; link.target = "_blank"; link.rel = "noopener";
-    video.append(node("span", "Ссылка на видеовстречу: "), link);
+    video.append(bindTranslation(node("span", t("Ссылка на видеовстречу: ")), "Ссылка на видеовстречу: "), link);
     pop.append(video);
   }
   const eventUrl = item.url && item.url !== item.joinUrl ? item.url : null;
@@ -10908,17 +11054,17 @@ function showExternalEvent(item) {
   if (item.me) {
     const me = popSection("pop-me");
     const line = node("div", undefined, "pop-me-line");
-    line.append(node("span", "Мой ответ:", "pop-me-label"), popStatusIcon(item.me.status), node("b", POP_STATUS[item.me.status]?.[1] || "без ответа"));
+    line.append(bindTranslation(node("span", t("Мой ответ:"), "pop-me-label"), "Мой ответ:"), popStatusIcon(item.me.status), node("b", POP_STATUS[item.me.status]?.[1] || t("без ответа")));
     me.append(line);
     const comment = node("input", undefined, "pop-comment");
-    comment.type = "text"; comment.placeholder = "Комментарий организатору"; comment.maxLength = 500; comment.value = item.me.comment || "";
-    comment.setAttribute("aria-label", "Комментарий организатору");
+    comment.type = "text"; bindTranslation(comment, "Комментарий организатору", "placeholder"); comment.maxLength = 500; comment.value = item.me.comment || "";
+    bindTranslation(comment, "Комментарий организатору", "aria-label");
     const respond = async (status) => {
       for (const button of buttons.children) button.disabled = true;
       try {
         const body = { status, ...(comment.value.trim() !== (item.me.comment || "") ? { comment: comment.value.trim() } : {}) };
         await request(`/api/calendar/external/${encodeURIComponent(item.id)}/respond`, { method: "POST", body: JSON.stringify(body) });
-        toast(`Ответ отправлен: ${POP_STATUS[status][1]}`);
+        toast(t("Ответ отправлен: {value1}", { value1: POP_STATUS[status][1] }));
         closeCalendarPop();
         await loadCalendar();
       } catch (error) { toast(error.message); for (const button of buttons.children) button.disabled = false; }
@@ -10926,11 +11072,11 @@ function showExternalEvent(item) {
     const buttons = node("div", undefined, "pop-me-buttons");
     // Текущий ответ — не кнопка призыва, а отметка состояния: цветом статуса,
     // с галочкой и без нажатия. Чёрная заливка читалась как «нажми меня».
-    for (const [status, label, chosen] of [["accepted", "Принять", "Принято"], ["tentative", "Под вопросом", "Под вопросом"], ["declined", "Отклонить", "Отклонено"]]) {
+    for (const [status, label, chosen] of [["accepted", t("Принять"), t("Принято")], ["tentative", t("Под вопросом"), t("Под вопросом")], ["declined", t("Отклонить"), t("Отклонено")]]) {
       const current = item.me.status === status;
       const button = calButton(current ? `${POP_STATUS[status][0]} ${chosen}` : label, `cal-pop-btn small${current ? ` is-current ${status}` : ""}`, () => respond(status));
       button.setAttribute("aria-pressed", String(current));
-      if (current) { button.disabled = true; button.title = "Ваш текущий ответ"; }
+      if (current) { button.disabled = true; bindTranslation(button, "Ваш текущий ответ", "title"); }
       buttons.append(button);
     }
     comment.addEventListener("keydown", (keyEvent) => { if (keyEvent.key === "Enter") { keyEvent.preventDefault(); respond(item.me.status === "needs-action" ? "accepted" : item.me.status); } });
@@ -10939,15 +11085,15 @@ function showExternalEvent(item) {
   }
   // ── действия ──
   const actions = node("div", undefined, "cal-pop-actions");
-  if (item.joinUrl) { const join = node("a", "Присоединиться", "cal-pop-btn primary"); join.href = item.joinUrl; join.target = "_blank"; join.rel = "noopener"; actions.append(join); }
-  const take = calButton("Взять в память", `cal-pop-btn${item.joinUrl ? "" : " primary"}`, async () => {
+  if (item.joinUrl) { const join = bindTranslation(node("a", t("Присоединиться"), "cal-pop-btn primary"), "Присоединиться"); join.href = item.joinUrl; join.target = "_blank"; join.rel = "noopener"; actions.append(join); }
+  const take = calButton(t("Взять в память"), `cal-pop-btn${item.joinUrl ? "" : " primary"}`, async () => {
     take.disabled = true;
     try {
       const d = calParse(item.date);
       const numeric = `${calPad(d.getUTCDate())}.${calPad(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}`;
-      const raw = item.allDay ? `${item.title} — ${numeric}, весь день (из календаря ${item.source})` : `${item.title} — ${numeric} в ${item.time}${item.end ? `–${item.end}` : ""}${item.location ? `, ${item.location}` : ""} (из календаря ${item.source})`;
+      const raw = item.allDay ? t("{title} — {numeric}, весь день (из календаря {source})", { title: item.title, numeric: numeric, source: item.source }) : t("{title} — {numeric} в {time}{value4}{value5} (из календаря {source})", { title: item.title, numeric: numeric, time: item.time, value4: item.end ? `–${item.end}` : "", value5: item.location ? `, ${item.location}` : "", source: item.source });
       await request("/api/captures", { method: "POST", body: JSON.stringify({ raw }) });
-      toast("Событие записано в память");
+      toast(t("Событие записано в память"));
       closeCalendarPop();
       await load();
       await loadCalendar();
@@ -10968,7 +11114,7 @@ function showExternalEvent(item) {
       request(`/api/calendar/external/${encodeURIComponent(item.id)}${scope ? `?scope=${scope}` : ""}`, { method: "DELETE" })
         .then(() => {
           forget();
-          toast(series ? `Серия «${item.title}» удалена из ${item.source}` : `Удалено из ${item.source}`);
+          toast(series ? t("Серия «{title}» удалена из {source}", { title: item.title, source: item.source }) : t("Удалено из {source}", { source: item.source }));
           // Сервер мог убрать больше нашего — у CalDAV одиночное событие
           // лежит файлом целиком, — поэтому сверяемся с ним.
           todayState.calendarStale = true;
@@ -10977,7 +11123,7 @@ function showExternalEvent(item) {
         })
         .catch((error) => {
           forget();
-          toast(`«${item.title}» не удалилось: ${error.message}`);
+          toast(t("«{title}» не удалилось: {message}", { title: item.title, message: error.message }));
           load().catch(() => {});
         });
     };
@@ -10985,16 +11131,16 @@ function showExternalEvent(item) {
     // серия. Выбор живёт в самой плашке, на месте кнопок.
     const askDeleteScope = () => {
       const ask = node("div", undefined, "cal-pop-ask");
-      ask.append(node("p", `«${item.title}» повторяется. Удалить только этот повтор (${calHuman(item.date)}) или всю серию из календаря ${item.source}? Это не вернуть.`, "cal-pop-ask-text"));
+      ask.append(bindTranslation(node("p", t("«{title}» повторяется. Удалить только этот повтор ({value2}) или всю серию из календаря {source}? Это не вернуть.", { title: item.title, value2: calHuman(item.date), source: item.source }), "cal-pop-ask-text"), "«{title}» повторяется. Удалить только этот повтор ({value2}) или всю серию из календаря {source}? Это не вернуть.", { title: item.title, value2: calHuman(item.date), source: item.source }));
       const row = node("div", undefined, "cal-pop-actions");
-      row.append(calButton("Только это событие", "cal-pop-btn danger", () => erase("instance")), calButton("Всю серию", "cal-pop-btn danger", () => erase("series")), calButton("Отмена", "cal-pop-btn", () => ask.replaceWith(actions)));
+      row.append(calButton(t("Только это событие"), "cal-pop-btn danger", () => erase("instance")), calButton(t("Всю серию"), "cal-pop-btn danger", () => erase("series")), calButton(t("Отмена"), "cal-pop-btn", () => ask.replaceWith(actions)));
       ask.append(row);
       actions.replaceWith(ask);
       calPopFit(pop);
     };
-    actions.append(calButton("Удалить", "cal-pop-btn danger", () => {
+    actions.append(calButton(t("Удалить"), "cal-pop-btn danger", () => {
       if (item.recurring) { askDeleteScope(); return; }
-      if (!confirm(`Удалить «${item.title}» из календаря ${item.source}? Это не вернуть.`)) return;
+      if (!confirm(t("Удалить «{title}» из календаря {source}? Это не вернуть.", { title: item.title, source: item.source }))) return;
       erase(null);
     }));
   }
@@ -11003,10 +11149,10 @@ function showExternalEvent(item) {
   // удалить можно и его одного, и всю серию; ответ организатору — один на
   // всю серию.
   const note = !item.editable
-    ? "Чужое событие не запись: его нет в поиске и отчётах, пока вы не возьмёте его в память."
+    ? t("Чужое событие не запись: его нет в поиске и отчётах, пока вы не возьмёте его в память.")
     : item.recurring
-      ? "Экземпляр повтора: название по клику и перенос мышкой меняют только этот повтор; «Удалить» спросит, убрать его одного или всю серию; ответ организатору — на всю серию."
-      : "Чужое событие не запись: его нет в поиске и отчётах, пока вы не возьмёте его в память. Название правится по клику, перенос — мышкой, изменения уходят в календарь сразу.";
+      ? t("Экземпляр повтора: название по клику и перенос мышкой меняют только этот повтор; «Удалить» спросит, убрать его одного или всю серию; ответ организатору — на всю серию.")
+      : t("Чужое событие не запись: его нет в поиске и отчётах, пока вы не возьмёте его в память. Название правится по клику, перенос — мышкой, изменения уходят в календарь сразу.");
   pop.append(node("p", note, "cal-pop-note"));
   calPopFit(pop);
 }
@@ -11024,10 +11170,10 @@ function openCalendarQuickAdd(target, event) {
   pop.append(node("p", `${calHuman(date)}${time ? `, ${time}` : ""}`, "cal-pop-when"));
   const input = node("input");
   input.type = "text";
-  input.placeholder = "Что записать? — «созвон с Сашей на полчаса»";
-  input.setAttribute("aria-label", "Новая запись");
+  bindTranslation(input, "Что записать? — «созвон с Сашей на полчаса»", "placeholder");
+  bindTranslation(input, "Новая запись", "aria-label");
   pop.append(input);
-  pop.append(node("p", "Enter — записать · Esc — закрыть. Дело получит этот срок; встречу разберёт модель.", "cal-pop-note"));
+  pop.append(bindTranslation(node("p", t("Enter — записать · Esc — закрыть. Дело получит этот срок; встречу разберёт модель."), "cal-pop-note"), "Enter — записать · Esc — закрыть. Дело получит этот срок; встречу разберёт модель."));
   input.focus();
   input.addEventListener("keydown", async (keyEvent) => {
     if (keyEvent.key === "Escape") { closeCalendarPop(); return; }
@@ -11042,10 +11188,10 @@ function openCalendarQuickAdd(target, event) {
       // остальное — дело с точным сроком, без гаданий.
       const looksMeeting = /созвон|встреч|обед|звон|митинг|интервью|демо|презентац|собеседован/i.test(text);
       const body = looksMeeting
-        ? { raw: `${text} — ${numeric}${time ? ` в ${time}` : ""}` }
+        ? { raw: `${text} — ${numeric}${time ? t(" в {time}", { time: time }) : ""}` }
         : { raw: text, primaryType: "todo", due: { date, ...(time ? { time } : {}) } };
       await request("/api/captures", { method: "POST", body: JSON.stringify(body) });
-      toast("Записано");
+      toast(t("Записано"));
       closeCalendarPop();
       await load();
       await loadCalendar();
@@ -11061,8 +11207,8 @@ async function toggleCalendarDone(item) {
   try {
     for (const projectionId of ids) await request(`/api/projections/${projectionId}/${item.done ? "undo-complete" : "complete"}`, { method: "POST", body: "{}" });
     await loadCalendar();
-    if (item.done) toast("Снова в работе");
-    else toast(`Готово: «${shortTitle(item.title)}»`, { label: "Вернуть", run: () => toggleCalendarDone({ ...item, done: true }) });
+    if (item.done) toast(t("Снова в работе"));
+    else toast(t("Готово: «{value1}»", { value1: shortTitle(item.title) }), { get label() { return t("Вернуть"); }, run: () => toggleCalendarDone({ ...item, done: true }) });
     load().catch(() => {});
   } catch (error) { toast(error.message); }
 }
@@ -11081,8 +11227,8 @@ async function moveCalendarItem(item, schedule, { announce = true } = {}) {
     try {
       await request(`/api/captures/${item.id}/corrections`, { method: "POST", body: JSON.stringify({ patch: { schedule: next }, at: Date.now() }) });
       await loadCalendar();
-      const label = next.time ? `${calHuman(schedule.date)}, ${next.time}` : `${calHuman(schedule.date)}, без времени`;
-      if (announce) toast(`Перенесена вся серия: ${label}`, { label: "Вернуть", run: () => moveCalendarItem({ ...item, date: schedule.date, time: next.time, end: next.end || null, baseDate: base }, { date: item.date, time: item.time, ...(item.end ? { end: item.end } : {}) }, { announce: false }) });
+      const label = next.time ? `${calHuman(schedule.date)}, ${next.time}` : t("{value1}, без времени", { value1: calHuman(schedule.date) });
+      if (announce) toast(t("Перенесена вся серия: {label}", { label: label }), { get label() { return t("Вернуть"); }, run: () => moveCalendarItem({ ...item, date: schedule.date, time: next.time, end: next.end || null, baseDate: base }, { date: item.date, time: item.time, ...(item.end ? { end: item.end } : {}) }, { announce: false }) });
       await load();
     } catch (error) { toast(error.message); }
     return;
@@ -11093,8 +11239,8 @@ async function moveCalendarItem(item, schedule, { announce = true } = {}) {
     if (item.kind === "external") await request(`/api/calendar/external/${encodeURIComponent(item.id)}`, { method: "PATCH", body: JSON.stringify({ date: schedule.date, time: schedule.time ?? null, end: schedule.end ?? null }) });
     else await request(`/api/captures/${item.id}/corrections`, { method: "POST", body: JSON.stringify({ patch: { schedule } }) });
     await loadCalendar();
-    const label = schedule.time ? `${calHuman(schedule.date)}, ${schedule.time}` : `${calHuman(schedule.date)}, без времени`;
-    if (announce) toast(`Перенесено${item.kind === "external" ? ` в ${item.source}` : ""}: ${label}`, { label: "Вернуть", run: () => moveCalendarItem({ ...item, ...schedule }, before, { announce: false }) });
+    const label = schedule.time ? `${calHuman(schedule.date)}, ${schedule.time}` : t("{value1}, без времени", { value1: calHuman(schedule.date) });
+    if (announce) toast(t("Перенесено{value1}: {label}", { value1: item.kind === "external" ? t(" в {value1}", { value1: item.source }) : "", label: label }), { get label() { return t("Вернуть"); }, run: () => moveCalendarItem({ ...item, ...schedule }, before, { announce: false }) });
     if (item.kind !== "external") await load();
   } catch (error) { toast(error.message); }
 }
@@ -11185,7 +11331,7 @@ async function loadTelegram({ announce = false } = {}) {
     // настройках, зовёт это раньше, чем модуль дошёл до объявлений ниже.
     const wasLinked = Boolean(telegramView?.link);
     paintTelegram(view);
-    if (announce && !wasLinked && telegramView?.link) toast("Telegram подключён");
+    if (announce && !wasLinked && telegramView?.link) toast(t("Telegram подключён"));
   } catch {
     // Раздел не обновился — остальные настройки работают и без него.
   }
@@ -11197,7 +11343,7 @@ function telegramAnchor(username) {
   anchor.rel = "noopener";
   return anchor;
 }
-const telegramBotLink = (bot) => (bot?.bot?.username ? telegramAnchor(bot.bot.username) : document.createTextNode("Кизуны"));
+const telegramBotLink = (bot) => (bot?.bot?.username ? telegramAnchor(bot.bot.username) : document.createTextNode(t("Кизуны")));
 function paintTelegram(view) {
   const group = $("#telegram-settings");
   if (!group || !view?.bot) return;
@@ -11208,19 +11354,19 @@ function paintTelegram(view) {
   const state = $("#telegram-state");
   clear(state);
   state.classList.toggle("is-error", bot.state === "error");
-  if (!bot.configured) state.append("Бот ещё не заведён: создайте его у ", telegramAnchor("BotFather"), " командой /newbot и вставьте токен в «Ключах» выше.");
-  else if (bot.state === "error") state.append(`Бот не на связи: ${bot.error || "Telegram не отвечает."}`);
+  if (!bot.configured) state.append(t("Бот ещё не заведён: создайте его у "), telegramAnchor("BotFather"), t(" командой /newbot и вставьте токен в «Ключах» выше."));
+  else if (bot.state === "error") state.append(t("Бот не на связи: {value1}", { value1: bot.error || t("Telegram не отвечает.") }));
   else if (link) {
     const who = `${link.name || "Telegram"}${link.username ? ` (@${link.username})` : ""}`;
-    state.append(`Подключён ${who}. Пишите боту `, telegramBotLink(bot), " или пересылайте ему сообщения.");
-  } else if (bot.state === "connecting") state.append("Бот выходит на связь…");
-  else state.append("Бот ", telegramBotLink(bot), " на связи. Подключите свой Telegram — и пишите ему.");
+    state.append(t("Подключён {who}. Пишите боту ", { who: who }), telegramBotLink(bot), t(" или пересылайте ему сообщения."));
+  } else if (bot.state === "connecting") state.append(t("Бот выходит на связь…"));
+  else state.append(t("Бот "), telegramBotLink(bot), t(" на связи. Подключите свой Telegram — и пишите ему."));
   const linkButton = $("#telegram-link");
   linkButton.hidden = !bot.configured || Boolean(link);
   $("#telegram-unlink").hidden = !link;
   if (link || !bot.configured) {
     $("#telegram-connect").hidden = true;
-    linkButton.textContent = "Подключить Telegram";
+    bindTranslation(linkButton, "Подключить Telegram");
   }
   // Токен только что сохранили: пара секунд — и бот на связи.
   clearTimeout(telegramRetry);
@@ -11238,7 +11384,7 @@ $("#telegram-link")?.addEventListener("click", async (event) => {
     $("#telegram-open").href = result.url;
     $("#telegram-connect").hidden = false;
     // Нажать ещё раз — значит взять новую ссылку: прежняя тут же гаснет.
-    button.textContent = "Новая ссылка";
+    bindTranslation(button, "Новая ссылка");
   } catch (error) {
     toast(error.message);
   } finally {
@@ -11248,7 +11394,7 @@ $("#telegram-link")?.addEventListener("click", async (event) => {
 $("#telegram-unlink")?.addEventListener("click", async () => {
   try {
     paintTelegram(await request("/api/telegram/link", { method: "DELETE" }));
-    toast("Telegram отключён");
+    toast(t("Telegram отключён"));
   } catch (error) {
     toast(error.message);
   }
@@ -11256,9 +11402,9 @@ $("#telegram-unlink")?.addEventListener("click", async () => {
 
 // ── Календари в настройках ──────────────────────────────────────────────────
 const CAL_PRESET_HINTS = {
-  yandex: { title: "Яндекс Календарь", hint: "Логин — адрес почты Яндекса. Пароль — пароль приложения из Яндекс ID: «Безопасность → Пароли приложений → Календарь». Обычный пароль не подойдёт.", placeholder: "name@yandex.ru" },
-  icloud: { title: "Apple iCloud", hint: "Логин — Apple ID. Пароль — пароль для приложения с appleid.apple.com: «Вход и безопасность → Пароли приложений».", placeholder: "name@icloud.com" },
-  custom: { title: "Другой CalDAV", hint: "Адрес сервера, логин и пароль — как в любом CalDAV-клиенте. Подойдёт Fastmail, Nextcloud, Radicale.", placeholder: "логин" },
+  yandex: { get title() { return t("Яндекс Календарь"); }, get hint() { return t("Логин — адрес почты Яндекса. Пароль — пароль приложения из Яндекс ID: «Безопасность → Пароли приложений → Календарь». Обычный пароль не подойдёт."); }, placeholder: "name@yandex.ru" },
+  icloud: { title: "Apple iCloud", get hint() { return t("Логин — Apple ID. Пароль — пароль для приложения с appleid.apple.com: «Вход и безопасность → Пароли приложений»."); }, placeholder: "name@icloud.com" },
+  custom: { get title() { return t("Другой CalDAV"); }, get hint() { return t("Адрес сервера, логин и пароль — как в любом CalDAV-клиенте. Подойдёт Fastmail, Nextcloud, Radicale."); }, get placeholder() { return t("логин"); } },
 };
 let calendarAccountsState = { accounts: [], googleReady: false };
 async function loadCalendarAccounts() {
@@ -11270,31 +11416,31 @@ async function loadCalendarAccounts() {
   } catch (error) { clear(wrap); wrap.append(node("p", error.message, "setting-hint")); }
 }
 function calendarSyncLabel(account) {
-  if (account.syncError) return `ошибка: ${account.syncError}`;
-  if (!account.syncedAt) return "ещё не синхронизирован";
+  if (account.syncError) return t("ошибка: {syncError}", { syncError: account.syncError });
+  if (!account.syncedAt) return t("ещё не синхронизирован");
   const minutes = Math.round((Date.now() - Date.parse(account.syncedAt)) / 60000);
-  return minutes < 1 ? "обновлён только что" : minutes < 60 ? `обновлён ${minutes} мин назад` : `обновлён ${Math.round(minutes / 60)} ч назад`;
+  return minutes < 1 ? t("обновлён только что") : minutes < 60 ? t("обновлён {minutes} мин назад", { minutes: minutes }) : t("обновлён {value1} ч назад", { value1: Math.round(minutes / 60) });
 }
 function paintCalendarAccounts() {
   const wrap = $("#calendar-accounts");
   clear(wrap);
   const google = $("#calendar-google");
-  if (google) { google.classList.toggle("is-disabled", !calendarAccountsState.googleReady); google.title = calendarAccountsState.googleReady ? "" : "Сначала укажите ID и секрет клиента Google в «Ключах»"; }
-  if (!calendarAccountsState.accounts.length) { wrap.append(node("p", "Пока ни одного внешнего календаря.", "setting-hint")); return; }
+  if (google) { google.classList.toggle("is-disabled", !calendarAccountsState.googleReady); google.title = calendarAccountsState.googleReady ? "" : t("Сначала укажите ID и секрет клиента Google в «Ключах»"); }
+  if (!calendarAccountsState.accounts.length) { wrap.append(bindTranslation(node("p", t("Пока ни одного внешнего календаря."), "setting-hint"), "Пока ни одного внешнего календаря.")); return; }
   for (const account of calendarAccountsState.accounts) {
     const card = node("div", undefined, `calendar-account${account.disabled ? " is-disabled" : ""}`);
     const head = node("div", undefined, "calendar-account-head");
     const dot = node("i", undefined, "cal-dot");
     dot.style.background = account.color || "var(--n-72)";
     const name = node("b", account.label);
-    name.title = "Переименовать";
+    bindTranslation(name, "Переименовать", "title");
     name.tabIndex = 0;
     name.addEventListener("click", async () => {
-      const next = prompt("Название календаря", account.label);
+      const next = prompt(t("Название календаря"), account.label);
       if (next === null || !next.trim() || next.trim() === account.label) return;
       await patchCalendarAccount(account.id, { label: next.trim() });
     });
-    const meta = node("span", `${account.provider === "google" ? "Google" : account.preset === "yandex" ? "Яндекс · CalDAV" : account.preset === "icloud" ? "Apple · CalDAV" : "CalDAV"} · ${account.disabled ? "отключён" : calendarSyncLabel(account)}${account.exportError ? ` · отправка: ${account.exportError}` : ""}`, `calendar-account-meta${account.syncError || account.exportError ? " is-error" : ""}`);
+    const meta = node("span", `${account.provider === "google" ? "Google" : account.preset === "yandex" ? t("Яндекс · CalDAV") : account.preset === "icloud" ? "Apple · CalDAV" : "CalDAV"} · ${account.disabled ? t("отключён") : calendarSyncLabel(account)}${account.exportError ? t(" · отправка: {exportError}", { exportError: account.exportError }) : ""}`, `calendar-account-meta${account.syncError || account.exportError ? " is-error" : ""}`);
     head.append(dot, name, meta);
     card.append(head);
     const list = node("div", undefined, "calendar-account-calendars");
@@ -11307,29 +11453,29 @@ function paintCalendarAccounts() {
       const swatch = node("i", undefined, "cal-dot");
       swatch.style.background = calendar.color || account.color || "var(--n-72)";
       label.append(box, swatch, node("span", calendar.name));
-      if (!calendar.writable) label.append(node("small", "только чтение"));
+      if (!calendar.writable) label.append(bindTranslation(node("small", t("только чтение")), "только чтение"));
       list.append(label);
     }
     card.append(list);
     const controls = node("div", undefined, "calendar-account-controls");
     const mode = node("select");
-    for (const [value, text] of [["full", "Показывать названия"], ["busy", "Только «занято»"]]) { const option = node("option", text); option.value = value; option.selected = account.mode === value; mode.append(option); }
+    for (const [value, text] of [["full", t("Показывать названия")], ["busy", t("Только «занято»")]]) { const option = node("option", text); option.value = value; option.selected = account.mode === value; mode.append(option); }
     mode.addEventListener("change", () => patchCalendarAccount(account.id, { mode: mode.value }));
     const color = node("input");
     color.type = "color";
     color.value = account.color || "#8a8681";
-    color.title = "Цвет в календаре";
+    bindTranslation(color, "Цвет в календаре", "title");
     color.addEventListener("change", () => patchCalendarAccount(account.id, { color: color.value }));
-    const sync = calButton("Обновить", "secondary", async () => {
+    const sync = calButton(t("Обновить"), "secondary", async () => {
       sync.disabled = true;
-      try { const result = await request(`/api/calendar/accounts/${account.id}/sync`, { method: "POST", body: "{}" }); toast(`Синхронизировано: ${result.events ?? 0} соб.`); }
+      try { const result = await request(`/api/calendar/accounts/${account.id}/sync`, { method: "POST", body: "{}" }); toast(t("Синхронизировано: {value1} соб.", { value1: result.events ?? 0 })); }
       catch (error) { toast(error.message); }
       await loadCalendarAccounts();
     });
-    const toggle = calButton(account.disabled ? "Включить" : "Отключить", "secondary", () => patchCalendarAccount(account.id, { disabled: !account.disabled }));
-    const remove = calButton("Удалить", "secondary calendar-remove", async () => {
-      if (!confirm(`Удалить «${account.label}»? Учётные данные и кэш событий сотрутся; сам календарь не пострадает.`)) return;
-      try { await request(`/api/calendar/accounts/${account.id}`, { method: "DELETE" }); toast("Календарь отключён"); }
+    const toggle = calButton(account.disabled ? t("Включить") : t("Отключить"), "secondary", () => patchCalendarAccount(account.id, { disabled: !account.disabled }));
+    const remove = calButton(t("Удалить"), "secondary calendar-remove", async () => {
+      if (!confirm(t("Удалить «{label}»? Учётные данные и кэш событий сотрутся; сам календарь не пострадает.", { label: account.label }))) return;
+      try { await request(`/api/calendar/accounts/${account.id}`, { method: "DELETE" }); toast(t("Календарь отключён")); }
       catch (error) { toast(error.message); }
       await loadCalendarAccounts();
     });
@@ -11342,22 +11488,22 @@ function paintCalendarAccounts() {
     const autoMode = node("select");
     // Все записи — дела, поэтому «только встречи» новому выбору не предлагается:
     // оно остаётся в списке лишь у тех, у кого уже включено.
-    const autoChoices = [["off", "Наружу — только кнопкой"], ["all", "Отправлять дела со сроком"]];
-    if ((account.autoExport || "off") === "meetings") autoChoices.splice(1, 0, ["meetings", "Отправлять только встречи"]);
+    const autoChoices = [["off", t("Наружу — только кнопкой")], ["all", t("Отправлять дела со сроком")]];
+    if ((account.autoExport || "off") === "meetings") autoChoices.splice(1, 0, ["meetings", t("Отправлять только встречи")]);
     for (const [value, text] of autoChoices) { const option = node("option", text); option.value = value; option.selected = (account.autoExport || "off") === value; autoMode.append(option); }
-    autoMode.setAttribute("aria-label", "Автоматическая отправка");
+    bindTranslation(autoMode, "Автоматическая отправка", "aria-label");
     autoMode.addEventListener("change", () => patchCalendarAccount(account.id, { autoExport: autoMode.value }));
     auto.append(autoMode);
     const writable = account.calendars.filter((calendar) => calendar.writable);
     if ((account.autoExport || "off") !== "off" && writable.length) {
-      auto.append(node("span", "в", "calendar-account-auto-in"));
+      auto.append(bindTranslation(node("span", t("в"), "calendar-account-auto-in"), "в"));
       const target = node("select");
-      target.setAttribute("aria-label", "Календарь для отправки");
+      bindTranslation(target, "Календарь для отправки", "aria-label");
       for (const calendar of writable) { const option = node("option", calendar.name); option.value = calendar.id; option.selected = calendar.id === account.autoCalendarId; target.append(option); }
       target.addEventListener("change", () => patchCalendarAccount(account.id, { autoCalendarId: target.value }));
       auto.append(target);
     }
-    auto.append(node("small", (account.autoExport || "off") === "off" ? "Дела уходят в календарь только кнопкой «В календарь» в карточке." : "Уходят сами и следуют за записью: перенос, конец, удаление. Сдвинули событие в календаре — срок записи подвинется тоже.", "setting-hint"));
+    auto.append(node("small", (account.autoExport || "off") === "off" ? t("Дела уходят в календарь только кнопкой «В календарь» в карточке.") : t("Уходят сами и следуют за записью: перенос, конец, удаление. Сдвинули событие в календаре — срок записи подвинется тоже."), "setting-hint"));
     card.append(auto);
     wrap.append(card);
   }
@@ -11387,18 +11533,18 @@ async function patchCalendarAccount(id, patch) {
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const state = $("#calendar-connect-state"), submit = $("#calendar-connect-submit");
-      state.textContent = "Проверяем…";
+      bindTranslation(state, "Проверяем…");
       submit.disabled = true;
       try {
         const result = await request("/api/calendar/accounts", { method: "POST", body: JSON.stringify({ preset, serverUrl: $("#calendar-server").value.trim() || null, username: $("#calendar-username").value.trim(), password: $("#calendar-password").value }) });
-        toast(result.syncError ? `Подключено, но синхронизация не удалась: ${result.syncError}` : `Подключено: ${result.account.calendars.length} кал., ${result.events ?? 0} соб.`);
+        toast(result.syncError ? t("Подключено, но синхронизация не удалась: {syncError}", { syncError: result.syncError }) : t("Подключено: {length} кал., {value2} соб.", { length: result.account.calendars.length, value2: result.events ?? 0 }));
         form.hidden = true;
         form.reset();
         await loadCalendarAccounts();
       } catch (error) { state.textContent = error.message; }
       finally { submit.disabled = false; }
     });
-    $("#calendar-google")?.addEventListener("click", (event) => { if (!calendarAccountsState.googleReady) { event.preventDefault(); toast("Сначала укажите ID и секрет клиента Google в «Ключах»"); } });
+    $("#calendar-google")?.addEventListener("click", (event) => { if (!calendarAccountsState.googleReady) { event.preventDefault(); toast(t("Сначала укажите ID и секрет клиента Google в «Ключах»")); } });
   }
 }
 
@@ -11420,16 +11566,16 @@ function calendarExportEl(entry) {
       for (const link of exports) {
         const account = accounts.find((candidate) => candidate.id === link.accountId);
         const row = node("span", undefined, "card-calendar-link");
-        row.append(node("span", `В календаре: ${account?.label || "внешний"}${link.auto ? " · автоматически" : ""}`));
-        if (link.href && link.href.startsWith("http")) { const open = node("a", "открыть"); open.href = link.href; open.target = "_blank"; open.rel = "noopener"; row.append(open); }
+        row.append(bindTranslation(node("span", t("В календаре: {value1}{value2}", { value1: account?.label || t("внешний"), value2: link.auto ? t(" · автоматически") : "" })), "В календаре: {value1}{value2}", { value1: account?.label || t("внешний"), value2: link.auto ? t(" · автоматически") : "" }));
+        if (link.href && link.href.startsWith("http")) { const open = bindTranslation(node("a", t("открыть")), "открыть"); open.href = link.href; open.target = "_blank"; open.rel = "noopener"; row.append(open); }
         // Автоматическую отправку «убрать» нельзя: следующий проход вернул бы
         // событие. Выключается в настройках календаря.
         if (link.auto && (account?.autoExport || "off") !== "off") { wrap.append(row); continue; }
-        const remove = node("button", "убрать", "card-calendar-remove");
+        const remove = bindTranslation(node("button", t("убрать"), "card-calendar-remove"), "убрать");
         remove.type = "button";
         remove.addEventListener("click", async () => {
           remove.disabled = true;
-          try { await request("/api/calendar/export/remove", { method: "POST", body: JSON.stringify({ captureId: entry.id, accountId: link.accountId }) }); toast("Событие убрано из календаря"); wrap.replaceWith(calendarExportEl(entry)); }
+          try { await request("/api/calendar/export/remove", { method: "POST", body: JSON.stringify({ captureId: entry.id, accountId: link.accountId }) }); toast(t("Событие убрано из календаря")); wrap.replaceWith(calendarExportEl(entry)); }
           catch (error) { toast(error.message); remove.disabled = false; }
         });
         row.append(remove);
@@ -11438,7 +11584,7 @@ function calendarExportEl(entry) {
       const targets = writable.filter(({ account }) => !exports.some((link) => link.accountId === account.id));
       if (!targets.length) return;
       const menu = node("details", undefined, "card-calendar-menu");
-      const summary = node("summary", "В календарь");
+      const summary = bindTranslation(node("summary", t("В календарь")), "В календарь");
       summary.prepend(propIcon("schedule"));
       menu.append(summary);
       const list = node("div", undefined, "card-calendar-list");
@@ -11450,7 +11596,7 @@ function calendarExportEl(entry) {
         button.prepend(dot);
         button.addEventListener("click", async () => {
           button.disabled = true;
-          try { await request("/api/calendar/export", { method: "POST", body: JSON.stringify({ captureId: entry.id, accountId: account.id, calendarId: calendar.id }) }); toast(`Отправлено в ${account.label}`); wrap.replaceWith(calendarExportEl(entry)); }
+          try { await request("/api/calendar/export", { method: "POST", body: JSON.stringify({ captureId: entry.id, accountId: account.id, calendarId: calendar.id }) }); toast(t("Отправлено в {label}", { label: account.label })); wrap.replaceWith(calendarExportEl(entry)); }
           catch (error) { toast(error.message); button.disabled = false; }
         });
         list.append(button);
@@ -11465,11 +11611,11 @@ function calendarExportEl(entry) {
 // ── напоминания и push ───────────────────────────────────────────────────
 // Напоминание считает сервер; страница только показывает, что настроено, и
 // подписывает устройство на Web Push. Подписка — на каждом устройстве своя.
-const REMIND_LABELS = { off: "не напоминать", 0: "в момент начала", 5: "за 5 минут", 15: "за 15 минут", 30: "за 30 минут", 60: "за час", 120: "за 2 часа", 1440: "за день" };
-function remindMinutesLabel(value) { return REMIND_LABELS[String(value)] || `за ${value} мин`; }
+const REMIND_LABELS = { get off() { return t("не напоминать"); }, get 0() { return t("в момент начала"); }, get 5() { return t("за 5 минут"); }, get 15() { return t("за 15 минут"); }, get 30() { return t("за 30 минут"); }, get 60() { return t("за час"); }, get 120() { return t("за 2 часа"); }, get 1440() { return t("за день"); } };
+function remindMinutesLabel(value) { return REMIND_LABELS[String(value)] || t("за {value} мин", { value: value }); }
 function remindDefaultLabel() { return remindMinutesLabel(appSettings.remindDefault ?? "15"); }
 function remindHourValue() { const value = appSettings.remindHour; return value && value !== "off" ? value : "09:00"; }
-function remindHourLabel() { return appSettings.remindHour === "off" ? "не напоминать" : `в ${remindHourValue()}`; }
+function remindHourLabel() { return appSettings.remindHour === "off" ? t("не напоминать") : t("в {value1}", { value1: remindHourValue() }); }
 const IOS_DEVICE = /iPhone|iPad|iPod/.test(navigator.userAgent);
 function pushSupported() { return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window; }
 function urlBase64ToUint8Array(base64) {
@@ -11487,8 +11633,8 @@ async function paintPush() {
   const enable = $("#push-enable"), disable = $("#push-disable"), test = $("#push-test");
   if (!pushSupported()) {
     state.textContent = IOS_DEVICE
-      ? "На iPhone уведомления работают, если добавить Кизуну на экран «Домой» (Поделиться → На экран «Домой») и открывать оттуда."
-      : "Этот браузер не умеет уведомления на закрытую вкладку.";
+      ? t("На iPhone уведомления работают, если добавить Кизуну на экран «Домой» (Поделиться → На экран «Домой») и открывать оттуда.")
+      : t("Этот браузер не умеет уведомления на закрытую вкладку.");
     enable.hidden = disable.hidden = test.hidden = true;
     return;
   }
@@ -11496,22 +11642,22 @@ async function paintPush() {
   let others = 0;
   try { const info = await request("/api/push/key"); others = info.subscriptions.filter((item) => item.endpoint !== subscription?.endpoint).length; } catch {}
   const denied = Notification.permission === "denied";
-  if (subscription) state.textContent = `На этом устройстве включены${others ? `, ещё устройств: ${others}` : ""}.`;
-  else if (denied) state.textContent = "Уведомления для этого сайта запрещены в браузере — разрешите их в настройках сайта.";
-  else state.textContent = others ? `На этом устройстве выключены, других устройств: ${others}.` : "Уведомления приходят на закрытую вкладку и на телефон. Включаются на каждом устройстве отдельно.";
+  if (subscription) bindTranslation(state, "На этом устройстве включены{value1}.", { value1: others ? t(", ещё устройств: {value1}", { value1: others }) : "" });
+  else if (denied) bindTranslation(state, "Уведомления для этого сайта запрещены в браузере — разрешите их в настройках сайта.");
+  else state.textContent = others ? t("На этом устройстве выключены, других устройств: {others}.", { others: others }) : t("Уведомления приходят на закрытую вкладку и на телефон. Включаются на каждом устройстве отдельно.");
   enable.hidden = Boolean(subscription) || denied;
   disable.hidden = !subscription;
   test.hidden = !subscription && !others;
 }
 async function enablePush() {
   const permission = await Notification.requestPermission();
-  if (permission !== "granted") { toast("Без разрешения браузера уведомления не придут"); paintPush(); return; }
+  if (permission !== "granted") { toast(t("Без разрешения браузера уведомления не придут")); paintPush(); return; }
   const registration = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
   await navigator.serviceWorker.ready;
   const { publicKey } = await request("/api/push/key");
   const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
   await request("/api/push/subscriptions", { method: "POST", body: JSON.stringify({ subscription: subscription.toJSON() }) });
-  toast("Уведомления включены на этом устройстве");
+  toast(t("Уведомления включены на этом устройстве"));
   paintPush();
 }
 async function disablePush() {
@@ -11520,13 +11666,13 @@ async function disablePush() {
     await request("/api/push/subscriptions", { method: "DELETE", body: JSON.stringify({ endpoint: subscription.endpoint }) });
     try { await subscription.unsubscribe(); } catch {}
   }
-  toast("Уведомления выключены на этом устройстве");
+  toast(t("Уведомления выключены на этом устройстве"));
   paintPush();
 }
 async function testPush() {
   try {
     const summary = await request("/api/push/test", { method: "POST", body: "{}" });
-    toast(summary.sent ? "Пробное уведомление отправлено" : "Устройство не приняло уведомление — включите заново");
+    toast(summary.sent ? t("Пробное уведомление отправлено") : t("Устройство не приняло уведомление — включите заново"));
   } catch (error) { toast(error.message); }
 }
 // Браузер может сменить адрес подписки: при каждой загрузке она уходит на
@@ -11542,8 +11688,8 @@ async function paintUpcomingReminders() {
   try {
     const { reminders } = await request("/api/reminders/upcoming");
     element.textContent = reminders.length
-      ? `Ближайшие: ${reminders.slice(0, 3).map((item) => `«${item.title}» — ${item.when}${item.lead ? `, ${item.lead.replace("через", "за")} до` : ""}`).join("; ")}.`
-      : "Впереди напоминаний нет: у открытых дел со сроком они появятся сами.";
+      ? t("Ближайшие: {value1}.", { value1: reminders.slice(0, 3).map((item) => `«${item.title}» — ${item.when}${item.lead ? t(", {value1} до", { value1: item.lead.replace("через", "за") }) : ""}`).join("; ") })
+      : t("Впереди напоминаний нет: у открытых дел со сроком они появятся сами.");
   } catch { element.textContent = ""; }
 }
 async function openCaptureById(id, { subtasks = false } = {}) {
@@ -11552,7 +11698,7 @@ async function openCaptureById(id, { subtasks = false } = {}) {
   try { const { entry } = await request(`/api/captures/${encodeURIComponent(id)}`); const review = reviewFromEntry(entry); cardScrollTarget = subtasks ? id : null; showCorrection(entry, review.level === "high" ? undefined : review); }
   catch (error) { toast(error.message); }
 }
-$("#push-enable")?.addEventListener("click", () => enablePush().catch((error) => { toast(error.message || "Не удалось включить уведомления"); paintPush(); }));
+$("#push-enable")?.addEventListener("click", () => enablePush().catch((error) => { toast(error.message || t("Не удалось включить уведомления")); paintPush(); }));
 $("#push-disable")?.addEventListener("click", () => disablePush().catch((error) => toast(error.message)));
 $("#push-test")?.addEventListener("click", testPush);
 
@@ -11562,7 +11708,82 @@ $("#push-test")?.addEventListener("click", testPush);
 // непрочитанное — тихой точкой: колокольчик сообщает, а не подгоняет. Полоса
 // «к вам» на «Сегодня» показывает то же ждущее, поэтому ответ в одном месте
 // гасит строку в обоих.
-const NOTIFY_FILTERS = [["all", "Все"], ["waits", "Ждут ответа"], ["people", "Люди"], ["time", "Сроки и встречи"], ["other", "Остальное"]];
+// Curated server notification presentation; records and message text stay untouched.
+const NOTIFY_KIND_PRESENTATION = localizedBuiltins({
+  "request": {
+    "label": "Просят сделать дело",
+    "hint": "ждёт вашего ответа: беру или не я"
+  },
+  "call": {
+    "label": "Зовут по имени",
+    "hint": "@имя в записи, в обсуждении карточки или в разговоре круга"
+  },
+  "reply": {
+    "label": "Отвечают на ваше сообщение",
+    "hint": "ответ цитатой в разговоре или обсуждении"
+  },
+  "answer": {
+    "label": "Ответили на вашу просьбу",
+    "hint": "берут, возвращают, сделали"
+  },
+  "circle": {
+    "label": "Добавили в круг",
+    "hint": ""
+  },
+  "room": {
+    "label": "Позвали в комнату",
+    "hint": "разговор части круга"
+  },
+  "reaction": {
+    "label": "Реакции на ваши сообщения",
+    "hint": "одной строкой на разговор"
+  },
+  "pin": {
+    "label": "Закрепили сообщение",
+    "hint": "в разговоре, где вы есть"
+  },
+  "chatter": {
+    "label": "Пишут без призыва",
+    "hint": "одной строкой на разговор, без числа"
+  },
+  "reminder": {
+    "label": "Скоро срок дела или начало встречи",
+    "hint": "за сколько — в «Напоминаниях»"
+  },
+  "invite": {
+    "label": "Приглашение на встречу",
+    "hint": "принять или отказаться прямо в строке"
+  },
+  "event_changed": {
+    "label": "Встречу перенесли или отменили",
+    "hint": "только на ближайшие два дня"
+  },
+  "event_added": {
+    "label": "Появилась новая встреча",
+    "hint": "из подключённых календарей, на ближайшие два дня"
+  },
+  "digest": {
+    "label": "Утренняя сводка",
+    "hint": "в час напоминаний: встречи, дела и кто ждёт ответа"
+  },
+  "clarify": {
+    "label": "Запись ждёт уточнения",
+    "hint": "модель не разобрала однозначно"
+  },
+  "calendar_error": {
+    "label": "Календарь перестал обновляться",
+    "hint": "нужно переподключить"
+  },
+  "spend": {
+    "label": "Расходы подошли к потолку",
+    "hint": "на 80% и на 100% месячного"
+  },
+  "signup": {
+    "label": "Новая заявка на вход",
+    "hint": "только администратору"
+  }
+});
+const NOTIFY_FILTERS = localizedBuiltins([["all", "Все"], ["waits", "Ждут ответа"], ["people", "Люди"], ["time", "Сроки и встречи"], ["other", "Остальное"]]);
 const NOTIFY_GLYPHS = {
   clock: '<circle cx="8" cy="8" r="5.8"/><path d="M8 4.9V8l2.1 1.4"/>',
   calendar: '<rect x="2.4" y="3.4" width="11.2" height="10.2" rx="2"/><path d="M2.4 6.6h11.2M5.4 2v2.8M10.6 2v2.8"/>',
@@ -11576,19 +11797,19 @@ const NOTIFY_FACES = {
   reminder: ["clock", "coral"], invite: ["calendar", "blue"], event_added: ["calendar", "blue"], event_changed: ["calendar", "blue"],
   digest: ["sun", "amber"], clarify: ["spark", "violet"], calendar_error: ["warn", "amber"], spend: ["gauge", "muted"], signup: ["door", "teal"],
 };
-const notifyDay = (iso) => new Intl.DateTimeFormat("en-CA", { timeZone: TODAY_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
-const notifyClock = (iso) => new Intl.DateTimeFormat("ru-RU", { timeZone: TODAY_ZONE, hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
+const notifyDay = (iso) => new Intl.DateTimeFormat("en-CA", { timeZone: getTimeZone(), year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
+const notifyClock = (iso) => new Intl.DateTimeFormat(getLocale(), { timeZone: getTimeZone(), hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
 function notifyTime(iso) {
   const today = currentDayDate || notifyDay(new Date().toISOString());
   const day = notifyDay(iso);
   if (day === today) return notifyClock(iso);
-  if (day === shiftDate(today, -1)) return `вчера, ${notifyClock(iso)}`;
+  if (day === shiftDate(today, -1)) return t("вчера, {value1}", { value1: notifyClock(iso) });
   return `${day.slice(8, 10)}.${day.slice(5, 7)}`;
 }
 function notifyPeople(actors) {
   const names = actors.map((person) => person.name);
-  if (names.length <= 2) return names.join(" и ");
-  return `${names.slice(0, 2).join(", ")} и ещё ${names.length - 2}`;
+  if (names.length <= 2) return names.join(t(" и "));
+  return t("{value1} и ещё {value2}", { value1: names.slice(0, 2).join(", "), value2: names.length - 2 });
 }
 
 async function loadNotifications() {
@@ -11611,7 +11832,7 @@ function paintBell() {
   count.hidden = !waits;
   count.textContent = waits > 99 ? "99+" : String(waits);
   dot.hidden = Boolean(waits) || !unread;
-  summary.setAttribute("aria-label", waits ? `Уведомления: ждут ответа — ${waits}` : unread ? "Уведомления: есть непрочитанные" : "Уведомления");
+  summary.setAttribute("aria-label", waits ? t("Уведомления: ждут ответа — {waits}", { waits: waits }) : unread ? t("Уведомления: есть непрочитанные") : t("Уведомления"));
   if ($("#bell-menu")?.open) renderBellPanel();
 }
 function notificationFace(item) {
@@ -11635,17 +11856,17 @@ function notificationText(item) {
 }
 function notificationMeta(item) {
   const meta = node("div", undefined, "bell-meta");
-  if (item.kind === "chatter" && item.count > 1) meta.append(node("span", `${item.count} ${pluralRu(item.count, "сообщение", "сообщения", "сообщений")}`));
+  if (item.kind === "chatter" && item.count > 1) meta.append(node("span", `${item.count} ${pluralRu(item.count, t("сообщение"), t("сообщения"), t("сообщений"))}`));
   for (const piece of item.meta || []) meta.append(node("span", piece));
   if (item.data?.circle) meta.append(circleChip(item.data.circle, { small: true }));
   return meta;
 }
 // Срок «Отложить» словами: «30 минут», «час», «2 часа», «сутки».
 function snoozeWords(minutes) {
-  if (minutes >= 24 * 60) return "сутки";
-  if (minutes % 60) return `${minutes} ${pluralRu(minutes, "минуту", "минуты", "минут")}`;
+  if (minutes >= 24 * 60) return t("сутки");
+  if (minutes % 60) return `${minutes} ${pluralRu(minutes, t("минуту"), t("минуты"), t("минут"))}`;
   const hours = minutes / 60;
-  return hours === 1 ? "час" : `${hours} ${pluralRu(hours, "час", "часа", "часов")}`;
+  return hours === 1 ? t("час") : `${hours} ${pluralRu(hours, t("час"), t("часа"), t("часов"))}`;
 }
 function notifyButton(label, primary, run, { ok = false } = {}) {
   const button = node("button", label, `bell-act${primary ? " primary" : ""}${ok ? " ok" : ""}`);
@@ -11653,7 +11874,7 @@ function notifyButton(label, primary, run, { ok = false } = {}) {
   button.addEventListener("click", async (event) => {
     event.stopPropagation();
     button.disabled = true;
-    try { await run(); } catch (error) { toast(error.message || "Не получилось"); button.disabled = false; }
+    try { await run(); } catch (error) { toast(error.message || t("Не получилось")); button.disabled = false; }
   });
   return button;
 }
@@ -11665,41 +11886,41 @@ function notificationActions(item, { after = () => {}, inPanel = false } = {}) {
   const done = (words, { close = true } = {}) => { bellDone.set(item.id, words); if (close) after(); loadNotifications(); };
   if (item.kind === "request" && item.waits) {
     acts.append(
-      notifyButton("Беру", true, async () => { await request(`/api/assignments/${item.assignmentId}/respond`, { method: "POST", body: JSON.stringify({ take: true }) }); done("Взято — дело в вашем дне"); load().catch(() => {}); }),
-      notifyButton("Не я", false, async () => {
-        const reason = (prompt("Почему не вы? Можно не отвечать — причина уйдёт автору.") ?? "").trim();
+      notifyButton(t("Беру"), true, async () => { await request(`/api/assignments/${item.assignmentId}/respond`, { method: "POST", body: JSON.stringify({ take: true }) }); done(t("Взято — дело в вашем дне")); load().catch(() => {}); }),
+      notifyButton(t("Не я"), false, async () => {
+        const reason = (prompt(t("Почему не вы? Можно не отвечать — причина уйдёт автору.")) ?? "").trim();
         await request(`/api/assignments/${item.assignmentId}/respond`, { method: "POST", body: JSON.stringify({ take: false, ...(reason ? { reason } : {}) }) });
-        done("Вернули автору"); load().catch(() => {});
+        done(t("Вернули автору")); load().catch(() => {});
       }),
     );
   } else if (item.kind === "invite" && item.waits) {
     acts.append(
-      notifyButton("Приму", true, async () => { await answerInvite(item, "accepted"); done("Принято — встреча в календаре"); }),
-      notifyButton("Не смогу", false, async () => { await answerInvite(item, "declined"); done("Организатор узнает, что вас не будет"); }),
+      notifyButton(t("Приму"), true, async () => { await answerInvite(item, "accepted"); done(t("Принято — встреча в календаре")); }),
+      notifyButton(t("Не смогу"), false, async () => { await answerInvite(item, "declined"); done(t("Организатор узнает, что вас не будет")); }),
     );
   } else if (item.kind === "reminder") {
     // Дело из напоминания закрывается прямо в строке — открывать карточку ради
     // одного кружка незачем. Вместе с делом из ленты уходят его напоминания.
     if (item.captureId && (item.meta || []).includes("дело"))
-      acts.append(notifyButton("Готово", true, async () => { await completeFromNotification(item); done("Готово — дело закрыто", { close: !inPanel }); }, { ok: true }));
+      acts.append(notifyButton(t("Готово"), true, async () => { await completeFromNotification(item); done(t("Готово — дело закрыто"), { close: !inPanel }); }, { ok: true }));
     if (item.data?.startAt ? Date.parse(item.data.startAt) > Date.now() : notifyDay(item.updatedAt) === currentDayDate) {
-      if (item.data?.joinUrl) acts.append(notifyButton("К звонку", true, async () => { window.open(item.data.joinUrl, "_blank", "noopener"); done("Звонок открыт в новой вкладке"); }));
+      if (item.data?.joinUrl) acts.append(notifyButton(t("К звонку"), true, async () => { window.open(item.data.joinUrl, "_blank", "noopener"); done(t("Звонок открыт в новой вкладке")); }));
       // Отложить: первый раз на полчаса, каждый следующий вдвое дольше — срок
       // считает сервер. Встреча возвращается не позже начала, и кнопка так и
       // говорит.
       const snooze = item.snoozeMinutes || 30;
       const toStart = item.data?.startAt && Date.parse(item.data.startAt) - Date.now() < snooze * 60000;
-      acts.append(notifyButton(toStart ? "Напомнить к началу" : `Через ${snoozeWords(snooze)}`, false, async () => {
+      acts.append(notifyButton(toStart ? t("Напомнить к началу") : t("Через {value1}", { value1: snoozeWords(snooze) }), false, async () => {
         const result = await request(`/api/notifications/${item.id}/snooze`, { method: "POST", body: JSON.stringify({}) });
-        done(`Напомню в ${notifyClock(result.snoozedUntil)}`);
+        done(t("Напомню в {value1}", { value1: notifyClock(result.snoozedUntil) }));
       }));
     }
   } else if (item.kind === "call" || item.kind === "reply") {
-    acts.append(notifyButton("Ответить", false, async () => { after(); openNotification(item); }));
+    acts.append(notifyButton(t("Ответить"), false, async () => { after(); openNotification(item); }));
   } else if (item.kind === "clarify" && !item.resolved) {
-    acts.append(notifyButton("Уточнить", false, async () => { after(); openNotification(item); }));
+    acts.append(notifyButton(t("Уточнить"), false, async () => { after(); openNotification(item); }));
   } else if (item.kind === "calendar_error" && !item.resolved) {
-    acts.append(notifyButton("Переподключить", false, async () => { after(); openNotification(item); }));
+    acts.append(notifyButton(t("Переподключить"), false, async () => { after(); openNotification(item); }));
   }
   return acts.childNodes.length ? acts : null;
 }
@@ -11717,13 +11938,13 @@ async function completeFromNotification(item) {
     dismissNotifications([item.id]);
     return;
   }
-  if (!projections.length) throw new Error("Это дело уже закрыто");
+  if (!projections.length) throw new Error(t("Это дело уже закрыто"));
   for (const projection of projections)
     await request(`/api/projections/${projection.id}/complete`, { method: "POST", body: "{}" });
-  toast(`Готово: «${shortTitle(titleOf(entry))}»`, { label: "Вернуть", run: async () => {
+  toast(t("Готово: «{value1}»", { value1: shortTitle(titleOf(entry)) }), { get label() { return t("Вернуть"); }, run: async () => {
     try {
       for (const projection of projections) await request(`/api/projections/${projection.id}/undo-complete`, { method: "POST", body: "{}" });
-      toast("Снова в работе");
+      toast(t("Снова в работе"));
       await load();
     } catch (error) { toast(error.message); }
   } });
@@ -11746,7 +11967,7 @@ async function dismissNotifications(ids, { announce = null, keep = false } = {})
     const result = await request("/api/notifications/dismiss", { method: "POST", body: JSON.stringify({ ids: wanted }) });
     bellState.counts = result.counts;
     paintBell();
-    if (announce) toast(announce, { label: "Вернуть", run: () => restoreNotifications(result.dismissed) });
+    if (announce) toast(announce, { get label() { return t("Вернуть"); }, run: () => restoreNotifications(result.dismissed) });
     return result.dismissed;
   } catch (error) {
     toast(error.message);
@@ -11774,18 +11995,18 @@ function notificationMenu(item) {
     button.addEventListener("click", async (event) => {
       event.stopPropagation();
       bellState.menu = null;
-      try { await run(); } catch (error) { toast(error.message || "Не получилось"); }
+      try { await run(); } catch (error) { toast(error.message || t("Не получилось")); }
     });
     menu.append(button);
   };
-  if (!item.waits) entry("Убрать из ленты", null, () => dismissNotifications([item.id], { announce: "Убрано из ленты" }));
-  if (item.kind === "reminder" && item.captureId) entry("Не напоминать об этом деле", "срок остаётся, напоминаний больше не будет", () => muteReminder(item));
+  if (!item.waits) entry(t("Убрать из ленты"), null, () => dismissNotifications([item.id], { get announce() { return t("Убрано из ленты"); } }));
+  if (item.kind === "reminder" && item.captureId) entry(t("Не напоминать об этом деле"), t("срок остаётся, напоминаний больше не будет"), () => muteReminder(item));
   if (["event_added", "event_changed"].includes(item.kind) && item.accountId) {
     const account = calendarAccountLabel(item.accountId);
-    entry(account ? `Не сообщать об изменениях в «${account}»` : "Не сообщать об изменениях в этом календаре", "календарь в Кизуне остаётся", () => muteCalendarChanges(item, account));
+    entry(account ? t("Не сообщать об изменениях в «{account}»", { account: account }) : t("Не сообщать об изменениях в этом календаре"), t("календарь в Кизуне остаётся"), () => muteCalendarChanges(item, account));
   }
   const kind = bellState.kinds.find((candidate) => candidate.key === item.kind);
-  if (kind) entry("Выключить такие", `«${kind.label}» — вернуть можно в настройках`, () => turnOffKind(item, kind));
+  if (kind) entry(t("Выключить такие"), t("«{label}» — вернуть можно в настройках", { label: t(kind.label) }), () => turnOffKind(item, kind));
   return menu;
 }
 function calendarAccountLabel(accountId) {
@@ -11795,11 +12016,11 @@ function calendarAccountLabel(accountId) {
 async function muteReminder(item) {
   const { entry } = await request(`/api/captures/${item.captureId}`);
   const schedule = scheduleOf(entry);
-  if (!schedule?.date) throw new Error("У дела уже нет срока");
+  if (!schedule?.date) throw new Error(t("У дела уже нет срока"));
   const patch = (remind) => ({ patch: { schedule: { date: schedule.date, time: schedule.time || null, ...(schedule.time && schedule.end ? { end: schedule.end } : {}), remind } } });
   await request(`/api/captures/${entry.id}/corrections`, { method: "POST", body: JSON.stringify(patch("off")) });
   await dismissNotifications([item.id]);
-  toast("Об этом деле больше не напомню", { label: "Вернуть", run: async () => {
+  toast(t("Об этом деле больше не напомню"), { get label() { return t("Вернуть"); }, run: async () => {
     try { await request(`/api/captures/${entry.id}/corrections`, { method: "POST", body: JSON.stringify(patch(schedule.remind ?? null)) }); }
     catch (error) { toast(error.message); }
     await restoreNotifications([item.id]);
@@ -11808,7 +12029,7 @@ async function muteReminder(item) {
 }
 async function saveMutedCalendars(list) {
   const value = JSON.stringify([...new Set(list)]);
-  paintSettings(await request("/api/settings", { method: "PUT", body: JSON.stringify({ notifyMutedCalendars: value }) }));
+  paintSettings(await request("/api/settings", { method: "PUT", body: JSON.stringify({ notifyMutedCalendars: value }) }), { updatedFields: ["notifyMutedCalendars"] });
 }
 function mutedCalendarsNow() {
   try { const parsed = JSON.parse(appSettings.notifyMutedCalendars || "[]"); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
@@ -11817,7 +12038,7 @@ async function muteCalendarChanges(item, label) {
   const before = mutedCalendarsNow();
   await saveMutedCalendars([...before, item.accountId]);
   await dismissNotifications([item.id]);
-  toast(label ? `«${label}» — без уведомлений об изменениях` : "Об изменениях в этом календаре — молчу", { label: "Вернуть", run: async () => {
+  toast(label ? t("«{label}» — без уведомлений об изменениях", { label: label }) : t("Об изменениях в этом календаре — молчу"), { get label() { return t("Вернуть"); }, run: async () => {
     try { await saveMutedCalendars(before); } catch (error) { toast(error.message); }
     await restoreNotifications([item.id]);
   } });
@@ -11827,7 +12048,7 @@ async function turnOffKind(item, kind) {
   const before = ["off", "bell", "phone"].includes(prefs[kind.key]) ? prefs[kind.key] : kind.default;
   setNotifyMode(kind, "off");
   await dismissNotifications([item.id]);
-  toast(`«${kind.label}» — выключено`, { label: "Вернуть", run: async () => { setNotifyMode(kind, before); await restoreNotifications([item.id]); } });
+  toast(t("«{label}» — выключено", { label: t(kind.label) }), { get label() { return t("Вернуть"); }, run: async () => { setNotifyMode(kind, before); await restoreNotifications([item.id]); } });
 }
 // «Доброе утро» раскрывается на месте: встречи по часам и дела на сегодня с
 // кружками. Переходить на главную, чтобы увидеть те же шесть строк, незачем.
@@ -11838,11 +12059,11 @@ function digestBody(item) {
   if (forToday) {
     const minutes = nowMinutes();
     const meetings = todayMeetings().sort((left, right) => left.start - right.start);
-    box.append(node("p", meetings.length ? `Встречи · ${meetings.length}` : "Встреч сегодня нет", "bell-digest-head"));
+    box.append(node("p", meetings.length ? t("Встречи · {length}", { length: meetings.length }) : t("Встреч сегодня нет"), "bell-digest-head"));
     for (const meeting of meetings) {
       const row = node("button", undefined, "bell-digest-row");
       row.type = "button";
-      const state = minutes >= meeting.end ? "прошла" : minutes >= meeting.start ? "идёт" : meeting.start - minutes <= 90 ? `через ${meeting.start - minutes} мин` : "";
+      const state = minutes >= meeting.end ? t("прошла") : minutes >= meeting.start ? t("идёт") : meeting.start - minutes <= 90 ? t("через {value1} мин", { value1: meeting.start - minutes }) : "";
       row.append(node("span", hm(meeting.start), "bell-digest-time"), node("i", undefined, "bell-digest-dot"), node("span", meeting.title, "bell-digest-title"), node("span", state, "bell-digest-state"));
       row.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -11855,13 +12076,13 @@ function digestBody(item) {
     const deals = todayState.entries
       .filter((entry) => scheduledOn(entry, today) && !isReportedWork(entry) && projectionOfType(entry, "task") && (isActiveTask(entry) || isClosed(entry)))
       .sort((left, right) => (scheduleOf(left)?.time || "99").localeCompare(scheduleOf(right)?.time || "99"));
-    box.append(node("p", deals.length ? `Дела на сегодня · ${deals.length}` : "Дел на сегодня нет", "bell-digest-head"));
+    box.append(node("p", deals.length ? t("Дела на сегодня · {length}", { length: deals.length }) : t("Дел на сегодня нет"), "bell-digest-head"));
     for (const entry of deals) {
       const closed = isClosed(entry);
       const row = node("div", undefined, `bell-digest-row deal${closed ? " done" : ""}`);
       const tick = node("button", undefined, `completion-button${closed ? " is-done" : ""}`);
       tick.type = "button";
-      tick.title = closed ? "Вернуть в работу" : "Готово";
+      tick.title = closed ? t("Вернуть в работу") : t("Готово");
       tick.setAttribute("aria-label", `${tick.title}: ${titleOf(entry)}`);
       tick.addEventListener("click", async (event) => {
         event.stopPropagation();
@@ -11875,7 +12096,7 @@ function digestBody(item) {
       box.append(row);
     }
   }
-  const day = node("button", "Открыть «День» →", "bell-digest-link");
+  const day = bindTranslation(node("button", t("Открыть «День» →"), "bell-digest-link"), "Открыть «День» →");
   day.type = "button";
   day.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -11898,7 +12119,7 @@ function notificationRow(item) {
   if (meta.childNodes.length) main.append(meta);
   if (item.kind === "digest") {
     const open = bellState.digest === item.id;
-    const toggle = node("button", open ? "Свернуть" : "Показать встречи и дела", `bell-digest-toggle${open ? " open" : ""}`);
+    const toggle = node("button", open ? t("Свернуть") : t("Показать встречи и дела"), `bell-digest-toggle${open ? " open" : ""}`);
     toggle.type = "button";
     toggle.setAttribute("aria-expanded", String(open));
     toggle.addEventListener("click", (event) => { event.stopPropagation(); toggleDigest(item); });
@@ -11911,8 +12132,8 @@ function notificationRow(item) {
   side.append(node("span", notifyTime(item.updatedAt), "bell-time"));
   const mute = node("button", undefined, "bell-mute");
   mute.type = "button";
-  mute.title = "Заглушить";
-  mute.setAttribute("aria-label", `Заглушить: ${[item.lead, item.text].filter(Boolean).join(" ")}`);
+  bindTranslation(mute, "Заглушить", "title");
+  bindTranslation(mute, "Заглушить: {value1}", { value1: [item.lead, item.text].filter(Boolean).join(" ") }, "aria-label");
   mute.setAttribute("aria-expanded", String(bellState.menu === item.id));
   mute.innerHTML = BELL_MUTE_ICON;
   mute.addEventListener("click", (event) => {
@@ -11946,9 +12167,9 @@ function renderBellPanel() {
   const scroll = panel.scrollTop;
   clear(panel);
   const head = node("div", undefined, "bell-head");
-  head.append(node("h3", "Уведомления"));
+  head.append(bindTranslation(node("h3", t("Уведомления")), "Уведомления"));
   // «Очистить» — всё, что не ждёт ответа: лента для неразобранного, а не архив.
-  const clearAll = node("button", "Очистить", "linklike bell-read-all");
+  const clearAll = bindTranslation(node("button", t("Очистить"), "linklike bell-read-all"), "Очистить");
   clearAll.type = "button";
   clearAll.disabled = !bellState.items.some((item) => !item.waits);
   clearAll.addEventListener("click", async () => {
@@ -11960,7 +12181,7 @@ function renderBellPanel() {
       const result = await request("/api/notifications/dismiss", { method: "POST", body: JSON.stringify({ all: true }) });
       bellState.counts = result.counts;
       paintBell();
-      if (result.dismissed.length) toast("Лента очищена", { label: "Вернуть", run: () => restoreNotifications(result.dismissed) });
+      if (result.dismissed.length) toast(t("Лента очищена"), { get label() { return t("Вернуть"); }, run: () => restoreNotifications(result.dismissed) });
     } catch (error) {
       bellState.items = before;
       renderBellPanel();
@@ -11988,16 +12209,16 @@ function renderBellPanel() {
     list.append(node("p", label, `bell-group${extra}`));
     for (const item of items) list.append(notificationRow(item));
   };
-  group("Ждут ответа", pinned, " waits");
-  group("Сегодня", rest.filter((item) => notifyDay(item.updatedAt) === today));
-  group("Вчера", rest.filter((item) => notifyDay(item.updatedAt) === yesterday));
-  group("Раньше", rest.filter((item) => notifyDay(item.updatedAt) < yesterday));
-  if (!list.childNodes.length) list.append(node("p", bellState.filter === "all" ? "Всё разобрано. Новое появится здесь." : "По этому поводу ничего нет.", "bell-empty"));
+  group(t("Ждут ответа"), pinned, " waits");
+  group(t("Сегодня"), rest.filter((item) => notifyDay(item.updatedAt) === today));
+  group(t("Вчера"), rest.filter((item) => notifyDay(item.updatedAt) === yesterday));
+  group(t("Раньше"), rest.filter((item) => notifyDay(item.updatedAt) < yesterday));
+  if (!list.childNodes.length) list.append(node("p", bellState.filter === "all" ? t("Всё разобрано. Новое появится здесь.") : t("По этому поводу ничего нет."), "bell-empty"));
   const foot = node("div", undefined, "bell-foot");
-  const settings = node("a", "Настройки уведомлений →");
+  const settings = bindTranslation(node("a", t("Настройки уведомлений →")), "Настройки уведомлений →");
   settings.href = "#settings";
   settings.addEventListener("click", () => { $("#bell-menu")?.removeAttribute("open"); setTimeout(() => $("#notify-settings")?.scrollIntoView({ block: "start" }), 60); });
-  foot.append(node("span", "Открытое уходит из ленты"), settings);
+  foot.append(bindTranslation(node("span", t("Открытое уходит из ленты")), "Открытое уходит из ленты"), settings);
   panel.append(head, filters, list, foot);
   panel.scrollTop = scroll;
 }
@@ -12056,7 +12277,7 @@ function showNotificationToast(item) {
   if (acts) main.append(acts);
   const close = node("button", "×", "notify-toast-close");
   close.type = "button";
-  close.setAttribute("aria-label", "Скрыть");
+  bindTranslation(close, "Скрыть", "aria-label");
   close.addEventListener("click", dismiss);
   card.append(notificationFace(item), main, close);
   stack.prepend(card);
@@ -12084,12 +12305,12 @@ function inviteRow(item) {
     button.type = "button";
     button.addEventListener("click", async () => {
       button.disabled = true;
-      try { await answerInvite(item, status); toast(status === "accepted" ? "Принято — встреча в календаре" : "Организатор узнает, что вас не будет"); await loadNotifications(); }
-      catch (error) { button.disabled = false; toast(error.message || "Не получилось ответить"); }
+      try { await answerInvite(item, status); toast(status === "accepted" ? t("Принято — встреча в календаре") : t("Организатор узнает, что вас не будет")); await loadNotifications(); }
+      catch (error) { button.disabled = false; toast(error.message || t("Не получилось ответить")); }
     });
     return button;
   };
-  acts.append(answer("Приму", "inbox-take", "accepted"), answer("Не смогу", "inbox-not", "declined"));
+  acts.append(answer(t("Приму"), "inbox-take", "accepted"), answer(t("Не смогу"), "inbox-not", "declined"));
   element.append(mark, main, acts);
   return element;
 }
@@ -12124,23 +12345,24 @@ function paintNotifySettings() {
   const prefs = notifyPrefsNow();
   clear(table);
   const cols = node("div", undefined, "notify-row notify-cols");
-  cols.append(node("span", "Повод"), node("span", "Колокольчик"), node("span", "Телефон"));
+  cols.append(bindTranslation(node("span", t("Повод")), "Повод"), bindTranslation(node("span", t("Колокольчик")), "Колокольчик"), bindTranslation(node("span", t("Телефон")), "Телефон"));
   table.append(cols);
-  const titles = { people: "Люди и круги", time: "Сроки и встречи", other: "Записи и служебное" };
+  const titles = { get people() { return t("Люди и круги"); }, get time() { return t("Сроки и встречи"); }, get other() { return t("Записи и служебное"); } };
   for (const group of ["people", "time", "other"]) {
     const kinds = bellState.kinds.filter((kind) => kind.group === group);
     if (!kinds.length) continue;
     table.append(node("p", titles[group], "notify-group"));
     for (const kind of kinds) {
+      const presentation = NOTIFY_KIND_PRESENTATION[kind.key] || kind;
       const mode = ["off", "bell", "phone"].includes(prefs[kind.key]) ? prefs[kind.key] : kind.default;
       const row = node("div", undefined, "notify-row");
       const name = node("span", undefined, "notify-name");
-      name.append(document.createTextNode(kind.label));
-      if (kind.hint) name.append(node("span", kind.hint, "notify-hint"));
+      name.append(document.createTextNode(presentation.label));
+      if (presentation.hint) name.append(node("span", presentation.hint, "notify-hint"));
       row.append(
         name,
-        notifySwitch(`notify-bell-${kind.key}`, `${kind.label}: колокольчик`, mode !== "off", false, (on) => setNotifyMode(kind, on ? "bell" : "off")),
-        notifySwitch(`notify-phone-${kind.key}`, `${kind.label}: телефон`, mode === "phone", mode === "off", (on) => setNotifyMode(kind, on ? "phone" : "bell")),
+        notifySwitch(`notify-bell-${kind.key}`, t("{label}: колокольчик", { label: t(kind.label) }), mode !== "off", false, (on) => setNotifyMode(kind, on ? "bell" : "off")),
+        notifySwitch(`notify-phone-${kind.key}`, t("{label}: телефон", { label: t(kind.label) }), mode === "phone", mode === "off", (on) => setNotifyMode(kind, on ? "phone" : "bell")),
       );
       table.append(row);
     }
@@ -12148,13 +12370,13 @@ function paintNotifySettings() {
   // Заглушённые из колокольчика календари: здесь их возвращают.
   const muted = mutedCalendarsNow();
   if (muted.length) {
-    const line = node("p", "Об изменениях встреч молчат:", "notify-muted");
+    const line = bindTranslation(node("p", t("Об изменениях встреч молчат:"), "notify-muted"), "Об изменениях встреч молчат:");
     for (const accountId of muted) {
-      const chip = node("button", `${calendarAccountLabel(accountId) || "календарь"} ✕`);
+      const chip = node("button", `${calendarAccountLabel(accountId) || t("календарь")} ✕`);
       chip.type = "button";
-      chip.title = "Снова сообщать об изменениях";
+      bindTranslation(chip, "Снова сообщать об изменениях", "title");
       chip.addEventListener("click", async () => {
-        try { await saveMutedCalendars(mutedCalendarsNow().filter((id) => id !== accountId)); toast("Об изменениях снова сообщу"); }
+        try { await saveMutedCalendars(mutedCalendarsNow().filter((id) => id !== accountId)); toast(t("Об изменениях снова сообщу")); }
         catch (error) { toast(error.message); }
       });
       line.append(chip);
@@ -12210,3 +12432,71 @@ async function refreshRoomsOnce() {
   }
   renderCircles({ toBottom: atBottom });
 }
+
+// Locale changes update UI labels and cached views without navigating or
+// recreating the capture editor. Draft values and selection remain in place.
+settingInput("locale")?.addEventListener("change", (event) => {
+  const choice = event.target.value;
+  const revision = ++localeSaveRevision;
+  pendingLocaleChoice = choice;
+  setLocale(choice);
+  // Serialize account writes so the server cannot finish an older choice last.
+  // Only the latest selection can repaint or announce a committed preference.
+  settingsPreferenceSaveQueue = settingsPreferenceSaveQueue.then(async () => {
+    try {
+      const detectedLocale = getDetectedLocale(appSettings.detectedLocale);
+      const payload = await request("/api/settings", { method: "PUT", body: JSON.stringify({ locale: choice, ...(detectedLocale ? { detectedLocale } : {}) }) });
+      appSettings = { ...appSettings, locale: payload.settings.locale, detectedLocale: payload.settings.detectedLocale };
+      if (revision !== localeSaveRevision) return;
+      pendingLocaleChoice = null;
+      initLocale(appSettings);
+      settingInput("locale").value = appSettings.locale;
+      announceLocaleSaved(appSettings);
+      loadNotifications();
+      paintUpcomingReminders();
+    } catch (error) {
+      if (revision !== localeSaveRevision) return;
+      pendingLocaleChoice = null;
+      initLocale(appSettings);
+      settingInput("locale").value = appSettings.locale || "system";
+      toast(error.message);
+    }
+  });
+});
+window.addEventListener("pagent:localechange", () => {
+  renderToday();
+  paintThemeButton();
+  paintAccountSummary();
+  paintAvatarPicker();
+  if (currentUser) $("#account-role").textContent = roleNames[currentUser.role] || currentUser.role;
+  for (const name of SECRET_FIELDS) {
+    const state = document.getElementById(`state-${name}`);
+    const value = appSettings[name];
+    if (state) state.textContent = value?.configured ? `${value.hint}${value.fromEnvironment ? t(" · из .env") : ""}` : t("не настроен");
+  }
+  if (telegramView) paintTelegram(telegramView);
+  paintBell();
+  paintPush();
+  paintNotifySettings();
+  paintUpcomingReminders();
+  const page = location.hash.slice(1).split("?")[0];
+  if (page === "board") loadBoard({ force: true });
+  if (page === "done") loadDone({ fresh: true });
+  if (page === "calendar") loadCalendar();
+  if (page === "guide") updatePageFromHash();
+});
+
+window.addEventListener("pagent:timezonechange", () => {
+  const previousDay = currentDayDate;
+  currentDayDate = zoneDate(new Date());
+  if (calState.anchor === previousDay) calState.anchor = currentDayDate;
+  boardState.locale = null;
+  renderToday();
+  paintUpcomingReminders();
+  paintTimeZoneSetting();
+  load().catch(() => {});
+  const page = location.hash.slice(1).split("?")[0];
+  if (page === "board") loadBoard({ force: true });
+  if (page === "calendar") loadCalendar();
+  if (page === "done") loadDone({ fresh: true });
+});

@@ -1,3 +1,5 @@
+import { getTimeZone } from "./browser-time-zone.js";
+import { t, getLocale, bindTranslation, localizedBuiltins } from "./browser-i18n.js";
 // Раздел «Заметки»: страницы деревом, базы и ссылки — как в Notion, но каждая
 // страница остаётся обычной записью журнала (сервер — server/notes-tree.js).
 //
@@ -14,10 +16,10 @@ import { attachSlashMenu } from "./slash-menu.js";
 import { attachFormatToolbar } from "./format-toolbar.js";
 import { attachLinkMenu, forgetLinkPages } from "./link-menu.js";
 
-const ZONE = "Europe/Samara";
-const TYPE_NAMES = { note: "Заметка", idea_question: "Идея" };
-const LAYOUTS = [["table", "Таблица"], ["gallery", "Галерея"], ["list", "Список"]];
-const SORTS = [["created", "Сначала новые"], ["updated", "Недавно изменённые"], ["title", "По названию"]];
+
+const TYPE_NAMES = { get note() { return t("Заметка"); }, get idea_question() { return t("Идея"); } };
+const LAYOUTS = localizedBuiltins([["table", "Таблица"], ["gallery", "Галерея"], ["list", "Список"]]);
+const SORTS = localizedBuiltins([["created", "Сначала новые"], ["updated", "Недавно изменённые"], ["title", "По названию"]]);
 const DEFAULT_VIEW = { layout: "table", sort: "created", filter: { type: "all", project: null, tag: null, parent: null } };
 const EXPANDED_KEY = "kizuna-notes-expanded";
 // Свёрнутые блоки страницы — свойства, страницы внутри, ссылки — помнятся в
@@ -58,7 +60,7 @@ let picker = null;
 window.addEventListener("kizuna:before-update", (event) => {
   if (!editor || typeof event.detail?.block !== "function") return;
   if (editor.saving || editor.field.getValue() !== editor.saved) {
-    event.detail.block("Дождитесь сохранения заметки и продолжите обновление.");
+    event.detail.block(t("Дождитесь сохранения заметки и продолжите обновление."));
   } else {
     event.detail.savedEditors.push(editor.field.element);
   }
@@ -118,21 +120,23 @@ function foldable(block, key) {
   block.classList.toggle("is-collapsed", state.collapsed.has(key));
   return block;
 }
-const zoneDay = (date) => new Intl.DateTimeFormat("en-CA", { timeZone: ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+const zoneDay = (date) => new Intl.DateTimeFormat("en-CA", { timeZone: getTimeZone(), year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
 function when(iso, { time = true } = {}) {
   if (!iso) return "";
   const date = new Date(iso);
-  const clock = new Intl.DateTimeFormat("ru-RU", { timeZone: ZONE, hour: "2-digit", minute: "2-digit" }).format(date);
+  const clock = new Intl.DateTimeFormat(getLocale(), { timeZone: getTimeZone(), hour: "2-digit", minute: "2-digit" }).format(date);
   const today = zoneDay(new Date()), day = zoneDay(date);
-  const yesterday = zoneDay(new Date(Date.now() - 86400000));
-  if (day === today) return time ? `сегодня, ${clock}` : "сегодня";
-  if (day === yesterday) return time ? `вчера, ${clock}` : "вчера";
-  const short = new Intl.DateTimeFormat("ru-RU", { timeZone: ZONE, day: "numeric", month: "short", ...(day.slice(0, 4) !== today.slice(0, 4) ? { year: "numeric" } : {}) }).format(date);
+  const previousDate = new Date(`${today}T12:00:00Z`);
+  previousDate.setUTCDate(previousDate.getUTCDate() - 1);
+  const yesterday = previousDate.toISOString().slice(0, 10);
+  if (day === today) return time ? t("сегодня, {clock}", { clock: clock }) : t("сегодня");
+  if (day === yesterday) return time ? t("вчера, {clock}", { clock: clock }) : t("вчера");
+  const short = new Intl.DateTimeFormat(getLocale(), { timeZone: getTimeZone(), day: "numeric", month: "short", ...(day.slice(0, 4) !== today.slice(0, 4) ? { year: "numeric" } : {}) }).format(date);
   return time ? `${short}, ${clock}` : short;
 }
 const plural = (count, one, few, many) => {
-  const mod10 = count % 10, mod100 = count % 100;
-  return mod10 === 1 && mod100 !== 11 ? one : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14) ? few : many;
+  const category = new Intl.PluralRules(getLocale()).select(count);
+  return category === "one" ? one : category === "few" ? few : many;
 };
 const pageById = (id) => state.overview?.pages.find((page) => page.id === id) || null;
 // Значки страниц — эмодзи, как в Notion: у страницы и проекта свой, выбранный
@@ -159,10 +163,10 @@ function go(route) {
   else location.hash = hash;
 }
 function placeLabel(key) {
-  if (key === null || key === undefined) return "Корень";
-  if (key === "inbox") return "Входящие";
+  if (key === null || key === undefined) return t("Корень");
+  if (key === "inbox") return t("Входящие");
   if (key.startsWith("project:")) return key.slice(8);
-  return pageById(key)?.title || "Страница";
+  return pageById(key)?.title || t("Страница");
 }
 async function call(url, method = "GET", body) {
   return deps.request(url, body === undefined ? { method } : { method, body: JSON.stringify(body) });
@@ -294,7 +298,7 @@ function treeRow({ key, title, mark, href, depth, count = 0, hasChildren = false
     if (state.expanded.has(key)) state.expanded.delete(key); else state.expanded.add(key);
     saveExpanded();
     renderSide();
-  }, { title: open ? "Свернуть" : "Развернуть" });
+  }, { title: open ? t("Свернуть") : t("Развернуть") });
   caret.append(icon("caret"));
   if (!hasChildren) caret.tabIndex = -1;
   const link = el("a", "notes-link");
@@ -305,7 +309,7 @@ function treeRow({ key, title, mark, href, depth, count = 0, hasChildren = false
   if (kind === "page" || kind === "project") dropTarget(row, kind, key);
   if (count) row.append(el("span", "notes-count", String(count)));
   if (addParent !== null) {
-    const add = button("", "notes-row-add", (event) => { event.preventDefault(); newPage(addParent); }, { title: "Страница внутри" });
+    const add = button("", "notes-row-add", (event) => { event.preventDefault(); newPage(addParent); }, { get title() { return t("Страница внутри"); } });
     add.append(icon("plus"));
     row.append(add);
   }
@@ -332,7 +336,7 @@ function renderSide() {
   const input = el("input");
   input.id = "notes-search";
   input.type = "search";
-  input.placeholder = "Найти страницу";
+  bindTranslation(input, "Найти страницу", "placeholder");
   input.autocomplete = "off";
   input.value = state.query;
   input.addEventListener("input", () => { state.query = input.value; renderSide(); });
@@ -349,21 +353,21 @@ function renderSide() {
       link.append(emoji(pageEmoji(page)), el("span", "notes-found-title", page.title), el("span", "notes-found-where", placeLabel(page.parentKey)));
       list.append(link);
     }
-    if (!found.length) list.append(el("p", "notes-empty", "Ничего не нашлось."));
+    if (!found.length) list.append(bindTranslation(el("p", "notes-empty", t("Ничего не нашлось.")), "Ничего не нашлось."));
     side.append(list);
   } else {
     const inboxCount = state.overview.pages.filter((page) => page.parentKey === "inbox").length;
     const top = el("div", "notes-tree");
     top.setAttribute("role", "tree");
-    top.setAttribute("aria-label", "Разделы заметок");
-    const inbox = treeRow({ key: "inbox", title: "Входящие", mark: EMOJI.inbox, href: hashFor({ kind: "inbox" }), depth: 0, count: inboxCount });
+    bindTranslation(top, "Разделы заметок", "aria-label");
+    const inbox = treeRow({ key: "inbox", get title() { return t("Входящие"); }, mark: EMOJI.inbox, href: hashFor({ kind: "inbox" }), depth: 0, count: inboxCount });
     if (inboxCount) inbox.querySelector(".notes-count").classList.add("is-hot");
     top.append(inbox);
     side.append(top);
 
     const pagesHead = el("div", "notes-side-head");
-    pagesHead.append(el("span", undefined, "Страницы"));
-    const addRoot = button("", "notes-side-add", () => newPage("root"), { title: "Новая страница" });
+    pagesHead.append(bindTranslation(el("span", undefined, t("Страницы")), "Страницы"));
+    const addRoot = button("", "notes-side-add", () => newPage("root"), { get title() { return t("Новая страница"); } });
     addRoot.append(icon("plus"));
     pagesHead.append(addRoot);
     // Заголовок «Страницы» — корень: брошенная на него страница встаёт наверх.
@@ -371,24 +375,24 @@ function renderSide() {
     side.append(pagesHead);
     const tree = el("div", "notes-tree");
     tree.setAttribute("role", "tree");
-    tree.setAttribute("aria-label", "Страницы");
+    bindTranslation(tree, "Страницы", "aria-label");
     // Узлы проектов — первыми: это полки, на которых лежат заметки по делу.
     for (const project of state.overview.projects)
       treeNode({ key: `project:${project.name}`, title: project.name, mark: projectEmoji(project.name), href: hashFor({ kind: "project", name: project.name }), addParent: `project:${project.name}`, kind: "project" }, 0, tree);
     for (const page of childrenOf(null))
       treeNode({ key: page.id, title: page.title, mark: pageEmoji(page), href: hashFor({ kind: "page", id: page.id }), addParent: page.id, kind: "page" }, 0, tree);
     if (!state.overview.projects.length && !childrenOf(null).length)
-      tree.append(el("p", "notes-empty", "Страниц пока нет. «+» заводит новую, а заметки с «Сегодня» появятся сами."));
+      tree.append(bindTranslation(el("p", "notes-empty", t("Страниц пока нет. «+» заводит новую, а заметки с «Сегодня» появятся сами.")), "Страниц пока нет. «+» заводит новую, а заметки с «Сегодня» появятся сами."));
     side.append(tree);
 
     const basesHead = el("div", "notes-side-head");
-    basesHead.append(el("span", undefined, "Базы"));
-    const addBase = button("", "notes-side-add", () => newBase(), { title: "Новая база" });
+    basesHead.append(bindTranslation(el("span", undefined, t("Базы")), "Базы"));
+    const addBase = button("", "notes-side-add", () => newBase(), { get title() { return t("Новая база"); } });
     addBase.append(icon("plus"));
     basesHead.append(addBase);
     side.append(basesHead);
     const bases = el("div", "notes-tree");
-    bases.append(treeRow({ key: "all", title: "Все заметки", mark: EMOJI.all, href: hashFor({ kind: "all" }), depth: 0 }));
+    bases.append(treeRow({ key: "all", get title() { return t("Все заметки"); }, mark: EMOJI.all, href: hashFor({ kind: "all" }), depth: 0 }));
     for (const base of state.overview.bases)
       bases.append(treeRow({ key: `base:${base.id}`, title: base.name, mark: EMOJI.base, href: hashFor({ kind: "base", id: base.id }), depth: 0 }));
     side.append(bases);
@@ -496,14 +500,14 @@ async function dropPage(pageId, kind, key, zone) {
     if (state.route.kind === "page") await loadDetail(state.route.id);
     renderSide();
     renderMain({ quiet: true });
-    if (parentKey !== page.parentKey) deps.toast(`«${page.title}» — ${parentKey ? `в «${placeLabel(parentKey)}»` : "в корне"}`);
+    if (parentKey !== page.parentKey) deps.toast(`«${page.title}» — ${parentKey ? t("в «{value1}»", { value1: placeLabel(parentKey) }) : t("в корне")}`);
   } catch (error) {
     deps.toast(error.message);
   }
 }
 
 // ── создание ───────────────────────────────────────────────────────────────
-async function newPage(parent, title = "Без названия") {
+async function newPage(parent, title = t("Без названия")) {
   try {
     await saveEditor();
     const detail = await call("/api/pages", "POST", { title, parent });
@@ -517,7 +521,7 @@ async function newPage(parent, title = "Без названия") {
 }
 async function newBase() {
   try {
-    const { base } = await call("/api/pages/bases", "POST", { name: "Новая база", view: DEFAULT_VIEW });
+    const { base } = await call("/api/pages/bases", "POST", { get name() { return t("Новая база"); }, view: DEFAULT_VIEW });
     state.focusTitle = true;
     go({ kind: "base", id: base.id });
   } catch (error) {
@@ -532,13 +536,13 @@ function mainShell() {
   const toggle = button("", "notes-side-toggle", () => {
     state.sideOpen = !state.sideOpen;
     document.querySelector(".notes-shell")?.classList.toggle("side-open", state.sideOpen);
-  }, { title: "Страницы" });
-  toggle.append(icon("menu"), el("span", undefined, "Страницы"));
+  }, { get title() { return t("Страницы"); } });
+  toggle.append(icon("menu"), bindTranslation(el("span", undefined, t("Страницы")), "Страницы"));
   bar.append(toggle);
   // Не <nav>: у приложения на nav и nav a висят стили и логика шапки.
   const crumbs = el("div", "notes-crumbs");
   crumbs.setAttribute("role", "navigation");
-  crumbs.setAttribute("aria-label", "Где лежит");
+  bindTranslation(crumbs, "Где лежит", "aria-label");
   bar.append(crumbs);
   const tail = el("div", "notes-bar-tail");
   bar.append(tail);
@@ -572,7 +576,7 @@ function renderPage({ quiet }) {
   if (!detail || detail.page.id !== state.route.id) {
     if (editor) destroyEditor();
     const sheet = el("article", "notes-sheet");
-    sheet.append(el("h1", "notes-title is-static", "Страница не найдена"), el("p", "notes-lead", "Её удалили или она стала делом — дела живут на «Доске»."));
+    sheet.append(bindTranslation(el("h1", "notes-title is-static", t("Страница не найдена")), "Страница не найдена"), bindTranslation(el("p", "notes-lead", t("Её удалили или она стала делом — дела живут на «Доске».")), "Её удалили или она стала делом — дела живут на «Доске»."));
     main.replaceChildren(bar, sheet);
     return;
   }
@@ -598,12 +602,13 @@ function renderPage({ quiet }) {
   const sheet = el("article", "notes-sheet");
   sheet.dataset.page = page.id;
   const head = el("div", "notes-head");
-  head.append(iconButton(page.id, () => pageEmoji(page), "Значок страницы"));
+  head.append(iconButton(page.id, () => pageEmoji(page), t("Значок страницы")));
   const title = el("h1", "notes-title", page.title);
   title.contentEditable = "true";
+  bindTranslation(title, "Без названия", "data-placeholder");
   title.spellcheck = true;
   title.setAttribute("role", "textbox");
-  title.setAttribute("aria-label", "Название страницы");
+  bindTranslation(title, "Название страницы", "aria-label");
   title.addEventListener("keydown", (event) => {
     if (event.key === "Enter") { event.preventDefault(); title.blur(); editor?.field.focus(); }
     if (event.key === "Escape") { title.textContent = page.title; title.blur(); }
@@ -644,19 +649,19 @@ function fillBar(detail, crumbs, tail) {
   // длинной страницы. Нет ссылок — нет и счётчика.
   if (detail.backlinks.length) {
     const count = detail.backlinks.length;
-    const words = plural(count, "ссылка", "ссылки", "ссылок");
-    const links = button("", "notes-bar-button notes-bar-links", showBacklinks, { title: `${count} ${words} сюда — показать` });
-    links.append(icon("link"), el("span", "notes-bar-count", String(count)), el("span", "notes-bar-label", `${words} сюда`));
+    const words = plural(count, t("ссылка"), t("ссылки"), t("ссылок"));
+    const links = button("", "notes-bar-button notes-bar-links", showBacklinks, { title: t("{count} {words} сюда — показать", { count: count, words: words }) });
+    links.append(icon("link"), el("span", "notes-bar-count", String(count)), bindTranslation(el("span", "notes-bar-label", t("{words} сюда", { words: words })), "{words} сюда", { words: words }));
     tail.append(links);
   }
   // «Страница внутри» — здесь, а не пустым блоком под текстом: под страницей
   // остаётся только то, что в ней есть.
-  const inside = button("", "notes-bar-button", () => newPage(page.id), { title: "Новая страница внутри этой" });
-  inside.append(icon("plus"), el("span", "notes-bar-label", "Страница внутри"));
-  const open = button("", "notes-bar-button", () => deps.openCard(page.id), { title: "Открыть карточку: обсуждение, вложения, источник" });
-  open.append(icon("card"), el("span", "notes-bar-label", "Карточка"));
-  const remove = button("", "notes-bar-button is-danger", () => deletePage(detail), { title: "Удалить страницу — вернуть можно из уведомления" });
-  remove.append(icon("trash"), el("span", "notes-bar-label", "Удалить"));
+  const inside = button("", "notes-bar-button", () => newPage(page.id), { get title() { return t("Новая страница внутри этой"); } });
+  inside.append(icon("plus"), bindTranslation(el("span", "notes-bar-label", t("Страница внутри")), "Страница внутри"));
+  const open = button("", "notes-bar-button", () => deps.openCard(page.id), { get title() { return t("Открыть карточку: обсуждение, вложения, источник"); } });
+  open.append(icon("card"), bindTranslation(el("span", "notes-bar-label", t("Карточка")), "Карточка"));
+  const remove = button("", "notes-bar-button is-danger", () => deletePage(detail), { get title() { return t("Удалить страницу — вернуть можно из уведомления"); } });
+  remove.append(icon("trash"), bindTranslation(el("span", "notes-bar-label", t("Удалить")), "Удалить"));
   tail.append(inside, open, remove);
 }
 // Счётчик ведёт к блоку ссылок и разворачивает его, если тот свёрнут.
@@ -686,16 +691,16 @@ async function deletePage(detail) {
   }
   const up = detail.trail.at(-1);
   go(!up ? { kind: "all" } : up.key === "inbox" ? { kind: "inbox" } : up.key.startsWith("project:") ? { kind: "project", name: up.title } : { kind: "page", id: up.key });
-  deps.toast(`Страница «${page.title}» удалена`, { label: "Вернуть", run: async () => {
+  deps.toast(t("Страница «{title}» удалена", { title: page.title }), { get label() { return t("Вернуть"); }, run: async () => {
     try {
       await call(`/api/captures/${encodeURIComponent(page.id)}/restore`, "POST");
       go({ kind: "page", id: page.id });
-      deps.toast("Страница возвращена");
+      deps.toast(t("Страница возвращена"));
     } catch (error) { deps.toast(error.message); }
   } });
 }
 function versionLabel(page) {
-  return `изменено ${when(page.updatedAt)}${page.noteVersion ? ` · версия ${page.noteVersion}` : ""}`;
+  return t("изменено {value1}{value2}", { value1: when(page.updatedAt), value2: page.noteVersion ? t(" · версия {value1}", { value1: page.noteVersion }) : "" });
 }
 async function renamePage(page, title) {
   const next = title.textContent.replace(/\s+/g, " ").trim();
@@ -725,24 +730,24 @@ function propsBlock(detail) {
   const { page } = detail;
   const block = foldable(el("div", "notes-props-block"), "props");
   const list = el("dl", "notes-props");
-  const where = detail.trail.map((step) => step.title).join(" / ") || "Корень";
+  const where = detail.trail.map((step) => step.title).join(" / ") || t("Корень");
   // Свёрнутые свойства не пропадают совсем: строка кнопки говорит главное —
   // где лежит, проект и тип.
-  const toggle = foldToggle("props", "Свойства");
+  const toggle = foldToggle("props", t("Свойства"));
   toggle.append(el("span", "notes-props-summary", [...new Set([where, page.project, TYPE_NAMES[page.type]].filter(Boolean))].join(" · ")));
   block.append(toggle, list);
   const place = button("", "notes-prop-button", (event) => openPicker(event.currentTarget, page));
   place.append(el("span", undefined, where));
-  const placeRow = propRow(list, "Место", place);
-  const origin = page.parentKey === "inbox" ? "не разложено" : page.placed ? (detail.page.placeSource === "text" ? "из текста" : "указано") : page.parentKey?.startsWith("project:") ? "по проекту" : "";
+  const placeRow = propRow(list, t("Место"), place);
+  const origin = page.parentKey === "inbox" ? t("не разложено") : page.placed ? (detail.page.placeSource === "text" ? t("из текста") : t("указано")) : page.parentKey?.startsWith("project:") ? t("по проекту") : "";
   if (origin) placeRow.append(el("span", `notes-prov${page.parentKey === "inbox" ? " is-loose" : ""}`, origin));
   if (page.project) {
     const link = el("a", "notes-prop-link", page.project);
     link.href = hashFor({ kind: "project", name: page.project });
-    propRow(list, "Проект", link);
-  } else propRow(list, "Проект", el("span", "notes-ghost", "—"));
+    propRow(list, t("Проект"), link);
+  } else propRow(list, t("Проект"), el("span", "notes-ghost", "—"));
   const type = el("select", "notes-prop-select");
-  type.setAttribute("aria-label", "Тип страницы");
+  bindTranslation(type, "Тип страницы", "aria-label");
   for (const [value, name] of Object.entries(TYPE_NAMES)) {
     const option = el("option", undefined, name);
     option.value = value;
@@ -758,13 +763,13 @@ function propsBlock(detail) {
       renderMain();
     } catch (error) { deps.toast(error.message); }
   });
-  propRow(list, "Тип", type);
+  propRow(list, t("Тип"), type);
   if (page.tags.length) {
     const tags = el("span", "notes-tags");
     for (const tag of page.tags) tags.append(el("span", "notes-tag", `#${tag}`));
-    propRow(list, "Теги", tags);
+    propRow(list, t("Теги"), tags);
   }
-  propRow(list, "Записано", when(page.createdAt));
+  propRow(list, t("Записано"), when(page.createdAt));
   return block;
 }
 function suggestBlock(detail) {
@@ -775,15 +780,15 @@ function suggestBlock(detail) {
   wrap.className = "notes-suggest";
   const text = el("p", "notes-suggest-text");
   if (detail.suggest) {
-    text.append("Похоже, это про ", el("b", undefined, `«${detail.suggest.title}»`), ". Положить туда?");
-    wrap.append(text, button("Положить", "notes-act is-primary", () => applyPlace(page, detail.suggest.key)));
+    text.append(t("Похоже, это про "), el("b", undefined, `«${detail.suggest.title}»`), t(". Положить туда?"));
+    wrap.append(text, bindTranslation(button(t("Положить"), "notes-act is-primary", () => applyPlace(page, detail.suggest.key)), "Положить"));
   } else {
-    text.textContent = "Заметка во «Входящих»: места для неё пока не нашлось.";
+    bindTranslation(text, "Заметка во «Входящих»: места для неё пока не нашлось.");
     wrap.append(text);
   }
   wrap.append(
-    button("Выбрать место", "notes-act", (event) => openPicker(event.currentTarget, page)),
-    button("В корень", "notes-act", () => applyPlace(page, "root")),
+    bindTranslation(button(t("Выбрать место"), "notes-act", (event) => openPicker(event.currentTarget, page)), "Выбрать место"),
+    bindTranslation(button(t("В корень"), "notes-act", () => applyPlace(page, "root")), "В корень"),
   );
   return wrap;
 }
@@ -806,8 +811,8 @@ function editorFor(page) {
   const wrap = el("div", "notes-editor");
   const field = createMarkdownField({
     id: "notes-editor-field",
-    ariaLabel: "Текст страницы",
-    placeholder: "Пишите. «/» — команды разметки, [[название]] — ссылка на страницу, «- [ ] …» — дело, которое можно отправить на «Доску».",
+    get ariaLabel() { return t("Текст страницы"); },
+    get placeholder() { return t("Пишите. «/» — команды разметки, [[название]] — ссылка на страницу, «- [ ] …» — дело, которое можно отправить на «Доску»."); },
     onInput: () => { if (editor?.field === field) { scheduleSave(); decorateDeeds(); } },
     onSubmit: () => saveEditor(),
   });
@@ -817,7 +822,7 @@ function editorFor(page) {
   // После «[[» — страницы на выбор; новая страница из подсказки встаёт внутрь
   // этой, как подстраница в Notion.
   const links = attachLinkMenu(field, { exclude: () => page.id, parentFor: () => page.id });
-  const deedButton = button("На доску →", "notes-deed-button", () => makeDeed(Number(deedButton.dataset.line)), { title: "Завести дело из этой строки" });
+  const deedButton = bindTranslation(button(t("На доску →"), "notes-deed-button", () => makeDeed(Number(deedButton.dataset.line)), { get title() { return t("Завести дело из этой строки"); } }), "На доску →");
   deedButton.hidden = true;
   deedButton.addEventListener("mousedown", (event) => event.preventDefault());
   wrap.append(field.element, deedButton);
@@ -847,7 +852,7 @@ function editorFor(page) {
     if (!deed || !["open", "done"].includes(deed.state) || !deed.projectionIds.length) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      deps.toast(deed?.state === "pending" ? "Дело ещё разбирается — через пару секунд его можно будет закрыть" : "Это дело закрывается на «Доске»");
+      deps.toast(deed?.state === "pending" ? t("Дело ещё разбирается — через пару секунд его можно будет закрыть") : t("Это дело закрывается на «Доске»"));
       return;
     }
     toggleDeed(deed);
@@ -919,12 +924,12 @@ async function saveEditor() {
   return current.saving;
 }
 function deedLabel(deed) {
-  if (!deed) return "дело";
-  if (deed.state === "pending") return "дело · разбирается…";
-  if (deed.state === "failed") return "дело · не разобралось";
-  if (deed.state === "done") return "дело · сделано";
-  if (deed.state === "other") return "запись";
-  return ["дело", "Доска", deed.column, deed.due].filter(Boolean).join(" · ");
+  if (!deed) return t("дело");
+  if (deed.state === "pending") return t("дело · разбирается…");
+  if (deed.state === "failed") return t("дело · не разобралось");
+  if (deed.state === "done") return t("дело · сделано");
+  if (deed.state === "other") return t("запись");
+  return [t("дело"), t("Доска"), deed.column, deed.due].filter(Boolean).join(" · ");
 }
 function decorateDeeds() {
   if (!editor) return;
@@ -956,7 +961,7 @@ async function makeDeed(index) {
     current.saved = result.page.body;
     current.field.setValue(result.page.body);
     decorateDeeds();
-    deps.toast("Дело легло на «Доску»", { label: "Открыть доску", run: () => { location.hash = "#board"; } });
+    deps.toast(t("Дело легло на «Доску»"), { get label() { return t("Открыть доску"); }, run: () => { location.hash = "#board"; } });
   } catch (error) {
     deps.toast(error.message);
   }
@@ -967,7 +972,7 @@ async function toggleDeed(deed) {
   decorateDeeds();
   try {
     for (const id of deed.projectionIds) await call(`/api/projections/${id}/${path}`, "POST", {});
-    deps.toast(path === "complete" ? "Дело закрыто — и на «Доске» тоже" : "Дело снова открыто");
+    deps.toast(path === "complete" ? t("Дело закрыто — и на «Доске» тоже") : t("Дело снова открыто"));
   } catch (error) {
     deed.state = path === "complete" ? "open" : "done";
     decorateDeeds();
@@ -1000,7 +1005,7 @@ function afterBlock(detail) {
   // полосы над страницей.
   if (detail.children.length) {
     const children = foldable(el("section", "notes-section notes-children"), "children");
-    children.append(sectionHead("Страницы внутри", detail.children.length, "children"));
+    children.append(sectionHead(t("Страницы внутри"), detail.children.length, "children"));
     for (const child of detail.children) children.append(pageRow(child));
     wrap.append(children);
   }
@@ -1014,32 +1019,32 @@ function afterBlock(detail) {
   for (const base of embedded) {
     const block = foldable(el("section", "notes-section notes-embed"), `base:${base.id}`);
     const head = sectionHead(base.name, undefined, `base:${base.id}`);
-    head.append(crumbLink("открыть", { kind: "base", id: base.id }));
+    head.append(crumbLink(t("открыть"), { kind: "base", id: base.id }));
     block.append(head, baseContent(base.view, rowsFor(base.view)));
     wrap.append(block);
   }
 
   if (detail.backlinks.length) {
     const links = foldable(el("section", "notes-section notes-backlinks"), "backlinks");
-    links.append(sectionHead("Ссылаются сюда", detail.backlinks.length, "backlinks"));
+    links.append(sectionHead(t("Ссылаются сюда"), detail.backlinks.length, "backlinks"));
     for (const item of detail.backlinks) links.append(referenceRow(item));
     wrap.append(links);
   }
 
   if (detail.mentions.length) {
     const mentions = foldable(el("section", "notes-section notes-mentions"), "mentions");
-    mentions.append(sectionHead("Упоминания без ссылки", detail.mentions.length, "mentions"));
+    mentions.append(sectionHead(t("Упоминания без ссылки"), detail.mentions.length, "mentions"));
     for (const item of detail.mentions) {
       const row = referenceRow(item);
-      row.append(button("Связать", "notes-act", async (event) => {
+      row.append(bindTranslation(button(t("Связать"), "notes-act", async (event) => {
         event.preventDefault();
         event.stopPropagation();
         try {
           state.detail = await call(`/api/pages/${page.id}/mentions`, "POST", { fromId: item.id });
-          deps.toast("Упоминание стало ссылкой");
+          deps.toast(t("Упоминание стало ссылкой"));
           renderMain();
         } catch (error) { deps.toast(error.message); }
-      }));
+      }), "Связать"));
       mentions.append(row);
     }
     wrap.append(mentions);
@@ -1069,19 +1074,19 @@ function renderProject() {
   crumbs.append(el("span", "notes-crumb is-current", name));
   const sheet = el("article", "notes-sheet");
   const head = el("div", "notes-head");
-  head.append(iconButton(`project:${name}`, () => projectEmoji(name), "Значок проекта"), el("h1", "notes-title is-static", name));
+  head.append(iconButton(`project:${name}`, () => projectEmoji(name), t("Значок проекта")), el("h1", "notes-title is-static", name));
   const all = state.overview.pages.filter((page) => page.project === name);
   const inside = childrenOf(`project:${name}`);
-  sheet.append(head, el("p", "notes-lead", all.length ? `Проект · ${all.length} ${plural(all.length, "заметка", "заметки", "заметок")}. Заметка с этим проектом без своего места ложится сюда сама.` : "В проекте пока нет заметок."));
+  sheet.append(head, el("p", "notes-lead", all.length ? t("Проект · {length} {value2}. Заметка с этим проектом без своего места ложится сюда сама.", { length: all.length, value2: plural(all.length, t("заметка"), t("заметки"), t("заметок")) }) : t("В проекте пока нет заметок.")));
   const children = foldable(el("section", "notes-section notes-children"), "project-children");
-  children.append(sectionHead("Страницы", inside.length || undefined, "project-children"));
+  children.append(sectionHead(t("Страницы"), inside.length || undefined, "project-children"));
   for (const page of inside) children.append(pageRow(page));
   const add = button("", "notes-add-row", () => newPage(`project:${name}`));
-  add.append(icon("plus"), el("span", undefined, "Страница в проекте"));
+  add.append(icon("plus"), bindTranslation(el("span", undefined, t("Страница в проекте")), "Страница в проекте"));
   children.append(add);
   const view = { ...DEFAULT_VIEW, filter: { ...DEFAULT_VIEW.filter, project: name } };
   const everything = foldable(el("section", "notes-section notes-embed"), "project-all");
-  everything.append(sectionHead("Все заметки проекта", all.length, "project-all"), baseContent(view, rowsFor(view)));
+  everything.append(sectionHead(t("Все заметки проекта"), all.length, "project-all"), baseContent(view, rowsFor(view)));
   sheet.append(children, everything);
   main.replaceChildren(bar, sheet);
 }
@@ -1089,14 +1094,14 @@ function renderProject() {
 // ── «Входящие» ─────────────────────────────────────────────────────────────
 function renderInbox() {
   const { main, bar, crumbs } = mainShell();
-  crumbs.append(el("span", "notes-crumb is-current", "Входящие"));
+  crumbs.append(bindTranslation(el("span", "notes-crumb is-current", t("Входящие")), "Входящие"));
   const sheet = el("article", "notes-sheet");
   const head = el("div", "notes-head");
-  head.append(emoji(EMOJI.inbox, "notes-head-emo"), el("h1", "notes-title is-static", "Входящие"));
-  sheet.append(head, el("p", "notes-lead", "Заметки с «Сегодня» и из голоса, которым не нашлось места: без проекта и без [[страницы]] в тексте."));
+  head.append(emoji(EMOJI.inbox, "notes-head-emo"), bindTranslation(el("h1", "notes-title is-static", t("Входящие")), "Входящие"));
+  sheet.append(head, bindTranslation(el("p", "notes-lead", t("Заметки с «Сегодня» и из голоса, которым не нашлось места: без проекта и без [[страницы]] в тексте.")), "Заметки с «Сегодня» и из голоса, которым не нашлось места: без проекта и без [[страницы]] в тексте."));
   const rows = state.overview.pages.filter((page) => page.parentKey === "inbox").sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   const list = el("div", "notes-inbox");
-  if (!rows.length) list.append(el("p", "notes-empty", "Пусто — всё разложено."));
+  if (!rows.length) list.append(bindTranslation(el("p", "notes-empty", t("Пусто — всё разложено.")), "Пусто — всё разложено."));
   for (const page of rows) {
     const row = el("div", "notes-inbox-row");
     // Входящие раскладываются и мышью: строку можно бросить на страницу или
@@ -1108,8 +1113,8 @@ function renderInbox() {
     if (page.excerpt && page.excerpt !== page.title) text.append(el("span", "notes-inbox-excerpt", page.excerpt));
     text.append(el("span", "notes-inbox-when", when(page.createdAt)));
     const actions = el("div", "notes-inbox-actions");
-    if (page.suggest) actions.append(button(`В «${page.suggest.title}»`, "notes-act is-primary", () => applyPlace(page, page.suggest.key)));
-    actions.append(button("Выбрать место", "notes-act", (event) => openPicker(event.currentTarget, page)), button("В корень", "notes-act", () => applyPlace(page, "root")));
+    if (page.suggest) actions.append(bindTranslation(button(t("В «{title}»", { title: page.suggest.title }), "notes-act is-primary", () => applyPlace(page, page.suggest.key)), "В «{title}»", { title: page.suggest.title }));
+    actions.append(bindTranslation(button(t("Выбрать место"), "notes-act", (event) => openPicker(event.currentTarget, page)), "Выбрать место"), bindTranslation(button(t("В корень"), "notes-act", () => applyPlace(page, "root")), "В корень"));
     row.append(emoji(pageEmoji(page)), text, actions);
     list.append(row);
   }
@@ -1128,12 +1133,12 @@ function renderMissing() {
   const parent = from && pageById(from) ? pageById(from).parentKey : "root";
   const actions = el("div", "notes-missing-actions");
   actions.append(
-    button(`Создать страницу «${title}»`, "notes-act is-primary", () => newPage(parent === "inbox" ? "root" : parent ?? "root", title)),
+    bindTranslation(button(t("Создать страницу «{title}»", { title: title }), "notes-act is-primary", () => newPage(parent === "inbox" ? "root" : parent ?? "root", title)), "Создать страницу «{title}»", { title: title }),
   );
-  const memory = el("a", "notes-act", "Искать в памяти");
+  const memory = bindTranslation(el("a", "notes-act", t("Искать в памяти")), "Искать в памяти");
   memory.href = `#memory?query=${encodeURIComponent(title)}`;
   actions.append(memory);
-  sheet.append(head, el("p", "notes-lead", "Такой страницы пока нет. Создайте её — ссылки на это название сразу начнут вести сюда."), actions);
+  sheet.append(head, bindTranslation(el("p", "notes-lead", t("Такой страницы пока нет. Создайте её — ссылки на это название сразу начнут вести сюда.")), "Такой страницы пока нет. Создайте её — ссылки на это название сразу начнут вести сюда."), actions);
   main.replaceChildren(bar, sheet);
 }
 
@@ -1160,22 +1165,23 @@ function renderBase() {
   const base = currentBase();
   if (state.route.kind === "base" && !base) {
     const sheet = el("article", "notes-sheet");
-    sheet.append(el("h1", "notes-title is-static", "База не найдена"));
+    sheet.append(bindTranslation(el("h1", "notes-title is-static", t("База не найдена")), "База не найдена"));
     main.replaceChildren(bar, sheet);
     return;
   }
   const saved = base ? base.view : DEFAULT_VIEW;
   if (!state.draft) state.draft = structuredClone(saved);
   const view = state.draft;
-  crumbs.append(el("span", "notes-crumb is-current", base ? base.name : "Все заметки"));
+  crumbs.append(el("span", "notes-crumb is-current", base ? base.name : t("Все заметки")));
   const sheet = el("article", "notes-sheet is-wide");
   const head = el("div", "notes-head");
   head.append(emoji(base ? EMOJI.base : EMOJI.all, "notes-head-emo"));
-  const title = el("h1", "notes-title", base ? base.name : "Все заметки");
+  const title = el("h1", "notes-title", base ? base.name : t("Все заметки"));
   if (base) {
     title.contentEditable = "true";
+  bindTranslation(title, "Без названия", "data-placeholder");
     title.setAttribute("role", "textbox");
-    title.setAttribute("aria-label", "Название базы");
+    bindTranslation(title, "Название базы", "aria-label");
     title.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); title.blur(); } });
     title.addEventListener("blur", async () => {
       const name = title.textContent.replace(/\s+/g, " ").trim();
@@ -1195,7 +1201,7 @@ function renderBase() {
   const controls = el("div", "notes-base-controls");
   const tabs = el("div", "notes-base-tabs");
   tabs.setAttribute("role", "group");
-  tabs.setAttribute("aria-label", "Раскладка");
+  bindTranslation(tabs, "Раскладка", "aria-label");
   for (const [value, name] of LAYOUTS) {
     const tab = button(name, "notes-base-tab", () => { view.layout = value; renderMain(); });
     tab.setAttribute("aria-pressed", String(view.layout === value));
@@ -1216,10 +1222,10 @@ function renderBase() {
   };
   const tags = [...new Set(state.overview.pages.flatMap((page) => page.tags))].sort((left, right) => left.localeCompare(right, "ru"));
   filters.append(
-    select("Тип", view.filter.type, [["all", "Заметки и идеи"], ["note", "Только заметки"], ["idea_question", "Только идеи"]], (value) => { view.filter.type = value || "all"; }),
-    select("Проект", view.filter.project, [["", "Все проекты"], ...state.overview.allProjects.map((name) => [name, name])], (value) => { view.filter.project = value; }),
-    select("Тег", view.filter.tag, [["", "Все теги"], ...tags.map((tag) => [tag, `#${tag}`])], (value) => { view.filter.tag = value; }),
-    select("Сортировка", view.sort, SORTS, (value) => { view.sort = value || "created"; }),
+    select(t("Тип"), view.filter.type, [["all", t("Заметки и идеи")], ["note", t("Только заметки")], ["idea_question", t("Только идеи")]], (value) => { view.filter.type = value || "all"; }),
+    select(t("Проект"), view.filter.project, [["", t("Все проекты")], ...state.overview.allProjects.map((name) => [name, name])], (value) => { view.filter.project = value; }),
+    select(t("Тег"), view.filter.tag, [["", t("Все теги")], ...tags.map((tag) => [tag, `#${tag}`])], (value) => { view.filter.tag = value; }),
+    select(t("Сортировка"), view.sort, SORTS, (value) => { view.sort = value || "created"; }),
   );
   controls.append(tabs, filters);
   sheet.append(controls);
@@ -1227,32 +1233,32 @@ function renderBase() {
   const rows = rowsFor(view);
   const changed = viewKey(view) !== viewKey(saved);
   if (base) {
-    if (changed) tail.append(button("Сохранить вид", "notes-act is-primary", async () => {
+    if (changed) tail.append(bindTranslation(button(t("Сохранить вид"), "notes-act is-primary", async () => {
       try {
         await call(`/api/pages/bases/${base.id}`, "PATCH", { view });
         await loadOverview();
         state.draft = null;
-        deps.toast("Вид базы сохранён");
+        deps.toast(t("Вид базы сохранён"));
         renderMain();
       } catch (error) { deps.toast(error.message); }
-    }));
-    tail.append(button("Удалить базу", "notes-act", async () => {
+    }), "Сохранить вид"));
+    tail.append(bindTranslation(button(t("Удалить базу"), "notes-act", async () => {
       try {
         await call(`/api/pages/bases/${base.id}`, "DELETE");
-        deps.toast(`База «${base.name}» удалена`);
+        deps.toast(t("База «{name}» удалена", { name: base.name }));
         go({ kind: "all" });
       } catch (error) { deps.toast(error.message); }
-    }));
+    }), "Удалить базу"));
   } else {
-    tail.append(button("Сохранить как базу", "notes-act", async () => {
+    tail.append(bindTranslation(button(t("Сохранить как базу"), "notes-act", async () => {
       try {
-        const { base: created } = await call("/api/pages/bases", "POST", { name: view.filter.project || (view.filter.tag ? `#${view.filter.tag}` : "Новая база"), view });
+        const { base: created } = await call("/api/pages/bases", "POST", { name: view.filter.project || (view.filter.tag ? `#${view.filter.tag}` : t("Новая база")), view });
         state.focusTitle = true;
         go({ kind: "base", id: created.id });
       } catch (error) { deps.toast(error.message); }
-    }));
+    }), "Сохранить как базу"));
   }
-  sheet.append(el("p", "notes-base-count", `${rows.length} ${plural(rows.length, "страница", "страницы", "страниц")}`), baseContent(view, rows));
+  sheet.append(el("p", "notes-base-count", `${rows.length} ${plural(rows.length, t("страница"), t("страницы"), t("страниц"))}`), baseContent(view, rows));
   main.replaceChildren(bar, sheet);
   if (state.focusTitle && base) {
     state.focusTitle = false;
@@ -1264,7 +1270,7 @@ function renderBase() {
   }
 }
 function baseContent(view, rows) {
-  if (!rows.length) return el("p", "notes-empty", "Под этот вид ни одна страница не подходит.");
+  if (!rows.length) return bindTranslation(el("p", "notes-empty", t("Под этот вид ни одна страница не подходит.")), "Под этот вид ни одна страница не подходит.");
   if (view.layout === "gallery") {
     const grid = el("div", "notes-gallery");
     for (const page of rows) {
@@ -1303,7 +1309,7 @@ function baseContent(view, rows) {
   const wrap = el("div", "notes-table-wrap");
   const table = el("table", "notes-table");
   const head = el("tr");
-  for (const name of ["Название", "Место", "Проект", "Теги", "Изменено", "Ссылок"]) head.append(el("th", undefined, name));
+  for (const name of [t("Название"), t("Место"), t("Проект"), t("Теги"), t("Изменено"), t("Ссылок")]) head.append(el("th", undefined, name));
   const thead = el("thead");
   thead.append(head);
   const tbody = el("tbody");
@@ -1346,18 +1352,18 @@ function openPicker(anchor, page) {
   closePicker();
   const node = el("div", "notes-picker");
   node.setAttribute("role", "dialog");
-  node.setAttribute("aria-label", "Куда положить страницу");
+  bindTranslation(node, "Куда положить страницу", "aria-label");
   const input = el("input", "notes-picker-input");
   input.type = "search";
-  input.placeholder = "Куда положить…";
+  bindTranslation(input, "Куда положить…", "placeholder");
   const list = el("div", "notes-picker-list");
   list.setAttribute("role", "listbox");
   node.append(input, list);
   const blocked = descendantsOf(page.id);
   const options = [
-    { key: "root", title: "В корень", hint: "страница верхнего уровня", mark: EMOJI.missing },
-    { key: "auto", title: "По правилу", hint: page.project ? `под проект «${page.project}»` : "во «Входящие»", mark: EMOJI.inbox },
-    ...state.overview.allProjects.map((name) => ({ key: `project:${name}`, title: name, hint: "проект", mark: projectEmoji(name) })),
+    { key: "root", get title() { return t("В корень"); }, get hint() { return t("страница верхнего уровня"); }, mark: EMOJI.missing },
+    { key: "auto", get title() { return t("По правилу"); }, hint: page.project ? t("под проект «{project}»", { project: page.project }) : t("во «Входящие»"), mark: EMOJI.inbox },
+    ...state.overview.allProjects.map((name) => ({ key: `project:${name}`, title: name, get hint() { return t("проект"); }, mark: projectEmoji(name) })),
     ...state.overview.pages.filter((item) => !blocked.has(item.id)).map((item) => ({ key: item.id, title: item.title, hint: placeLabel(item.parentKey), mark: pageEmoji(item) })),
   ];
   const paint = () => {
@@ -1370,7 +1376,7 @@ function openPicker(anchor, page) {
       row.append(emoji(option.mark), el("span", "notes-picker-title", option.title), el("span", "notes-picker-hint", option.hint));
       list.append(row);
     }
-    if (!shown.length) list.append(el("p", "notes-empty", "Ничего не нашлось."));
+    if (!shown.length) list.append(bindTranslation(el("p", "notes-empty", t("Ничего не нашлось.")), "Ничего не нашлось."));
   };
   input.addEventListener("input", paint);
   input.addEventListener("keydown", (event) => {
@@ -1392,7 +1398,7 @@ function openPicker(anchor, page) {
 }
 // Крупный значок над заголовком — кнопка: нажатие открывает выбор эмодзи.
 function iconButton(key, current, label) {
-  const node = button(current(), "notes-head-emo", (event) => openEmojiPicker(event.currentTarget, key, current, label), { title: `${label} — сменить` });
+  const node = button(current(), "notes-head-emo", (event) => openEmojiPicker(event.currentTarget, key, current, label), { title: t("{label} — сменить", { label: label }) });
   node.setAttribute("aria-haspopup", "dialog");
   return node;
 }
@@ -1414,12 +1420,12 @@ function openEmojiPicker(anchor, key, current, label) {
   const input = el("input", "notes-emoji-input");
   input.type = "text";
   input.maxLength = 16;
-  input.placeholder = "Свой эмодзи и Enter";
-  input.setAttribute("aria-label", "Свой эмодзи");
+  bindTranslation(input, "Свой эмодзи и Enter", "placeholder");
+  bindTranslation(input, "Свой эмодзи", "aria-label");
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && input.value.trim()) { event.preventDefault(); chooseIcon(anchor, key, input.value.trim(), current); }
   });
-  foot.append(input, button("По умолчанию", "notes-act", () => chooseIcon(anchor, key, null, current)));
+  foot.append(input, bindTranslation(button(t("По умолчанию"), "notes-act", () => chooseIcon(anchor, key, null, current)), "По умолчанию"));
   node.append(grid, foot);
   document.body.append(node);
   const rect = anchor.getBoundingClientRect();
@@ -1447,7 +1453,7 @@ async function chooseIcon(anchor, key, value, current) {
     // проект перерисовывается целиком: значок есть и в его списке.
     if (state.route?.kind === "project") renderMain();
     else anchor.focus();
-  } catch (error) { deps.toast(error.message || "Значок не сохранился"); }
+  } catch (error) { deps.toast(error.message || t("Значок не сохранился")); }
 }
 async function applyPlace(page, key) {
   try {
@@ -1463,10 +1469,25 @@ async function applyPlace(page, key) {
     if (state.route.kind === "page") await loadDetail(state.route.id);
     const where = key === "auto" ? placeLabel(pageById(page.id)?.parentKey) : placeLabel(key);
     if (key !== "root" && key !== "auto") { state.expanded.add(key); saveExpanded(); }
-    deps.toast(key === "root" ? `«${page.title}» — в корне` : `«${page.title}» — в «${where}»`);
+    deps.toast(key === "root" ? t("«{title}» — в корне", { title: page.title }) : t("«{title}» — в «{where}»", { title: page.title, where: where }));
     renderSide();
     renderMain();
   } catch (error) {
     deps.toast(error.message);
   }
 }
+
+window.addEventListener("pagent:localechange", () => {
+  if (!state.overview) return;
+  renderSide();
+  syncTop();
+  if (!document.getElementById("notes")?.hidden) {
+    renderMain({ quiet: true });
+    if (editor) {
+      editor.field.setPlaceholder(t("Пишите. «/» — команды разметки, [[название]] — ссылка на страницу, «- [ ] …» — дело, которое можно отправить на «Доску»."));
+      bindTranslation(editor.field.element, "Текст страницы", "aria-label");
+    }
+  }
+});
+
+window.addEventListener("pagent:timezonechange", () => { if (state.overview && !document.getElementById("notes")?.hidden) renderMain({ quiet: true }); });

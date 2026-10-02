@@ -10059,3 +10059,8 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0 0 96px; }
 .settings-link:hover { color: var(--dock-board-f); }
 .theme-toggle:hover { color: var(--dock-today-f); }
 .account-menu > summary:hover, .account-menu[open] > summary { color: var(--dock-done-f); }
+
+/* Editor placeholders are application text, resolved by the active locale. */
+.notes-title[contenteditable="true"][data-placeholder]:empty::before {
+  content: attr(data-placeholder);
+}

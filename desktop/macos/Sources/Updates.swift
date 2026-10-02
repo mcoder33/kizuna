@@ -31,6 +31,8 @@ final class DesktopUpdates: NSObject, SPUUserDriver, SPUUpdaterDelegate {
         super.init()
     }
 
+    func refreshLocale() { banner.refreshLocale() }
+
     func start() {
         readinessObservations = [
             updater.observe(\.sessionInProgress, options: [.new]) { [weak self] _, change in
@@ -64,8 +66,8 @@ final class DesktopUpdates: NSObject, SPUUserDriver, SPUUpdaterDelegate {
     func showUserInitiatedUpdateCheck(cancellation: @escaping () -> Void) {
         manualCheckPending = false
         preserveMessage = false
-        banner.present("Проверяем обновления…", detail: "Это займёт несколько секунд.", progress: -1,
-                       secondary: "Отмена", onSecondary: cancellation)
+        banner.present(L("Проверяем обновления…"), detail: L("Это займёт несколько секунд."), progress: -1,
+                       secondary: L("Отмена"), onSecondary: cancellation)
     }
 
     func showUpdateFound(with appcastItem: SUAppcastItem, state: SPUUserUpdateState, reply: @escaping (SPUUserUpdateChoice) -> Void) {
@@ -76,11 +78,11 @@ final class DesktopUpdates: NSObject, SPUUserDriver, SPUUpdaterDelegate {
         installRequested = false
         deferInstallation = { reply(.dismiss) }
         if appcastItem.isInformationOnlyUpdate {
-            banner.present("Доступна новая версия", detail: "Для этой версии нужна отдельная установка.",
-                           primary: "Подробнее", onPrimary: { [weak self] in
+            banner.present(L("Доступна новая версия"), detail: L("Для этой версии нужна отдельная установка."),
+                           primary: L("Подробнее"), onPrimary: { [weak self] in
                 if let url = appcastItem.infoURL, url.scheme == "https" { NSWorkspace.shared.open(url) }
                 self?.banner.isHidden = true; reply(.dismiss)
-            }, secondary: "Позже", onSecondary: { reply(.dismiss) })
+            }, secondary: L("Позже"), onSecondary: { reply(.dismiss) })
             return
         }
         if state.stage == .notDownloaded {
@@ -105,24 +107,24 @@ final class DesktopUpdates: NSObject, SPUUserDriver, SPUUpdaterDelegate {
                 self.reminders.refresh(); self.banner.isHidden = true
                 respond(.dismiss)
             }
-            banner.present("Доступна Кизуна \(appcastItem.displayVersionString)",
-                           detail: "Обновление установится, и приложение перезапустится.",
-                           primary: "Обновить приложение", onPrimary: { [weak self] in
+            banner.present(L("Доступна Кизуна {version}", ["version": appcastItem.displayVersionString]),
+                           detail: L("Обновление установится, и приложение перезапустится."),
+                           primary: L("Обновить приложение"), onPrimary: { [weak self] in
                 guard let self, self.generation == current else { return }
                 self.reminderPolicy.beginInstallation(version: version); self.reminders.refresh()
                 self.installRequested = true; self.banner.disableActions(); respond(.install)
-            }, secondary: "Отложить на 1 час", onSecondary: { dismiss(.hour) },
-               tertiary: "Не показывать больше", onTertiary: { dismiss(nil) }, onClose: { dismiss(.tomorrow) })
+            }, secondary: L("Отложить на 1 час"), onSecondary: { dismiss(.hour) },
+               tertiary: L("Не показывать больше"), onTertiary: { dismiss(nil) }, onClose: { dismiss(.tomorrow) })
             return
         }
-        banner.present("Доступна Кизуна \(appcastItem.displayVersionString)",
-                       detail: "Обновление установится, и приложение перезапустится.",
-                       primary: "Обновить приложение", onPrimary: { [weak self] in
+        banner.present(L("Доступна Кизуна {version}", ["version": appcastItem.displayVersionString]),
+                       detail: L("Обновление установится, и приложение перезапустится."),
+                       primary: L("Обновить приложение"), onPrimary: { [weak self] in
             guard let self else { return }
             self.installRequested = true
             if state.stage == .installing { self.installWhenReady { reply(.install) } }
             else { self.banner.disableActions(); reply(.install) }
-        }, secondary: "Позже", onSecondary: { reply(.dismiss) })
+        }, secondary: L("Позже"), onSecondary: { reply(.dismiss) })
     }
 
     func showUpdateReleaseNotes(with downloadData: SPUDownloadData) {}
@@ -131,7 +133,7 @@ final class DesktopUpdates: NSObject, SPUUserDriver, SPUUpdaterDelegate {
     func showUpdateNotFoundWithError(_ error: Error, acknowledgement: @escaping () -> Void) {
         manualCheckPending = false
         // A missing applicable update can also mean a newer macOS is required.
-        showMessage("Обновлений для этого Mac нет", detail: "Можно продолжать работу.")
+        showMessage(L("Обновлений для этого Mac нет"), detail: L("Можно продолжать работу."))
         acknowledgement()
     }
 
@@ -144,18 +146,18 @@ final class DesktopUpdates: NSObject, SPUUserDriver, SPUUpdaterDelegate {
     private func showFailure(_ error: Error) {
         NSLog("Kizuna updater: %@", error.localizedDescription)
         isInstalling = false; resumeEditing()
-        showMessage("Не удалось обновить Кизуну", detail: "Текущая версия продолжает работать. Проверьте связь и попробуйте ещё раз.")
+        showMessage(L("Не удалось обновить Кизуну"), detail: L("Текущая версия продолжает работать. Проверьте связь и попробуйте ещё раз."))
     }
 
-    private func showMessage(_ title: String, detail: String) {
+    private func showMessage(_ title: @autoclosure @escaping () -> String, detail: @autoclosure @escaping () -> String) {
         preserveMessage = true
-        banner.present(title, detail: detail, secondary: "Закрыть", onSecondary: { [weak self] in self?.banner.isHidden = true })
+        banner.present(title(), detail: detail(), secondary: L("Закрыть"), onSecondary: { [weak self] in self?.banner.isHidden = true })
     }
 
     func showDownloadInitiated(cancellation: @escaping () -> Void) {
         received = 0; expected = 0
-        banner.present("Скачиваем обновление…", detail: "Можно продолжать работу.", progress: -1,
-                       secondary: "Отмена", onSecondary: cancellation)
+        banner.present(L("Скачиваем обновление…"), detail: L("Можно продолжать работу."), progress: -1,
+                       secondary: L("Отмена"), onSecondary: cancellation)
     }
 
     func showDownloadDidReceiveExpectedContentLength(_ expectedContentLength: UInt64) { expected = expectedContentLength; updateProgress() }
@@ -165,7 +167,7 @@ final class DesktopUpdates: NSObject, SPUUserDriver, SPUUpdaterDelegate {
     }
 
     func showDownloadDidStartExtractingUpdate() {
-        banner.present("Готовим обновление…", detail: "Проверяем и распаковываем новую версию.", progress: -1)
+        banner.present(L("Готовим обновление…"), detail: L("Проверяем и распаковываем новую версию."), progress: -1)
     }
     func showExtractionReceivedProgress(_ progress: Double) { banner.setProgress(progress) }
 
@@ -173,9 +175,9 @@ final class DesktopUpdates: NSObject, SPUUserDriver, SPUUpdaterDelegate {
         deferInstallation = { reply(.dismiss) }
         if installRequested { installWhenReady { reply(.install) } }
         else {
-            banner.present("Обновление готово", detail: "Кизуна перезапустится после установки.",
-                           primary: "Обновить приложение", onPrimary: { [weak self] in self?.installWhenReady { reply(.install) } },
-                           secondary: "Позже", onSecondary: { reply(.dismiss) })
+            banner.present(L("Обновление готово"), detail: L("Кизуна перезапустится после установки."),
+                           primary: L("Обновить приложение"), onPrimary: { [weak self] in self?.installWhenReady { reply(.install) } },
+                           secondary: L("Позже"), onSecondary: { reply(.dismiss) })
         }
     }
 
@@ -186,19 +188,19 @@ final class DesktopUpdates: NSObject, SPUUserDriver, SPUUpdaterDelegate {
         prepareForRestart { [weak self] reason in
             guard let self, self.generation == current else { return }
             if let reason {
-                self.banner.present("Обновление готово", detail: reason,
-                                    primary: "Продолжить обновление", onPrimary: { [weak self] in self?.installWhenReady(install) },
-                                    secondary: "Позже", onSecondary: { [weak self] in self?.deferInstallation?() })
+                self.banner.present(L("Обновление готово"), detail: reason,
+                                    primary: L("Продолжить обновление"), onPrimary: { [weak self] in self?.installWhenReady(install) },
+                                    secondary: L("Позже"), onSecondary: { [weak self] in self?.deferInstallation?() })
             } else {
                 self.isInstalling = true
-                self.banner.present("Устанавливаем обновление…", detail: "Кизуна сейчас перезапустится.", progress: -1)
+                self.banner.present(L("Устанавливаем обновление…"), detail: L("Кизуна сейчас перезапустится."), progress: -1)
                 install()
             }
         }
     }
 
     func showInstallingUpdate(withApplicationTerminated applicationTerminated: Bool, retryTerminatingApplication: @escaping () -> Void) {
-        banner.present("Устанавливаем обновление…", detail: "Кизуна сейчас перезапустится.", progress: -1)
+        banner.present(L("Устанавливаем обновление…"), detail: L("Кизуна сейчас перезапустится."), progress: -1)
         if !applicationTerminated {
             // Sparkle allows retry if macOS or the application delayed quitting.
             banner.setRetry { [weak self] in self?.installWhenReady(retryTerminatingApplication) }
@@ -242,6 +244,11 @@ final class UpdateBanner: NSVisualEffectView {
     private var secondaryAction: (() -> Void)?
     private var tertiaryAction: (() -> Void)?
     private var closeAction: (() -> Void)?
+    private var headingText: (() -> String)?
+    private var detailText: (() -> String)?
+    private var primaryText: (() -> String?)?
+    private var secondaryText: (() -> String?)?
+    private var tertiaryText: (() -> String?)?
 
     init() {
         super.init(frame: .zero)
@@ -256,9 +263,9 @@ final class UpdateBanner: NSVisualEffectView {
         primary.bezelColor = .systemRed
         secondary.bezelStyle = .rounded
         tertiary.bezelStyle = .inline; tertiary.controlSize = .small
-        tertiary.toolTip = "Не напоминать об этой версии. Новые версии будут показаны."
+        tertiary.toolTip = L("Не напоминать об этой версии. Новые версии будут показаны.")
         close.isBordered = false; close.font = .systemFont(ofSize: 18)
-        close.toolTip = "Закрыть до завтра"; close.setAccessibilityLabel("Закрыть до завтра")
+        close.toolTip = L("Закрыть до завтра"); close.setAccessibilityLabel(L("Закрыть до завтра"))
         primary.target = self; primary.action = #selector(accept)
         secondary.target = self; secondary.action = #selector(deferUpdate)
         tertiary.target = self; tertiary.action = #selector(ignoreUpdate)
@@ -276,7 +283,7 @@ final class UpdateBanner: NSVisualEffectView {
             detail.widthAnchor.constraint(equalTo: stack.widthAnchor), progress.widthAnchor.constraint(equalTo: stack.widthAnchor),
             close.widthAnchor.constraint(equalToConstant: 24), close.heightAnchor.constraint(equalToConstant: 24)
         ])
-        isHidden = true; setAccessibilityLabel("Обновление Кизуны")
+        isHidden = true; setAccessibilityLabel(L("Обновление Кизуны"))
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
@@ -287,20 +294,33 @@ final class UpdateBanner: NSVisualEffectView {
             widthAnchor.constraint(equalToConstant: 480), leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 18)
         ])
     }
-    func present(_ heading: String, detail text: String, progress fraction: Double? = nil,
-                 primary primaryTitle: String? = nil, onPrimary: (() -> Void)? = nil,
-                 secondary secondaryTitle: String? = nil, onSecondary: (() -> Void)? = nil,
-                 tertiary tertiaryTitle: String? = nil, onTertiary: (() -> Void)? = nil, onClose: (() -> Void)? = nil) {
+    func present(_ heading: @autoclosure @escaping () -> String, detail text: @autoclosure @escaping () -> String, progress fraction: Double? = nil,
+                 primary primaryTitle: @autoclosure @escaping () -> String? = nil, onPrimary: (() -> Void)? = nil,
+                 secondary secondaryTitle: @autoclosure @escaping () -> String? = nil, onSecondary: (() -> Void)? = nil,
+                 tertiary tertiaryTitle: @autoclosure @escaping () -> String? = nil, onTertiary: (() -> Void)? = nil, onClose: (() -> Void)? = nil) {
         clearActions()
-        title.stringValue = heading; detail.stringValue = text
-        primary.title = primaryTitle ?? ""; primary.isHidden = primaryTitle == nil; primary.isEnabled = true
-        secondary.title = secondaryTitle ?? ""; secondary.isHidden = secondaryTitle == nil; secondary.isEnabled = true
-        tertiary.title = tertiaryTitle ?? ""; tertiary.isHidden = tertiaryTitle == nil; tertiary.isEnabled = true
+        headingText = heading; detailText = text
+        primaryText = primaryTitle; secondaryText = secondaryTitle; tertiaryText = tertiaryTitle
+        refreshLocale()
+        primary.isHidden = primaryTitle() == nil; primary.isEnabled = true
+        secondary.isHidden = secondaryTitle() == nil; secondary.isEnabled = true
+        tertiary.isHidden = tertiaryTitle() == nil; tertiary.isEnabled = true
         close.isHidden = onClose == nil; close.isEnabled = true
         primaryAction = onPrimary; secondaryAction = onSecondary; tertiaryAction = onTertiary; closeAction = onClose
         progress.isHidden = fraction == nil
         if let fraction { setProgress(fraction) } else { progress.stopAnimation(nil) }
         isHidden = false
+    }
+    // Refresh text only: callbacks, readiness, progress and Sparkle state stay intact.
+    func refreshLocale() {
+        if let headingText { title.stringValue = headingText() }
+        if let detailText { detail.stringValue = detailText() }
+        if let primaryText { primary.title = primaryText() ?? "" }
+        if let secondaryText { secondary.title = secondaryText() ?? "" }
+        if let tertiaryText { tertiary.title = tertiaryText() ?? "" }
+        tertiary.toolTip = L("Не напоминать об этой версии. Новые версии будут показаны.")
+        close.toolTip = L("Закрыть до завтра"); close.setAccessibilityLabel(L("Закрыть до завтра"))
+        setAccessibilityLabel(L("Обновление Кизуны"))
     }
     func setProgress(_ fraction: Double) {
         progress.isIndeterminate = fraction < 0
@@ -309,8 +329,8 @@ final class UpdateBanner: NSVisualEffectView {
     }
     func disableActions() { clearActions(); primary.isEnabled = false; secondary.isEnabled = false; tertiary.isEnabled = false; close.isEnabled = false }
     func clearActions() { primaryAction = nil; secondaryAction = nil; tertiaryAction = nil; closeAction = nil }
-    func setClose(_ action: @escaping () -> Void) { secondary.title = "Закрыть"; secondary.isHidden = false; secondary.isEnabled = true; secondaryAction = action }
-    func setRetry(_ action: @escaping () -> Void) { primary.title = "Перезапустить"; primary.isHidden = false; primary.isEnabled = true; primaryAction = action }
+    func setClose(_ action: @escaping () -> Void) { secondaryText = { L("Закрыть") }; refreshLocale(); secondary.isHidden = false; secondary.isEnabled = true; secondaryAction = action }
+    func setRetry(_ action: @escaping () -> Void) { primaryText = { L("Перезапустить") }; refreshLocale(); primary.isHidden = false; primary.isEnabled = true; primaryAction = action }
     @objc private func accept() { let action = primaryAction; clearActions(); action?() }
     @objc private func deferUpdate() { let action = secondaryAction; clearActions(); action?() }
     @objc private func ignoreUpdate() { let action = tertiaryAction; clearActions(); action?() }

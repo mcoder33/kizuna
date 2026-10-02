@@ -1,3 +1,4 @@
+import { t } from "./browser-i18n.js";
 // Вход, регистрация и второй фактор. Одна форма на три состояния, потому что
 // это один разговор: «кто ты» — «докажи» — «тебя ещё не пустили».
 const $ = (selector) => document.querySelector(selector);
@@ -29,17 +30,17 @@ function clearMessages() {
 
 function paint() {
   const registering = mode === "register";
-  $("#auth-title").textContent = registering ? "Регистрация" : "Вход";
+  $("#auth-title").textContent = registering ? t("Регистрация") : t("Вход");
   $("#auth-lead").textContent = registering
-    ? "Заведите учётную запись. Доступ откроет администратор — вы получите его, когда он подтвердит заявку."
-    : "Журнал у каждого свой: записи, отчёты и память видит только их автор.";
-  submit.textContent = registering ? "Отправить заявку" : needsCode ? "Подтвердить" : "Войти";
-  $("#auth-switch").textContent = registering ? "Войти" : "Зарегистрироваться";
-  $("#auth-switch-text").textContent = registering ? "Уже есть доступ?" : "Нет учётной записи?";
+    ? t("Заведите учётную запись. Доступ откроет администратор — вы получите его, когда он подтвердит заявку.")
+    : t("Журнал у каждого свой: записи, отчёты и память видит только их автор.");
+  submit.textContent = registering ? t("Отправить заявку") : needsCode ? t("Подтвердить") : t("Войти");
+  $("#auth-switch").textContent = registering ? t("Войти") : t("Зарегистрироваться");
+  $("#auth-switch-text").textContent = registering ? t("Уже есть доступ?") : t("Нет учётной записи?");
   $("#auth-repeat-field").hidden = !registering;
   $("#auth-code-field").hidden = registering || !needsCode;
   password.autocomplete = registering ? "new-password" : "current-password";
-  password.placeholder = registering ? "не короче 10 знаков" : "";
+  password.placeholder = registering ? t("не короче 10 знаков") : "";
   if (needsCode && !registering) code.focus();
 }
 
@@ -57,9 +58,9 @@ form.addEventListener("submit", async (event) => {
   event.preventDefault();
   clearMessages();
   const address = email.value.trim();
-  if (!address || !password.value) return show(error, "Заполните почту и пароль.");
+  if (!address || !password.value) return show(error, t("Заполните почту и пароль."));
   if (mode === "register" && password.value !== repeat.value)
-    return show(error, "Пароли не совпадают.");
+    return show(error, t("Пароли не совпадают."));
 
   submit.disabled = true;
   try {
@@ -68,7 +69,7 @@ form.addEventListener("submit", async (event) => {
         email: address,
         password: password.value,
       });
-      if (!ok) return show(error, payload.error?.message || "Не получилось зарегистрироваться.");
+      if (!ok) return show(error, payload.error?.message || t("Не получилось зарегистрироваться."));
       // Первый — сразу внутрь: он и есть администратор, подтверждать его некому.
       if (payload.first) return location.replace("/");
       mode = "login";
@@ -76,7 +77,7 @@ form.addEventListener("submit", async (event) => {
       password.value = "";
       repeat.value = "";
       paint();
-      return show(notice, payload.message || "Заявка отправлена. Доступ откроет администратор.");
+      return show(notice, payload.message || t("Заявка отправлена. Доступ откроет администратор."));
     }
 
     const { ok, status, payload } = await send("/api/auth/login", {
@@ -88,7 +89,7 @@ form.addEventListener("submit", async (event) => {
     if (payload.error?.code === "totp_required") {
       needsCode = true;
       paint();
-      return show(notice, "Введите код из приложения-аутентификатора.");
+      return show(notice, t("Введите код из приложения-аутентификатора."));
     }
     if (payload.error?.code === "invalid_totp") {
       needsCode = true;
@@ -98,10 +99,10 @@ form.addEventListener("submit", async (event) => {
     }
     // Ожидание подтверждения и блокировка — это не ошибка ввода, а состояние
     // учётной записи: повторять пароль бессмысленно, и об этом стоит сказать.
-    if (status === 403) return show(notice, payload.error?.message || "Доступ закрыт.");
-    show(error, payload.error?.message || "Не удалось войти.");
+    if (status === 403) return show(notice, payload.error?.message || t("Доступ закрыт."));
+    show(error, payload.error?.message || t("Не удалось войти."));
   } catch {
-    show(error, "Сервер не отвечает.");
+    show(error, t("Сервер не отвечает."));
   } finally {
     submit.disabled = false;
   }
@@ -121,8 +122,8 @@ $("#auth-switch").addEventListener("click", () => {
 const themeButton = $("#auth-theme");
 function paintTheme() {
   themeButton.innerHTML = window.pagentTheme.icon();
-  themeButton.title = `Тема: ${window.pagentTheme.label()}`;
-  themeButton.setAttribute("aria-label", `Тема оформления: ${window.pagentTheme.label()}`);
+  themeButton.title = t("Тема: {value1}", { value1: t(window.pagentTheme.label()) });
+  themeButton.setAttribute("aria-label", t("Тема оформления: {value1}", { value1: t(window.pagentTheme.label()) }));
 }
 themeButton.addEventListener("click", () => {
   window.pagentTheme.set(window.pagentTheme.next());
@@ -146,3 +147,5 @@ paintTheme();
   paint();
   email.focus();
 })();
+
+window.addEventListener("pagent:localechange", () => { paint(); paintTheme(); });

@@ -171,7 +171,7 @@ final class DesktopNotifications: NSObject, UNUserNotificationCenterDelegate {
                           DesktopNotificationPolicy.shouldDeliver(item: item, preferences: preferences, defaults: defaults, quiet: quiet),
                           let url = self.destination(item) else { continue }
                     let content = UNMutableNotificationContent()
-                    content.title = (item["data"] as? [String: Any])?["pushTitle"] as? String ?? "Кизуна"
+                    content.title = (item["data"] as? [String: Any])?["pushTitle"] as? String ?? L("Кизуна")
                     content.body = [item["lead"] as? String, item["text"] as? String].compactMap { $0 }.joined(separator: " ")
                     content.sound = .default
                     content.userInfo = ["url": url.absoluteString]
@@ -190,6 +190,7 @@ final class DesktopNotifications: NSObject, UNUserNotificationCenterDelegate {
         guard let url = URL(string: path, relativeTo: origin)?.absoluteURL,
               DesktopNotificationPolicy.sameOrigin(url, origin) else { throw PollError.invalidResponse }
         var request = URLRequest(url: url)
+        request.setValue(DesktopLocale.current, forHTTPHeaderField: "Accept-Language")
         request.allHTTPHeaderFields = headers
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let (data, response) = try await session.data(for: request)

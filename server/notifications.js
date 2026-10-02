@@ -1,3 +1,7 @@
+import { dateInZone } from './reports.js';
+import { localizedDay } from './locale.js';
+import { localizedCalendarWhen } from './locale.js';
+import { translate, formatDate } from '../public/i18n.js';
 // Уведомления: когда Кизуна говорит первой.
 //
 // Повод случается в своём модуле — просьба в круге, призыв в разговоре,
@@ -92,7 +96,7 @@ export function noticeUnclear(db, { userId, captureId, classification, raw = '' 
   const gate = gateClassification(classification);
   if (!userId || gate.level === 'high') return null;
   const title = clip(classification?.summary || raw, 120);
-  return notify(db, { userId, kind: 'clarify', captureId, lead: 'Запись ждёт уточнения:', text: `«${title}»`, meta: [gate.question || (classification?.unclassified ? 'сохранена без разбора' : 'разбор не уверен')], group: `clarify:${captureId}`, once: true });
+  return notify(db, { userId, kind: 'clarify', captureId, lead: 'Запись ждёт уточнения:', template: { lead: { source: 'Запись ждёт уточнения:' } }, text: `«${title}»`, meta: [gate.question || (classification?.unclassified ? 'сохранена без разбора' : 'разбор не уверен')], group: `clarify:${captureId}`, once: true });
 }
 
 // ── доставщик ──
@@ -159,13 +163,13 @@ export function mutedCalendarsOf(db, userId) {
  * дописывается в неё (число, последние лица), а не ложится рядом. once — повод
  * случается один раз на ключ: сводка за день, порог расходов, приглашение.
  */
-export function notify(db, { userId, kind, actorId = null, captureId = null, roomId = null, circleId = null, assignmentId = null, accountId = null, eventUid = null, lead = null, text, meta = [], data = {}, group = null, once = false, at = now() }) {
+export function notify(db, { userId, kind, actorId = null, captureId = null, roomId = null, circleId = null, assignmentId = null, accountId = null, eventUid = null, lead = null, text, meta = [], data = {}, template = null, textTemplate = null, metaTemplates = null, group = null, once = false, at = now() }) {
   const rule = NOTIFICATION_KINDS[kind];
   if (!rule || !userId || actorId === userId) return null;
   if (!notificationPrefs(db, userId)[kind].bell) return null;
   if (accountId && MUTABLE_CALENDAR_KINDS.has(kind) && mutedCalendarsOf(db, userId).has(accountId)) return null;
   if (once && group && db.prepare('SELECT 1 FROM notifications WHERE user_id=? AND group_key=?').get(userId, group)) return null;
-  const payload = { ...data, meta: meta.filter(Boolean).map(item => clip(item, 120)).slice(0, 4) };
+  const payload = { ...data, ...(metaTemplates ? {metaTemplates} : {}), ...(template || textTemplate ? { template: { ...template, ...(textTemplate ? {text:textTemplate} : {}) } } : {}), meta: meta.filter(Boolean).map(item => clip(item, 120)).slice(0, 4) };
   if (group && !once) {
     const open = db.prepare('SELECT * FROM notifications WHERE user_id=? AND group_key=? AND read_at IS NULL AND resolved_at IS NULL AND dismissed_at IS NULL ORDER BY updated_at DESC LIMIT 1').get(userId, group);
     if (open) {
@@ -197,12 +201,49 @@ export function findNotification(db, id) {
 
 // Строка ленты в том виде, в каком её видит браузер. Лица людей подставляет
 // тот, кто знает про круги: здесь только их идентификаторы.
-export function serializeNotification(row) {
+export function serializeNotification(row, locale = 'ru', {timeZone = null, at = null} = {}) {
   const data = JSON.parse(row.data_json || '{}');
-  const { actors = [], meta = [], ...rest } = data;
+  const { actors = [], meta = [], template, metaTemplates, ...rest } = data;
+  if (rest.calendarPresentation) {
+    const schedule = rest.calendarPresentation.when;
+    if (timeZone && schedule?.startAt) rest.date = dateInZone(new Date(schedule.startAt),schedule.allDay ? 'UTC' : timeZone);
+    const when = localizedCalendarWhen(locale,{...rest.calendarPresentation.when,...(timeZone?{timeZone}:{})});
+    if (template?.text?.params && Object.hasOwn(template.text.params,'when')) template.text.params.when = when;
+    meta[0] = rest.calendarPresentation.previousWhen
+      ? translate(locale,'было {when}',{when:localizedCalendarWhen(locale,{...rest.calendarPresentation.previousWhen,...(timeZone?{timeZone}:{})})}) : when;
+  }
+  const render = field => template?.[field]?.source ? translate(locale, template[field].source, template[field].params || {}) : null;
+  if (template?.pushBody) rest.pushBody = render('pushBody');
+  if (template?.pushTitle) rest.pushTitle = render('pushTitle');
+  // Structured reminder presentation can follow the account language on every read.
+  // Historic rows without this metadata retain their original text safely.
+  if (row.kind === 'reminder' && rest.reminderSchedule) {
+    const schedule = rest.reminderSchedule;
+    const day = at && timeZone ? localizedDay(locale,schedule.date,dateInZone(at,timeZone)) : schedule.daySource ? translate(locale,schedule.daySource) : formatDate(locale,new Date(`${schedule.date}T12:00:00Z`),{day:'numeric',month:'long',timeZone:'UTC'});
+    const when = schedule.time ? `${day}, ${schedule.time}${schedule.end ? `–${schedule.end}` : ''}` : day;
+    meta[0] = when;
+    meta[1] = translate(locale,schedule.meeting ? 'встреча' : 'дело');
+    const kind = translate(locale,schedule.meeting ? 'Встреча' : 'Дело');
+    const count = template?.lead?.params?.count ?? schedule.leadMinutes;
+    const lead = count === null ? null : count === 0 ? translate(locale,'сейчас') : translate(locale,'через {count} мин',{count});
+    rest.pushBody = `${kind} · ${when}${lead ? ` · ${lead}` : ''}`;
+  }
+  let text = render('text') ?? row.text;
+  if (row.kind === 'digest' && rest.digest && locale !== 'ru') {
+    const summary = rest.digest;
+    const t = (source,params = {}) => translate(locale,source,params);
+    text = [summary.meetings ? t('{count} встреча',{count:summary.meetings}) : null, summary.deeds ? t('{items} на сегодня',{items:t('{count} дело',{count:summary.deeds})}) : null].filter(Boolean).join(t(' и ')) || t('на сегодня ничего не назначено');
+    const first = summary.firstWait;
+    const waiting = !summary.waits ? null : summary.waits === 1 && first
+      ? t(first.invite ? '{person} ждёт ответа на приглашение {title}.' : '{person} ждёт ответа: {title}.',{person:first.person || t('Кто-то'),title:first.title})
+      : t('Ждут вашего ответа: {count}.',{count:summary.waits});
+    meta.splice(0,meta.length,...[summary.overdue ? t('{count} дело просрочено',{count:summary.overdue})+'.' : null, waiting, summary.calls ? t('Призывы без ответа: {count}.',{count:summary.calls}) : null].filter(Boolean));
+    rest.pushTitle = t('Доброе утро: {today}',{today:text});
+    rest.pushBody = meta.join(' ') || t('Хорошего дня.');
+  }
   return {
     id: row.id, kind: row.kind, group: NOTIFICATION_KINDS[row.kind]?.group || 'other',
-    lead: row.lead, text: row.text, meta, data: rest, actorIds: actors.length ? actors : row.actor_id ? [row.actor_id] : [], count: row.count,
+    lead: render('lead') ?? row.lead, text, meta: meta.map((value,index) => metaTemplates?.[index]?.source ? translate(locale, metaTemplates[index].source, metaTemplates[index].params || {}) : value), data: rest, actorIds: actors.length ? actors : row.actor_id ? [row.actor_id] : [], count: row.count,
     captureId: row.capture_id, roomId: row.room_id, circleId: row.circle_id, assignmentId: row.assignment_id, accountId: row.account_id, eventUid: row.event_uid,
     waits: Boolean(row.waits) && !row.resolved_at, resolved: Boolean(row.resolved_at), read: Boolean(row.read_at), dismissed: Boolean(row.dismissed_at),
     createdAt: row.created_at, updatedAt: row.updated_at,
@@ -305,7 +346,7 @@ export function wakeSnoozed(db, at = new Date(), refresh = row => row) {
   const due = db.prepare('SELECT * FROM notifications WHERE snoozed_until IS NOT NULL AND snoozed_until<=? AND dismissed_at IS NULL').all(at.toISOString());
   for (const row of due) {
     const fresh = refresh(row) || row;
-    db.prepare('UPDATE notifications SET snoozed_until=NULL, read_at=NULL, updated_at=?, lead=?, text=? WHERE id=?').run(at.toISOString(), fresh.lead, fresh.text, row.id);
+    db.prepare('UPDATE notifications SET snoozed_until=NULL, read_at=NULL, updated_at=?, lead=?, text=?, data_json=? WHERE id=?').run(at.toISOString(), fresh.lead, fresh.text, fresh.data_json, row.id);
     deliver(db, findNotification(db, row.id), { merged: false });
   }
   return due.length;
@@ -318,10 +359,10 @@ export function wakeSnoozed(db, at = new Date(), refresh = row => row) {
  * сегодня» про вчера только мешает. Она уходит из ленты сама, как только настал
  * новый день, и открывать её ради этого не нужно.
  */
-export function dismissStaleDigests(db, today, at = now()) {
+export function dismissStaleDigests(db, today, at = now(), userId = undefined) {
   const rows = db
-    .prepare("SELECT id FROM notifications WHERE kind='digest' AND dismissed_at IS NULL AND group_key IS NOT NULL AND group_key<?")
-    .all(`digest:${today}`);
+    .prepare("SELECT id FROM notifications WHERE kind='digest' AND dismissed_at IS NULL AND group_key IS NOT NULL AND group_key<? AND (?=1 OR user_id IS ?)")
+    .all(`digest:${today}`,userId === undefined ? 1 : 0,userId ?? null);
   const update = db.prepare('UPDATE notifications SET dismissed_at=?, read_at=COALESCE(read_at, ?) WHERE id=?');
   for (const row of rows) update.run(at, at, row.id);
   return rows.length;

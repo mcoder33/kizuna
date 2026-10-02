@@ -6,7 +6,7 @@ self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim(
 self.addEventListener("push", (event) => {
   let payload = {};
   try { payload = event.data ? event.data.json() : {}; } catch { payload = { body: event.data?.text() || "" }; }
-  const title = payload.title || "Кизуна";
+  const title = payload.title || (payload.locale && !String(payload.locale).startsWith("ru") ? "Kizuna" : "Кизуна");
   const options = {
     body: payload.body || "",
     tag: payload.tag || undefined,

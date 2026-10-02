@@ -194,7 +194,7 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
         // Заявку разбирает администратор — и узнаёт о ней сразу, а не когда
         // случайно заглянет в «Пользователей».
         for (const admin of listUsers(db).filter(user => user.role === 'admin' && user.status === 'active'))
-          notify(db, { userId: admin.id, kind: 'signup', lead: 'Новая заявка на вход:', text: result.user.email, meta: ['доступ открывает администратор'], data: { url: '/#admin' } });
+          notify(db, { userId: admin.id, kind: 'signup', lead: 'Новая заявка на вход:', template: { lead: { source: 'Новая заявка на вход:' } }, text: result.user.email, meta: ['доступ открывает администратор'], metaTemplates: [{source:'доступ открывает администратор'}], data: { url: '/#admin' } });
         res.status(201).json({ user: publicUser(result.user), first: false, message: 'Заявка отправлена. Доступ откроет администратор.' });
       } catch (error) { next(error); }
     });

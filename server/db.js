@@ -1,3 +1,5 @@
+import { dayStartInZone } from './reports.js';
+import { zonedToUtc } from './ics.js';
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,6 +18,9 @@ export function openDatabase(filename) {
   migrate(db);
   migrateNotifications(db);
   migrateNotesTree(db);
+  const linkColumns = new Set(db.prepare('PRAGMA table_info(calendar_links)').all().map(column => column.name));
+  if (!linkColumns.has('export_time_zone')) db.exec('ALTER TABLE calendar_links ADD COLUMN export_time_zone TEXT');
+  db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(26, now());
   repairMissingProjections(db);
   return db;
 }
@@ -974,12 +979,12 @@ export const isSplitContainer = entry => entry.projections.length === 0 && isCon
 const splitActionsOf = classification => (classification?.proposedActions || []).filter(action => action?.type === 'task' && typeof action.title === 'string');
 // Пачка дел делает родителя контейнером; отчёт «сделал X, надо Y» остаётся закрытым туду.
 const isContainer = classification => classification?.completed !== true && splitActionsOf(classification).length > 0;
-function splitOffActions(db, { parentId, classification, provider, model = null, userId = null, at, timeZone = 'Europe/Samara' }) {
+function splitOffActions(db, { parentId, classification, provider, model = null, userId = null, at, referenceAt = at, timeZone = 'Europe/Samara' }) {
   const actions = splitActionsOf(classification);
   const parts = [];
   for (const action of actions) {
     const childId = id(), interpretationId = id(), undoGroupId = id();
-    const childClassification = actionClassification(action.title, classification, new Date(at), timeZone, { details: action.details, people: action.people });
+    const childClassification = actionClassification(action.title, classification, new Date(referenceAt), timeZone, { details: action.details, people: action.people });
     db.prepare('INSERT INTO captures(id,raw,modality,occurred_at,created_at,privacy_scope,deleted_at,user_id,parent_capture_id) VALUES(?,?,?,?,?,?,NULL,?,?)')
       .run(childId, action.title, 'text', at, at, 'private', userId, parentId);
     db.prepare('INSERT INTO interpretations VALUES(?,?,?,?,?,?,?,?,?,NULL)')
@@ -1024,7 +1029,7 @@ function settleOccurredAt(db, captureId, classification, timeZone) {
   if (at && at !== current.occurred_at) db.prepare('UPDATE captures SET occurred_at=? WHERE id=?').run(at, captureId);
   return at;
 }
-export function createLedger(db, { raw, occurredAt, classification, provider, model = null, createProjections = true, userId = null, timeZone = 'Europe/Samara' }) {
+export function createLedger(db, { raw, occurredAt, classification, provider, model = null, createProjections = true, userId = null, timeZone = 'Europe/Samara', referenceAt = null }) {
   const captureId = id(), interpretationId = id(), undoGroupId = id(), createdAt = now();
   let parts = [];
   const write = db.transaction(() => {
@@ -1036,7 +1041,7 @@ export function createLedger(db, { raw, occurredAt, classification, provider, mo
     if(createProjections && !container) { insertProjections(db, interpretationId, makeProjections(captureId, classification, undoGroupId), createdAt); closeIfCompleted(db, captureId, interpretationId, classification, createdAt); }
     db.prepare('INSERT INTO activity_events VALUES(?,?,?,?)').run(id(), 'capture_created', JSON.stringify({ captureId, undoGroupId }), createdAt);
     if (createProjections && !container) saveDetails(db, captureId, classification, createdAt);
-    parts = splitOffActions(db, { parentId: captureId, classification, provider, model, userId, at: createdAt, timeZone });
+    parts = splitOffActions(db, { parentId: captureId, classification, provider, model, userId, at: createdAt, referenceAt:referenceAt || createdAt, timeZone });
   });
   write(); return { captureId, interpretationId, undoGroupId, parts };
 }
@@ -1094,7 +1099,7 @@ export function claimCaptureJob(db, { owner, leaseToken, leaseMs, currentTime = 
   });
 }
 
-export function completeCaptureJob(db, claim, { classification, provider, model = null, fallbackReason = null }, { timeZone = 'Europe/Samara' } = {}) {
+export function completeCaptureJob(db, claim, { classification, provider, model = null, fallbackReason = null }, { timeZone = 'Europe/Samara', referenceAt = null } = {}) {
   const completedAt = now();
   return withImmediateTransaction(db, () => {
     const current = db.prepare(`SELECT * FROM capture_jobs WHERE id=? AND state='running' AND lease_owner=? AND lease_token=? AND lease_fence=? AND lease_expires_at > ?`).get(claim.id, claim.lease_owner, claim.lease_token, claim.lease_fence, completedAt);
@@ -1114,7 +1119,7 @@ export function completeCaptureJob(db, claim, { classification, provider, model 
       WHERE id=? AND state='running' AND lease_owner=? AND lease_token=? AND lease_fence=?`).run(provider, model, provider === 'fallback' ? (fallbackReason || null) : null, completedAt, claim.id, claim.lease_owner, claim.lease_token, claim.lease_fence);
     insertJobEvent(db, claim.id, 'succeeded', completedAt);
     insertLedgerEvent(db, 'capture_classified', claim.capture_id, claim.id, completedAt);
-    const parts = splitOffActions(db, { parentId: claim.capture_id, classification, provider, model, userId: claim.user_id, at: completedAt, timeZone });
+    const parts = splitOffActions(db, { parentId: claim.capture_id, classification, provider, model, userId: claim.user_id, at: completedAt, referenceAt:referenceAt || completedAt, timeZone });
     return { interpretationId, undoGroupId, parts };
   });
 }
@@ -1171,8 +1176,8 @@ export function retryCaptureJob(db, jobId) {
     if (!previous) return null;
     if (!['failed','cancelled'].includes(previous.state) || !previous.retryable) return { invalidState:true };
     const retryId = id();
-    db.prepare(`INSERT INTO capture_jobs(id,capture_id,selected_provider,selected_model,state,stage,retryable,retry_of_id,created_at,user_id,origin)
-      VALUES(?,?,?,?,'pending','queued',0,?,?,?,?)`).run(retryId, previous.capture_id, previous.selected_provider, previous.selected_model || null, previous.id, createdAt, previous.user_id ?? null, previous.origin ?? null);
+    db.prepare(`INSERT INTO capture_jobs(id,capture_id,selected_provider,selected_model,state,stage,retryable,retry_of_id,created_at,user_id,origin,overrides_json)
+      VALUES(?,?,?,?,'pending','queued',0,?,?,?,?,?)`).run(retryId, previous.capture_id, previous.selected_provider, previous.selected_model || null, previous.id, createdAt, previous.user_id ?? null, previous.origin ?? null, previous.overrides_json ?? null);
     insertJobEvent(db, retryId, 'queued', createdAt);
     insertLedgerEvent(db, 'capture_retry_queued', previous.capture_id, retryId, createdAt);
     return { captureId:previous.capture_id, jobId:retryId, state:'pending' };
@@ -1206,10 +1211,12 @@ function repairMissingProjections(db) {
 }
 export function replaceInterpretation(db, captureId, classification, provider, correction = null, createProjections = true, model = null, { timeZone = 'Europe/Samara' } = {}) {
   return withImmediateTransaction(db,()=>{
-    settleOccurredAt(db, captureId, classification, timeZone);
     if(correction?.operationKey){const existing=db.prepare('SELECT interpretation_id,request_fingerprint FROM corrections WHERE capture_id=? AND operation_key=?').get(captureId,correction.operationKey);if(existing){if(existing.request_fingerprint!==correction.requestFingerprint)return { conflict:true };const projection=db.prepare('SELECT undo_group_id FROM projections WHERE interpretation_id=? ORDER BY created_at LIMIT 1').get(existing.interpretation_id);return { interpretationId:existing.interpretation_id,undoGroupId:projection?.undo_group_id||null,replayed:true };}}
     const previous = db.prepare("SELECT * FROM interpretations WHERE capture_id=? AND status='active'").get(captureId);
     if (!previous) return null;
+    const previousDoneOn = JSON.parse(previous.classification_json)?.entities?.doneOn;
+    const nextDoneOn = classification?.entities?.doneOn;
+    if (previousDoneOn?.date !== nextDoneOn?.date || (previousDoneOn?.time ?? null) !== (nextDoneOn?.time ?? null)) settleOccurredAt(db, captureId, classification, timeZone);
     // Запись, из которой отделились дела, — контейнер с исходным текстом: туду
     // из неё не пересобирается, что бы ни поправили.
     if (createProjections && isContainer(classification)) createProjections = false;
@@ -1342,17 +1349,17 @@ export function fullEntry(db, row) { const entry = serializeEntry(row); entry.no
   if (entry.parentId) { const parent = db.prepare("SELECT c.id, c.raw, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.id=? AND c.deleted_at IS NULL").get(entry.parentId); const classification = parent ? JSON.parse(parent.classification_json) : null; entry.parent = parent ? { id: parent.id, raw: parent.raw, title: classification.summary, type: classification.primaryType, container: isContainer(classification), splitSource: splitActionsOf(classification).length > 0 } : null; }
   return entry; }
 export function day(db, userId) { const rows = db.prepare(`SELECT c.*, i.id interpretation_id, i.version, i.provider, i.model, i.classification_json, i.field_confidence_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.deleted_at IS NULL AND c.subtask=0 AND c.user_id IS ? ORDER BY c.created_at DESC LIMIT 100`).all(userId); return rows.map(row=>fullEntry(db,row)); }
-export function dayView(db, date, now=new Date(), userId=null) { const entries=day(db,userId).filter(entry=>!isSplitContainer(entry)); const scheduled=entry=>entry.interpretation.classification.entities.schedule; const onDay=s=>Boolean(s?.date)&&(s.date===date||occursOn(s,date)); const sortAtOf=s=>{if(!s?.sortAt)return null;if(!s.repeat)return s.sortAt;const next=nextOccurrence(s,date);return next?`${next}T${s.time||'23:59'}:00`:null;}; const completable=entry=>entry.projections.find(projection=>['task','meeting_event'].includes(projection.type)); const dayEntries=entries.filter(entry=>onDay(scheduled(entry))); const horizon=new Date(now.getTime()+48*60*60*1000); const upcoming=entries.filter(entry=>{const c=entry.interpretation.classification,s=scheduled(entry),projection=completable(entry);return !projection?.completion.completed&&['meeting_event','task'].includes(c.primaryType)&&sortAtOf(s)&&new Date(sortAtOf(s))>=now&&new Date(sortAtOf(s))<=horizon}).sort((a,b)=>new Date(sortAtOf(scheduled(a)))-new Date(sortAtOf(scheduled(b)))); const attention=entries.filter(entry=>{const c=entry.interpretation.classification,projection=completable(entry);return !projection?.completion.completed&&!c.completed&&((c.primaryType==='task'&&!scheduled(entry)?.date)||c.entities.followUp||c.primaryType==='outcome_decision')}); return {day:dayEntries,upcoming,attention}; }
+export function dayView(db, date, now=new Date(), userId=null, timeZone='Europe/Samara') { const entries=day(db,userId).filter(entry=>!isSplitContainer(entry)); const scheduled=entry=>entry.interpretation.classification.entities.schedule; const onDay=s=>Boolean(s?.date)&&(s.date===date||occursOn(s,date)); const sortAtOf=s=>{if(!s?.sortAt)return null;if(!s.repeat)return s.sortAt;const next=nextOccurrence(s,date);return next?`${next}T${s.time||'23:59'}:00`:null;}; const atOf=s=>{const value=sortAtOf(s);if(!value)return null;const [date,time]=value.split('T');const [year,month,day]=date.split('-').map(Number),[hour,minute]=time.split(':').map(Number);return zonedToUtc({year,month,day,hour,minute},timeZone);}; const completable=entry=>entry.projections.find(projection=>['task','meeting_event'].includes(projection.type)); const dayEntries=entries.filter(entry=>onDay(scheduled(entry))); const horizon=new Date(now.getTime()+48*60*60*1000); const upcoming=entries.filter(entry=>{const c=entry.interpretation.classification,s=scheduled(entry),projection=completable(entry);return !projection?.completion.completed&&['meeting_event','task'].includes(c.primaryType)&&sortAtOf(s)&&atOf(s)>=now&&atOf(s)<=horizon}).sort((a,b)=>atOf(scheduled(a))-atOf(scheduled(b))); const attention=entries.filter(entry=>{const c=entry.interpretation.classification,projection=completable(entry);return !projection?.completion.completed&&!c.completed&&((c.primaryType==='task'&&!scheduled(entry)?.date)||c.entities.followUp||c.primaryType==='outcome_decision')}); return {day:dayEntries,upcoming,attention}; }
 
 const dailySectionLabels = { doneYesterday:'Сделано вчера', decisions:'Решения', carried:'Перенесённое', blockers:'Блокеры', today:'Сегодня' };
-function samaraBounds(date) { const start = new Date(`${date}T00:00:00+04:00`); return { start:start.toISOString(), end:new Date(start.getTime()+86400000).toISOString() }; }
+function dailyBounds(date, timeZone) { return { start:dayStartInZone(date,timeZone).toISOString(), end:dayStartInZone(new Date(Date.parse(`${date}T12:00:00Z`)+86400000).toISOString().slice(0,10),timeZone).toISOString() }; }
 function previousDate(date) { return new Date(new Date(`${date}T00:00:00Z`).getTime()-86400000).toISOString().slice(0,10); }
 function dailySource(sectionKey, itemKey, sourceType, sourceId, row) { return { sectionKey,itemKey,sourceType,sourceId,captureId:row.capture_id || row.id,projectionId:row.projection_id || null,interpretationId:row.interpretation_id || null,ledgerEventId:row.ledger_id || null }; }
 function dailyItem(key, text, source) { return { key, text, source:{ kind:'capture', captureId:source.captureId } }; }
 function isExplicitDecision(raw) { return !/^\s*[«"']/u.test(raw) && !raw.includes('?') && /^\s*(?:решение|решили|договорились|выбрали)\s*:/iu.test(raw); }
 function effectiveProjectionText(row) { const payload=JSON.parse(row.payload_json),schedule=payload.schedule||{},details=[schedule.time,payload.title,(payload.projects||[]).join(', '),payload.followUp].filter(Boolean); return details.join(' · '); }
-function dailyContent(db, date, userId=null) {
-  const yesterday = previousDate(date), { start, end } = samaraBounds(yesterday), sections = [];
+function dailyContent(db, date, userId=null, timeZone='Europe/Samara') {
+  const yesterday = previousDate(date), { start, end } = dailyBounds(yesterday,timeZone), sections = [];
   const doneRows = db.prepare(`SELECT e.id ledger_id,e.capture_id,e.projection_id,e.interpretation_id,c.raw FROM ledger_events e JOIN captures c ON c.id=e.capture_id
     WHERE e.event_type='completed' AND e.actor='user' AND c.user_id IS ? AND e.occurred_at>=? AND e.occurred_at<?
     AND NOT EXISTS (SELECT 1 FROM ledger_events later WHERE later.projection_id=e.projection_id AND later.event_type='completion_undone' AND later.rowid>e.rowid)
@@ -1387,16 +1394,16 @@ function dailyContent(db, date, userId=null) {
     ORDER BY json_extract(p.payload_json,'$.schedule.time'),p.created_at LIMIT 100`).all(userId).filter(row => { try { return occursOn(JSON.parse(row.payload_json).schedule, date); } catch { return false; } });
   const today = [...todayRows, ...repeatingRows].map(row => ({ item:dailyItem(`today-${row.projection_id}`,effectiveProjectionText(row),{captureId:row.capture_id}), sources:[dailySource('today',`today-${row.projection_id}`,'capture',row.capture_id,row),dailySource('today',`today-${row.projection_id}`,'projection',row.projection_id,row),dailySource('today',`today-${row.projection_id}`,'interpretation',row.interpretation_id,row)] }));
   sections.push({ key:'today', label:dailySectionLabels.today, empty:'На сегодня задач и встреч нет.', items:today });
-  return { content:{ date, timeZone:'Europe/Samara', sections:sections.map(section=>({...section,items:section.items.map(entry=>entry.item)})) }, sourceRows:sections.flatMap(section=>section.items.flatMap(entry=>entry.sources)) };
+  return { content:{ date, timeZone, sections:sections.map(section=>({...section,items:section.items.map(entry=>entry.item)})) }, sourceRows:sections.flatMap(section=>section.items.flatMap(entry=>entry.sources)) };
 }
 function dailyFingerprint(content, sourceRows) { return crypto.createHash('sha256').update(JSON.stringify({content,sources:sourceRows.map(source=>[source.sectionKey,source.itemKey,source.sourceType,source.sourceId])})).digest('hex'); }
 function readBriefSources(db, briefId) { return db.prepare(`SELECT section_key,item_key,source_type,source_id,capture_id FROM daily_brief_sources WHERE daily_brief_id=? ORDER BY rowid`).all(briefId).map(row => ({ sectionKey:row.section_key,itemKey:row.item_key,sourceType:row.source_type,sourceId:row.source_id,action:{kind:'capture',captureId:row.capture_id} })); }
 function serializeBrief(db, row) { return { date:row.brief_date, timeZone:row.time_zone, revision:row.revision, generatedAt:row.generated_at, content:JSON.parse(row.content_json), sources:readBriefSources(db,row.id) }; }
 export function getDailyBrief(db, { date, timeZone='Europe/Samara', force=false, userId=null }) {
-  return withImmediateTransaction(db,()=>{const { content, sourceRows }=dailyContent(db,date,userId),fingerprint=dailyFingerprint(content,sourceRows),latest=db.prepare('SELECT * FROM daily_briefs WHERE user_id IS ? AND brief_date=? AND time_zone=? ORDER BY revision DESC LIMIT 1').get(userId,date,timeZone);if(latest&&latest.effective_fingerprint===fingerprint)return serializeBrief(db,latest);const generatedAt=now(),revision=(latest?.revision||0)+1,briefId=id();db.prepare('INSERT INTO daily_briefs(id,user_id,brief_date,time_zone,revision,generated_at,content_json,effective_fingerprint,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(briefId,userId,date,timeZone,revision,generatedAt,JSON.stringify(content),fingerprint,generatedAt);for(const source of sourceRows)db.prepare('INSERT INTO daily_brief_sources(id,daily_brief_id,section_key,item_key,source_type,source_id,capture_id,projection_id,interpretation_id,ledger_event_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id(),briefId,source.sectionKey,source.itemKey,source.sourceType,source.sourceId,source.captureId,source.projectionId,source.interpretationId,source.ledgerEventId,generatedAt);return serializeBrief(db,db.prepare('SELECT * FROM daily_briefs WHERE id=?').get(briefId));});
+  return withImmediateTransaction(db,()=>{const { content, sourceRows }=dailyContent(db,date,userId,timeZone),fingerprint=dailyFingerprint(content,sourceRows),latest=db.prepare('SELECT * FROM daily_briefs WHERE user_id IS ? AND brief_date=? AND time_zone=? ORDER BY revision DESC LIMIT 1').get(userId,date,timeZone);if(latest&&latest.effective_fingerprint===fingerprint)return serializeBrief(db,latest);const generatedAt=now(),revision=(latest?.revision||0)+1,briefId=id();db.prepare('INSERT INTO daily_briefs(id,user_id,brief_date,time_zone,revision,generated_at,content_json,effective_fingerprint,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(briefId,userId,date,timeZone,revision,generatedAt,JSON.stringify(content),fingerprint,generatedAt);for(const source of sourceRows)db.prepare('INSERT INTO daily_brief_sources(id,daily_brief_id,section_key,item_key,source_type,source_id,capture_id,projection_id,interpretation_id,ledger_event_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id(),briefId,source.sectionKey,source.itemKey,source.sourceType,source.sourceId,source.captureId,source.projectionId,source.interpretationId,source.ledgerEventId,generatedAt);return serializeBrief(db,db.prepare('SELECT * FROM daily_briefs WHERE id=?').get(briefId));});
 }
 export function findDailyBrief(db, { date, timeZone='Europe/Samara', revision=null, userId=null }) { const row = revision === null ? db.prepare('SELECT * FROM daily_briefs WHERE user_id IS ? AND brief_date=? AND time_zone=? ORDER BY revision DESC LIMIT 1').get(userId,date,timeZone) : db.prepare('SELECT * FROM daily_briefs WHERE user_id IS ? AND brief_date=? AND time_zone=? AND revision=?').get(userId,date,timeZone,revision); return row ? serializeBrief(db,row) : null; }
-export function findDailyBriefSource(db,{date,timeZone='Europe/Samara',revision,sourceId,userId=null}) { return db.prepare(`SELECT c.id,c.raw,c.occurred_at,c.created_at FROM daily_brief_sources s JOIN daily_briefs b ON b.id=s.daily_brief_id JOIN captures c ON c.id=s.capture_id WHERE b.user_id IS ? AND b.brief_date=? AND b.time_zone=? AND b.revision=? AND s.source_id=?`).get(userId,date,timeZone,revision,sourceId) || null; }
+export function findDailyBriefSource(db,{date,timeZone=null,revision,sourceId,userId=null}) { return db.prepare(`SELECT c.id,c.raw,c.occurred_at,c.created_at FROM daily_brief_sources s JOIN daily_briefs b ON b.id=s.daily_brief_id JOIN captures c ON c.id=s.capture_id WHERE b.user_id IS ? AND b.brief_date=? AND (? IS NULL OR b.time_zone=?) AND b.revision=? AND s.source_id=?`).get(userId,date,timeZone,timeZone,revision,sourceId) || null; }
 // Удаление записи — мягкое: строка остаётся в журнале, но помечается временем
 // удаления и пропадает из всех списков, поиска и отчётов. Контракт памяти этим
 // не нарушается: raw не переписывается, история решений сохраняется, а экспорт

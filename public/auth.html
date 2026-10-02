@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Кизуна — вход</title>
+    <title data-i18n="Кизуна — вход">Кизуна — вход</title>
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='2' y='2' width='60' height='60' rx='14' fill='%23c73e3a'/%3E%3Cg fill='none' stroke='white' stroke-linecap='round' stroke-width='6'%3E%3Cpath d='M8 17q24 -6 48 0'/%3E%3Cline x1='14' y1='27' x2='50' y2='27'/%3E%3Cline x1='19' y1='22' x2='21' y2='54'/%3E%3Cline x1='45' y1='22' x2='43' y2='54'/%3E%3C/g%3E%3C/svg%3E"
@@ -14,6 +14,7 @@
     <script src="/public/theme.js"></script>
     <link rel="stylesheet" href="/public/app.css" />
     <link rel="stylesheet" href="/public/auth.css" />
+  <script type="module" src="/public/browser-i18n.js"></script>
   </head>
   <body class="auth-body">
     <main class="auth-shell">
@@ -31,17 +32,17 @@
                 x2="21"
                 y2="54"
               /><line x1="45" y1="22" x2="43" y2="54" /></g></svg
-          ><span class="brand-word">Кизуна</span></a
+          ><span class="brand-word" data-i18n="Кизуна">Кизуна</span></a
         >
 
-        <h1 id="auth-title">Вход</h1>
-        <p id="auth-lead" class="auth-lead">
+        <h1 id="auth-title" data-i18n="Вход">Вход</h1>
+        <p id="auth-lead" class="auth-lead" data-i18n="Журнал у каждого свой: записи, отчёты и память видит только их автор.">
           Журнал у каждого свой: записи, отчёты и память видит только их автор.
         </p>
 
         <form id="auth-form" class="auth-form" novalidate>
           <label class="auth-field" for="auth-email"
-            ><span>Почта</span
+            ><span data-i18n="Почта">Почта</span
             ><input
               id="auth-email"
               type="email"
@@ -51,38 +52,39 @@
               placeholder="you@example.com"
           /></label>
           <label class="auth-field" for="auth-password"
-            ><span>Пароль</span
+            ><span data-i18n="Пароль">Пароль</span
             ><input
               id="auth-password"
               type="password"
               autocomplete="current-password"
               required
               placeholder="не короче 10 знаков"
-          /></label>
+           data-i18n-attrs="{&quot;placeholder&quot;: &quot;не короче 10 знаков&quot;}"/></label>
           <label class="auth-field" for="auth-password-repeat" id="auth-repeat-field" hidden
-            ><span>Пароль ещё раз</span
+            ><span data-i18n="Пароль ещё раз">Пароль ещё раз</span
             ><input id="auth-password-repeat" type="password" autocomplete="new-password"
           /></label>
           <label class="auth-field" for="auth-code" id="auth-code-field" hidden
-            ><span>Код из приложения</span
+            ><span data-i18n="Код из приложения">Код из приложения</span
             ><input
               id="auth-code"
               type="text"
               inputmode="numeric"
               autocomplete="one-time-code"
               placeholder="6 цифр или резервный код"
-          /></label>
+           data-i18n-attrs="{&quot;placeholder&quot;: &quot;6 цифр или резервный код&quot;}"/></label>
           <p id="auth-error" class="auth-error" role="alert" hidden></p>
           <p id="auth-notice" class="auth-notice" role="status" hidden></p>
-          <button id="auth-submit" class="primary auth-submit" type="submit">Войти</button>
+          <button id="auth-submit" class="primary auth-submit" type="submit" data-i18n="Войти">Войти</button>
         </form>
 
         <p class="auth-switch">
-          <span id="auth-switch-text">Нет учётной записи?</span>
-          <button id="auth-switch" class="linklike" type="button">Зарегистрироваться</button>
+          <span id="auth-switch-text" data-i18n="Нет учётной записи?">Нет учётной записи?</span>
+          <button id="auth-switch" class="linklike" type="button" data-i18n="Зарегистрироваться">Зарегистрироваться</button>
         </p>
 
-        <p id="auth-bootstrap" class="auth-bootstrap" hidden>
+        <p id="auth-bootstrap" class="auth-bootstrap" hidden data-i18n="В приложении ещё нет ни одной учётной записи. Первая станет
+          администратором и заберёт себе журнал, который вёлся до сих пор.">
           В приложении ещё нет ни одной учётной записи. Первая станет
           администратором и заберёт себе журнал, который вёлся до сих пор.
         </p>
@@ -93,7 +95,7 @@
         type="button"
         aria-label="Сменить тему оформления"
         title="Сменить тему оформления"
-      ></button>
+       data-i18n-attrs="{&quot;aria-label&quot;: &quot;Сменить тему оформления&quot;, &quot;title&quot;: &quot;Сменить тему оформления&quot;}"></button>
     </main>
     <script type="module" src="/public/auth.js"></script>
   </body>

@@ -17,7 +17,7 @@ private final class CaptureEditor: NSTextView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         if string.isEmpty && !hasMarkedText() {
-            ("Записать дело…" as NSString).draw(at: NSPoint(x: textContainerInset.width + (textContainer?.lineFragmentPadding ?? 0), y: textContainerInset.height),
+            (L("Записать дело…") as NSString).draw(at: NSPoint(x: textContainerInset.width + (textContainer?.lineFragmentPadding ?? 0), y: textContainerInset.height),
                 withAttributes: [.font: font ?? NSFont.systemFont(ofSize: 22), .foregroundColor: NSColor.placeholderTextColor])
         }
     }
@@ -68,7 +68,8 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
     private let origin: URL
     private let panel: CapturePanel
     private let editor = CaptureEditor()
-    private let message = NSTextField(wrappingLabelWithString: "Enter — сохранить · Esc — закрыть")
+    private let message = NSTextField(wrappingLabelWithString: L("Enter — сохранить · Esc — закрыть"))
+    private var messageText: () -> String = { L("Enter — сохранить · Esc — закрыть") }
     private let submitButton = NSButton(title: "", target: nil, action: nil)
     private let scroll = NSScrollView()
     private var editorHeight: NSLayoutConstraint!
@@ -101,7 +102,7 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
         panel = CapturePanel(contentRect: NSRect(x: 0, y: 0, width: 600, height: 100),
                              styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         super.init()
-        panel.title = "Быстрая запись — Кизуна"; panel.titleVisibility = .hidden
+        panel.title = L("Быстрая запись — Кизуна"); panel.titleVisibility = .hidden
         panel.isFloatingPanel = true; panel.level = .floating
         panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true
         panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false
@@ -120,7 +121,7 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
         editor.isVerticallyResizable = true; editor.isHorizontallyResizable = false
         editor.autoresizingMask = [.width]; editor.textContainer?.widthTracksTextView = true
         editor.textContainer?.containerSize = NSSize(width: 464, height: CGFloat.greatestFiniteMagnitude)
-        editor.allowsUndo = true; editor.delegate = self; editor.setAccessibilityLabel("Новая запись")
+        editor.allowsUndo = true; editor.delegate = self; editor.setAccessibilityLabel(L("Новая запись"))
         editor.onSubmit = { [weak self] in self?.submit() }
         editor.onDismiss = { [weak self] in self?.hide(restoreFocus: true) }
         scroll.drawsBackground = false; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
@@ -128,10 +129,10 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
         scroll.documentView = editor; editor.frame = NSRect(x: 0, y: 0, width: 464, height: 44)
         message.font = .systemFont(ofSize: 11); message.textColor = .tertiaryLabelColor
         submitButton.isBordered = false; submitButton.target = self; submitButton.action = #selector(submitAction)
-        submitButton.image = NSImage(systemSymbolName: "arrow.up.circle.fill", accessibilityDescription: "Сохранить запись")
+        submitButton.image = NSImage(systemSymbolName: "arrow.up.circle.fill", accessibilityDescription: L("Сохранить запись"))
         submitButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 27, weight: .regular)
-        submitButton.contentTintColor = .secondaryLabelColor; submitButton.toolTip = "Сохранить (Enter)"
-        submitButton.setAccessibilityLabel("Сохранить запись")
+        submitButton.contentTintColor = .secondaryLabelColor; submitButton.toolTip = L("Сохранить (Enter)")
+        submitButton.setAccessibilityLabel(L("Сохранить запись"))
         submitButton.isEnabled = false; submitButton.isHidden = true
         for view in [mark, scroll, message, submitButton] { view.translatesAutoresizingMaskIntoConstraints = false; base.addSubview(view) }
         editorHeight = scroll.heightAnchor.constraint(equalToConstant: 44)
@@ -149,7 +150,21 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
         message.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
     }
 
+    private func setMessage(_ value: @autoclosure @escaping () -> String) {
+        messageText = value
+        message.stringValue = value()
+    }
+    func refreshLocale() {
+        panel.title = L("Быстрая запись — Кизуна")
+        editor.setAccessibilityLabel(L("Новая запись"))
+        submitButton.toolTip = L("Сохранить (Enter)")
+        submitButton.setAccessibilityLabel(L("Сохранить запись"))
+        message.stringValue = messageText()
+        editor.needsDisplay = true
+        updateLayout()
+    }
     func show() {
+        refreshLocale()
         if panel.isVisible { panel.makeKeyAndOrderFront(nil); panel.makeFirstResponder(editor); return }
         previousApp = NSWorkspace.shared.frontmostApplication
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
@@ -164,7 +179,7 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
     func resumeAfterLogin() {
         guard awaitingLogin else { return }
         awaitingLogin = false
-        message.stringValue = "Вход выполнен. Нажмите Enter, чтобы сохранить черновик."
+        setMessage(L("Вход выполнен. Нажмите Enter, чтобы сохранить черновик."))
         show()
     }
     private func hide(restoreFocus: Bool) {
@@ -179,8 +194,8 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
         let raw = editor.string.trimmingCharacters(in: .whitespacesAndNewlines)
         if raw.isEmpty && !unconfirmed { attempt = nil }
         submitButton.isEnabled = !busy && QuickCapturePolicy.validText(raw)
-        if !QuickCapturePolicy.validText(raw) && !raw.isEmpty { message.stringValue = "В записи может быть не больше 10 000 символов." }
-        else if !busy && !unconfirmed { message.stringValue = "Enter — сохранить · Esc — закрыть" }
+        if !QuickCapturePolicy.validText(raw) && !raw.isEmpty { setMessage(L("В записи может быть не больше 10 000 символов.")) }
+        else if !busy && !unconfirmed { setMessage(L("Enter — сохранить · Esc — закрыть")) }
         updateLayout()
     }
     private func updateLayout() {
@@ -224,6 +239,7 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
         let url = URL(string: path, relativeTo: origin)!.absoluteURL
         var request = URLRequest(url: url); request.setValue(cookie, forHTTPHeaderField: "Cookie")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(DesktopLocale.current, forHTTPHeaderField: "Accept-Language")
         if let attempt {
             request.httpMethod = "POST"; request.httpBody = attempt.body
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -232,20 +248,20 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
         }
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse, let final = response.url,
-              DesktopOrigin.contains(final, origin: origin), data.count <= 1_048_576 else { throw CaptureError.message("Не удалось проверить ответ сервера. Черновик сохранён.") }
+              DesktopOrigin.contains(final, origin: origin), data.count <= 1_048_576 else { throw CaptureError.message(L("Не удалось проверить ответ сервера. Черновик сохранён.")) }
         if response.statusCode == 401 { throw CaptureError.login }
-        guard let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw CaptureError.message("Сервер не подтвердил сохранение. Повторите отправку.") }
+        guard let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw CaptureError.message(L("Сервер не подтвердил сохранение. Повторите отправку.")) }
         return (response.statusCode, payload)
     }
     private func submit() {
         let raw = editor.string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !busy, QuickCapturePolicy.validText(raw) else { return }
         guard !unconfirmed || attempt?.raw == raw else {
-            message.stringValue = "Сначала нужно подтвердить прежнюю отправку. Верните исходный текст для безопасного повтора."
+            setMessage(L("Сначала нужно подтвердить прежнюю отправку. Верните исходный текст для безопасного повтора."))
             updateLayout()
             return
         }
-        setBusy(true); message.stringValue = "Сохраняем запись…"
+        setBusy(true); setMessage(L("Сохраняем запись…"))
         Task { [weak self] in
             guard let self else { return }
             let previouslyUnconfirmed = self.unconfirmed
@@ -282,23 +298,25 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
                 if !previouslyUnconfirmed && (400..<500).contains(status) && status != 409 { self.unconfirmed = false }
                 guard status == 202, QuickCapturePolicy.confirmed(payload, origin: self.origin) else {
                     let detail = (payload["error"] as? [String: Any])?["message"] as? String
-                    throw CaptureError.message(detail ?? "Сервер не подтвердил сохранение. Черновик остался здесь.")
+                    throw CaptureError.message(detail ?? L("Сервер не подтвердил сохранение. Черновик остался здесь."))
                 }
                 self.editor.string = ""; self.editor.undoManager?.removeAllActions(); self.attempt = nil
                 self.unconfirmed = false
-                self.message.stringValue = "Enter — сохранить · Esc — закрыть"
+                self.setMessage(L("Enter — сохранить · Esc — закрыть"))
                 self.hide(restoreFocus: true)
             } catch CaptureError.login {
-                self.awaitingLogin = true; self.message.stringValue = "Войдите в Кизуну. Черновик останется здесь."
+                self.awaitingLogin = true; self.setMessage(L("Войдите в Кизуну. Черновик останется здесь."))
                 self.hide(restoreFocus: false); self.onLogin?()
             } catch CaptureError.changedAccount {
-                self.message.stringValue = "Учётная запись изменилась. Вернитесь в прежнюю учётную запись для отправки этого черновика."
+                self.setMessage(L("Учётная запись изменилась. Вернитесь в прежнюю учётную запись для отправки этого черновика."))
             } catch CaptureError.message(let message) {
-                self.message.stringValue = message
+                self.setMessage(message)
             } catch {
-                self.message.stringValue = self.unconfirmed
-                    ? "Нет подтверждения. Текст защищён от изменений: нажмите Enter для безопасного повтора."
-                    : "Нет связи с сервером. Черновик сохранён — попробуйте ещё раз."
+                if self.unconfirmed {
+                    self.setMessage(L("Нет подтверждения. Текст защищён от изменений: нажмите Enter для безопасного повтора."))
+                } else {
+                    self.setMessage(L("Нет связи с сервером. Черновик сохранён — попробуйте ещё раз."))
+                }
             }
         }
     }

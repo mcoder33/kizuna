@@ -1,3 +1,4 @@
+import { normalizeTimeZone } from '../public/time-zone.js';
 // Календарь: ещё один вид на ту же память плюс наложение чужих календарей.
 // Свои дела и встречи — проекции записей со сроком, они не копируются никуда.
 // Внешние события (Яндекс, Apple, Google) живут в отдельном кэше и не
@@ -51,7 +52,8 @@ const plainEtag = value => String(value || '').replace(/^W\//, '').replace(/"/g,
 function minutesOf(time) { return Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5)); }
 function timeOf(minutes) { const m = ((minutes % 1440) + 1440) % 1440; return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; }
 
-export function createCalendarService({ db, secrets, now = () => new Date(), timeZone = () => 'Europe/Samara', googleConfig = () => ({ clientId: null, clientSecret: null }), fetch = globalThis.fetch, caldav = null, google = null, audit = () => {}, onChange = () => {}, autoExportDelayMs = 1500 } = {}) {
+export function createCalendarService({ db, secrets, now = () => new Date(), timeZone = () => 'Europe/Samara', legacyTimeZone = () => timeZone(), googleConfig = () => ({ clientId: null, clientSecret: null }), fetch = globalThis.fetch, caldav = null, google = null, audit = () => {}, onChange = () => {}, autoExportDelayMs = 1500 } = {}) {
+  db.prepare('UPDATE calendar_links SET export_time_zone=? WHERE export_time_zone IS NULL').run(normalizeTimeZone(legacyTimeZone()) || 'Europe/Samara');
   const caldavClient = caldav || createCaldavClient({ fetch });
   const googleClient = google || createGoogleCalendarClient({ fetch });
   const oauthStates = new Map();
@@ -85,7 +87,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     const login = username.trim();
     let discovered;
     try { discovered = await caldavClient.discover({ serverUrl: base, username: login, password, preset }); }
-    catch (error) { return { error: error.code === 'unauthorized' ? 'unauthorized' : 'unreachable', message: error.message }; }
+    catch (error) { return { error: error.code === 'unauthorized' ? 'unauthorized' : 'unreachable', message: error.message, messageTemplate:error.presentation }; }
     const id = crypto.randomUUID();
     const calendars = discovered.calendars.map(calendar => ({ id: calendar.id, url: calendar.url, name: calendar.name, color: calendar.color, selected: true, writable: true }));
     const title = validLabel(label) || `${CALDAV_PRESETS[preset].label}${preset === 'custom' ? '' : ` · ${login}`}`;
@@ -164,7 +166,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     try {
       tokens = await googleClient.exchangeCode({ clientId, clientSecret, redirectUri: pending.redirectUri, code });
       calendars = await googleClient.listCalendars({ accessToken: tokens.accessToken });
-    } catch (error) { return { error: 'google_error', message: error.message }; }
+    } catch (error) { return { error: 'google_error', message: error.message, messageTemplate:error.presentation }; }
     const primary = calendars.find(calendar => calendar.primary);
     const id = crypto.randomUUID();
     const stored = calendars.map(calendar => ({ id: calendar.id, name: calendar.name, color: calendar.color, selected: calendar.selected, writable: calendar.writable, primary: calendar.primary }));
@@ -194,7 +196,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
       const creds = credentialsOf(row);
       if (!creds?.password) throw Object.assign(new Error('Пароль не расшифровался: подключите календарь заново.'), { code: 'unauthorized' });
       for (const calendar of calendars) {
-        const events = await caldavClient.listEvents({ calendarUrl: calendar.url || calendar.id, username: row.username, password: creds.password, from: window.from, to: window.to, timeZone: timeZone() });
+        const events = await caldavClient.listEvents({ calendarUrl: calendar.url || calendar.id, username: row.username, password: creds.password, from: window.from, to: window.to, timeZone: timeZone(row.user_id) });
         for (const event of events) out.push({ calendarId: calendar.id, ...event });
       }
     } else if (row.provider === 'google') {
@@ -215,7 +217,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
   // события, которые Кизуна отправила сама, новыми не считаются.
   function noticeChanges(row, before, after) {
     if (!row.synced_at || row.mode === 'busy') return;
-    const tz = timeZone();
+    const tz = timeZone(row.user_id);
     const at = now().getTime();
     const soon = event => { const start = Date.parse(event.start_at); return start >= at && start < at + NOTICE_WINDOW_MS; };
     const key = event => `${event.uid}|${event.instance_key || ''}`;
@@ -229,23 +231,24 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
       return event.all_day ? `${day}, весь день` : `${day}, ${start.time}${end.date === start.date ? `–${end.time}` : ''}`;
     };
     const mine = event => JSON.parse(event.attendees_json || '[]').find(person => person.self || (login && String(person.email || '').toLowerCase() === login)) || null;
-    const base = event => ({ userId: row.user_id, accountId: row.id, eventUid: event.uid, data: { date: localDateTime(new Date(event.start_at), tz).date } });
+    const presentation = event => ({startAt:event.start_at,endAt:event.end_at,allDay:Boolean(event.all_day),timeZone:tz,sameDay:localDateTime(new Date(event.start_at),tz).date === localDateTime(new Date(event.end_at),tz).date});
+    const base = (event, previous = null) => ({ userId: row.user_id, accountId: row.id, eventUid: event.uid, data: { date: localDateTime(new Date(event.start_at), tz).date, calendarPresentation:{when:presentation(event),previousWhen:previous ? presentation(previous) : null} } });
     for (const [id, event] of is) {
       if (ours.has(event.uid) || Date.parse(event.end_at) <= at) continue;
       const me = mine(event);
       if (me?.status === 'needs-action' && !me.organizer) {
         const organizer = event.organizer_json ? JSON.parse(event.organizer_json) : null;
-        notify(db, { ...base(event), kind: 'invite', lead: organizer?.name || organizer?.email || 'Вас', text: `зовёт на встречу «${event.title}»`, meta: [when(event), row.label], group: `invite:${row.id}:${event.uid}`, once: true });
+        notify(db, { ...base(event), kind: 'invite', lead: organizer?.name || organizer?.email || 'Вас', text: `зовёт на встречу «${event.title}»`, textTemplate: { source: "зовёт на встречу «{title}»", params: { title: event.title } }, meta: [when(event), row.label], group: `invite:${row.id}:${event.uid}`, once: true });
         continue;
       }
       const old = was.get(id);
-      if (!old && soon(event)) notify(db, { ...base(event), kind: 'event_added', lead: 'Появилась встреча', text: `в «${row.label}»: «${event.title}»`, meta: [when(event)] });
+      if (!old && soon(event)) notify(db, { ...base(event), kind: 'event_added', lead: 'Появилась встреча', template: { lead: { source: 'Появилась встреча' } }, text: `в «${row.label}»: «${event.title}»`, textTemplate: { source: "в «{name}»: «{title}»", params: { name: row.label, title: event.title } }, meta: [when(event)] });
       else if (old && (old.start_at !== event.start_at || old.end_at !== event.end_at) && (soon(old) || soon(event)))
-        notify(db, { ...base(event), kind: 'event_changed', lead: 'Встречу перенесли:', text: `«${event.title}» — теперь ${when(event)}`, meta: [`было ${when(old)}`, row.label] });
+        notify(db, { ...base(event,old), kind: 'event_changed', lead: 'Встречу перенесли:', template: { lead: { source: 'Встречу перенесли:' } }, text: `«${event.title}» — теперь ${when(event)}`, textTemplate: { source: "«{title}» — теперь {when}", params: { title: event.title, when: when(event) } }, meta: [`было ${when(old)}`, row.label] });
     }
     for (const [id, old] of was) {
       if (is.has(id) || ours.has(old.uid) || !soon(old)) continue;
-      notify(db, { ...base(old), kind: 'event_changed', lead: 'Встречу отменили:', text: `«${old.title}»`, meta: [when(old), row.label] });
+      notify(db, { ...base(old), kind: 'event_changed', lead: 'Встречу отменили:', template: { lead: { source: 'Встречу отменили:' } }, text: `«${old.title}»`, meta: [when(old), row.label] });
       resolveNotifications(db, { userId: row.user_id, kind: 'invite', accountId: row.id, eventUid: old.uid });
     }
   }
@@ -295,9 +298,9 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
       db.prepare('UPDATE calendar_accounts SET sync_error=?, synced_at=? WHERE id=?').run(message, nowIso(), id);
       // Одна строка на поломку: пока её не починили, повторные неудачи молчат.
       if (!db.prepare("SELECT 1 FROM notifications WHERE user_id=? AND kind='calendar_error' AND account_id=? AND resolved_at IS NULL").get(row.user_id, id))
-        notify(db, { userId: row.user_id, kind: 'calendar_error', accountId: id, lead: `${row.label} не обновляется:`, text: error?.code === 'unauthorized' ? 'пароль приложения или доступ больше не подходит' : message, meta: ['события в сетке — на момент последней синхронизации'], data: { url: '/#settings' } });
+        notify(db, { userId: row.user_id, kind: 'calendar_error', accountId: id, lead: `${row.label} не обновляется:`, template:{lead:{source:'{name} не обновляется:',params:{name:row.label}}}, textTemplate:error?.code === 'unauthorized' ? {source:'пароль приложения или доступ больше не подходит'} : error.presentation, text: error?.code === 'unauthorized' ? 'пароль приложения или доступ больше не подходит' : message, meta: ['события в сетке — на момент последней синхронизации'], metaTemplates: [{source:'события в сетке — на момент последней синхронизации'}], data: { url: '/#settings' } });
       report({ event: 'calendar_sync_failed', provider: row.provider, errorCode: error?.code || 'sync_error' });
-      return { account: rowToAccount(db.prepare('SELECT * FROM calendar_accounts WHERE id=?').get(id)), error: error?.code === 'unauthorized' ? 'unauthorized' : 'sync_error', message };
+      return { account: rowToAccount(db.prepare('SELECT * FROM calendar_accounts WHERE id=?').get(id)), error: error?.code === 'unauthorized' ? 'unauthorized' : 'sync_error', message, messageTemplate:error.presentation };
     } finally { syncing.delete(id); }
   }
   async function syncDue({ intervalMs = SYNC_INTERVAL_MS } = {}) {
@@ -368,7 +371,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     return { items, overdue };
   }
   function externalItems({ userId, from, to }) {
-    const zone = timeZone();
+    const zone = timeZone(userId);
     const fromUtc = zonedToUtc({ year: Number(from.slice(0, 4)), month: Number(from.slice(5, 7)), day: Number(from.slice(8, 10)) }, zone);
     const toUtc = zonedToUtc({ year: Number(to.slice(0, 4)), month: Number(to.slice(5, 7)), day: Number(to.slice(8, 10)) + 1 }, zone);
     // Свои же отправленные события в чужом календаре не показываются второй
@@ -418,10 +421,10 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     if (!validDate(from) || !validDate(to) || from > to) return { error: 'invalid_range' };
     const spanDays = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
     if (spanDays > RANGE_LIMIT_DAYS) return { error: 'range_too_wide' };
-    const today = dateInZone(now(), timeZone());
+    const today = dateInZone(now(), timeZone(userId));
     const own = ownItems({ userId, from, to, today, borrowed });
     return {
-      from, to, today, timeZone: timeZone(),
+      from, to, today, timeZone: timeZone(userId),
       defaults: { meetingMinutes: DEFAULT_MEETING_MINUTES, taskMinutes: DEFAULT_TASK_MINUTES },
       items: own.items, overdue: own.overdue, external: externalItems({ userId, from, to }),
       accounts: listAccounts(userId).map(account => ({ id: account.id, label: account.label, provider: account.provider, color: account.color, mode: account.mode, disabled: account.disabled, syncedAt: account.syncedAt, syncError: account.syncError, calendars: account.calendars.filter(calendar => calendar.selected).map(calendar => ({ id: calendar.id, name: calendar.name, color: calendar.color, writable: calendar.writable })) })),
@@ -480,9 +483,9 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     const inserted = await googleClient.insertEvent({ accessToken, calendarId: calendar.id, event: { ...event, captureId: capture.id } });
     return { uid: inserted.id, href: inserted.href, etag: inserted.etag };
   }
-  function saveLink({ captureId, accountId, calendarId, stored, fingerprint, auto, existing }) {
+  function saveLink({ captureId, accountId, calendarId, stored, fingerprint, auto, existing, exportTimeZone }) {
     if (existing) db.prepare('UPDATE calendar_links SET calendar_id=?, uid=?, href=?, etag=?, fingerprint=?, updated_at=? WHERE capture_id=? AND account_id=?').run(calendarId, stored.uid, stored.href, stored.etag, fingerprint, nowIso(), captureId, accountId);
-    else db.prepare('INSERT INTO calendar_links(capture_id,account_id,calendar_id,uid,href,etag,created_at,fingerprint,auto,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(captureId, accountId, calendarId, stored.uid, stored.href, stored.etag, nowIso(), fingerprint, auto ? 1 : 0, nowIso());
+    else db.prepare('INSERT INTO calendar_links(capture_id,account_id,calendar_id,uid,href,etag,created_at,fingerprint,auto,updated_at,export_time_zone) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(captureId, accountId, calendarId, stored.uid, stored.href, stored.etag, nowIso(), fingerprint, auto ? 1 : 0, nowIso(), exportTimeZone);
   }
   async function deleteLinked(row, link) {
     if (row.provider === 'caldav') await caldavClient.deleteEvent({ href: link.href, username: row.username, password: credentialsOf(row)?.password || '' });
@@ -498,12 +501,12 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     const calendar = JSON.parse(row.calendars_json || '[]').find(item => item.id === calendarId);
     if (!calendar || calendar.writable === false) return { error: 'calendar_not_found' };
     if (db.prepare('SELECT 1 FROM calendar_links WHERE capture_id=? AND account_id=?').get(captureId, accountId)) return { error: 'already_exported' };
-    const event = eventFromCapture(capture, timeZone());
+    const event = eventFromCapture(capture, timeZone(userId));
     if (!event) return { error: 'no_schedule' };
     let stored;
     try { stored = await writeEvent(row, calendar, capture, event); }
-    catch (error) { return { error: error.code === 'unauthorized' ? 'unauthorized' : 'export_failed', message: error.message }; }
-    saveLink({ captureId, accountId, calendarId, stored, fingerprint: fingerprintOf(event), auto: false });
+    catch (error) { return { error: error.code === 'unauthorized' ? 'unauthorized' : 'export_failed', message: error.message, messageTemplate:error.presentation }; }
+    saveLink({ captureId, accountId, calendarId, stored, fingerprint: fingerprintOf(event), exportTimeZone:event.timeZone, auto: false });
     report({ event: 'calendar_event_exported', provider: row.provider });
     return { link: { accountId, calendarId, href: stored.href, auto: false } };
   }
@@ -512,7 +515,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     if (!link) return { error: 'not_found' };
     const row = accountRow(userId, accountId);
     try { await deleteLinked(row, link); }
-    catch (error) { return { error: 'remove_failed', message: error.message }; }
+    catch (error) { return { error: 'remove_failed', message: error.message, messageTemplate:error.presentation }; }
     return { removed: true };
   }
 
@@ -529,7 +532,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
   }
   // Уточнение срока записи из кода, тем же путём, что и из карточки: новая
   // интерпретация, проекции пересобираются, история append-only.
-  function applySchedule(captureId, schedule, note) {
+  function applySchedule(captureId, schedule, note, zone = null) {
     const active = db.prepare(`SELECT i.classification_json FROM interpretations i WHERE i.capture_id=? AND i.status='active'`).get(captureId);
     if (!active) return null;
     const original = JSON.parse(active.classification_json);
@@ -541,10 +544,10 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     const skip = repeat ? normalizeSkip(original.entities?.schedule?.skip) : [];
     const next = { state: schedule.date && schedule.time ? 'ok' : 'ambiguous', date: schedule.date || null, time: schedule.time || null, ...(end ? { end } : {}), ...(remind !== undefined && remind !== null ? { remind } : {}), ...(repeat ? { repeat } : {}), ...(skip.length ? { skip } : {}), sortAt: schedule.date ? `${schedule.date}T${schedule.time || '23:59'}:00` : null, display: scheduleDisplay({ date: schedule.date || null, time: schedule.time || null, end, repeat }) };
     const classification = { ...original, entities: { ...original.entities, schedule: next } };
-    return replaceInterpretation(db, captureId, classification, 'manual', { patch: { schedule: { date: next.date, time: next.time, ...(end ? { end } : {}) } }, note }, shouldMaterializeProjections(classification));
+    return replaceInterpretation(db, captureId, classification, 'manual', { patch: { schedule: { date: next.date, time: next.time, ...(end ? { end } : {}) } }, note }, shouldMaterializeProjections(classification),null,{timeZone:zone || timeZone(db.prepare('SELECT user_id FROM captures WHERE id=?').get(captureId)?.user_id)});
   }
   async function autoExportAccount(row) {
-    const tz = timeZone(), today = dateInZone(now(), tz);
+    const tz = timeZone(row.user_id), today = dateInZone(now(), tz);
     const calendars = JSON.parse(row.calendars_json || '[]');
     const target = row.auto_export !== 'off' ? calendars.find(calendar => calendar.id === row.auto_calendar_id && calendar.writable !== false) || null : null;
     const types = row.auto_export === 'all' ? ['task', 'meeting_event'] : ['meeting_event'];
@@ -554,13 +557,14 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     const budget = () => writes < AUTO_EXPORT_BATCH;
     const links = db.prepare('SELECT * FROM calendar_links WHERE account_id=?').all(row.id);
     for (const link of links) {
+      const linkedZone = normalizeTimeZone(link.export_time_zone) || normalizeTimeZone(legacyTimeZone()) || tz;
       if (!budget()) break;
       const capture = db.prepare(captureQuery).get(link.capture_id);
       const c = capture && !capture.deleted_at && capture.classification_json ? JSON.parse(capture.classification_json) : null;
       // Сделанное — результат, а не встреча (settleCompleted): событие о нём
       // уже было и из календаря не пропадает, но и переписывать его незачем.
       if (c?.completed) continue;
-      let event = c && ['task', 'meeting_event'].includes(c.primaryType) && hasActiveProjection(capture.id) ? eventFromCapture(capture, tz) : null;
+      let event = c && ['task', 'meeting_event'].includes(c.primaryType) && hasActiveProjection(capture.id) ? eventFromCapture(capture, linkedZone) : null;
       // Выключенная автоотправка не забирает уже отправленное: события живут
       // дальше как ручные. А суженный режим («только встречи») дела убирает.
       const following = link.auto && row.auto_export !== 'off';
@@ -570,15 +574,15 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
       // Снаружи подвинули наше событие — правим запись, а не событие.
       const cached = db.prepare('SELECT * FROM calendar_events WHERE account_id=? AND uid=? ORDER BY start_at LIMIT 1').get(row.id, link.uid);
       if (cached && link.etag && cached.etag && plainEtag(cached.etag) !== plainEtag(link.etag)) {
-        const outside = scheduleFromCached(cached, tz);
+        const outside = scheduleFromCached(cached, linkedZone);
         const own = c.entities?.schedule || {};
         // У серии правку снаружи не забираем: по одному экземпляру не понять,
         // подвинули серию или только его. Серия правится в записи.
         if (!own.repeat && (outside.date !== own.date || (outside.time || null) !== (own.time || null) || (outside.end || null) !== (own.end || null))) {
-          applySchedule(capture.id, outside, `Перенесено в календаре «${row.label}»`);
+          applySchedule(capture.id, outside, `Перенесено в календаре «${row.label}»`,linkedZone);
           pulled += 1;
           const refreshed = db.prepare(captureQuery).get(capture.id);
-          event = eventFromCapture(refreshed, tz) || event;
+          event = eventFromCapture(refreshed, linkedZone) || event;
         }
         db.prepare('UPDATE calendar_links SET etag=?, fingerprint=?, updated_at=? WHERE capture_id=? AND account_id=?').run(cached.etag, fingerprintOf(event), nowIso(), capture.id, row.id);
         continue;
@@ -604,7 +608,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
         const event = eventFromCapture(capture, tz);
         if (!event) continue;
         const stored = await writeEvent(row, target, capture, event);
-        saveLink({ captureId: capture.id, accountId: row.id, calendarId: target.id, stored, fingerprint: fingerprintOf(event), auto: true });
+        saveLink({ captureId: capture.id, accountId: row.id, calendarId: target.id, stored, fingerprint: fingerprintOf(event), exportTimeZone:event.timeZone, auto: true });
         writes += 1; created += 1;
       }
     }
@@ -687,7 +691,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
         etag = result.etag || etag;
         if (result.attendees?.length) attendees = result.attendees;
       }
-    } catch (error) { return { error: error.code === 'unauthorized' ? 'unauthorized' : error.code === 'conflict' ? 'conflict' : 'update_failed', message: error.message }; }
+    } catch (error) { return { error: error.code === 'unauthorized' ? 'unauthorized' : error.code === 'conflict' ? 'conflict' : 'update_failed', message: error.message, messageTemplate:error.presentation }; }
     // Кэш — для всех экземпляров серии сразу: ответ один на всю серию.
     db.prepare('UPDATE calendar_events SET attendees_json=?, etag=CASE WHEN id=? THEN ? ELSE etag END, updated_at=? WHERE account_id=? AND uid=?').run(JSON.stringify(attendees.map(({ self, ...attendee }) => attendee)), row.id, etag, nowIso(), row.account_id, row.uid);
     report({ event: 'calendar_external_responded', provider: row.provider, status });
@@ -717,7 +721,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
         const moved = await googleClient.moveEvent({ accessToken: await googleAccessToken(row), calendarId: row.calendar_id, eventId: row.uid, destination: target.id });
         stored = { href: moved.href || row.href, etag: moved.etag, uid: moved.id };
       }
-    } catch (error) { return { error: error.code === 'unauthorized' ? 'unauthorized' : 'update_failed', message: error.message }; }
+    } catch (error) { return { error: error.code === 'unauthorized' ? 'unauthorized' : 'update_failed', message: error.message, messageTemplate:error.presentation }; }
     db.prepare('UPDATE calendar_events SET calendar_id=?, href=?, etag=?, uid=?, updated_at=? WHERE account_id=? AND uid=?').run(target.id, stored.href, stored.etag, stored.uid, nowIso(), row.account_id, row.uid);
     report({ event: 'calendar_external_moved', provider: row.provider });
     changed();
@@ -731,7 +735,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     return db.prepare(`SELECT e.*, a.user_id, a.mode, a.provider, a.username, a.credentials_enc, a.calendars_json, a.label account_label, a.color account_color, a.disabled_at FROM calendar_events e JOIN calendar_accounts a ON a.id=e.account_id WHERE e.id=? AND a.user_id IS ?`).get(key, userId) || null;
   }
   function externalInfo(row) {
-    const tz = timeZone();
+    const tz = timeZone(row.user_id);
     const calendar = JSON.parse(row.calendars_json || '[]').find(item => item.id === row.calendar_id) || null;
     const base = { id: `ext:${row.id}`, title: row.mode === 'busy' ? 'Занято' : row.title, source: row.account_label, calendarId: row.calendar_id, calendarName: calendar?.name || row.account_label, color: calendar?.color || null, location: row.mode === 'busy' ? null : row.location, joinUrl: row.mode === 'busy' ? null : row.join_url, href: row.href, recurring: Boolean(row.instance_key), seriesId: row.mode === 'busy' ? null : row.series_uid || row.uid, editable: !externalWritable(row), movable: !externalWritable(row) && !(row.provider === 'caldav' && row.instance_key), ...(row.mode === 'busy' ? { attendees: [], organizer: null, repeat: null, url: null, me: null } : eventPeople(row)) };
     if (row.all_day) return { ...base, allDay: true, date: row.start_at.slice(0, 10), time: null, end: null };
@@ -754,7 +758,8 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     if (date !== undefined && !validDate(date)) return { error: 'invalid_schedule' };
     if (time !== undefined && time !== null && !validTime(time)) return { error: 'invalid_schedule' };
     if (end !== undefined && end !== null && (!validTime(end) || (time === null))) return { error: 'invalid_schedule' };
-    const tz = timeZone();
+    const titleOnly = date === undefined && time === undefined && end === undefined;
+    const tz = timeZone(userId);
     const current = externalInfo(row);
     const nextDate = date ?? current.date;
     const nextTime = time === undefined ? current.time : time;
@@ -766,10 +771,13 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
       else if (current.time && current.end) { const total = minutesOf(nextTime) + (minutesOf(current.end) - minutesOf(current.time)); nextEnd = total >= 24 * 60 ? '23:59' : timeOf(total); }
       else nextEnd = null;
     }
-    if (nextTime && nextEnd && minutesOf(nextEnd) <= minutesOf(nextTime)) return { error: 'invalid_schedule' };
+    if (!titleOnly && nextTime && nextEnd && minutesOf(nextEnd) <= minutesOf(nextTime)) return { error: 'invalid_schedule' };
     const [year, month, day] = nextDate.split('-').map(Number);
     let event;
-    if (!nextTime) {
+    if (titleOnly) {
+      const wallOf = value => { const [year,month,day] = value.slice(0,10).split('-').map(Number); return {year,month,day}; };
+      event = row.all_day ? {allDay:true,startDate:row.start_at.slice(0,10),endDate:row.end_at.slice(0,10),start:wallOf(row.start_at),end:wallOf(row.end_at)} : {allDay:false,start:new Date(row.start_at),end:new Date(row.end_at)};
+    } else if (!nextTime) {
       const days = row.all_day ? Math.max(1, Math.round((Date.parse(row.end_at.slice(0, 10)) - Date.parse(row.start_at.slice(0, 10))) / 86400000)) : 1;
       const last = shiftDate(nextDate, days);
       event = { allDay: true, startDate: nextDate, endDate: last, start: { year, month, day }, end: { year: Number(last.slice(0, 4)), month: Number(last.slice(5, 7)), day: Number(last.slice(8, 10)) } };
@@ -789,18 +797,19 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
         // получает свой VEVENT с RECURRENCE-ID; одиночное событие правится по месту.
         const ics = row.instance_key
           ? overrideInstance(got.ics, { instanceKey: row.instance_key, title: nextTitle, start: event.start, end: event.end, allDay: event.allDay, now: now(), timeZone: tz })
-          : rewriteEvent(got.ics, { title: nextTitle, start: event.start, end: event.end, allDay: event.allDay, now: now() });
+          : rewriteEvent(got.ics, { title: nextTitle, ...(titleOnly ? {} : {start:event.start,end:event.end,allDay:event.allDay}), now: now() });
         if (!ics) return { error: 'update_failed', message: 'В файле события не нашлось серии.' };
         const put = await caldavClient.putEvent({ href: row.href, username: row.username, password, uid: row.uid, ics, etag: got.etag || null });
         etag = put.etag || null;
       } else {
-        const patched = await googleClient.patchEvent({ accessToken: await googleAccessToken(row), calendarId: row.calendar_id, eventId: row.uid, patch: { title: nextTitle, ...event } });
+        const patched = await googleClient.patchEvent({ accessToken: await googleAccessToken(row), calendarId: row.calendar_id, eventId: row.uid, patch: { title: nextTitle, ...(titleOnly ? {} : event) } });
         etag = patched.etag || etag;
       }
-    } catch (error) { return { error: error.code === 'unauthorized' ? 'unauthorized' : error.code === 'conflict' ? 'conflict' : 'update_failed', message: error.message }; }
+    } catch (error) { return { error: error.code === 'unauthorized' ? 'unauthorized' : error.code === 'conflict' ? 'conflict' : 'update_failed', message: error.message, messageTemplate:error.presentation }; }
     const startAt = event.allDay ? new Date(Date.UTC(event.start.year, event.start.month - 1, event.start.day)) : event.start;
     const endAt = event.allDay ? new Date(Date.UTC(event.end.year, event.end.month - 1, event.end.day)) : event.end;
-    db.prepare('UPDATE calendar_events SET title=?, start_at=?, end_at=?, all_day=?, etag=?, updated_at=? WHERE id=?').run(nextTitle ?? row.title, startAt.toISOString(), endAt.toISOString(), event.allDay ? 1 : 0, etag, nowIso(), row.id);
+    if (titleOnly) db.prepare('UPDATE calendar_events SET title=?, etag=?, updated_at=? WHERE id=?').run(nextTitle ?? row.title,etag,nowIso(),row.id);
+    else db.prepare('UPDATE calendar_events SET title=?, start_at=?, end_at=?, all_day=?, etag=?, updated_at=? WHERE id=?').run(nextTitle ?? row.title, startAt.toISOString(), endAt.toISOString(), event.allDay ? 1 : 0, etag, nowIso(), row.id);
     report({ event: 'calendar_external_updated', provider: row.provider });
     changed();
     return { event: externalInfo(externalRow(userId, id)) };
@@ -823,13 +832,13 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
         // с If-Match — остальные повторы остаются.
         const password = credentialsOf(row)?.password || '';
         const got = await caldavClient.getEvent({ href: row.href, username: row.username, password });
-        const ics = excludeInstance(got.ics, { instanceKey: row.instance_key, now: now(), timeZone: timeZone() });
+        const ics = excludeInstance(got.ics, { instanceKey: row.instance_key, now: now(), timeZone: timeZone(userId) });
         if (!ics) return { error: 'remove_failed', message: 'В файле события не нашлось серии.' };
         await caldavClient.putEvent({ href: row.href, username: row.username, password, uid: row.uid, ics, etag: got.etag || null });
       } else if (row.provider === 'caldav') await caldavClient.deleteEvent({ href: row.href, username: row.username, password: credentialsOf(row)?.password || '' });
       // У Google экземпляр — своё событие, серия — событие recurringEventId.
       else await googleClient.deleteEvent({ accessToken: await googleAccessToken(row), calendarId: row.calendar_id, eventId: wholeSeries ? seriesUid : row.uid });
-    } catch (error) { return { error: error.code === 'unauthorized' ? 'unauthorized' : error.code === 'conflict' ? 'conflict' : 'remove_failed', message: error.message }; }
+    } catch (error) { return { error: error.code === 'unauthorized' ? 'unauthorized' : error.code === 'conflict' ? 'conflict' : 'remove_failed', message: error.message, messageTemplate:error.presentation }; }
     const removedScope = wholeSeries ? 'series' : instance ? 'instance' : 'event';
     if (wholeSeries) db.prepare('DELETE FROM calendar_events WHERE account_id=? AND (uid=? OR series_uid=?)').run(row.account_id, seriesUid, seriesUid);
     else if (row.provider === 'caldav' && !instance) db.prepare('DELETE FROM calendar_events WHERE account_id=? AND uid=?').run(row.account_id, row.uid);

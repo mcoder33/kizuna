@@ -121,7 +121,7 @@ test('a message is recorded and parsed exactly like the main page input', async 
     assert.equal(viaTelegram.raw, text);
     assert.equal(viaTelegram.user_id, ctx.api.user.id);
     assert.equal(viaTelegram.origin, 'telegram');
-    assert.equal(viaTelegram.overrides_json, null, 'тип выбирает модель, как на главной');
+    assert.deepEqual(JSON.parse(viaTelegram.overrides_json), {timeContext:{timeZone:'Europe/Samara',referenceAt:NOW.toISOString()}}, 'только внутренний контекст времени; тип выбирает модель, как на главной');
     // Карточка показывает «Откуда»: полная запись знает, что она из Telegram, а с главной — ни откуда.
     assert.equal((await ctx.api.get(`/api/captures/${viaTelegram.id}`).expect(200)).body.entry.origin, 'telegram');
 

@@ -26,8 +26,10 @@ export function createGoogleCalendarClient({ fetch = globalThis.fetch, timeoutMs
       let data = null;
       try { data = text ? JSON.parse(text) : null; } catch { data = null; }
       if (!response.ok) {
-        const message = data?.error?.message || data?.error_description || data?.error || `Google ответил ${response.status}.`;
-        const error = new Error(typeof message === 'string' ? message : `Google ответил ${response.status}.`);
+        const suppliedMessage = data?.error?.message || data?.error_description || data?.error;
+        const fallback = `Google ответил ${response.status}.`;
+        const error = new Error(typeof suppliedMessage === 'string' ? suppliedMessage : fallback);
+        if (typeof suppliedMessage !== 'string') error.presentation = {source:'Google ответил {status}.',params:{status:response.status}};
         error.status = response.status;
         error.code = response.status === 401 ? 'unauthorized' : response.status === 403 ? 'forbidden' : 'google_error';
         throw error;

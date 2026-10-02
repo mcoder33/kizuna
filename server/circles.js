@@ -278,7 +278,7 @@ export function addMember(db, circleId, userId, personId) {
   if (existing) db.prepare('UPDATE circle_members SET left_at=NULL, joined_at=?, muted_at=NULL, added_by=?, seen_at=NULL WHERE circle_id=? AND user_id=?').run(at, userId, circleId, personId);
   else db.prepare("INSERT INTO circle_members(circle_id,user_id,role,joined_at,added_by) VALUES(?,?,'member',?,?)").run(circleId, personId, at, userId);
   const brief = circleBrief(db, circleId);
-  notify(db, { userId: personId, kind: 'circle', actorId: userId, circleId, text: `добавляет вас в круг «${brief?.name || ''}»`, meta: ['видно только то, что в круг отдали'], data: { circle: brief }, at });
+  notify(db, { userId: personId, kind: 'circle', actorId: userId, circleId, text: `добавляет вас в круг «${brief?.name || ''}»`, textTemplate: { source: "добавляет вас в круг «{name}»", params: { name: brief?.name || '' } }, meta: ['видно только то, что в круг отдали'], metaTemplates: [{source:'видно только то, что в круг отдали'}], data: { circle: brief }, at });
   return { circle: circleDetail(db, circleId, userId), person: publicUser(person) };
 }
 // Пока человек не открыл круг, в который его добавили, об этом говорит строка
@@ -407,7 +407,7 @@ export function assign(db, { captureId, assigneeId, assignerId, circleId = null 
   shareCapture(db, captureId, circle, assignerId);
   // Просьба ждёт ответа — и в полосе «к вам», и за колокольчиком, и на
   // телефоне, если человек не у экрана.
-  notify(db, { userId: assigneeId, kind: 'request', actorId: assignerId, captureId, circleId: circle, assignmentId, text: `просит: «${titleOf(db, captureId)}»`, meta: [dueWords(dueOf(db, captureId))], data: { circle: circleBrief(db, circle), due: dueOf(db, captureId) }, at });
+  notify(db, { userId: assigneeId, kind: 'request', actorId: assignerId, captureId, circleId: circle, assignmentId, text: `просит: «${titleOf(db, captureId)}»`, textTemplate: { source: "просит: «{title}»", params: { title: titleOf(db, captureId) } }, meta: [dueWords(dueOf(db, captureId))], data: { circle: circleBrief(db, circle), due: dueOf(db, captureId) }, at });
   return { assignment: assignmentFor(db, captureId) };
 }
 export function unassign(db, captureId, userId) {
@@ -433,7 +433,7 @@ export function respond(db, assignmentId, userId, take, reason = null) {
   resolveNotifications(db, { kind: 'request', assignmentId, at });
   const title = titleOf(db, row.capture_id);
   notify(db, { userId: row.assigner_id, kind: 'answer', actorId: userId, captureId: row.capture_id, circleId: row.circle_id, assignmentId,
-    text: take ? `берёт «${title}»` : `возвращает «${title}»${why ? `: «${why}»` : ''}`, meta: [take ? 'ваша просьба' : 'просьба вернулась к вам'], data: { circle: circleBrief(db, row.circle_id), state: take ? 'accepted' : 'declined' }, at });
+    textTemplate: {source:take ? 'берёт «{title}»' : 'возвращает «{title}»{reason}',params:{title,reason:why ? `: «${why}»` : ''}}, metaTemplates:[{source:take ? 'ваша просьба' : 'просьба вернулась к вам'}], text: take ? `берёт «${title}»` : `возвращает «${title}»${why ? `: «${why}»` : ''}`, meta: [take ? 'ваша просьба' : 'просьба вернулась к вам'], data: { circle: circleBrief(db, row.circle_id), state: take ? 'accepted' : 'declined' }, at });
   return { assignment: assignmentFor(db, row.capture_id) };
 }
 // Закрытое дело закрывает и просьбу: автор узнаёт об этом в «Я жду», а в свой
@@ -446,7 +446,7 @@ export function noteCompletion(db, captureId, completed) {
   const at = now();
   if (completed && row.state === 'accepted') {
     db.prepare("UPDATE assignments SET state='done', done_at=? WHERE id=?").run(at, row.id);
-    notify(db, { userId: row.assigner_id, kind: 'answer', actorId: row.assignee_id, captureId, circleId: row.circle_id, assignmentId: row.id, text: `отмечает сделанным «${titleOf(db, captureId)}»`, meta: ['ваша просьба закрыта'], data: { circle: circleBrief(db, row.circle_id), state: 'done' } });
+    notify(db, { userId: row.assigner_id, kind: 'answer', actorId: row.assignee_id, captureId, circleId: row.circle_id, assignmentId: row.id, text: `отмечает сделанным «${titleOf(db, captureId)}»`, textTemplate: { source: "отмечает сделанным «{title}»", params: { title: titleOf(db, captureId) } }, meta: ['ваша просьба закрыта'], metaTemplates: [{source:'ваша просьба закрыта'}], data: { circle: circleBrief(db, row.circle_id), state: 'done' } });
   }
   if (completed && row.state === 'pending') {
     db.prepare("UPDATE assignments SET state='done', done_at=? WHERE id=?").run(at, row.id);
@@ -536,7 +536,7 @@ export function reactComment(db, captureId, commentId, userId, emoji) {
   else {
     db.prepare('INSERT INTO comment_reactions(comment_id,user_id,emoji,created_at) VALUES(?,?,?,?)').run(commentId, userId, emoji, at);
     const circle = circlesForCapture(db, captureId)[0] || null;
-    notify(db, { userId: comment.author_id, kind: 'reaction', actorId: userId, captureId, circleId: circle?.id || null, text: `${emoji} на ваше сообщение в «${titleOf(db, captureId)}»: «${excerpt(comment.body)}»`, data: { circle, emoji }, group: `react:capture:${captureId}`, at });
+    notify(db, { userId: comment.author_id, kind: 'reaction', actorId: userId, captureId, circleId: circle?.id || null, text: `${emoji} на ваше сообщение в «${titleOf(db, captureId)}»: «${excerpt(comment.body)}»`, textTemplate: { source: "{emoji} на ваше сообщение в «{title}»: «{excerpt}»", params: { emoji: emoji, title: titleOf(db, captureId), excerpt: excerpt(comment.body) } }, data: { circle, emoji }, group: `react:capture:${captureId}`, at });
   }
   return { reactions: reactionsOfComments(db, [commentId], userId).get(commentId) || [], added: !exists };
 }
@@ -602,12 +602,12 @@ export function addComment(db, { captureId, authorId, body, parentId = null, sha
     if (share !== 'yes' && strangers.includes(target)) continue;
     insert.run(commentId, target.id, at);
     called.add(target.id);
-    notify(db, { userId: target.id, kind: 'call', actorId: authorId, captureId, circleId: circle?.id || null, text: `зовёт вас в обсуждении «${title}»: «${excerpt}»`, data: { circle }, at });
+    notify(db, { userId: target.id, kind: 'call', actorId: authorId, captureId, circleId: circle?.id || null, text: `зовёт вас в обсуждении «${title}»: «${excerpt}»`, textTemplate: { source: "зовёт вас в обсуждении «{title}»: «{excerpt}»", params: { title: title, excerpt: excerpt } }, data: { circle }, at });
   }
   // Ответ цитатой — как призыв: тому, кому ответили, строка и телефон.
   const parentAuthor = parentId ? db.prepare('SELECT author_id FROM comments WHERE id=?').get(parentId)?.author_id : null;
   if (parentAuthor && parentAuthor !== authorId && !called.has(parentAuthor) && canSeeCapture(db, captureId, parentAuthor)) {
-    notify(db, { userId: parentAuthor, kind: 'reply', actorId: authorId, captureId, circleId: circle?.id || null, text: `отвечает вам в обсуждении «${title}»: «${excerpt}»`, data: { circle }, at });
+    notify(db, { userId: parentAuthor, kind: 'reply', actorId: authorId, captureId, circleId: circle?.id || null, text: `отвечает вам в обсуждении «${title}»: «${excerpt}»`, textTemplate: { source: "отвечает вам в обсуждении «{title}»: «{excerpt}»", params: { title: title, excerpt: excerpt } }, data: { circle }, at });
     called.add(parentAuthor);
   }
   const participants = captureParticipants(db, captureId);
@@ -615,7 +615,7 @@ export function addComment(db, { captureId, authorId, body, parentId = null, sha
   const assignee = db.prepare('SELECT assignee_id FROM assignments WHERE capture_id=? AND cancelled_at IS NULL').get(captureId)?.assignee_id;
   for (const follower of new Set([owner, assignee, ...participants.map(person => person.id)].filter(Boolean))) {
     if (follower === authorId || called.has(follower)) continue;
-    notify(db, { userId: follower, kind: 'chatter', actorId: authorId, captureId, circleId: circle?.id || null, text: `в обсуждении «${title}»: «${excerpt}»`, data: { circle }, group: `comments:${captureId}`, at });
+    notify(db, { userId: follower, kind: 'chatter', actorId: authorId, captureId, circleId: circle?.id || null, text: `в обсуждении «${title}»: «${excerpt}»`, textTemplate: { source: "в обсуждении «{title}»: «{excerpt}»", params: { title: title, excerpt: excerpt } }, data: { circle }, group: `comments:${captureId}`, at });
   }
   return { comment: comments(db, captureId, authorId).find(item => item.id === commentId), added, participants };
 }
@@ -844,7 +844,7 @@ export function callFromText(db, { captureId, authorId, raw = '', assigneeId = n
   const called = [];
   for (const person of targets.values()) {
     addParticipant(db, captureId, person.id, authorId, at);
-    notify(db, { userId: person.id, kind: 'call', actorId: authorId, captureId, circleId: circle?.id || null, text: `зовёт вас в записи «${title}»`, data: { circle }, at });
+    notify(db, { userId: person.id, kind: 'call', actorId: authorId, captureId, circleId: circle?.id || null, text: `зовёт вас в записи «${title}»`, textTemplate: { source: "зовёт вас в записи «{title}»", params: { title: title } }, data: { circle }, at });
     called.push(person);
   }
   return called;

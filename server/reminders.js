@@ -1,3 +1,5 @@
+import { translate, formatDate } from '../public/i18n.js';
+import { userLocale } from './locale.js';
 // Напоминания по делам и встречам. Напоминание — свойство срока
 // (`entities.schedule.remind`), а не отдельная сущность: перенос дела двигает
 // и напоминание, снятие срока снимает его. Что и когда слать, решает сервер:
@@ -76,10 +78,10 @@ export function createReminderService({ db, now = () => new Date(), timeZone = (
       byCapture.get(projection.capture_id).push(projection.id);
     }
     const completion = completionEvents(db);
-    const tz = timeZone();
-    const today = dateInZone(now(), tz);
     const out = [];
     for (const row of rows) {
+      const tz = timeZone(row.user_id);
+      const today = dateInZone(now(), tz);
       const ids = byCapture.get(row.id);
       if (!ids?.length) continue;
       let classification;
@@ -99,24 +101,27 @@ export function createReminderService({ db, now = () => new Date(), timeZone = (
     }
     return out;
   }
-  function describe(item, at) {
-    const tz = timeZone();
+  function describe(item, at, requestedLocale = null) {
+    const tz = timeZone(item.userId);
     const today = dateInZone(at, tz);
     const { schedule } = item;
-    const when = schedule.time ? `${dayWord(schedule.date, today)}, ${schedule.time}${schedule.end ? `–${schedule.end}` : ''}` : dayWord(schedule.date, today);
+    const locale = requestedLocale || userLocale(db, item.userId);
+    const t = (source, params = {}) => translate(locale, source, params);
+    const day = schedule.date === today ? t('сегодня') : schedule.date === shiftDate(today, 1) ? t('завтра') : formatDate(locale, new Date(`${schedule.date}T12:00:00Z`), {day:'numeric',month:'long',timeZone:'UTC'});
+    const when = schedule.time ? `${day}, ${schedule.time}${schedule.end ? `–${schedule.end}` : ''}` : day;
     const start = schedule.time ? zonedToUtc(wallOf(schedule.date, schedule.time), tz) : null;
     const leadMinutes = start ? Math.max(0, Math.round((start.getTime() - item.remindAt.getTime()) / 60000)) : null;
-    const lead = leadMinutes === null ? null : leadMinutes === 0 ? 'сейчас' : `через ${humanMinutes(leadMinutes)}`;
-    const kind = item.type === 'meeting_event' ? 'Встреча' : 'Дело';
-    return { captureId: item.captureId, title: item.title, type: item.type, date: schedule.date, time: schedule.time || null, end: schedule.end || null, remindAt: item.remindAt.toISOString(), when, lead, body: `${kind} · ${when}${lead ? ` · ${lead}` : ''}` };
+    const lead = leadMinutes === null ? null : leadMinutes === 0 ? t('сейчас') : locale === 'ru' ? `через ${humanMinutes(leadMinutes)}` : t('через {count} мин', {count:leadMinutes});
+    const kind = item.type === 'meeting_event' ? t('Встреча') : t('Дело');
+    return { captureId: item.captureId, title: item.title, type: item.type, date: schedule.date, time: schedule.time || null, end: schedule.end || null, remindAt: item.remindAt.toISOString(), when, lead, leadMinutes, daySource: schedule.date === today ? 'сегодня' : schedule.date === shiftDate(today,1) ? 'завтра' : schedule.date === shiftDate(today,-1) ? 'вчера' : null, body: `${kind} · ${when}${lead ? ` · ${lead}` : ''}` };
   }
   // Что впереди у человека: для карточки и настроек, чтобы видеть, когда
   // именно напомнит.
-  function upcoming(userId, { limit = 20 } = {}) {
+  function upcoming(userId, { limit = 20, locale = null } = {}) {
     const at = now();
-    return candidates().filter(item => item.userId === userId && item.remindAt >= at).sort((left, right) => left.remindAt - right.remindAt).slice(0, limit).map(item => describe(item, at));
+    return candidates().filter(item => item.userId === userId && item.remindAt >= at).sort((left, right) => left.remindAt - right.remindAt).slice(0, limit).map(item => describe(item, at, locale));
   }
-  function momentFor(userId, schedule) { return remindMoment(schedule, { timeZone: timeZone(), defaults: settingsFor(userId) }); }
+  function momentFor(userId, schedule) { return remindMoment(schedule, { timeZone: timeZone(userId), defaults: settingsFor(userId) }); }
   const seen = db.prepare('SELECT status FROM reminder_sends WHERE capture_id=? AND remind_at=?');
   const record = db.prepare('INSERT OR IGNORE INTO reminder_sends(capture_id, remind_at, user_id, status, title, created_at) VALUES(?,?,?,?,?,?)');
   async function tick() {

@@ -102,7 +102,7 @@ final class DesktopNavigation: NSObject, WKNavigationDelegate, WKUIDelegate, WKD
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { failed(error) }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { failed(error) }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        onFailure?(NSError(domain: "Kizuna", code: 1, userInfo: [NSLocalizedDescriptionKey: "Окно приложения нужно перезагрузить."]))
+        onFailure?(NSError(domain: "Kizuna", code: 1, userInfo: [NSLocalizedDescriptionKey: L("Окно приложения нужно перезагрузить.")]))
     }
     private func failed(_ error: Error) {
         guard (error as NSError).code != NSURLErrorCancelled else { return }
@@ -115,23 +115,23 @@ final class DesktopNavigation: NSObject, WKNavigationDelegate, WKUIDelegate, WKD
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         guard trusted(frame) else { completionHandler(); return }
-        let alert = NSAlert(); alert.messageText = "Кизуна"; alert.informativeText = message
+        let alert = NSAlert(); alert.messageText = L("Кизуна"); alert.informativeText = message
         alert.runModal(); completionHandler()
     }
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
         guard trusted(frame) else { completionHandler(false); return }
-        let alert = NSAlert(); alert.messageText = "Кизуна"; alert.informativeText = message
-        alert.addButton(withTitle: "Продолжить"); alert.addButton(withTitle: "Отмена")
+        let alert = NSAlert(); alert.messageText = L("Кизуна"); alert.informativeText = message
+        alert.addButton(withTitle: L("Продолжить")); alert.addButton(withTitle: L("Отмена"))
         completionHandler(alert.runModal() == .alertFirstButtonReturn)
     }
     func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String,
                  defaultText: String?, initiatedByFrame frame: WKFrameInfo,
                  completionHandler: @escaping (String?) -> Void) {
         guard trusted(frame) else { completionHandler(nil); return }
-        let alert = NSAlert(); alert.messageText = "Кизуна"; alert.informativeText = prompt
+        let alert = NSAlert(); alert.messageText = L("Кизуна"); alert.informativeText = prompt
         let field = NSTextField(string: defaultText ?? ""); field.frame = NSRect(x: 0, y: 0, width: 320, height: 24)
-        alert.accessoryView = field; alert.addButton(withTitle: "Сохранить"); alert.addButton(withTitle: "Отмена")
+        alert.accessoryView = field; alert.addButton(withTitle: L("Сохранить")); alert.addButton(withTitle: L("Отмена"))
         completionHandler(alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil)
     }
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
@@ -161,7 +161,7 @@ final class DesktopNavigation: NSObject, WKNavigationDelegate, WKUIDelegate, WKD
     func downloadDidFinish(_ download: WKDownload) { downloads.removeAll { $0 === download } }
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
         downloads.removeAll { $0 === download }
-        let alert = NSAlert(); alert.messageText = "Не удалось скачать файл"; alert.informativeText = error.localizedDescription
+        let alert = NSAlert(); alert.messageText = L("Не удалось скачать файл"); alert.informativeText = error.localizedDescription
         alert.runModal()
     }
 }
