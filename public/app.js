@@ -271,6 +271,7 @@ function updatePageFromHash() {
 }
 // Поповеры шапки (настройки ИИ) закрываются по клику вне и Escape.
 const headerMenus = () => [...document.querySelectorAll("header details")];
+$("#account-guide-link")?.addEventListener("click", () => $(".account-menu")?.removeAttribute("open"));
 document.addEventListener("pointerdown", (event) => {
   // «Вернуть» в тосте — продолжение действия в меню: лента остаётся открытой.
   if (event.target.closest?.("#toast")) return;
@@ -4798,7 +4799,6 @@ function captureModifier(platform = navigator.platform || "", agent = navigator.
   return "Ctrl";
 }
 const CAPTURE_MOD = captureModifier();
-$("#capture-hint").textContent = `${CAPTURE_MOD}+Enter — отправить, Enter — новая строка`;
 $("#capture-submit").title = `Сохранить запись — ${CAPTURE_MOD}+Enter`;
 
 // Лист: карточка выходит на передний план и вписывается в окно листом A4.
@@ -5230,8 +5230,8 @@ function paintSettings(payload) {
   if (settingInput("theme")) {
     // Тема, сохранённая в учётной записи, сильнее пустого браузера: человек
     // выбрал её однажды и ждёт её на любом устройстве.
-    const remembered = appSettings.theme || "system";
-    if (window.pagentTheme.read() === "system" && remembered !== "system") window.pagentTheme.set(remembered);
+    const remembered = appSettings.theme;
+    if (!window.pagentTheme.hasChoice() && (remembered === "light" || remembered === "dark")) window.pagentTheme.set(remembered);
     settingInput("theme").value = window.pagentTheme.read();
     paintThemeButton();
   }

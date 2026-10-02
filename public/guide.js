@@ -51,34 +51,24 @@ function icon(paths, extra = "") {
   wrap.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ${extra} aria-hidden="true">${paths}</svg>`;
   return wrap.firstChild;
 }
-const waveIcon = () => icon('<path d="M3 9.5v5"/><path d="M7.5 7v10"/><path d="M12 4v16"/><path d="M16.5 7v10"/><path d="M21 9.5v5"/>', 'stroke-width="2.2"');
 const expandIcon = () => icon('<path d="M9 4.5H6.5a2 2 0 0 0-2 2V9"/><path d="M15 4.5h2.5a2 2 0 0 1 2 2V9"/><path d="M9 19.5H6.5a2 2 0 0 1-2-2V15"/><path d="M15 19.5h2.5a2 2 0 0 0 2-2V15"/>', 'stroke-width="1.6"');
 const todoIcon = () => icon('<circle cx="12" cy="12" r="8.5"/><path d="m8.5 12.5 2.3 2.3L15.5 10"/>');
 
 /* ── сцены: копии интерфейса ── */
 function todayScene(state, hooks) {
   const root = h("div", "gd-today");
-  root.append(h("p", "gd-cover-date", `${longDate(isoDay())} · `, h("span", "gd-phase", "день")), h("p", "gd-cover-brief", state.brief));
   const cap = h("div", "gd-capture");
   const hasText = Boolean(state.text) || Boolean(state.typing);
   const text = h("div", "gd-cap-text" + (hasText ? "" : " empty"));
   text.tabIndex = 0;
   text.setAttribute("role", "textbox");
   text.setAttribute("aria-label", "Поле записи в примере");
-  text.textContent = state.text || (state.typing ? "" : "Запишите мысль, план, встречу или итог дня");
+  text.textContent = state.text || (state.typing ? "" : "Что нужно сделать?");
   const foot = h("div", "gd-cap-foot");
-  const dots = h("div", "gd-type-dots");
-  for (const [value, label] of [["auto", "Авто"], ["todo", "ТУДУ"], ["outcome", "Результат"], ["note", "Заметка"]]) {
-    const dot = button("gd-type-dot" + (value === "auto" ? " on" : ""), [h("span", "gd-mark"), h("span", "gd-label", label)], null, { "aria-label": label });
-    dot.style.setProperty("--c", `var(--type-${value})`);
-    dot.style.setProperty("--tint", `var(--tint-${value})`);
-    dots.append(dot);
-  }
   const send = button("gd-cap-send", "→", null, { "aria-label": "Сохранить запись в примере" });
   send.hidden = !state.text;
   const expand = button("gd-cap-expand", expandIcon(), null, { "aria-label": "Увеличить поле в примере" });
-  const voice = button("gd-cap-voice", waveIcon(), null, { "aria-label": "Поговорить с журналом в примере" });
-  foot.append(dots, h("span", "gd-sep"), h("span", "gd-tags", "#тег…"), expand, voice, send);
+  foot.append(expand, send);
   cap.append(text, foot);
   root.append(cap);
   if (state.typing) {
@@ -99,8 +89,8 @@ function todayScene(state, hooks) {
   const tabs = h("div", "gd-today-tabs");
   const doneCount = state.doneEntries.length, dayCount = state.entries.filter((e) => !e.done).length;
   tabs.append(
-    button("gd-today-tab" + (state.tab === "done" ? " on" : ""), ["Сделано", h("b", null, String(doneCount))]),
     button("gd-today-tab" + (state.tab === "day" ? " on" : ""), ["День", h("b", null, `${dayCount} ${dayCount === 1 ? "дело" : dayCount > 1 && dayCount < 5 ? "дела" : "дел"}`)]),
+    button("gd-today-tab" + (state.tab === "done" ? " on" : ""), ["Закрыто", h("b", null, String(doneCount))]),
   );
   root.append(tabs);
   root.append(h("div", "gd-day-head", h("span", null, `‹ ${shortDate(isoDay(-1))}`), h("span", "gd-mid", longDate(isoDay()), h("i", null, "Сегодня")), h("span", "gd-r", `${shortDate(isoDay(1))} ›`)));
@@ -122,7 +112,6 @@ function entryRow(entry) {
   if (entry.type === "task") row.append(button("gd-check", "", null, { "aria-label": entry.done ? "Вернуть в работу" : "Готово" }));
   row.append(button("gd-title", entry.title));
   const meta = h("div", "gd-meta");
-  meta.append(h("span", "gd-tag " + entry.type, { task: "задача", outcome: "результат", note: "заметка", meeting: "встреча" }[entry.type]));
   if (entry.project) meta.append(h("span", "gd-tag project", entry.project));
   if (entry.from) meta.append(h("span", "gd-tag from", entry.from));
   if (entry.assign) meta.append(h("span", "gd-tag assign" + (entry.taken ? " taken" : ""), entry.assign));
@@ -138,20 +127,15 @@ function cardScene(state) {
   const root = h("div", "gd-cardv");
   root.append(h("div", "gd-card-head", "Сегодня / запись", button("gd-round", "×", null, { "aria-label": "Закрыть карточку в примере" })), h("p", "gd-card-title", state.title));
   const props = h("div", "gd-props");
-  const typeVal = h("div", "gd-prop-val");
-  if (state.choices) {
-    for (const [id, word] of [["note", "заметка"], ["task", "задача"], ["meeting", "встреча"], ["outcome", "результат"], ["idea", "идея"]])
-      typeVal.append(button(`gd-choice gd-choice-${id}` + (word === state.type ? " on" : ""), word));
-  } else typeVal.append(h("span", "gd-select", state.type));
-  props.append(h("div", "gd-prop", h("span", "gd-prop-name", "Тип"), typeVal));
-  props.append(h("div", "gd-prop", h("span", "gd-prop-name", "Срок"), h("div", "gd-prop-val", state.due ? h("span", "gd-select", state.due) : h("span", "gd-ghost", "без срока"))));
+  root.append(button("gd-act gd-card-params", "Параметры"));
+  props.append(h("div", "gd-prop gd-prop-due", h("span", "gd-prop-name", "Срок"), h("div", "gd-prop-val", state.due ? h("span", "gd-select", state.due) : h("span", "gd-ghost", "без срока"))));
   props.append(h("div", "gd-prop", h("span", "gd-prop-name", "Проект"), h("div", "gd-prop-val", h("span", "gd-select", state.project || "—"))));
   if (state.assignee !== undefined) {
     const val = h("div", "gd-prop-val", h("span", "gd-select", state.assignee || "— никому"));
     if (state.assignWord) val.append(h("span", "gd-origin", "— " + state.assignWord));
     props.append(h("div", "gd-prop gd-prop-assign", h("span", "gd-prop-name", "Исполнитель"), val));
   }
-  root.append(props);
+  if (state.params) root.append(props);
   if (state.lesson) root.append(h("p", "gd-lesson", h("span", "gd-mk", "✓"), state.lesson));
   root.append(h("div", "gd-card-src", "Исходная запись: ", h("b", null, `«${state.title}»`), " · сегодня, 12:05. Она хранится как есть, правки живут поверх."));
   return root;
@@ -185,12 +169,12 @@ function annaScene(state) {
   const bell = h("div", "gd-bell", h("div", "gd-bell-h", "Колокольчик", h("span", "gd-n", "1")));
   const notice = h("div", "gd-notice" + (state.taken ? " taken" : ""), h("span", "gd-ava s", "С"));
   if (!state.taken) {
-    notice.append(h("div", null, h("b", null, "Саша"), " просит: «Прислать смету по Хабу»", h("div", "gd-notice-meta", "срок: пятница · круг ВойсОпс")));
+    notice.append(h("div", null, h("b", null, "Саша"), " просит: «Прислать смету по Хабу»", h("div", "gd-notice-meta", "срок: сегодня · круг ВойсОпс")));
     notice.append(h("div", "gd-notice-acts", button("gd-act primary gd-take", "Беру"), button("gd-act", "Не я")));
   } else notice.append(h("div", null, h("b", null, "Взято"), ", дело в вашем дне"));
   bell.append(notice);
   root.append(bell);
-  if (state.taken) root.append(h("div", "gd-anna-day", h("p", "gd-shelf", "День Ани · без времени"), h("div", "gd-entries", entryRow({ title: "Прислать смету по Хабу", type: "task", due: "пятница", ontime: true, from: "от Саши", when: "ссылка на запись Саши" }))));
+  if (state.taken) root.append(h("div", "gd-anna-day", h("p", "gd-shelf", "День Ани · без времени"), h("div", "gd-entries", entryRow({ title: "Прислать смету по Хабу", type: "task", due: "сегодня", ontime: true, from: "от Саши", when: "ссылка на запись Саши" }))));
   return root;
 }
 function scene(state, hooks) {
@@ -421,7 +405,12 @@ function createPlayer({ onTry, onGo, onExit, onBack, onDone, onMode }) {
 // Страница занимает окно под шапкой: высота шапки своя у каждой ширины окна,
 // поэтому пересчитывается и при смене размера.
 let sizedHost = null;
-const sizeTop = () => sizedHost?.style.setProperty("--guide-top", `${Math.round(document.querySelector("header")?.getBoundingClientRect().height ?? 72)}px`);
+const sizeTop = () => {
+  if (!sizedHost) return;
+  sizedHost.style.setProperty("--guide-top", `${Math.round(document.querySelector("header")?.getBoundingClientRect().height ?? 72)}px`);
+  const dock = document.querySelector("header > nav.dock")?.getBoundingClientRect();
+  sizedHost.style.setProperty("--guide-bottom", `${dock ? Math.ceil(window.innerHeight - dock.top + 12) : 0}px`);
+};
 window.addEventListener("resize", sizeTop);
 
 export function mountGuide(host, { initial = null, initialDemo = false, onTry, onGo, onExit } = {}) {

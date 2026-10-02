@@ -99,7 +99,7 @@ main:has(> #guide:not([hidden])) { max-width: none; padding: 0; }
 .gd-cap-text.empty { color: var(--n-66); }
 .gd-caret { display: inline-block; width: 1.5px; height: 1.1em; background: var(--ink); vertical-align: -0.2em; margin-left: 1px; animation: gd-blink 1s steps(1) infinite; }
 @keyframes gd-blink { 50% { opacity: 0; } }
-.gd-cap-foot { display: flex; gap: 7px; align-items: center; color: var(--muted); font-size: 12px; margin-top: 10px; padding-top: 11px; border-top: 1px solid var(--hairline); }
+.gd-cap-foot { display: flex; gap: 7px; align-items: center; color: var(--muted); font-size: 12px; margin-top: 10px; padding-top: 11px; }
 .gd-type-dots { display: flex; gap: 3px; align-items: center; flex: none; border-radius: 999px; }
 .gd-type-dot { position: relative; height: 28px; min-width: 28px; border-radius: 99px; border: 0; background: none; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0 9px; color: var(--c); font: inherit; }
 .gd-type-dot .gd-mark { width: 10px; height: 10px; border-radius: 99px; background: var(--c); flex: none; }
@@ -109,7 +109,7 @@ main:has(> #guide:not([hidden])) { max-width: none; padding: 0; }
 .gd-sep { width: 1px; height: 18px; background: var(--hairline); margin: 0 3px; }
 .gd-tags { color: var(--n-66); flex: 1; min-width: 0; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gd-cap-foot { min-width: 0; }
-.gd-cap-expand { width: 28px; height: 28px; border: 0; background: none; color: var(--n-82); display: grid; place-items: center; border-radius: 8px; padding: 0; cursor: pointer; }
+.gd-cap-expand { margin-left: auto; width: 28px; height: 28px; border: 0; background: none; color: var(--n-82); display: grid; place-items: center; border-radius: 8px; padding: 0; cursor: pointer; }
 .gd-cap-expand svg { width: 16px; height: 16px; }
 .gd-cap-voice { flex: none; width: 38px; height: 38px; padding: 0; border: 0; border-radius: 50%; background: var(--coral); color: #fff; cursor: pointer; display: grid; place-items: center; }
 .gd-cap-voice svg { width: 20px; height: 20px; }
@@ -243,7 +243,11 @@ main:has(> #guide:not([hidden])) { max-width: none; padding: 0; }
 
 /* ── телефон: сначала список, потом прогон ── */
 @media (max-width: 760px) {
-  .gd-shell { grid-template-columns: minmax(0, 1fr); }
+  .gd-shell {
+    grid-template-columns: minmax(0, 1fr);
+    height: calc(100vh - var(--guide-top, 73px) - var(--guide-bottom, 90px));
+    height: calc(100dvh - var(--guide-top, 73px) - var(--guide-bottom, 90px));
+  }
   .gd-side { border-right: 0; background: none; padding: 20px 16px 32px; }
   .gd-shell.playing .gd-side { display: none; }
   .gd-shell:not(.playing) .gd-main { display: none; }

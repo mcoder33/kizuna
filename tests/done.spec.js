@@ -22,10 +22,12 @@ test("закрытая в «Дне» туду видна в «Закрыто» �
   await row.locator(".completion-button").click();
   await expect(page.locator("#tab-journal b")).toHaveText("1");
   await showTab(page, /^Закрыто/);
-  await expect(page.locator("#journal .entry").filter({ hasText: "Проверить страницу итогов" })).toBeVisible();
+  const closedRow = page.locator("#journal .entry").filter({ hasText: "Проверить страницу итогов" });
+  await expect(closedRow).toBeVisible();
+  await expect(closedRow.locator(".entry-title")).toHaveCSS("text-decoration-line", "line-through");
 
   // «Сделано» — свой пункт в шапке, первый, перед «Сегодня».
-  await expect(page.locator('nav a[href="#done"]')).toHaveText("Сделано");
+  await expect(page.locator('nav a[href="#done"] .dock-label')).toHaveText("Сделано");
   await page.locator('nav a[href="#done"]').click();
   await expect(page).toHaveURL(/#done$/);
   const done = page.locator("#done");
@@ -64,6 +66,7 @@ test("закрытая в «Дне» туду видна в «Закрыто» �
   await expect(done.locator(".done-day")).toHaveText(["Сегодня · 1"]);
   const item = done.locator(".done-days .entry").filter({ hasText: "Проверить страницу итогов" });
   await expect(item).toBeVisible();
+  await expect(item.locator(".entry-title")).toHaveCSS("text-decoration-line", "none");
   await expect(item.locator(".tag.done-where")).toHaveText("Дела");
   await expect(item.locator(".tag.time")).toHaveText(/^\d\d:\d\d$/);
 

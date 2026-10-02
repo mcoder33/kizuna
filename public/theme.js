@@ -7,17 +7,14 @@
   var root = document.documentElement;
 
   function apply(theme) {
-    // «Системная» — это отсутствие выбора, поэтому атрибут снимается: дальше
-    // решает prefers-color-scheme, как и задумано в таблице стилей.
-    if (theme === "light" || theme === "dark") root.setAttribute("data-theme", theme);
-    else root.removeAttribute("data-theme");
+    root.setAttribute("data-theme", theme === "dark" ? "dark" : "light");
   }
 
   var stored = null;
   try {
     stored = localStorage.getItem(KEY);
   } catch {
-    // Приватное окно или запрет на хранилище: тема просто останется системной.
+    // Приватное окно или запрет на хранилище: по умолчанию светлая тема.
   }
   apply(stored);
 
@@ -53,26 +50,25 @@
   // он живёт здесь, а не в каждом из них.
   window.pagentTheme = {
     read: function () {
-      return stored === "light" || stored === "dark" ? stored : "system";
+      return stored === "dark" ? "dark" : "light";
     },
+    hasChoice: function () { return stored === "light" || stored === "dark"; },
     set: function (theme) {
-      stored = theme;
-      apply(theme);
+      stored = theme === "dark" ? "dark" : "light";
+      apply(stored);
       try {
-        if (theme === "system") localStorage.removeItem(KEY);
-        else localStorage.setItem(KEY, theme);
+        localStorage.setItem(KEY, stored);
       } catch {
         // Не сохранилось — тема действует до конца сессии.
       }
-      window.dispatchEvent(new CustomEvent("pagent-theme", { detail: { theme } }));
+      window.dispatchEvent(new CustomEvent("pagent-theme", { detail: { theme: stored } }));
     },
-    // Порядок обхода по кнопке: системная → светлая → тёмная → системная.
+    // Кнопка переключает только светлую и тёмную тему.
     next: function () {
-      var order = ["system", "light", "dark"];
-      return order[(order.indexOf(this.read()) + 1) % order.length];
+      return this.read() === "dark" ? "light" : "dark";
     },
     label: function (theme) {
-      return { system: "как в системе", light: "светлая", dark: "тёмная" }[theme || this.read()];
+      return { light: "светлая", dark: "тёмная" }[theme || this.read()];
     },
     // Значок — инлайновый SVG, а не символ шрифта: глифы вроде «◐» и «☀»
     // в каждом шрифте сидят по-своему и в круглой кнопке стояли криво.
@@ -80,10 +76,6 @@
     icon: function (theme) {
       var head = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">';
       return {
-        system:
-          head +
-          '<circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="1.8"/>' +
-          '<path d="M12 3.6a8.4 8.4 0 0 1 0 16.8z" fill="currentColor" stroke="none"/></svg>',
         light:
           head +
           '<circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/>' +

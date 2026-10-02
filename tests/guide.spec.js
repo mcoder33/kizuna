@@ -12,14 +12,14 @@ test.beforeEach(async ({ page }) => {
 test("по адресу #guide вопросы слева, прогон про поручение идёт справа и заканчивается выходом", async ({ page }) => {
   await page.goto("/#today");
   const entriesBefore = await (await page.request.get("/api/entries")).text();
-  // Ссылки на «Как пользоваться» в шапке больше нет: страница открывается по адресу.
-  await expect(page.locator(".help-link")).toHaveCount(0);
-  await page.evaluate(() => { location.hash = "#guide"; });
+  await page.getByLabel("Учётная запись").click();
+  await page.locator(".account-menu").getByRole("link", { name: "Как пользоваться", exact: true }).click();
+  await expect(page.locator(".account-menu")).not.toHaveAttribute("open");
   const guide = page.locator("#guide");
   await expect(guide).toBeVisible();
   await expect(page.locator("nav a.active")).toHaveCount(0);
-  await expect(guide.locator(".gd-q")).toHaveCount(18);
-  await expect(guide.locator(".gd-q-side.live")).toHaveCount(4);
+  await expect(guide.locator(".gd-q")).toHaveCount(19);
+  await expect(guide.locator(".gd-q-side.live")).toHaveCount(3);
   await expect(guide.getByText("Выберите вопрос слева")).toBeVisible();
 
   await guide.locator('.gd-q[data-guide="assign"]').click();
@@ -32,7 +32,7 @@ test("по адресу #guide вопросы слева, прогон про п
   await expect(guide.locator(".gd-kc-band")).toHaveClass(/gd-spot/);
   await guide.getByRole("button", { name: "Дальше" }).click();
   // Шаг 2: фраза печатается сама, стрелка подсвечивается только после набора.
-  await expect(guide.locator(".gd-cap-text")).toHaveText("Ане — прислать смету по Хабу до пятницы", { timeout: 5000 });
+  await expect(guide.locator(".gd-cap-text")).toHaveText("Ане — прислать смету по Хабу сегодня", { timeout: 5000 });
   await expect(guide.locator(".gd-cap-send")).toHaveClass(/gd-spot/);
   await guide.locator(".gd-cap-send").click();
   await expect(guide.locator(".gd-entry.new .gd-tag.assign")).toHaveText("Аня · ждёт ответа");
@@ -47,7 +47,7 @@ test("по адресу #guide вопросы слева, прогон про п
   await expect(count).toHaveText("шаг 5 из 8");
   await guide.getByRole("button", { name: "Дальше" }).click();
   await guide.getByRole("button", { name: "Дальше" }).click();
-  await expect(guide.locator(".gd-kc-deed input")).toHaveValue("Прислать смету по Хабу до пятницы");
+  await expect(guide.locator(".gd-kc-deed input")).toHaveValue("Прислать смету по Хабу сегодня");
   await guide.getByRole("button", { name: "Дальше" }).click();
   await expect(count).toHaveText("шаг 8 из 8");
   // Пройдено: галочка в списке сразу, в конце — выход из обучения.
@@ -63,16 +63,18 @@ test("по адресу #guide вопросы слева, прогон про п
 });
 
 test("по адресу вопроса прогон открыт сразу; «Попробовать по-настоящему» уносит фразу в поле, «Открыть раздел» ведёт в раздел", async ({ page }) => {
-  await page.goto("/#guide?q=outcome");
+  await page.goto("/#guide?q=todo");
   const guide = page.locator("#guide");
-  await expect(guide.locator(".gd-p-title")).toHaveText("Как записать результат");
+  await expect(guide.locator(".gd-p-title")).toHaveText("Как завести дело");
+  await guide.locator(".gd-cap-text").click();
   await expect(guide.locator(".gd-cap-send")).toHaveClass(/gd-spot/, { timeout: 5000 });
   await guide.locator(".gd-cap-send").click();
   await guide.getByRole("button", { name: "Дальше" }).click();
   await guide.getByRole("button", { name: "Дальше" }).click();
+  await guide.locator(".gd-entry.new .gd-check").click();
   await guide.getByRole("button", { name: "Попробовать по-настоящему" }).click();
   await expect(page.locator("#today")).toBeVisible();
-  await expect(page.getByLabel("Новая запись")).toContainText("Починил ретрай в очереди уведомлений");
+  await expect(page.getByLabel("Новая запись")).toContainText("Оплатить хостинг сегодня");
 
   // Вопрос без прогона — шаги списком и кнопка в раздел.
   await page.goto("/#guide");
@@ -93,7 +95,11 @@ test("по адресу вопроса прогон открыт сразу; «�
 
 test("на телефоне сначала список, потом прогон с «‹ Вопросы», строка шага видна целиком", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 780 });
-  await page.goto("/#guide");
+  await page.goto("/#today");
+  await expect(page.locator(".capture-foot")).toHaveCSS("border-top-width", "0px");
+  await page.getByLabel("Учётная запись").click();
+  await page.locator(".account-menu").getByRole("link", { name: "Как пользоваться", exact: true }).click();
+  await expect(page.locator(".account-menu")).not.toHaveAttribute("open");
   const guide = page.locator("#guide");
   await expect(guide.locator(".gd-side")).toBeVisible();
   await expect(guide.locator(".gd-main")).toBeHidden();
@@ -102,6 +108,10 @@ test("на телефоне сначала список, потом прогон
   await expect(guide.locator(".gd-p-title")).toHaveText("Как завести дело");
   // Строка шага видна на экране целиком, хотя копия интерфейса выше экрана.
   await expect(guide.locator(".gd-rail")).toBeInViewport({ ratio: 1 });
+  // Нижний док не перекрывает текст и кнопки шага.
+  const rail = await guide.locator(".gd-rail").boundingBox();
+  const dock = await page.locator("nav.dock").boundingBox();
+  expect(rail.y + rail.height).toBeLessThanOrEqual(dock.y - 8);
   // Страница не шире экрана.
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await guide.getByRole("button", { name: "‹ Вопросы" }).click();
@@ -129,7 +139,7 @@ test("демо идёт само: курсор нажимает, пауза ос
   await expect(guide.locator(".gd-cursor")).toHaveClass(/on/);
   // Поле нажимает курсор, фраза печатается сама, стрелку нажимает курсор.
   await playTo(page, count, "демо · шаг 2 из 6");
-  await expect(guide.locator(".gd-cap-text")).toHaveText("Оплатить хостинг до пятницы", { timeout: 5000 });
+  await expect(guide.locator(".gd-cap-text")).toHaveText("Оплатить хостинг сегодня", { timeout: 5000 });
   await playTo(page, count, "демо · шаг 3 из 6");
   await expect(guide.locator(".gd-entry.new")).toBeVisible();
   // Пауза останавливает ход, «Продолжить» пускает дальше.
@@ -166,4 +176,19 @@ test("ссылка с «&demo=1» сразу показывает демо, и �
   await expect(page).toHaveURL(/#guide\?q=assign&demo=1$/);
   // Демо идёт в копии: в журнале ничего не прибавилось.
   expect(await (await page.request.get("/api/entries")).text()).toBe(entriesBefore);
+});
+
+test("карточка в инструкции открывает параметры; все цели шагов существуют", async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/#guide?q=fix');
+  const guide = page.locator('#guide');
+  await guide.locator('.gd-entry.new .gd-title').click();
+  await expect(guide.locator('.gd-props')).toHaveCount(0);
+  await guide.locator('.gd-card-params').click();
+  await expect(guide.locator('.gd-prop-due')).toBeVisible();
+  await guide.getByRole('button', { name: 'Дальше' }).click();
+  await guide.getByRole('button', { name: 'Дальше' }).click();
+  await expect(guide.getByRole('button', { name: 'Попробовать по-настоящему' })).toBeVisible();
+  expect(errors).toEqual([]);
 });

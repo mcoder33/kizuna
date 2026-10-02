@@ -49,12 +49,13 @@ test('живой прогон: каждый шаг с текстом, целью
   }
 });
 
-test('вопрос про поручение говорит правду: общий круг, имя в фразе, «@» не поручает', () => {
+test('поручение требует явного обращения в начале, упоминание внутри фразы только зовёт', () => {
   const text = GUIDES.assign.steps.map((step) => step.say).join(' ');
   assert.match(text, /общего круга/);
   assert.match(text, /в самой фразе/);
-  assert.match(text, /«@Аня»[^.]*призыв/);
-  assert.equal(GUIDES.assign.steps.at(-1).tryText, 'Ане — прислать смету по Хабу до пятницы');
+  assert.match(text, /«@Аня — …» в начале открытого дела — явное поручение/);
+  assert.match(text, /тире или двоеточие/);
+  assert.equal(GUIDES.assign.steps.at(-1).tryText, 'Ане — прислать смету по Хабу сегодня');
 });
 
 // Цель подсветки ищется в копии интерфейса по классам. Опечатка в классе не
@@ -94,3 +95,13 @@ test('демо держит шаг, пока текст читают, и вес�
     assert.ok(seconds <= 75, `${id}: демо ${Math.round(seconds)} с`);
   }
 });
+
+ test('инструкция покрывает актуальные возможности и не предлагает выбор типа или голос', () => {
+  for (const id of ['subtasks', 'focus', 'filters', 'report', 'ask', 'lessons']) assert.ok(GUIDES[id]);
+  assert.equal(GUIDES.voice, undefined);
+  assert.equal(GUIDES.outcome, undefined);
+  const scene = readFileSync(new URL('../public/guide.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(scene, /gd-type-dots|gd-cap-voice|gd-choice/);
+  assert.equal(GUIDES.report.go, '#done');
+  assert.equal(GUIDES.ask.go, '#memory');
+ });

@@ -985,7 +985,6 @@ body.capture-large-open::before {
   font-size: 12px;
   margin-top: 10px;
   padding-top: 11px;
-  border-top: 1px solid var(--hairline);
 }
 #capture-submit,
 .memory button {
@@ -6597,7 +6596,6 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 96px; }
    Дата с фазой суток, бриф и вопрос в поле меняются утром, днём, вечером и
    ночью. Под полем — вкладки «День» и «Закрыто», у каждой своя полоса дней. */
 .today-page .hero { max-width: var(--capture-width, 800px); margin: 0 auto 8px; }
-.capture-hint { font-size: 11.5px; color: var(--n-66); }
 /* Подсказка слева, «увеличить» и отправка — справа, рядом. */
 .capture-foot #capture-expand { margin-left: auto; }
 /* Заголовок полки: тихие капсы и тонкая линия до края. «Сделано» зелёный —
@@ -8203,6 +8201,7 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0 0 96px; }
 .entry.auto-done { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: 9px; padding: 6px 8px; font-size: 12.5px; }
 .entry.auto-done .entry-title { font-weight: 500; color: var(--n-62); text-decoration: line-through; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .entry.completed .entry-title { color: var(--n-62); text-decoration: line-through; }
+#done .entry-title { text-decoration: none; }
 .entry-meta .tag.time { background: none; color: var(--n-62); font-variant-numeric: tabular-nums; }
 .entry-meta .tag.auto { background: none; color: var(--green); }
 .entry-people { display: inline-flex; margin-left: 2px; }

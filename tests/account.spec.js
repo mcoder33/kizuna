@@ -31,13 +31,13 @@ test("неверный пароль объясняет отказ и не пус
   await context.close();
 });
 
-test("тема переключается из шапки, переживает перезагрузку и хранится в учётной записи", async ({ page }) => {
+test("тема переключается из шапки, переживает перезагрузку и хранится в учётной записи", async ({ page, request }) => {
+  await request.put("/api/settings", { data: { theme: "light" } });
   await page.goto("/");
   const root = page.locator("html");
   const toggle = page.locator("#theme-toggle");
 
-  // Обход по кругу: как в системе → светлая → тёмная.
-  await toggle.click();
+  // Светлая → тёмная за одно нажатие.
   await expect(root).toHaveAttribute("data-theme", "light");
   await toggle.click();
   await expect(root).toHaveAttribute("data-theme", "dark");
@@ -59,16 +59,14 @@ test("тема переключается из шапки, переживает 
   await page.locator("#setting-theme").selectOption("light");
   await expect(root).toHaveAttribute("data-theme", "light");
 
-  // Круг замыкается: светлая → тёмная → снова как в системе. Заодно возвращаем
-  // учётную запись в исходное состояние, чтобы следующие проверки видели то же,
-  // что и человек, впервые открывший приложение.
+  // Только два режима: светлая → тёмная → светлая.
   await toggle.click();
   await expect(root).toHaveAttribute("data-theme", "dark");
   await toggle.click();
-  await expect(root).not.toHaveAttribute("data-theme", /.*/);
+  await expect(root).toHaveAttribute("data-theme", "light");
   await expect
     .poll(async () => (await (await page.request.get("/api/settings")).json()).settings.theme)
-    .toBe("system");
+    .toBe("light");
 });
 
 test("администратор видит заявку, одобряет её и может заблокировать", async ({ page, request }) => {
@@ -229,8 +227,33 @@ test("выбор темы в настройках запоминается за 
   const [red, green, blue] = background.match(/\d+/g).map(Number);
   expect((red + green + blue) / 3).toBeGreaterThan(200, "светлая тема — светлый фон");
 
-  await page.locator("#setting-theme").selectOption("system");
+  await page.locator("#setting-theme").selectOption("dark");
   await expect
     .poll(async () => (await (await request.get("/api/settings")).json()).settings.theme)
-    .toBe("system");
+    .toBe("dark");
+  await page.evaluate(() => localStorage.removeItem("pagent.theme"));
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+});
+
+test("без выбора и со старым системным режимом тема светлая даже на тёмном устройстве", async ({ page, request }) => {
+  await request.put('/api/settings', { data: { theme: 'system' } });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.goto('/');
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const legacy of [null, 'system']) {
+      await page.evaluate(value => value === null ? localStorage.removeItem('pagent.theme') : localStorage.setItem('pagent.theme', value), legacy);
+      await page.reload();
+      await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+      await expect(page.locator('#theme-toggle')).toHaveAttribute('title', 'Тема: светлая');
+      expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(255, 255, 255)');
+    }
+    await page.goto('/#settings');
+    await expect(page.locator('#setting-theme option')).toHaveCount(2);
+    await expect(page.locator('#setting-theme')).toHaveValue('light');
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  }
 });

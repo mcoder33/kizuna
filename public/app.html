@@ -83,6 +83,7 @@
           <p id="account-role" class="account-role"></p>
           <a id="account-admin-link" href="#admin" hidden>Пользователи</a>
           <a href="#settings">Настройки и учётная запись</a>
+          <a id="account-guide-link" href="#guide">Как пользоваться</a>
           <button id="account-mac-download" class="linklike" type="button" aria-haspopup="dialog" aria-controls="mac-download-dialog">Скачать для Mac</button>
           <button id="account-logout" class="linklike" type="button">Выйти</button>
         </div>
@@ -108,7 +109,6 @@
                  оформляется прямо во время набора, поэтому это не textarea. -->
             <div id="capture-shots" class="capture-shots" hidden></div>
             <div class="capture-foot">
-              <span class="capture-hint" id="capture-hint">Ctrl+Enter — отправить, Enter — новая строка</span>
               <button
                 id="capture-expand"
                 class="capture-expand"
@@ -381,7 +381,6 @@
             <label class="setting" for="setting-theme"
               ><span class="setting-name">Тема оформления</span
               ><select id="setting-theme">
-                <option value="system">Как в системе</option>
                 <option value="light">Светлая</option>
                 <option value="dark">Тёмная</option>
               </select></label
