@@ -57,6 +57,29 @@ test('manifest rejects invalid IDs, foreign URLs, long photo captions and extra 
   }
 });
 
+test('manifest accepts the primary and legacy HTTPS origins in links, images and buttons', () => {
+  for (const origin of ['https://yourkizuna.com', SITE]) {
+    const manifest = { ...note, url: `${origin}/`, image: `${origin}/public/release.png`,
+      buttons: [{ text: 'Открыть', url: `${origin}/login` }] };
+    const result = prepareRelease(manifest);
+    assert.equal(result.payload.photo, manifest.image);
+    assert.ok(result.payload.caption.endsWith(manifest.url));
+    assert.deepEqual(result.payload.reply_markup.inline_keyboard, [manifest.buttons]);
+  }
+});
+
+test('manifest rejects HTTP, foreign hosts, credentials and nondefault ports for both domains', () => {
+  for (const origin of ['http://yourkizuna.com', 'http://kizuna.agent-hub.space', 'https://evil.example',
+    'https://yourkizuna.com.evil.example', 'https://evil-yourkizuna.com', 'https://kizuna.agent-hub.space.evil.example',
+    'https://yourkizuna.com:444', 'https://kizuna.agent-hub.space:444',
+    'https://user:password@yourkizuna.com', 'https://user:password@kizuna.agent-hub.space']) {
+    for (const manifest of [{ ...note, url: `${origin}/` }, { ...note, image: `${origin}/public/release.png` },
+      { ...note, buttons: [{ text: 'Открыть', url: `${origin}/` }] }]) {
+      assert.throws(() => prepareRelease(manifest), { code: 'invalid_manifest_url' });
+    }
+  }
+});
+
 test('dry run does not create receipts, mutate source DB, or call Telegram', async t => {
   const f = fixture(t); const before = fs.readFileSync(f.filename);
   const report = await f.run({ send: false });

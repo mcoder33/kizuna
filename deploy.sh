@@ -69,7 +69,7 @@ REMOTE_HEALTH
 echo "→ проверяю снаружи"
 code=000
 for attempt in 1 2 3; do
-  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://kizuna.agent-hub.space/login || true)
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://yourkizuna.com/login || true)
   [ "$code" = 200 ] && break
   sleep 2
 done
@@ -77,7 +77,7 @@ if [ "$code" != 200 ]; then
   echo "внешняя проверка /login не прошла: HTTP $code" >&2
   exit 1
 fi
-echo "   https://kizuna.agent-hub.space/login → HTTP 200"
+echo "   https://yourkizuna.com/login → HTTP 200"
 
 # GitHub Actions passes its immutable commit SHA. Record only after both health
 # checks pass, outside the rsync-managed application directory.

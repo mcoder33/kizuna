@@ -99,9 +99,10 @@ jobs:
             const { RELEASE_CARDS, applySeasonalDefault } = await import('./server/release-cards.js');
             manifest = applySeasonalDefault(manifest, true);
             const images = manifest.seasonalImage ? RELEASE_CARDS : (manifest.image ? [manifest.image] : []);
+            const publicOrigins = new Set(['https://yourkizuna.com', 'https://kizuna.agent-hub.space']);
             for (const image of images) {
               const url = new URL(image);
-              if (url.hostname !== 'kizuna.agent-hub.space' || url.protocol !== 'https:') {
+              if (!publicOrigins.has(url.origin) || url.username || url.password) {
                 throw new Error('Изображение релиза должно размещаться на публичном домене Кизуны');
               }
             }

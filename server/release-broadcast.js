@@ -13,7 +13,7 @@ export class ReleaseBroadcastError extends Error {
 const fail = code => { throw new ReleaseBroadcastError(code); };
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const chatHash = chat => hash(`telegram-chat:${chat}`);
-const SITE = 'https://kizuna.agent-hub.space';
+const PUBLIC_ORIGINS = new Set(['https://yourkizuna.com', 'https://kizuna.agent-hub.space']);
 
 function cleanText(value, limit) {
   if (typeof value !== 'string' || !value.trim() || value.length > limit || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(value)) fail('invalid_manifest');
@@ -22,7 +22,7 @@ function cleanText(value, limit) {
 function publicUrl(value, image = false) {
   if (typeof value !== 'string' || value.length > 500) fail('invalid_manifest_url');
   let url; try { url = new URL(value); } catch { fail('invalid_manifest_url'); }
-  if (url.origin !== SITE || url.username || url.password || (image && !url.pathname.startsWith('/public/'))) fail('invalid_manifest_url');
+  if (!PUBLIC_ORIGINS.has(url.origin) || url.username || url.password || (image && !url.pathname.startsWith('/public/'))) fail('invalid_manifest_url');
   return url.href;
 }
 
