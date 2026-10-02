@@ -785,3 +785,35 @@ New capture jobs retain a server-generated zone and reference instant in `overri
 
 
 The header language selector is available in the app and on guest pages. Guest choices are validated and kept only in the current browser session; they apply to landing, authentication, and downloads. New registrations retain the selected language for both active and pending accounts. Logging into an existing account keeps its own language preference. Authenticated app HTML supplies validated account language attributes before settings load, avoiding a temporary switch to the browser language.
+
+### Ограничения безопасности
+
+Вход и регистрация вычисляют пароль асинхронно. Перед вычислением действует
+ограничение на IP (60 запросов/минуту), пару IP/почта (8/минуту), регистрацию
+с одного IP (10/минуту) и общий поток (120/минуту). Окно — 60 секунд;
+таблица ограничена 4096 ключами. Одновременно допускаются четыре операции
+scrypt без очереди; отключение клиента не освобождает работающий scrypt.
+Ошибки чужого входа не блокируют аккаунт целиком. Административная блокировка
+и второй фактор продолжают действовать. Смена пароля, отключение второго
+фактора и выпуск новых резервных кодов требуют пароль и, при включённом 2FA,
+код аутентификатора или одноразовый резервный код.
+
+Платный разбор и ответы используют общий gate на исполнении: 30 вызовов
+в минуту на пользователя, один одновременно на пользователя, четыре
+одновременно и 120 в минуту на сервер. Очередь, повторы и Telegram используют
+тот же gate; постановка в очередь не расходует его второй раз. Бюджет
+перепроверяется перед исполнением. При ограничении запись сохраняется с raw
+и исходным временным контекстом, используя fallback. Пустой месячный лимит
+по-прежнему означает отсутствие заданного потолка; учёт неполных цен
+провайдера не является точной финансовой гарантией.
+
+`PAGENT_PUBLIC_URL` задаёт канонический адрес HTTPS; HTTP разрешён только для
+локальной разработки. В production Caddy соединяется с приложением через
+loopback: только этому proxy доверяются адрес клиента и протокол. Сырые
+`X-Forwarded-Host` не формируют ссылки. Secure cookies и HSTS на год включаются
+для канонического HTTPS или HTTPS через доверенный proxy. HSTS не включает
+preload или все поддомены. Для браузерных изменений проверяются Origin и
+Fetch Metadata; разрешены канонический адрес и прежний
+`https://kizuna.agent-hub.space`. Клиенты без браузерных заголовков сохраняют
+совместимость с авторизованным API. Auth audit сохраняет эффективный IP,
+пароли и коды в него не записываются; истёкшие сессии очищаются раз в час.

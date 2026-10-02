@@ -2403,7 +2403,8 @@ export const catalogs = {
     "снять подсветку": "снять подсветку",
     "снять фильтр": "снять фильтр",
     "только открытые": "только открытые",
-    "только просроченные": "только просроченные"
+    "только просроченные": "только просроченные",
+    "Код из приложения или резервный код": "Код из приложения или резервный код"
   },
   "en": {
     " {value1} мин": " {value1} min",
@@ -4806,7 +4807,8 @@ export const catalogs = {
     "снять подсветку": "clear highlighting",
     "снять фильтр": "clear filter",
     "только открытые": "open only",
-    "только просроченные": "overdue only"
+    "только просроченные": "overdue only",
+    "Код из приложения или резервный код": "Authenticator code or recovery code"
   },
   "es": {
     " {value1} мин": " {value1} min",
@@ -7210,7 +7212,8 @@ export const catalogs = {
     "снять подсветку": "quitar el resaltado",
     "снять фильтр": "quitar el filtro",
     "только открытые": "solo abiertas",
-    "только просроченные": "solo atrasadas"
+    "только просроченные": "solo atrasadas",
+    "Код из приложения или резервный код": "Código de autenticación o código de recuperación"
   },
   "pt-BR": {
     " {value1} мин": " {value1} min",
@@ -9614,7 +9617,8 @@ export const catalogs = {
     "снять подсветку": "remover o destaque",
     "снять фильтр": "remover o filtro",
     "только открытые": "somente abertas",
-    "только просроченные": "somente atrasadas"
+    "только просроченные": "somente atrasadas",
+    "Код из приложения или резервный код": "Código do autenticador ou código de recuperação"
   },
   "de": {
     " {value1} мин": " {value1} Min.",
@@ -12017,7 +12021,8 @@ export const catalogs = {
     "снять подсветку": "Hervorhebung aufheben",
     "снять фильтр": "Filter aufheben",
     "только открытые": "nur offene",
-    "только просроченные": "nur überfällige"
+    "только просроченные": "nur überfällige",
+    "Код из приложения или резервный код": "Authentifizierungscode oder Wiederherstellungscode"
   },
   "fr": {
     " {value1} мин": " {value1} min",
@@ -14421,7 +14426,8 @@ export const catalogs = {
     "снять подсветку": "retirer la mise en évidence",
     "снять фильтр": "retirer le filtre",
     "только открытые": "ouvertes uniquement",
-    "только просроченные": "en retard uniquement"
+    "только просроченные": "en retard uniquement",
+    "Код из приложения или резервный код": "Code d’authentification ou code de récupération"
   },
   "ja": {
     " {value1} мин": " {value1}分",
@@ -16823,6 +16829,7 @@ export const catalogs = {
     "снять подсветку": "強調表示を解除",
     "снять фильтр": "フィルターを解除",
     "только открытые": "未完了のみ",
-    "только просроченные": "期限超過のみ"
+    "только просроченные": "期限超過のみ",
+    "Код из приложения или резервный код": "認証アプリのコードまたはリカバリーコード"
   }
 };

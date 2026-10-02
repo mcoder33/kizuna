@@ -41,6 +41,39 @@ export function verifyPassword(password, stored) {
   } catch { return false; }
 }
 
+// HTTP callers use asynchronous scrypt under their admission gate. Existing
+// synchronous exports remain for offline fixtures, never the public routes.
+let passwordWorkActive = 0;
+const PASSWORD_WORK_LIMIT = 4;
+function derivePassword(password, salt, length, options) {
+  if (passwordWorkActive >= PASSWORD_WORK_LIMIT) return Promise.reject(Object.assign(new Error('Password work busy'), { code: 'auth_busy' }));
+  passwordWorkActive++;
+  return new Promise((resolve, reject) => {
+    try {
+      crypto.scrypt(password.normalize('NFKC'), salt, length, options, (error, key) => {
+        passwordWorkActive--; error ? reject(error) : resolve(key);
+      });
+    } catch (error) { passwordWorkActive--; reject(error); }
+  });
+}
+export async function hashPasswordAsync(password) {
+  const salt = crypto.randomBytes(SCRYPT.saltLength);
+  const { N, r, p } = SCRYPT;
+  const key = await derivePassword(password, salt, SCRYPT.keyLength, { N, r, p, maxmem: 256 * 1024 * 1024 });
+  return `scrypt$${N}$${r}$${p}$${salt.toString('base64')}$${key.toString('base64')}`;
+}
+export async function verifyPasswordAsync(password, stored) {
+  if (typeof password !== 'string' || password.length > PASSWORD_MAX_LENGTH || typeof stored !== 'string') return false;
+  const parts = stored.split('$');
+  if (parts.length !== 6 || parts[0] !== 'scrypt') return false;
+  const [, N, r, p, salt, hash] = parts;
+  try {
+    const expected = Buffer.from(hash, 'base64');
+    const key = await derivePassword(password, Buffer.from(salt, 'base64'), expected.length, { N: Number(N), r: Number(r), p: Number(p), maxmem: 256 * 1024 * 1024 });
+    return crypto.timingSafeEqual(key, expected);
+  } catch (error) { if (error?.code === 'auth_busy') throw error; return false; }
+}
+
 // ── base32 (RFC 4648) ───────────────────────────────────────────────────────
 // Приложения-аутентификаторы принимают секрет только в этом виде, а в
 // стандартной библиотеке его нет.

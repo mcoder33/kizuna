@@ -3,6 +3,8 @@
 // цвет календаря. Токен обновления хранится шифрованно вместе с учётной
 // записью; access-токен живёт час и перевыпускается по мере надобности.
 import { describeRrule } from './ics.js';
+import { readBoundedBody, withDeadline, externalRequestError } from './safe-http.js';
+import { safeExternalUrl } from '../public/safe-url.js';
 
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -12,17 +14,18 @@ const API_URL = 'https://www.googleapis.com/calendar/v3';
 // человека через согласие Google гонять не хочется.
 export const GOOGLE_SCOPES = ['https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/calendar.events'];
 
-export function createGoogleCalendarClient({ fetch = globalThis.fetch, timeoutMs = 20000 } = {}) {
-  async function call(url, { method = 'GET', body = null, accessToken = null, form = false } = {}) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
+export function createGoogleCalendarClient({ fetch = globalThis.fetch, timeoutMs = 20000, maxResponseBytes = 4 * 1024 * 1024 } = {}) {
+  async function call(url, { method = 'GET', body = null, accessToken = null, form = false, signal: parentSignal, budget } = {}) {
+    return withDeadline(async signal => {
+      if (budget && budget.remaining <= 0) throw externalRequestError('response_too_large');
       const response = await fetch(url, {
-        method, signal: controller.signal,
+        method, signal, redirect: 'error',
         headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...(body ? { 'Content-Type': form ? 'application/x-www-form-urlencoded' : 'application/json' } : {}) },
         body: body ? (form ? new URLSearchParams(body).toString() : JSON.stringify(body)) : undefined,
       });
-      const text = await response.text();
+      const bytes = await readBoundedBody(response, { maxBytes: Math.min(maxResponseBytes, budget?.remaining ?? maxResponseBytes), signal });
+      if (budget) budget.remaining -= bytes.length;
+      const text = bytes.toString('utf8');
       let data = null;
       try { data = text ? JSON.parse(text) : null; } catch { data = null; }
       if (!response.ok) {
@@ -35,7 +38,7 @@ export function createGoogleCalendarClient({ fetch = globalThis.fetch, timeoutMs
         throw error;
       }
       return data;
-    } finally { clearTimeout(timer); }
+    }, { timeoutMs, signal: parentSignal });
   }
 
   function authorizeUrl({ clientId, redirectUri, state }) {
@@ -53,15 +56,22 @@ export function createGoogleCalendarClient({ fetch = globalThis.fetch, timeoutMs
   }
 
   async function listCalendars({ accessToken }) {
+    return withDeadline(async signal => {
+    const budget = { remaining: 16 * 1024 * 1024 };
+    const tokens = new Set();
+    let pages = 0;
     const out = [];
     let pageToken = null;
     do {
+      if (++pages > 40 || tokens.has(pageToken)) throw externalRequestError('response_too_large');
+      tokens.add(pageToken);
       const params = new URLSearchParams({ minAccessRole: 'reader', showHidden: 'false', ...(pageToken ? { pageToken } : {}) });
-      const data = await call(`${API_URL}/users/me/calendarList?${params}`, { accessToken });
+      const data = await call(`${API_URL}/users/me/calendarList?${params}`, { accessToken, signal, budget });
       for (const item of data?.items || []) out.push({ id: item.id, name: item.summaryOverride || item.summary || item.id, color: item.backgroundColor || null, primary: Boolean(item.primary), writable: ['owner', 'writer'].includes(item.accessRole), selected: item.selected !== false });
       pageToken = data?.nextPageToken || null;
     } while (pageToken);
     return out;
+    }, { timeoutMs });
   }
 
   // Момент события: dateTime — со временем (с пояском в строке), date — весь
@@ -73,9 +83,9 @@ export function createGoogleCalendarClient({ fetch = globalThis.fetch, timeoutMs
     return null;
   }
   function joinUrlOf(item) {
-    if (item.hangoutLink) return item.hangoutLink;
+    if (safeExternalUrl(item.hangoutLink)) return safeExternalUrl(item.hangoutLink);
     const video = (item.conferenceData?.entryPoints || []).find(point => point.entryPointType === 'video');
-    return video?.uri || null;
+    return safeExternalUrl(video?.uri);
   }
 
   const STATUS = { accepted: 'accepted', declined: 'declined', tentative: 'tentative', needsAction: 'needs-action' };
@@ -88,13 +98,13 @@ export function createGoogleCalendarClient({ fetch = globalThis.fetch, timeoutMs
   }
   // Экземпляры повторов приходят без правила: оно у серии. Серия читается
   // один раз на синхронизацию, не больше сорока штук — больше в окне не бывает.
-  async function repeatOf(accessToken, calendarId, item, cache) {
+  async function repeatOf(accessToken, calendarId, item, cache, signal, budget) {
     if (!item.recurringEventId) return null;
     if (!cache.has(item.recurringEventId)) {
       let text = 'Повторяется';
       if (cache.size < 40) {
         try {
-          const master = await call(`${API_URL}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(item.recurringEventId)}`, { accessToken });
+          const master = await call(`${API_URL}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(item.recurringEventId)}`, { accessToken, signal, budget });
           const rrule = (master?.recurrence || []).find(line => /^RRULE:/i.test(line));
           text = rrule ? describeRrule(rrule.slice(6)) || text : text;
         } catch {}
@@ -105,12 +115,18 @@ export function createGoogleCalendarClient({ fetch = globalThis.fetch, timeoutMs
   }
 
   async function listEvents({ accessToken, calendarId, from, to }) {
+    return withDeadline(async signal => {
+    const budget = { remaining: 16 * 1024 * 1024 };
+    const tokens = new Set();
+    let pages = 0;
     const out = [];
     const series = new Map();
     let pageToken = null;
     do {
+      if (++pages > 40 || tokens.has(pageToken)) throw externalRequestError('response_too_large');
+      tokens.add(pageToken);
       const params = new URLSearchParams({ singleEvents: 'true', orderBy: 'startTime', maxResults: '250', timeMin: from.toISOString(), timeMax: to.toISOString(), ...(pageToken ? { pageToken } : {}) });
-      const data = await call(`${API_URL}/calendars/${encodeURIComponent(calendarId)}/events?${params}`, { accessToken });
+      const data = await call(`${API_URL}/calendars/${encodeURIComponent(calendarId)}/events?${params}`, { accessToken, signal, budget });
       for (const item of data?.items || []) {
         const start = moment(item.start), end = moment(item.end);
         if (!start || !end) continue;
@@ -127,18 +143,19 @@ export function createGoogleCalendarClient({ fetch = globalThis.fetch, timeoutMs
           busy: item.transparency !== 'transparent' && item.status !== 'cancelled',
           cancelled: item.status === 'cancelled',
           joinUrl: joinUrlOf(item),
-          url: item.htmlLink || null,
+          url: safeExternalUrl(item.htmlLink),
           attendees: attendeesOf(item),
           organizer: item.organizer ? { email: String(item.organizer.email || '').toLowerCase(), name: item.organizer.displayName || null } : null,
-          repeat: await repeatOf(accessToken, calendarId, item, series),
+          repeat: await repeatOf(accessToken, calendarId, item, series, signal, budget),
           sequence: Number(item.sequence) || 0,
           lastModified: item.updated || null,
-          etag: item.etag || null, href: item.htmlLink || null,
+          etag: item.etag || null, href: safeExternalUrl(item.htmlLink),
         });
       }
       pageToken = data?.nextPageToken || null;
     } while (pageToken);
     return out;
+    }, { timeoutMs });
   }
 
   // Повтор — строками RRULE и EXDATE, как в iCalendar. У повторяющегося
@@ -158,14 +175,14 @@ export function createGoogleCalendarClient({ fetch = globalThis.fetch, timeoutMs
   }
   async function insertEvent({ accessToken, calendarId, event }) {
     const data = await call(`${API_URL}/calendars/${encodeURIComponent(calendarId)}/events`, { method: 'POST', accessToken, body: eventBody(event) });
-    return { id: data.id, href: data.htmlLink || null, etag: data.etag || null };
+    return { id: data.id, href: safeExternalUrl(data.htmlLink), etag: data.etag || null };
   }
   // Обновление своего события целиком (PUT): стёртое снаружи — 404/410 —
   // возвращается как missing, чтобы вызывающий создал его заново.
   async function updateEvent({ accessToken, calendarId, eventId, event }) {
     try {
       const data = await call(`${API_URL}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, { method: 'PUT', accessToken, body: eventBody(event) });
-      return { id: data.id, href: data.htmlLink || null, etag: data.etag || null };
+      return { id: data.id, href: safeExternalUrl(data.htmlLink), etag: data.etag || null };
     } catch (error) {
       if (error.status === 404 || error.status === 410) return { missing: true };
       throw error;
@@ -181,7 +198,7 @@ export function createGoogleCalendarClient({ fetch = globalThis.fetch, timeoutMs
       body.end = patch.allDay ? { date: patch.endDate } : { dateTime: patch.end.toISOString() };
     }
     const data = await call(`${API_URL}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, { method: 'PATCH', accessToken, body });
-    return { id: data.id, href: data.htmlLink || null, etag: data.etag || null };
+    return { id: data.id, href: safeExternalUrl(data.htmlLink), etag: data.etag || null };
   }
   // Ответ на приглашение: свой участник получает responseStatus и комментарий.
   async function respond({ accessToken, calendarId, eventId, status, comment }) {
@@ -196,7 +213,7 @@ export function createGoogleCalendarClient({ fetch = globalThis.fetch, timeoutMs
   }
   async function moveEvent({ accessToken, calendarId, eventId, destination }) {
     const data = await call(`${API_URL}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}/move?destination=${encodeURIComponent(destination)}`, { method: 'POST', accessToken });
-    return { id: data?.id || eventId, href: data?.htmlLink || null, etag: data?.etag || null };
+    return { id: data?.id || eventId, href: safeExternalUrl(data?.htmlLink), etag: data?.etag || null };
   }
   async function deleteEvent({ accessToken, calendarId, eventId }) {
     try { await call(`${API_URL}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, { method: 'DELETE', accessToken }); }

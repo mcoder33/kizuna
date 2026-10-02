@@ -1,3 +1,4 @@
+import { readBoundedBody, withDeadline } from './safe-http.js';
 import { translate, formatDate } from '../public/i18n.js';
 import { userLocale, localizedDay, localizedRepeat } from './locale.js';
 // Telegram — второй вход в журнал. Написанное или пересланное боту Кизуны
@@ -306,6 +307,8 @@ export function createTelegramService({
   describe = () => null,
   onLink = () => {},
   attachmentLimit = 10 * 1024 * 1024,
+  requestTimeoutMs = 20000,
+  maxResponseBytes = 2 * 1024 * 1024,
   attachmentsPerCapture = 10,
   groupWindowMs = GROUP_QUIET_MS,
   pollTimeoutSeconds = POLL_TIMEOUT_S,
@@ -334,9 +337,11 @@ export function createTelegramService({
       for (const [name, file] of Object.entries(files)) form.append(name, new Blob([file.bytes], { type: file.type }), file.filename);
       request = { body: form };
     }
-    const response = await fetchImpl(`${apiBase().replace(/\/+$/, '')}/bot${key}/${method}`, { method: 'POST', ...request, signal });
+    return withDeadline(async requestSignal => {
+    const response = await fetchImpl(`${apiBase().replace(/\/+$/, '')}/bot${key}/${method}`, { method: 'POST', ...request, signal: requestSignal, redirect: 'error' });
+    const bytes = await readBoundedBody(response, { maxBytes: maxResponseBytes, signal: requestSignal });
     let body = null;
-    try { body = await response.json(); } catch {}
+    try { body = JSON.parse(bytes.toString('utf8')); } catch {}
     if (!body?.ok) {
       const error = new Error(body?.description || `Telegram: HTTP ${response.status}`);
       error.status = body?.error_code || response.status;
@@ -344,16 +349,24 @@ export function createTelegramService({
       throw error;
     }
     return body.result;
+    }, { signal, timeoutMs: method === 'getUpdates' ? ((Number(params.timeout) || 0) + 15) * 1000 : requestTimeoutMs });
   }
   async function download(fileId) {
-    const file = await call('getFile', { file_id: fileId });
-    if (!file?.file_path) throw new Error('no_file_path');
-    if (file.file_size && file.file_size > attachmentLimit) throw Object.assign(new Error('too_large'), { tooLarge: true });
-    const response = await fetchImpl(`${apiBase().replace(/\/+$/, '')}/file/bot${token()}/${file.file_path}`);
-    if (!response.ok) throw new Error(`download_${response.status}`);
-    const bytes = Buffer.from(await response.arrayBuffer());
-    if (bytes.length > attachmentLimit) throw Object.assign(new Error('too_large'), { tooLarge: true });
-    return bytes;
+    try {
+      return await withDeadline(async signal => {
+        const file = await call('getFile', { file_id: fileId }, { signal });
+        if (!file?.file_path || typeof file.file_path !== 'string') throw new Error('no_file_path');
+        const segments = file.file_path.split('/');
+        if (segments.some(part => !part || part === '.' || part === '..' || /[\\\s?#]/.test(part))) throw new Error('invalid_file_path');
+        if (file.file_size && file.file_size > attachmentLimit) throw Object.assign(new Error('too_large'), { tooLarge: true });
+        const response = await fetchImpl(`${apiBase().replace(/\/+$/, '')}/file/bot${token()}/${segments.map(encodeURIComponent).join('/')}`, { signal, redirect: 'error' });
+        if (!response.ok) throw new Error(`download_${response.status}`);
+        return await readBoundedBody(response, { maxBytes: attachmentLimit, signal });
+      }, { timeoutMs: requestTimeoutMs });
+    } catch (error) {
+      if (error.code === 'response_too_large') error.tooLarge = true;
+      throw error;
+    }
   }
   const localeForChat = chatId => userLocale(db, db.prepare('SELECT user_id FROM telegram_links WHERE chat_id=?').get(chatId)?.user_id);
   const say = (chatId, text, replyTo = null, extra = {}) => call('sendMessage', {

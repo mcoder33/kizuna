@@ -20,9 +20,9 @@ for (const name of ['PAGENT_TELEGRAM_BOT_TOKEN', 'PAGENT_TELEGRAM_API_BASE', 'PA
 const NOW = new Date('2031-09-24T09:00:00Z'); // 13:00 в Самаре
 const unix = date => Math.floor(date.getTime() / 1000);
 
-function fixture({ now = () => NOW, databasePath, fake = createFakeTelegram(), telegramOptions = {} } = {}) {
+function fixture({ now = () => NOW, databasePath, fake = createFakeTelegram(), telegramOptions = {}, publicUrl } = {}) {
   const file = databasePath || path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pagent-telegram-')), 'test.sqlite');
-  const app = createApp({ aiService: fakeModelService({ now }), databasePath: file, now, telegramFetch: fake.fetch, telegramOptions: { groupWindowMs: 0, ...telegramOptions } });
+  const app = createApp({ aiService: fakeModelService({ now }), databasePath: file, now, securityOptions: { publicUrl }, telegramFetch: fake.fetch, telegramOptions: { groupWindowMs: 0, ...telegramOptions } });
   return { app, api: authed(app), fake, db: app.database, databasePath: file };
 }
 async function eventually(assertion, timeout = 3000) {
@@ -251,7 +251,7 @@ test('a voice message is kept as a file with a line naming it; an oversized file
 });
 
 test('the reply leads to the record when Kizuna lives at a public https address', async () => {
-  const ctx = fixture();
+  const ctx = fixture({ publicUrl: 'https://kizuna.example.com' });
   await connect(ctx, { headers: { 'X-Forwarded-Proto': 'https', 'X-Forwarded-Host': 'kizuna.example.com' } });
   ctx.app.captureJobWorker.start();
   try {
@@ -401,4 +401,43 @@ test('a Telegram that refuses the picture leaves the bot working and tries again
   try { await eventually(async () => assert.equal((await next.api.get('/api/telegram').expect(200)).body.bot.state, 'ok')); }
   finally { await next.app.telegram.stop(); }
   assert.equal(fake.bot.photos.length, 1);
+});
+
+
+test('Telegram rejects understated streamed files and cancels stalled download bodies', async () => {
+  for (const stalled of [false, true]) {
+    const original = createFakeTelegram();
+    let cancelled = false;
+    const fake = { ...original, fetch: async (url, options = {}) => {
+      assert.equal(options.redirect, 'error');
+      if (url.endsWith('/getFile')) return Response.json({ ok: true, result: { file_size: 1, file_path: 'files/test.bin' } });
+      if (url.includes('/file/bot')) return new Response(new ReadableStream({
+        start(controller) { if (!stalled) { controller.enqueue(new Uint8Array(40)); controller.enqueue(new Uint8Array(40)); } },
+        cancel() { cancelled = true; },
+      }), { headers: { 'Content-Length': '1' } });
+      return original.fetch(url, options);
+    } };
+    const ctx = fixture({ fake, telegramOptions: { attachmentLimit: 64, requestTimeoutMs: 25 } });
+    await connect(ctx);
+    fake.push({ document: { file_id: 'fixture', file_name: 'test.bin', mime_type: 'application/octet-stream', file_size: 1 }, date: unix(NOW) });
+    await deliver(ctx.app);
+    assert.equal(cancelled, true);
+    assert.equal(count(ctx.db, 'capture_attachments'), 0);
+    assert.equal(count(ctx.db, 'captures'), 0);
+    if (!stalled) assert.match(fake.said().at(-1).text, /файлы больше/);
+  }
+});
+
+test('Telegram RPC response size and body deadline apply beyond long polling', async () => {
+  const { createTelegramService } = await import('../server/telegram.js');
+  const db = { prepare: () => ({ get: () => null }) };
+  for (const stalled of [false, true]) {
+    let cancelled = false;
+    const telegram = createTelegramService({ db, token: () => 'fixture', maxResponseBytes: 4, requestTimeoutMs: 15, fetch: async (url, options) => {
+      assert.equal(options.redirect, 'error');
+      return new Response(new ReadableStream({ start(controller) { if (!stalled) controller.enqueue(new Uint8Array(5)); }, cancel() { cancelled = true; } }));
+    } });
+    await assert.rejects(telegram.ensureBot(), error => error.code === (stalled ? 'request_timeout' : 'response_too_large'));
+    assert.equal(cancelled, true);
+  }
 });

@@ -6,12 +6,15 @@
 // без HTTP, здесь — правила и маршруты. Так первое можно проверять само по
 // себе, а второе читать как список решений, а не как смесь того и другого.
 import {
-  PASSWORD_MIN_LENGTH, passwordProblem, hashPassword, verifyPassword,
+  PASSWORD_MIN_LENGTH, passwordProblem, hashPasswordAsync, verifyPasswordAsync,
   generateTotpSecret, verifyTotp, otpauthUri,
   generateRecoveryCodes, hashRecoveryCode, normalizeRecoveryCode,
   newSessionToken, hashToken, sessionCookie, clearedSessionCookie, readCookie, SESSION_COOKIE, SESSION_TTL_MS,
-  normalizeEmail, validEmail, MAX_FAILED_ATTEMPTS, LOCKOUT_MS,
+  normalizeEmail, validEmail,
 } from './auth.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { createAdmission } from './auth-admission.js';
+import { clientAddress } from './security.js';
 import QRCode from 'qrcode';
 import express from 'express';
 import { monthlySpend, writeSettings } from './db.js';
@@ -45,8 +48,11 @@ export function publicUser(row) {
 const PENDING_LIMIT = 50;
 const fail = (res, status, code, message, extra = {}) => res.status(status).json({ error: { code, message, ...extra } });
 
-export function createAccounts({ db, now = () => new Date(), secureCookies = false, audit = () => {}, sessionTtlMs = SESSION_TTL_MS, timeZone = () => 'UTC', onPreferencesChanged = () => {} } = {}) {
+export function createAccounts({ db, now = () => new Date(), secureCookies = false, audit = () => {}, sessionTtlMs = SESSION_TTL_MS, timeZone = () => 'UTC', onPreferencesChanged = () => {}, admissionOptions = {} } = {}) {
   const at = () => now().toISOString();
+  const requestContext = new AsyncLocalStorage();
+  const admission = createAdmission({ now: () => now().getTime(), ...admissionOptions });
+  const logEvent = (database, fields) => logAuthEvent(database, { ...fields, ip: requestContext.getStore()?.ip || null });
   const note = (event) => { try { audit(event); } catch {} };
 
   // ── первая учётная запись ────────────────────────────────────────────────
@@ -55,7 +61,7 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
   // забирает себе журнал, который вёлся до обновления.
   const needsBootstrap = () => countUsers(db) === 0;
 
-  function registerAccount({ email, password, locale, detectedLocale, userAgent = null }) {
+  async function registerAccount({ email, password, locale, detectedLocale, userAgent = null }) {
     const address = normalizeEmail(email);
     if (!validEmail(address)) return { error: [400, 'invalid_email', 'Введите корректный адрес почты.'] };
     const problem = passwordProblem(password);
@@ -63,20 +69,25 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
     for (const [name, value, valid] of [['locale', locale, validLocaleSetting], ['detectedLocale', detectedLocale, value => value === null || validDetectedLocale(value)]]) {
       if (value !== undefined && !valid(value)) return { error: [400, 'invalid_setting', translate(resolveLocale(locale, [detectedLocale]), 'Некорректное значение настройки: {name}.', { name })] };
     }
-    const first = needsBootstrap();
+    let first = needsBootstrap();
     // Регистрация открыта всем, а решает администратор — значит, очередь заявок
     // легко забить и утопить в ней настоящих людей. Больше полусотни
     // нерассмотренных заявок держать незачем: сначала разберите эти.
     if (!first && listUsers(db).filter(user => user.status === 'pending').length >= PENDING_LIMIT) {
-      logAuthEvent(db, { email: address, event: 'register', result: 'queue_full' });
+      logEvent(db, { email: address, event: 'register', result: 'queue_full' });
       return { error: [429, 'too_many_pending', 'Очередь заявок переполнена. Попробуйте позже.'] };
     }
     if (findUserByEmail(db, address)) {
-      logAuthEvent(db, { email: address, event: 'register', result: 'duplicate' });
+      logEvent(db, { email: address, event: 'register', result: 'duplicate' });
       return { error: [409, 'email_taken', 'Такой адрес уже зарегистрирован.'] };
     }
+    const passwordHash = await hashPasswordAsync(password);
+    // Hashing yields: another registration may have completed in the meantime.
+    first = needsBootstrap();
+    if (findUserByEmail(db, address)) return { error: [409, 'email_taken', 'Такой адрес уже зарегистрирован.'] };
+    if (!first && listUsers(db).filter(user => user.status === 'pending').length >= PENDING_LIMIT) return { error: [429, 'too_many_pending', 'Очередь заявок переполнена. Попробуйте позже.'] };
     const user = createUser(db, {
-      email: address, passwordHash: hashPassword(password),
+      email: address, passwordHash,
       role: first ? 'admin' : 'user', status: first ? 'active' : 'pending',
     });
     const preferences = {};
@@ -87,7 +98,7 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
       updateUser(db, user.id, { approved_at: at(), approved_by: user.id });
       adoptOrphanRecords(db, user.id);
     }
-    logAuthEvent(db, { userId: user.id, email: address, event: 'register', result: 'succeeded', detail: first ? 'bootstrap-admin' : null });
+    logEvent(db, { userId: user.id, email: address, event: 'register', result: 'succeeded', detail: first ? 'bootstrap-admin' : null });
     note({ event: 'user_registered', result: 'succeeded', role: first ? 'admin' : 'user' });
     return { user: findUserById(db, user.id), first, userAgent };
   }
@@ -99,8 +110,8 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
     updateUser(db, user.id, { last_login_at: at(), failed_attempts: 0, locked_until: null });
     return token;
   }
-  const setSessionCookie = (res, token) => res.append('Set-Cookie', sessionCookie(token, { secure: secureCookies, maxAgeMs: sessionTtlMs }));
-  const dropSessionCookie = (res) => res.append('Set-Cookie', clearedSessionCookie({ secure: secureCookies }));
+  const setSessionCookie = (res, token) => res.append('Set-Cookie', sessionCookie(token, { secure: secureCookies || requestContext.getStore()?.secure, maxAgeMs: sessionTtlMs }));
+  const dropSessionCookie = (res) => res.append('Set-Cookie', clearedSessionCookie({ secure: secureCookies || requestContext.getStore()?.secure }));
 
   // ── кто перед нами ───────────────────────────────────────────────────────
   // Прикрепляется ко всем запросам, но никого не заворачивает: решение
@@ -136,25 +147,24 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
   // ── вход ─────────────────────────────────────────────────────────────────
   // Порядок проверок выбран так, чтобы по ответу нельзя было перебрать чужие
   // адреса: «нет такого» и «неверный пароль» отвечают одинаково.
-  function login({ email, password, code, userAgent }) {
+  async function login({ email, password, code, userAgent }) {
     const address = normalizeEmail(email);
-    const user = findUserByEmail(db, address);
+    let user = findUserByEmail(db, address);
     const wrong = [401, 'invalid_credentials', 'Неверная почта или пароль.'];
-    if (!user) { hashPassword(String(password || 'x').padEnd(12, 'x')); logAuthEvent(db, { email: address, event: 'login', result: 'unknown_email' }); return { error: wrong }; }
-    if (user.locked_until && user.locked_until > at()) {
-      logAuthEvent(db, { userId: user.id, email: address, event: 'login', result: 'locked' });
-      return { error: [429, 'too_many_attempts', 'Слишком много попыток. Попробуйте позже.'] };
-    }
-    if (!verifyPassword(String(password || ''), user.password_hash)) {
+    if (!user) { await hashPasswordAsync(String(password || 'x').slice(0, 200).padEnd(12, 'x')); logEvent(db, { email: address, event: 'login', result: 'unknown_email' }); return { error: wrong }; }
+    if (!await verifyPasswordAsync(String(password || ''), user.password_hash)) {
       const attempts = (user.failed_attempts || 0) + 1;
-      updateUser(db, user.id, { failed_attempts: attempts, locked_until: attempts >= MAX_FAILED_ATTEMPTS ? new Date(now().getTime() + LOCKOUT_MS).toISOString() : null });
-      logAuthEvent(db, { userId: user.id, email: address, event: 'login', result: 'wrong_password', detail: `attempt ${attempts}` });
+      updateUser(db, user.id, { failed_attempts: attempts, locked_until: null });
+      logEvent(db, { userId: user.id, email: address, event: 'login', result: 'wrong_password', detail: `attempt ${attempts}` });
       note({ event: 'login_failed', result: 'failed' });
       return { error: wrong };
     }
-    if (user.status === 'pending') { logAuthEvent(db, { userId: user.id, email: address, event: 'login', result: 'pending' }); return { error: [403, 'account_pending', 'Заявка ждёт подтверждения администратора.'] }; }
-    if (user.status === 'rejected') { logAuthEvent(db, { userId: user.id, email: address, event: 'login', result: 'rejected' }); return { error: [403, 'account_rejected', 'В доступе отказано.'] }; }
-    if (user.status === 'blocked') { logAuthEvent(db, { userId: user.id, email: address, event: 'login', result: 'blocked' }); return { error: [403, 'account_blocked', user.blocked_reason ? `Доступ закрыт: ${user.blocked_reason}` : 'Доступ закрыт администратором.'] }; }
+    const refreshed = findUserById(db, user.id);
+    if (!refreshed || refreshed.password_hash !== user.password_hash) return { error: wrong };
+    user = refreshed;
+    if (user.status === 'pending') { logEvent(db, { userId: user.id, email: address, event: 'login', result: 'pending' }); return { error: [403, 'account_pending', 'Заявка ждёт подтверждения администратора.'] }; }
+    if (user.status === 'rejected') { logEvent(db, { userId: user.id, email: address, event: 'login', result: 'rejected' }); return { error: [403, 'account_rejected', 'В доступе отказано.'] }; }
+    if (user.status === 'blocked') { logEvent(db, { userId: user.id, email: address, event: 'login', result: 'blocked' }); return { error: [403, 'account_blocked', user.blocked_reason ? `Доступ закрыт: ${user.blocked_reason}` : 'Доступ закрыт администратором.'] }; }
     // Второй фактор проверяется последним: спрашивать код у того, кто не знает
     // пароля, значит подсказывать, что адрес существует.
     if (user.totp_enabled) {
@@ -162,13 +172,13 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
       if (!entered) return { error: [401, 'totp_required', 'Введите код из приложения.'] };
       if (!verifyTotp(user.totp_secret, entered, { at: now().getTime() }) && !consumeRecoveryCode(user, entered)) {
         const attempts = (user.failed_attempts || 0) + 1;
-        updateUser(db, user.id, { failed_attempts: attempts, locked_until: attempts >= MAX_FAILED_ATTEMPTS ? new Date(now().getTime() + LOCKOUT_MS).toISOString() : null });
-        logAuthEvent(db, { userId: user.id, email: address, event: 'login', result: 'wrong_totp' });
+        updateUser(db, user.id, { failed_attempts: attempts, locked_until: null });
+        logEvent(db, { userId: user.id, email: address, event: 'login', result: 'wrong_totp' });
         return { error: [401, 'invalid_totp', 'Код не подошёл.'] };
       }
     }
     const token = issueSession(user, { userAgent });
-    logAuthEvent(db, { userId: user.id, email: address, event: 'login', result: 'succeeded' });
+    logEvent(db, { userId: user.id, email: address, event: 'login', result: 'succeeded' });
     note({ event: 'login', result: 'succeeded' });
     return { token, user: findUserById(db, user.id) };
   }
@@ -183,19 +193,41 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
     const hash = hashRecoveryCode(normalized);
     if (!stored.includes(hash)) return false;
     updateUser(db, user.id, { recovery_codes_json: JSON.stringify(stored.filter(item => item !== hash)) });
-    logAuthEvent(db, { userId: user.id, email: user.email, event: 'recovery_code', result: 'used', detail: `осталось ${stored.length - 1}` });
+    logEvent(db, { userId: user.id, email: user.email, event: 'recovery_code', result: 'used', detail: `осталось ${stored.length - 1}` });
+    return true;
+  }
+
+  async function reauthenticate(req, res, password) {
+    if (!await verifyPasswordAsync(String(password || ''), req.user.password_hash)) { fail(res, 403, 'invalid_credentials', 'Пароль не подошёл.'); return false; }
+    const user = findUserById(db, req.user.id);
+    if (!user || user.password_hash !== req.user.password_hash) { fail(res, 403, 'invalid_credentials', 'Пароль не подошёл.'); return false; }
+    if (user.status !== 'active') { fail(res, 403, 'account_blocked', 'Доступ закрыт администратором.'); return false; }
+    if (user.totp_enabled) {
+      const code = String(req.body?.code || '').trim();
+      if (!code) { fail(res, 401, 'totp_required', 'Введите код из приложения.'); return false; }
+      if (!verifyTotp(user.totp_secret, code, { at: now().getTime() }) && !consumeRecoveryCode(user, code)) { fail(res, 401, 'invalid_totp', 'Код не подошёл.'); return false; }
+    }
     return true;
   }
 
   // ── маршруты ─────────────────────────────────────────────────────────────
   function registerRoutes(app) {
+    const expensiveRoutes = new Set(['/register', '/login', '/password', '/totp/setup', '/totp/enable', '/totp/disable', '/totp/recovery-codes']);
+    app.use('/api/auth', (req, res, next) => {
+      const ip = clientAddress(req);
+      if (req.method !== 'POST' || !expensiveRoutes.has(req.path)) return requestContext.run({ ip, secure: req.secure }, next);
+      const release = admission.enter({ ip, email: normalizeEmail(req.body?.email || req.user?.email || ''), kind: req.path === '/register' ? 'register' : req.path === '/login' ? 'login' : 'reauth' });
+      if (!release) { logAuthEvent(db, { ip, email: normalizeEmail(req.body?.email), event: 'admission', result: 'rate_limited' }); res.set('Retry-After', '60'); return fail(res, 429, 'too_many_attempts', 'Слишком много попыток. Попробуйте позже.'); }
+      res.once('finish', release); res.once('close', release);
+      requestContext.run({ ip, secure: req.secure }, next);
+    });
     // Открытый маршрут: страница входа должна знать, звать ли к регистрации
     // первого администратора и не вошли ли мы уже.
     app.get('/api/auth/state', (req, res) => res.json({ authenticated: Boolean(req.user), needsBootstrap: needsBootstrap(), user: publicUser(req.user) }));
 
-    app.post('/api/auth/register', (req, res, next) => {
+    app.post('/api/auth/register', async (req, res, next) => {
       try {
-        const result = registerAccount({ email: req.body?.email, password: req.body?.password, locale: req.body?.locale, detectedLocale: req.body?.detectedLocale, userAgent: req.get('user-agent') });
+        const result = await registerAccount({ email: req.body?.email, password: req.body?.password, locale: req.body?.locale, detectedLocale: req.body?.detectedLocale, userAgent: req.get('user-agent') });
         if (result.error) return fail(res, ...result.error);
         // Первого администратора незачем заставлять входить ещё раз — он уже
         // доказал, что знает пароль, придумав его минуту назад.
@@ -205,21 +237,21 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
         for (const admin of listUsers(db).filter(user => user.role === 'admin' && user.status === 'active'))
           notify(db, { userId: admin.id, kind: 'signup', lead: 'Новая заявка на вход:', template: { lead: { source: 'Новая заявка на вход:' } }, text: result.user.email, meta: ['доступ открывает администратор'], metaTemplates: [{source:'доступ открывает администратор'}], data: { url: '/#admin' } });
         res.status(201).json({ user: publicUser(result.user), first: false, message: 'Заявка отправлена. Доступ откроет администратор.' });
-      } catch (error) { next(error); }
+      } catch (error) { if (error?.code === 'auth_busy') { res.set('Retry-After', '1'); fail(res, 429, 'too_many_attempts', 'Слишком много попыток. Попробуйте позже.'); } else next(error); }
     });
 
-    app.post('/api/auth/login', (req, res, next) => {
+    app.post('/api/auth/login', async (req, res, next) => {
       try {
-        const result = login({ email: req.body?.email, password: req.body?.password, code: req.body?.code, userAgent: req.get('user-agent') });
+        const result = await login({ email: req.body?.email, password: req.body?.password, code: req.body?.code, userAgent: req.get('user-agent') });
         if (result.error) return fail(res, ...result.error);
         setSessionCookie(res, result.token);
         res.json({ user: publicUser(result.user) });
-      } catch (error) { next(error); }
+      } catch (error) { if (error?.code === 'auth_busy') { res.set('Retry-After', '1'); fail(res, 429, 'too_many_attempts', 'Слишком много попыток. Попробуйте позже.'); } else next(error); }
     });
 
     app.post('/api/auth/logout', (req, res) => {
       if (req.sessionTokenHash) deleteSession(db, req.sessionTokenHash);
-      if (req.user) logAuthEvent(db, { userId: req.user.id, email: req.user.email, event: 'logout', result: 'succeeded' });
+      if (req.user) logEvent(db, { userId: req.user.id, email: req.user.email, event: 'logout', result: 'succeeded' });
       dropSessionCookie(res);
       res.json({ ok: true });
     });
@@ -267,24 +299,26 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
 
     app.post('/api/auth/logout-everywhere', requireAuth, (req, res) => {
       deleteUserSessions(db, req.user.id);
-      logAuthEvent(db, { userId: req.user.id, email: req.user.email, event: 'logout_all', result: 'succeeded' });
+      logEvent(db, { userId: req.user.id, email: req.user.email, event: 'logout_all', result: 'succeeded' });
       dropSessionCookie(res);
       res.json({ ok: true });
     });
 
-    app.post('/api/auth/password', requireAuth, (req, res, next) => {
+    app.post('/api/auth/password', requireAuth, async (req, res, next) => {
       try {
-        if (!verifyPassword(String(req.body?.currentPassword || ''), req.user.password_hash)) return fail(res, 403, 'invalid_credentials', 'Текущий пароль не подошёл.');
         const problem = passwordProblem(req.body?.newPassword);
         if (problem) return fail(res, 400, 'weak_password', problem);
-        updateUser(db, req.user.id, { password_hash: hashPassword(req.body.newPassword) });
+        // Validate the new password before consuming a one-time recovery code.
+        const passwordHash = await hashPasswordAsync(req.body.newPassword);
+        if (!await reauthenticate(req, res, req.body?.currentPassword)) return;
+        updateUser(db, req.user.id, { password_hash: passwordHash });
         // Смена пароля закрывает все прочие входы: если пароль меняют потому,
         // что его подсмотрели, чужая кука не должна пережить эту минуту.
         deleteUserSessions(db, req.user.id);
         setSessionCookie(res, issueSession(findUserById(db, req.user.id), { userAgent: req.get('user-agent') }));
-        logAuthEvent(db, { userId: req.user.id, email: req.user.email, event: 'password_changed', result: 'succeeded' });
+        logEvent(db, { userId: req.user.id, email: req.user.email, event: 'password_changed', result: 'succeeded' });
         res.json({ ok: true });
-      } catch (error) { next(error); }
+      } catch (error) { if (error?.code === 'auth_busy') { res.set('Retry-After', '1'); fail(res, 429, 'too_many_attempts', 'Слишком много попыток. Попробуйте позже.'); } else next(error); }
     });
 
     // ── второй фактор ──────────────────────────────────────────────────────
@@ -311,31 +345,31 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
         if (!verifyTotp(pending, req.body?.code, { at: now().getTime() })) return fail(res, 400, 'invalid_totp', 'Код не подошёл. Проверьте время на телефоне.');
         const codes = generateRecoveryCodes();
         updateUser(db, req.user.id, { totp_secret: pending, totp_pending_secret: null, totp_enabled: 1, recovery_codes_json: JSON.stringify(codes.map(hashRecoveryCode)) });
-        logAuthEvent(db, { userId: req.user.id, email: req.user.email, event: 'totp_enabled', result: 'succeeded' });
+        logEvent(db, { userId: req.user.id, email: req.user.email, event: 'totp_enabled', result: 'succeeded' });
         // Коды показываются ровно один раз: хранить их в открытом виде значило
         // бы держать рядом с замком запасной ключ.
         res.json({ ok: true, recoveryCodes: codes });
       } catch (error) { next(error); }
     });
 
-    app.post('/api/auth/totp/disable', requireAuth, (req, res, next) => {
+    app.post('/api/auth/totp/disable', requireAuth, async (req, res, next) => {
       try {
         if (!req.user.totp_enabled) return fail(res, 409, 'totp_not_enabled', 'Второй фактор не включён.');
-        if (!verifyPassword(String(req.body?.password || ''), req.user.password_hash)) return fail(res, 403, 'invalid_credentials', 'Пароль не подошёл.');
+        if (!await reauthenticate(req, res, req.body?.password)) return;
         updateUser(db, req.user.id, { totp_secret: null, totp_pending_secret: null, totp_enabled: 0, recovery_codes_json: null });
-        logAuthEvent(db, { userId: req.user.id, email: req.user.email, event: 'totp_disabled', result: 'succeeded' });
+        logEvent(db, { userId: req.user.id, email: req.user.email, event: 'totp_disabled', result: 'succeeded' });
         res.json({ ok: true });
-      } catch (error) { next(error); }
+      } catch (error) { if (error?.code === 'auth_busy') { res.set('Retry-After', '1'); fail(res, 429, 'too_many_attempts', 'Слишком много попыток. Попробуйте позже.'); } else next(error); }
     });
 
-    app.post('/api/auth/totp/recovery-codes', requireAuth, (req, res, next) => {
+    app.post('/api/auth/totp/recovery-codes', requireAuth, async (req, res, next) => {
       try {
         if (!req.user.totp_enabled) return fail(res, 409, 'totp_not_enabled', 'Второй фактор не включён.');
-        if (!verifyPassword(String(req.body?.password || ''), req.user.password_hash)) return fail(res, 403, 'invalid_credentials', 'Пароль не подошёл.');
+        if (!await reauthenticate(req, res, req.body?.password)) return;
         const codes = generateRecoveryCodes();
         updateUser(db, req.user.id, { recovery_codes_json: JSON.stringify(codes.map(hashRecoveryCode)) });
         res.json({ recoveryCodes: codes });
-      } catch (error) { next(error); }
+      } catch (error) { if (error?.code === 'auth_busy') { res.set('Retry-After', '1'); fail(res, 429, 'too_many_attempts', 'Слишком много попыток. Попробуйте позже.'); } else next(error); }
     });
 
     // ── администратор ──────────────────────────────────────────────────────
@@ -409,7 +443,7 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
         } else {
           return fail(res, 404, 'unknown_action', 'Неизвестное действие.');
         }
-        logAuthEvent(db, { userId: target.id, email: target.email, event: `admin_${action}`, result: 'succeeded', detail: `от ${req.user.email}` });
+        logEvent(db, { userId: target.id, email: target.email, event: `admin_${action}`, result: 'succeeded', detail: `от ${req.user.email}` });
         note({ event: 'admin_user_action', action, result: 'succeeded' });
         res.json({ user: publicUser(listUsers(db).find(user => user.id === target.id)) });
       } catch (error) { next(error); }
@@ -434,7 +468,7 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
         db.prepare('DELETE FROM telegram_links WHERE user_id=?').run(target.id);
         db.prepare('DELETE FROM telegram_codes WHERE user_id=?').run(target.id);
         db.prepare('DELETE FROM users WHERE id=?').run(target.id);
-        logAuthEvent(db, { email: target.email, event: 'admin_delete', result: 'succeeded', detail: `от ${req.user.email}` });
+        logEvent(db, { email: target.email, event: 'admin_delete', result: 'succeeded', detail: `от ${req.user.email}` });
         res.json({ ok: true });
       } catch (error) { next(error); }
     });
@@ -462,6 +496,8 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
   // Раз в час — чтобы протухшие сессии не копились вечно; на первом же запросе
   // после запуска — чтобы уборка не ждала часа на редко используемом сервере.
   purgeExpiredSessions(db, at());
+  const cleanupTimer = setInterval(() => { try { purgeExpiredSessions(db, at()); } catch {} }, 60 * 60 * 1000);
+  cleanupTimer.unref();
 
-  return { attachUser, userFromCookieHeader, requireAuth, requireAdmin, registerRoutes, issueSession, needsBootstrap, registerAccount, publicUser, readLimits, PASSWORD_MIN_LENGTH };
+  return { attachUser, userFromCookieHeader, requireAuth, requireAdmin, registerRoutes, issueSession, needsBootstrap, registerAccount, publicUser, readLimits, PASSWORD_MIN_LENGTH, stop: () => clearInterval(cleanupTimer) };
 }

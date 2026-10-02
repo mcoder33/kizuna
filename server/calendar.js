@@ -13,6 +13,8 @@ import { normalizeTimeZone } from '../public/time-zone.js';
 import crypto from 'node:crypto';
 import { dateInZone, shiftDate } from './reports.js';
 import { CALDAV_PRESETS, createCaldavClient } from './caldav.js';
+import { validateRemoteUrl } from './safe-http.js';
+import { safeExternalUrl } from '../public/safe-url.js';
 import { createGoogleCalendarClient } from './google-calendar.js';
 import { buildEvent, excludeInstance, findJoinUrl, localDateTime, overrideInstance, rewriteEvent, setPartstat, zonedToUtc } from './ics.js';
 import { replaceInterpretation } from './db.js';
@@ -79,9 +81,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
   async function addCaldavAccount({ userId, preset = 'custom', serverUrl = null, username, password, label = null }) {
     if (!CALDAV_PRESETS[preset]) return { error: 'invalid_preset' };
     const base = preset === 'custom' ? String(serverUrl || '').trim() : CALDAV_PRESETS[preset].serverUrl;
-    // Только https: пароль приложения по открытому каналу — подарок соседу по
-    // сети. Исключение — свой же компьютер, чтобы проверять с локальным сервером.
-    if (!/^https:\/\/[^\s/]+/i.test(base) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(base)) return { error: 'invalid_server' };
+    try { validateRemoteUrl(base); } catch { return { error: 'invalid_server' }; }
     if (typeof username !== 'string' || !username.trim() || username.length > 200) return { error: 'invalid_username' };
     if (typeof password !== 'string' || !password || password.length > 500) return { error: 'invalid_password' };
     const login = username.trim();
@@ -196,7 +196,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
       const creds = credentialsOf(row);
       if (!creds?.password) throw Object.assign(new Error('Пароль не расшифровался: подключите календарь заново.'), { code: 'unauthorized' });
       for (const calendar of calendars) {
-        const events = await caldavClient.listEvents({ calendarUrl: calendar.url || calendar.id, username: row.username, password: creds.password, from: window.from, to: window.to, timeZone: timeZone(row.user_id) });
+        const events = await caldavClient.listEvents({ serverUrl: row.server_url, preset: row.preset, calendarUrl: calendar.url || calendar.id, username: row.username, password: creds.password, from: window.from, to: window.to, timeZone: timeZone(row.user_id) });
         for (const event of events) out.push({ calendarId: calendar.id, ...event });
       }
     } else if (row.provider === 'google') {
@@ -337,7 +337,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     const links = new Map();
     for (const row of db.prepare('SELECT l.capture_id, l.account_id, l.calendar_id, l.href, l.auto FROM calendar_links l JOIN calendar_accounts a ON a.id=l.account_id WHERE a.user_id IS ?').all(userId)) {
       if (!links.has(row.capture_id)) links.set(row.capture_id, []);
-      links.get(row.capture_id).push({ accountId: row.account_id, calendarId: row.calendar_id, href: row.href, auto: Boolean(row.auto) });
+      links.get(row.capture_id).push({ accountId: row.account_id, calendarId: row.calendar_id, href: safeExternalUrl(row.href), auto: Boolean(row.auto) });
     }
     const items = [], overdue = [];
     for (const row of rows) {
@@ -392,7 +392,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
         id: `ext:${row.id}`, kind: 'external', accountId: row.account_id, calendarId: row.calendar_id, calendarName: calendar?.name || row.account_label,
         color: calendar?.color || row.account_color || null, source: row.account_label,
         title: busyOnly ? 'Занято' : row.title, description: busyOnly ? null : row.description, location: busyOnly ? null : row.location,
-        busy: Boolean(row.busy), joinUrl: busyOnly ? null : row.join_url, href: busyOnly ? null : row.href, readOnly: !editable, editable, movable,
+        busy: Boolean(row.busy), joinUrl: busyOnly ? null : safeExternalUrl(row.join_url), href: busyOnly ? null : safeExternalUrl(row.href), readOnly: !editable, editable, movable,
         // Ключ серии — чтобы страница знала, какие события уходят вместе с
         // ней: у CalDAV серия это один файл (uid), у Google — recurringEventId.
         recurring: Boolean(row.instance_key), seriesId: busyOnly ? null : row.series_uid || row.uid,
@@ -472,7 +472,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     if (row.provider === 'caldav') {
       const creds = credentialsOf(row);
       const ics = buildEvent({ uid, title: event.title, description: event.description, start: event.start, end: event.end, allDay: event.allDay, rrule: event.rrule || null, exdates: event.exdates || [], now: now() });
-      const put = await caldavClient.putEvent({ calendarUrl: calendar.url || calendar.id, username: row.username, password: creds?.password || '', uid, ics, replace: Boolean(link) });
+      const put = await caldavClient.putEvent({ serverUrl: row.server_url, preset: row.preset, calendarUrl: calendar.url || calendar.id, username: row.username, password: creds?.password || '', uid, ics, replace: Boolean(link) });
       return { uid, href: put.href, etag: put.etag };
     }
     const accessToken = await googleAccessToken(row);
@@ -488,7 +488,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     else db.prepare('INSERT INTO calendar_links(capture_id,account_id,calendar_id,uid,href,etag,created_at,fingerprint,auto,updated_at,export_time_zone) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(captureId, accountId, calendarId, stored.uid, stored.href, stored.etag, nowIso(), fingerprint, auto ? 1 : 0, nowIso(), exportTimeZone);
   }
   async function deleteLinked(row, link) {
-    if (row.provider === 'caldav') await caldavClient.deleteEvent({ href: link.href, username: row.username, password: credentialsOf(row)?.password || '' });
+    if (row.provider === 'caldav') await caldavClient.deleteEvent({ serverUrl: row.server_url, preset: row.preset, href: link.href, username: row.username, password: credentialsOf(row)?.password || '' });
     else await googleClient.deleteEvent({ accessToken: await googleAccessToken(row), calendarId: link.calendar_id, eventId: link.uid });
     db.prepare('DELETE FROM calendar_links WHERE capture_id=? AND account_id=?').run(link.capture_id, row.id);
     db.prepare('DELETE FROM calendar_events WHERE account_id=? AND uid=?').run(row.id, link.uid);
@@ -657,7 +657,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     const mine = attendees.find(attendee => attendee.self || (login && attendee.email === login)) || null;
     return {
       attendees: attendees.map(attendee => ({ email: attendee.email, name: attendee.name, status: attendee.status, optional: attendee.optional, organizer: attendee.organizer, self: attendee === mine })),
-      organizer, repeat: row.repeat || null, url: row.url || null,
+      organizer, repeat: row.repeat || null, url: safeExternalUrl(row.url),
       me: mine ? { email: mine.email, status: mine.status, optional: mine.optional, comment: mine.comment || null } : null,
     };
   }
@@ -680,10 +680,10 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     try {
       if (row.provider === 'caldav') {
         const password = credentialsOf(row)?.password || '';
-        const got = await caldavClient.getEvent({ href: row.href, username: row.username, password });
+        const got = await caldavClient.getEvent({ serverUrl: row.server_url, preset: row.preset, href: row.href, username: row.username, password });
         const ics = setPartstat(got.ics, { email: people.me.email, status, comment: note === '' ? undefined : note });
         if (!ics) return { error: 'not_invited' };
-        const put = await caldavClient.putEvent({ href: row.href, username: row.username, password, uid: row.uid, ics, etag: got.etag || null });
+        const put = await caldavClient.putEvent({ serverUrl: row.server_url, preset: row.preset, href: row.href, username: row.username, password, uid: row.uid, ics, etag: got.etag || null });
         etag = put.etag || null;
       } else {
         const result = await googleClient.respond({ accessToken: await googleAccessToken(row), calendarId: row.calendar_id, eventId: row.uid, status, comment: note });
@@ -713,9 +713,9 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     try {
       if (row.provider === 'caldav') {
         const password = credentialsOf(row)?.password || '';
-        const got = await caldavClient.getEvent({ href: row.href, username: row.username, password });
-        const put = await caldavClient.putEvent({ calendarUrl: target.url || target.id, username: row.username, password, uid: row.uid, ics: got.ics });
-        await caldavClient.deleteEvent({ href: row.href, username: row.username, password });
+        const got = await caldavClient.getEvent({ serverUrl: row.server_url, preset: row.preset, href: row.href, username: row.username, password });
+        const put = await caldavClient.putEvent({ serverUrl: row.server_url, preset: row.preset, calendarUrl: target.url || target.id, username: row.username, password, uid: row.uid, ics: got.ics });
+        await caldavClient.deleteEvent({ serverUrl: row.server_url, preset: row.preset, href: row.href, username: row.username, password });
         stored = { href: put.href, etag: put.etag, uid: row.uid };
       } else {
         const moved = await googleClient.moveEvent({ accessToken: await googleAccessToken(row), calendarId: row.calendar_id, eventId: row.uid, destination: target.id });
@@ -732,12 +732,12 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
   function externalRow(userId, id) {
     const key = String(id || '').replace(/^ext:/, '').split(':')[0];
     if (!key) return null;
-    return db.prepare(`SELECT e.*, a.user_id, a.mode, a.provider, a.username, a.credentials_enc, a.calendars_json, a.label account_label, a.color account_color, a.disabled_at FROM calendar_events e JOIN calendar_accounts a ON a.id=e.account_id WHERE e.id=? AND a.user_id IS ?`).get(key, userId) || null;
+    return db.prepare(`SELECT e.*, a.user_id, a.mode, a.provider, a.username, a.server_url, a.preset, a.credentials_enc, a.calendars_json, a.label account_label, a.color account_color, a.disabled_at FROM calendar_events e JOIN calendar_accounts a ON a.id=e.account_id WHERE e.id=? AND a.user_id IS ?`).get(key, userId) || null;
   }
   function externalInfo(row) {
     const tz = timeZone(row.user_id);
     const calendar = JSON.parse(row.calendars_json || '[]').find(item => item.id === row.calendar_id) || null;
-    const base = { id: `ext:${row.id}`, title: row.mode === 'busy' ? 'Занято' : row.title, source: row.account_label, calendarId: row.calendar_id, calendarName: calendar?.name || row.account_label, color: calendar?.color || null, location: row.mode === 'busy' ? null : row.location, joinUrl: row.mode === 'busy' ? null : row.join_url, href: row.href, recurring: Boolean(row.instance_key), seriesId: row.mode === 'busy' ? null : row.series_uid || row.uid, editable: !externalWritable(row), movable: !externalWritable(row) && !(row.provider === 'caldav' && row.instance_key), ...(row.mode === 'busy' ? { attendees: [], organizer: null, repeat: null, url: null, me: null } : eventPeople(row)) };
+    const base = { id: `ext:${row.id}`, title: row.mode === 'busy' ? 'Занято' : row.title, source: row.account_label, calendarId: row.calendar_id, calendarName: calendar?.name || row.account_label, color: calendar?.color || null, location: row.mode === 'busy' ? null : row.location, joinUrl: row.mode === 'busy' ? null : safeExternalUrl(row.join_url), href: safeExternalUrl(row.href), recurring: Boolean(row.instance_key), seriesId: row.mode === 'busy' ? null : row.series_uid || row.uid, editable: !externalWritable(row), movable: !externalWritable(row) && !(row.provider === 'caldav' && row.instance_key), ...(row.mode === 'busy' ? { attendees: [], organizer: null, repeat: null, url: null, me: null } : eventPeople(row)) };
     if (row.all_day) return { ...base, allDay: true, date: row.start_at.slice(0, 10), time: null, end: null };
     const start = localDateTime(new Date(row.start_at), tz), end = localDateTime(new Date(row.end_at), tz);
     return { ...base, allDay: false, date: start.date, time: start.time, end: end.date === start.date ? end.time : '23:59' };
@@ -792,14 +792,14 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
     try {
       if (row.provider === 'caldav') {
         const password = credentialsOf(row)?.password || '';
-        const got = await caldavClient.getEvent({ href: row.href, username: row.username, password });
+        const got = await caldavClient.getEvent({ serverUrl: row.server_url, preset: row.preset, href: row.href, username: row.username, password });
         // Экземпляр повтора — «только это событие»: серия остаётся, экземпляр
         // получает свой VEVENT с RECURRENCE-ID; одиночное событие правится по месту.
         const ics = row.instance_key
           ? overrideInstance(got.ics, { instanceKey: row.instance_key, title: nextTitle, start: event.start, end: event.end, allDay: event.allDay, now: now(), timeZone: tz })
           : rewriteEvent(got.ics, { title: nextTitle, ...(titleOnly ? {} : {start:event.start,end:event.end,allDay:event.allDay}), now: now() });
         if (!ics) return { error: 'update_failed', message: 'В файле события не нашлось серии.' };
-        const put = await caldavClient.putEvent({ href: row.href, username: row.username, password, uid: row.uid, ics, etag: got.etag || null });
+        const put = await caldavClient.putEvent({ serverUrl: row.server_url, preset: row.preset, href: row.href, username: row.username, password, uid: row.uid, ics, etag: got.etag || null });
         etag = put.etag || null;
       } else {
         const patched = await googleClient.patchEvent({ accessToken: await googleAccessToken(row), calendarId: row.calendar_id, eventId: row.uid, patch: { title: nextTitle, ...(titleOnly ? {} : event) } });
@@ -831,11 +831,11 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
         // Один экземпляр серии: серии дописывается EXDATE, файл кладётся обратно
         // с If-Match — остальные повторы остаются.
         const password = credentialsOf(row)?.password || '';
-        const got = await caldavClient.getEvent({ href: row.href, username: row.username, password });
+        const got = await caldavClient.getEvent({ serverUrl: row.server_url, preset: row.preset, href: row.href, username: row.username, password });
         const ics = excludeInstance(got.ics, { instanceKey: row.instance_key, now: now(), timeZone: timeZone(userId) });
         if (!ics) return { error: 'remove_failed', message: 'В файле события не нашлось серии.' };
-        await caldavClient.putEvent({ href: row.href, username: row.username, password, uid: row.uid, ics, etag: got.etag || null });
-      } else if (row.provider === 'caldav') await caldavClient.deleteEvent({ href: row.href, username: row.username, password: credentialsOf(row)?.password || '' });
+        await caldavClient.putEvent({ serverUrl: row.server_url, preset: row.preset, href: row.href, username: row.username, password, uid: row.uid, ics, etag: got.etag || null });
+      } else if (row.provider === 'caldav') await caldavClient.deleteEvent({ serverUrl: row.server_url, preset: row.preset, href: row.href, username: row.username, password: credentialsOf(row)?.password || '' });
       // У Google экземпляр — своё событие, серия — событие recurringEventId.
       else await googleClient.deleteEvent({ accessToken: await googleAccessToken(row), calendarId: row.calendar_id, eventId: wholeSeries ? seriesUid : row.uid });
     } catch (error) { return { error: error.code === 'unauthorized' ? 'unauthorized' : error.code === 'conflict' ? 'conflict' : 'remove_failed', message: error.message, messageTemplate:error.presentation }; }

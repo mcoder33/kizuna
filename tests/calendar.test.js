@@ -11,7 +11,7 @@ import { fakeYandex, INVITATION } from './caldav.test.js';
 
 function freshApp(options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pagent-calendar-'));
-  return createApp({ aiService: fakeModelService(), databasePath: path.join(dir, 'test.sqlite'), calendarKey: Buffer.alloc(32, 7), ...options });
+  return createApp({ aiService: fakeModelService(), databasePath: path.join(dir, 'test.sqlite'), calendarKey: Buffer.alloc(32, 7), securityOptions: { publicUrl: 'https://kizuna.example' }, ...options });
 }
 const today = () => dateInZone(new Date(), 'Europe/Samara');
 const yandexBody = { preset: 'yandex', username: 'user@yandex.ru', password: 'app-pass' };
@@ -664,4 +664,25 @@ test('title-only Google edits preserve late DST fold instants, recurrence identi
   for(const event of view.external){calls.length=0;await api.patch(`/api/calendar/external/${encodeURIComponent(event.id)}`).send({title:`Renamed ${event.title}`}).expect(200);assert.deepEqual(Object.keys(JSON.parse(calls.find(x=>x.method==='PATCH').body)),['summary']);}
   for(const original of originals){const current=app.database.prepare('SELECT * FROM calendar_events WHERE id=?').get(original.id);for(const field of ['start_at','end_at','all_day','uid','instance_key','series_uid'])assert.equal(current[field],original[field],field);}
  }finally{app.database.close();}
+});
+
+
+test('calendar sanitizes old cached presentation URLs and refuses stored foreign CalDAV write targets', async () => {
+  const calls = [];
+  const app = freshApp({ calendarFetch: fakeYandex({ calls }) });
+  const api = authed(app);
+  const account = (await api.post('/api/calendar/accounts').send(yandexBody).expect(201)).body.account;
+  const unsafe = 'javascript:alert(1)';
+  const db = app.database;
+  db.prepare('UPDATE calendar_events SET href=?,join_url=?,url=? WHERE account_id=?').run(unsafe, unsafe, unsafe, account.id);
+  const view = (await api.get('/api/calendar?from=2026-09-07&to=2026-09-07').expect(200)).body;
+  const item = view.external.find(item => item.kind === 'external');
+  assert.ok(item); assert.equal(item.href, null); assert.equal(item.joinUrl, null); assert.equal(item.url, null);
+  // No record/history rewriting: outbound writes independently reject the original stored target.
+  assert.equal(db.prepare('SELECT href FROM calendar_events WHERE account_id=? LIMIT 1').get(account.id).href, unsafe);
+  const event = db.prepare('SELECT id FROM calendar_events WHERE account_id=? AND instance_key IS NULL LIMIT 1').get(account.id);
+  db.prepare('UPDATE calendar_events SET href=? WHERE id=?').run('https://foreign.example/event.ics', event.id);
+  const before = calls.length;
+  await api.patch(`/api/calendar/external/ext:${event.id}`).send({ title: 'Changed' }).expect(502);
+  assert.equal(calls.length, before);
 });

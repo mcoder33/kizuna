@@ -458,6 +458,7 @@ function migrateUsers(db) {
     );
     CREATE INDEX IF NOT EXISTS voice_sessions_time ON voice_sessions(started_at);
     CREATE INDEX IF NOT EXISTS voice_sessions_user ON voice_sessions(user_id, started_at);`);
+  if (!db.prepare('PRAGMA table_info(auth_events)').all().some(column => column.name === 'ip')) db.exec('ALTER TABLE auth_events ADD COLUMN ip TEXT');
   const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map(column => column.name));
   if (!userColumns.has('voice_limit_minutes')) db.exec('ALTER TABLE users ADD COLUMN voice_limit_minutes REAL');
   if (!userColumns.has('monthly_limit_usd')) db.exec('ALTER TABLE users ADD COLUMN monthly_limit_usd REAL');
@@ -1665,8 +1666,8 @@ export function countUserSessions(db, userId, at = now()) { return db.prepare('S
 // ── журнал входов ───────────────────────────────────────────────────────────
 // Кто и когда пытался войти — единственный след, по которому потом можно
 // понять, был ли перебор. Пароли и коды сюда не попадают никогда.
-export function logAuthEvent(db, { userId = null, email = null, event, result, detail = null }) {
-  try { db.prepare('INSERT INTO auth_events(id,user_id,email,event,result,detail,created_at) VALUES(?,?,?,?,?,?,?)').run(id(), userId, email, event, result, detail, now()); } catch {}
+export function logAuthEvent(db, { ip = null, userId = null, email = null, event, result, detail = null }) {
+  try { db.prepare('INSERT INTO auth_events(id,user_id,email,event,result,detail,created_at,ip) VALUES(?,?,?,?,?,?,?,?)').run(id(), userId, email, event, result, detail, now(), ip); } catch {}
 }
 export function listAuthEvents(db, { limit = 50, userId = null } = {}) {
   const capped = Math.min(Math.max(Number(limit) || 50, 1), 200);

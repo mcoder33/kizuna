@@ -1,3 +1,4 @@
+import { safeExternalUrl } from "./safe-url.js";
 import { mountLanguageControls, syncLanguageControls } from "./language-control.js";
 import { normalizeTimeZone } from "./time-zone.js";
 import { getTimeZone, getDetectedTimeZone, initTimeZone, setTimeZone, announceTimeZoneSaved } from "./browser-time-zone.js";
@@ -82,7 +83,9 @@ async function requestResponse(url, options = {}) {
       data = await response.json().catch(() => null);
     // Сессия кончилась или её закрыл администратор: сообщать об этом ошибкой в
     // углу бессмысленно — дальше всё равно ничего не откроется.
-    if (response.status === 401) { location.replace("/login"); throw new Error(t("Нужно войти.")); }
+    // A valid session can still need a fresh second factor for this action.
+    const reauthenticationError = ["totp_required", "invalid_totp"].includes(data?.error?.code);
+    if (response.status === 401 && !reauthenticationError) { location.replace("/login"); throw new Error(t("Нужно войти.")); }
     if (!response.ok)
       throw new Error(data?.error?.message || t("Не удалось выполнить действие."));
     return { response, data };
@@ -935,7 +938,7 @@ function todayMeetings() {
   const external = (todayState.calendar?.external || []).filter((item) => item.date === today && !item.allDay && item.time);
   const defaults = todayState.calendar?.defaults?.meetingMinutes || 30;
   return [
-    ...external.map((item) => ({ id: item.id, title: item.title, start: minutesOf(item.time), end: minutesOf(item.end) ?? minutesOf(item.time) + defaults, joinUrl: item.joinUrl || null, busy: busyOnly(item) })),
+    ...external.map((item) => ({ id: item.id, title: item.title, start: minutesOf(item.time), end: minutesOf(item.end) ?? minutesOf(item.time) + defaults, joinUrl: safeExternalUrl(item.joinUrl), busy: busyOnly(item) })),
     ...todayState.todo
       .filter((entry) => isActiveMeeting(entry) && scheduledOn(entry, today) && scheduleOf(entry)?.time)
       .map((entry) => ({ id: entry.id, title: titleOf(entry), start: minutesOf(scheduleOf(entry).time), end: minutesOf(scheduleOf(entry).end) ?? minutesOf(scheduleOf(entry).time) + defaults, joinUrl: null, busy: false })),
@@ -1364,9 +1367,9 @@ function eventRow(item, { minutes = null, today = false, pastDay = false } = {})
     else if (soon) meta.append(bindTranslation(node("span", t("через {value1} мин", { value1: start - minutes }), "tag soon"), "через {value1} мин", { value1: start - minutes }));
     else if (minutes >= finish) { className += " past"; meta.append(bindTranslation(node("span", t("прошла"), "tag"), "прошла")); }
     else meta.append(bindTranslation(node("span", t("через {value1}", { value1: duration(start - minutes) }), "tag"), "через {value1}", { value1: duration(start - minutes) }));
-    if (item.joinUrl && (running || soon)) {
+    if (safeExternalUrl(item.joinUrl) && (running || soon)) {
       const join = bindTranslation(node("a", t("Присоединиться"), "day-join"), "Присоединиться");
-      join.href = item.joinUrl;
+      join.href = safeExternalUrl(item.joinUrl);
       join.target = "_blank";
       join.rel = "noopener";
       actions.append(join);
@@ -6263,9 +6266,12 @@ function paintTotp() {
   const state = $("#totp-state");
   if (!state || !currentUser) return;
   const on = currentUser.twoFactorEnabled;
-  state.textContent = on
-    ? t("Включён. При входе после пароля спрашивается код из приложения.")
-    : t("Выключен. Вход защищён только паролем.");
+  const source = on
+    ? "Включён. При входе после пароля спрашивается код из приложения."
+    : "Выключен. Вход защищён только паролем.";
+  state.dataset.i18n = source;
+  state.textContent = t(source);
+  $("#password-factor-field").hidden = !on;
   $("#totp-start").hidden = on;
   $("#totp-disable").hidden = !on;
   $("#totp-recovery").hidden = !on;
@@ -6310,9 +6316,10 @@ $("#totp-disable-submit")?.addEventListener("click", async (event) => {
   try {
     await request("/api/auth/totp/disable", {
       method: "POST",
-      body: JSON.stringify({ password: $("#totp-disable-password").value }),
+      body: JSON.stringify({ password: $("#totp-disable-password").value, code: $("#totp-disable-code").value.trim() }),
     });
     $("#totp-disable-password").value = "";
+    $("#totp-disable-code").value = "";
     $("#totp-disable-dialog").close();
     $("#totp-codes").hidden = true;
     await loadAccount();
@@ -6324,10 +6331,12 @@ $("#totp-disable-submit")?.addEventListener("click", async (event) => {
 $("#totp-recovery")?.addEventListener("click", async () => {
   const password = prompt(t("Пароль, чтобы выпустить новые резервные коды:"));
   if (!password) return;
+  const code = prompt(t("Код из приложения или резервный код"));
+  if (!code) return;
   try {
     const result = await request("/api/auth/totp/recovery-codes", {
       method: "POST",
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ password, code }),
     });
     showRecoveryCodes(result.recoveryCodes);
     toast(t("Прежние резервные коды больше не работают"));
@@ -6346,9 +6355,9 @@ $("#password-submit")?.addEventListener("click", async (event) => {
   try {
     await request("/api/auth/password", {
       method: "POST",
-      body: JSON.stringify({ currentPassword: current, newPassword: next }),
+      body: JSON.stringify({ currentPassword: current, newPassword: next, code: $("#password-factor").value.trim() }),
     });
-    for (const id of ["#password-current", "#password-new", "#password-repeat"])
+    for (const id of ["#password-current", "#password-new", "#password-repeat", "#password-factor"])
       $(id).value = "";
     $("#password-dialog").close();
     toast(t("Пароль сменён, остальные входы закрыты"));
@@ -10669,9 +10678,9 @@ function calEventEl(item, place = null) {
   if (sub) element.append(node("small", sub));
   // Повтор — значком в правом верхнем углу, как в Apple.
   if (item.repeat || item.recurring) { const repeat = node("i", "⟳", "cal-ev-repeat"); repeat.title = item.repeat || t("Повторяется"); element.append(repeat); }
-  if (item.joinUrl && height >= 34) {
+  if (safeExternalUrl(item.joinUrl) && height >= 34) {
     const join = bindTranslation(node("a", t("К звонку"), "cal-join"), "К звонку");
-    join.href = item.joinUrl; join.target = "_blank"; join.rel = "noopener";
+    join.href = safeExternalUrl(item.joinUrl); join.target = "_blank"; join.rel = "noopener";
     bindTranslation(join, "Открыть видеовстречу: {value1}", { value1: popHost(item.joinUrl) || t("ссылка") }, "title");
     join.addEventListener("click", (event) => event.stopPropagation());
     element.append(join);
@@ -10822,7 +10831,7 @@ function calAgendaEl(date) {
     const body = node("span", undefined, "cal-row-body");
     body.append(text, meta);
     row.append(body);
-    if (item.joinUrl) { const join = bindTranslation(node("a", t("К звонку"), "cal-join"), "К звонку"); join.href = item.joinUrl; join.target = "_blank"; join.rel = "noopener"; bindTranslation(join, "Открыть видеовстречу: {value1}", { value1: popHost(item.joinUrl) || t("ссылка") }, "title"); join.addEventListener("click", (event) => event.stopPropagation()); row.append(join); }
+    if (safeExternalUrl(item.joinUrl)) { const join = bindTranslation(node("a", t("К звонку"), "cal-join"), "К звонку"); join.href = safeExternalUrl(item.joinUrl); join.target = "_blank"; join.rel = "noopener"; bindTranslation(join, "Открыть видеовстречу: {value1}", { value1: popHost(item.joinUrl) || t("ссылка") }, "title"); join.addEventListener("click", (event) => event.stopPropagation()); row.append(join); }
     row.addEventListener("click", () => openCalendarItem(item));
     aside.append(row);
     cursor = Math.max(cursor, calMinutes(calEndOf(item)));
@@ -11047,7 +11056,7 @@ function showExternalEvent(item) {
   const host = popHost(item.href);
   const source = popSection("pop-row");
   source.append(node("span", `${item.source}${host ? ` · ${host}` : ""}`, "pop-src"));
-  if (item.href) { const open = bindTranslation(node("a", t("Открыть"), "cal-pop-btn small"), "Открыть"); open.href = item.href; open.target = "_blank"; open.rel = "noopener"; source.append(open); }
+  if (safeExternalUrl(item.href)) { const open = bindTranslation(node("a", t("Открыть"), "cal-pop-btn small"), "Открыть"); open.href = safeExternalUrl(item.href); open.target = "_blank"; open.rel = "noopener"; source.append(open); }
   pop.append(source);
   // ── когда ──
   const when = popSection();
@@ -11073,14 +11082,14 @@ function showExternalEvent(item) {
     pop.append(people);
   }
   // ── ссылки ──
-  if (item.joinUrl) {
+  if (safeExternalUrl(item.joinUrl)) {
     const video = popSection("pop-link");
     const link = node("a", item.joinUrl.replace(/^https?:\/\//, ""));
-    link.href = item.joinUrl; link.target = "_blank"; link.rel = "noopener";
+    link.href = safeExternalUrl(item.joinUrl); link.target = "_blank"; link.rel = "noopener";
     video.append(bindTranslation(node("span", t("Ссылка на видеовстречу: ")), "Ссылка на видеовстречу: "), link);
     pop.append(video);
   }
-  const eventUrl = item.url && item.url !== item.joinUrl ? item.url : null;
+  const eventUrl = item.url !== item.joinUrl ? safeExternalUrl(item.url) : null;
   if (eventUrl) { const urlSec = popSection("pop-link"); const link = node("a", eventUrl.replace(/^https?:\/\//, "")); link.href = eventUrl; link.target = "_blank"; link.rel = "noopener"; urlSec.append(link); pop.append(urlSec); }
   // ── мой ответ ──
   if (item.me) {
@@ -11117,7 +11126,7 @@ function showExternalEvent(item) {
   }
   // ── действия ──
   const actions = node("div", undefined, "cal-pop-actions");
-  if (item.joinUrl) { const join = bindTranslation(node("a", t("Присоединиться"), "cal-pop-btn primary"), "Присоединиться"); join.href = item.joinUrl; join.target = "_blank"; join.rel = "noopener"; actions.append(join); }
+  if (safeExternalUrl(item.joinUrl)) { const join = bindTranslation(node("a", t("Присоединиться"), "cal-pop-btn primary"), "Присоединиться"); join.href = safeExternalUrl(item.joinUrl); join.target = "_blank"; join.rel = "noopener"; actions.append(join); }
   const take = calButton(t("Взять в память"), `cal-pop-btn${item.joinUrl ? "" : " primary"}`, async () => {
     take.disabled = true;
     try {
@@ -11599,7 +11608,7 @@ function calendarExportEl(entry) {
         const account = accounts.find((candidate) => candidate.id === link.accountId);
         const row = node("span", undefined, "card-calendar-link");
         row.append(bindTranslation(node("span", t("В календаре: {value1}{value2}", { value1: account?.label || t("внешний"), value2: link.auto ? t(" · автоматически") : "" })), "В календаре: {value1}{value2}", { value1: account?.label || t("внешний"), value2: link.auto ? t(" · автоматически") : "" }));
-        if (link.href && link.href.startsWith("http")) { const open = bindTranslation(node("a", t("открыть")), "открыть"); open.href = link.href; open.target = "_blank"; open.rel = "noopener"; row.append(open); }
+        if (safeExternalUrl(link.href)) { const open = bindTranslation(node("a", t("открыть")), "открыть"); open.href = safeExternalUrl(link.href); open.target = "_blank"; open.rel = "noopener"; row.append(open); }
         // Автоматическую отправку «убрать» нельзя: следующий проход вернул бы
         // событие. Выключается в настройках календаря.
         if (link.auto && (account?.autoExport || "off") !== "off") { wrap.append(row); continue; }
@@ -11936,7 +11945,7 @@ function notificationActions(item, { after = () => {}, inPanel = false } = {}) {
     if (item.captureId && (item.meta || []).includes("дело"))
       acts.append(notifyButton(t("Готово"), true, async () => { await completeFromNotification(item); done(t("Готово — дело закрыто"), { close: !inPanel }); }, { ok: true }));
     if (item.data?.startAt ? Date.parse(item.data.startAt) > Date.now() : notifyDay(item.updatedAt) === currentDayDate) {
-      if (item.data?.joinUrl) acts.append(notifyButton(t("К звонку"), true, async () => { window.open(item.data.joinUrl, "_blank", "noopener"); done(t("Звонок открыт в новой вкладке")); }));
+      if (safeExternalUrl(item.data?.joinUrl)) acts.append(notifyButton(t("К звонку"), true, async () => { window.open(safeExternalUrl(item.data.joinUrl), "_blank", "noopener"); done(t("Звонок открыт в новой вкладке")); }));
       // Отложить: первый раз на полчаса, каждый следующий вдвое дольше — срок
       // считает сервер. Встреча возвращается не позже начала, и кнопка так и
       // говорит.

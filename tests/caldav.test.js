@@ -80,3 +80,63 @@ test('secrets: шифрование обратимо, чужой ключ не �
   assert.deepEqual(box.open(sealed), { password: 'app-pass' });
   assert.equal(createSecretBox({ key: Buffer.alloc(32, 2) }).open(sealed), null);
 });
+
+const authFixture = { serverUrl: 'https://calendar.example/', username: 'fixture-user', password: 'fixture-password' };
+const hasCode = code => error => error.code === code;
+
+test('CalDAV: foreign/private/downgrade redirects never receive credentials; redirects and cumulative body are bounded', async () => {
+  for (const destination of ['https://foreign.example/', 'http://calendar.example/', 'https://169.254.169.254/', 'https://[::ffff:192.168.1.1]/']) {
+    const calls = [];
+    const client = createCaldavClient({ fetch: async (url, options) => { calls.push(url); return new Response('', { status: 302, headers: { Location: destination } }); } });
+    await assert.rejects(client.discover({ ...authFixture, preset: 'custom' }));
+    assert.equal(calls.length, 1, destination);
+  }
+  let calls = 0;
+  const looping = createCaldavClient({ fetch: async () => { calls++; return new Response('', { status: 302, headers: { Location: '/loop' } }); } });
+  await assert.rejects(looping.getEvent({ ...authFixture, href: 'https://calendar.example/event.ics' }), hasCode('too_many_redirects'));
+  assert.equal(calls, 4);
+  const budget = createCaldavClient({ maxResponseBytes: 3, fetch: async () => new Response('xx', { status: 302, headers: { Location: '/loop' } }) });
+  await assert.rejects(budget.getEvent({ ...authFixture, href: 'https://calendar.example/event.ics' }), hasCode('response_too_large'));
+});
+
+test('CalDAV: discovery/REPORT href and persisted GET/PUT/DELETE targets are revalidated against account origin', async () => {
+  const calls = [];
+  const client = createCaldavClient({ fetch: async (url, options) => { calls.push(url); return new Response('<multistatus><response><propstat><prop><current-user-principal><href>https://foreign.example/principal</href></current-user-principal></prop></propstat></response></multistatus>', { status: 207 }); } });
+  await assert.rejects(client.discover(authFixture), hasCode('unsafe_origin'));
+  assert.equal(calls.length, 1);
+  const report = createCaldavClient({ fetch: async () => new Response('<multistatus><response><href>javascript:alert(1)</href><propstat><prop><calendar-data>BEGIN:VCALENDAR</calendar-data></prop></propstat></response></multistatus>', { status: 207 }) });
+  await assert.rejects(report.listEvents({ ...authFixture, calendarUrl: 'https://calendar.example/events/', from: new Date(), to: new Date() }), hasCode('unsafe_url'));
+  let touched = 0;
+  const saved = createCaldavClient({ fetch: async () => { touched++; return new Response(''); } });
+  for (const href of ['https://foreign.example/event.ics', 'javascript:alert(1)', 'https://10.0.0.1/event.ics']) {
+    for (const method of ['getEvent', 'deleteEvent', 'putEvent']) await assert.rejects(saved[method]({ ...authFixture, href, ics: '', uid: 'x' }));
+  }
+  assert.equal(touched, 0);
+});
+
+test('CalDAV: iCloud bootstrap may discover only canonical HTTPS pNN Apple shards', async () => {
+  const urls = [];
+  const response = props => new Response(`<multistatus><response><href>/home/events/</href><propstat><prop>${props}</prop></propstat></response></multistatus>`, { status: 207 });
+  const client = createCaldavClient({ fetch: async url => {
+    urls.push(url);
+    if (urls.length === 1) return response('<current-user-principal><href>/principal/</href></current-user-principal>');
+    if (urls.length === 2) return response('<calendar-home-set><href>https://p42-caldav.icloud.com/home/</href></calendar-home-set>');
+    return response('<resourcetype><collection/><calendar/></resourcetype><displayname>Personal</displayname>');
+  } });
+  const found = await client.discover({ ...authFixture, serverUrl: 'https://caldav.icloud.com/', preset: 'icloud' });
+  assert.equal(found.calendars[0].url, 'https://p42-caldav.icloud.com/home/events/');
+  const { validateRemoteUrl } = await import('../server/safe-http.js');
+  for (const target of ['https://p42-caldav.icloud.com.evil.test/', 'https://evil.icloud.com/', 'https://p42-caldav.icloud.com:444/', 'http://p42-caldav.icloud.com/']) assert.throws(() => validateRemoteUrl(target, { serverUrl: 'https://caldav.icloud.com', preset: 'icloud' }));
+  assert.throws(() => validateRemoteUrl('https://p42-caldav.icloud.com/', { serverUrl: 'https://caldav.icloud.com', preset: 'custom' }));
+});
+
+test('CalDAV: deadline covers a stalled body and the complete redirect chain', async () => {
+  let cancelled = 0;
+  const hanging = createCaldavClient({ timeoutMs: 15, fetch: async () => new Response(new ReadableStream({ cancel() { cancelled++; } })) });
+  await assert.rejects(hanging.getEvent({ ...authFixture, href: 'https://calendar.example/event.ics' }), hasCode('request_timeout'));
+  assert.equal(cancelled, 1);
+  let attempts = 0;
+  const slow = createCaldavClient({ timeoutMs: 25, fetch: async () => { attempts++; await new Promise(resolve => setTimeout(resolve, 15)); return new Response('', { status: 302, headers: { Location: '/next' } }); } });
+  await assert.rejects(slow.getEvent({ ...authFixture, href: 'https://calendar.example/event.ics' }), hasCode('request_timeout'));
+  assert.ok(attempts <= 2);
+});

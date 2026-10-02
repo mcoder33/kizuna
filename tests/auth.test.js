@@ -168,14 +168,16 @@ test('блокировка обрывает уже открытые сессии
   await gost.get('/api/entries').expect(401);
 });
 
-test('перебор пароля запирает учётную запись на время', async () => {
+test('перебор ограничивается по IP/email без блокировки аккаунта', async () => {
   const application = app();
   seedUser(application, { email: 'user@example.com', role: 'user' });
   const api = request(application);
   for (let attempt = 0; attempt < 8; attempt += 1)
     await api.post('/api/auth/login').send({ email: 'user@example.com', password: 'неверный-длинный' }).expect(401);
-  // Дальше не пускают даже с правильным паролем: счётчик неудач важнее.
+  // Эта пара IP/email исчерпана, но чужая попытка не запирает аккаунт.
   await api.post('/api/auth/login').send({ email: 'user@example.com', password: TEST_PASSWORD }).expect(429);
+  await api.post('/api/auth/login').set('X-Forwarded-For', '192.0.2.55').send({ email: 'user@example.com', password: TEST_PASSWORD }).expect(200);
+  assert.equal(application.database.prepare('SELECT locked_until FROM users WHERE email=?').get('user@example.com').locked_until, null);
 });
 
 test('выход закрывает сессию, а смена пароля — все остальные', async () => {
@@ -220,13 +222,14 @@ test('второй фактор включается только подтвер
   await plain.post('/api/auth/login').send({ email: 'user@example.com', password: TEST_PASSWORD, code: recovery }).expect(401);
 });
 
-test('второй фактор выключается только с паролем', async () => {
+test('второй фактор выключается только с паролем и кодом', async () => {
   const application = app();
   const api = authed(application, { email: 'user@example.com', role: 'user' });
   const setup = (await api.post('/api/auth/totp/setup').expect(200)).body;
   await api.post('/api/auth/totp/enable').send({ code: totpCode(setup.secret) }).expect(200);
   await api.post('/api/auth/totp/disable').send({ password: 'не-тот-пароль' }).expect(403);
-  await api.post('/api/auth/totp/disable').send({ password: TEST_PASSWORD }).expect(200);
+  await api.post('/api/auth/totp/disable').send({ password: TEST_PASSWORD }).expect(401);
+  await api.post('/api/auth/totp/disable').send({ password: TEST_PASSWORD, code: totpCode(setup.secret) }).expect(200);
   assert.equal((await api.get('/api/auth/me').expect(200)).body.user.twoFactorEnabled, false);
 });
 

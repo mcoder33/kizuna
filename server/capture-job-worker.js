@@ -10,7 +10,7 @@ import { noticeUnclear } from './notifications.js';
 const safeErrorCodes = new Set(['unavailable','busy','timeout','aborted','nonzero','malformed_output','absent_output','oversize_output','schema_invalid','rate_limited','invalid_provider','not_configured']);
 
 export class CaptureJobWorker {
-  constructor({ db, ai, leaseMs = 30_000, pollMs = 250, maxConcurrent = 1, shutdownGraceMs = 5_000, now = () => new Date(), audit = () => {}, timeZone = 'Europe/Samara', timeZoneFor = null }) {
+  constructor({ db, ai, leaseMs = 30_000, pollMs = 250, maxConcurrent = 1, shutdownGraceMs = 5_000, now = () => new Date(), audit = () => {}, timeZone = 'Europe/Samara', timeZoneFor = null, beforeClassify = null }) {
     this.db = db;
     this.ai = ai;
     this.leaseMs = leaseMs;
@@ -20,6 +20,7 @@ export class CaptureJobWorker {
     this.now = now;
     this.timeZone = timeZone;
     this.timeZoneFor = timeZoneFor;
+    this.beforeClassify = beforeClassify;
     this.audit = audit;
     this.owner = crypto.randomUUID();
     this.timer = null;
@@ -63,6 +64,7 @@ export class CaptureJobWorker {
     heartbeat.unref();
     const stopHeartbeat = () => clearInterval(heartbeat);
     controller.signal.addEventListener('abort', stopHeartbeat, { once:true });
+    let executionGate = null;
     try {
       let overrides = null;
       try { overrides = JSON.parse(claim.overrides_json || 'null'); } catch {}
@@ -70,7 +72,9 @@ export class CaptureJobWorker {
       const timeContext = validTimeContext(overrides?.timeContext) ? overrides.timeContext : captureTimeContext(this.timeZoneFor ? this.timeZoneFor(claim.user_id) : userTimeZone(this.db, claim.user_id, fallbackZone), this.now());
       // Память хозяина записи уходит в разбор вместе с текстом: поправленное
       // однажды не должно разбираться заново по-старому.
-      const result = await this.ai.classify(claim.raw, claim.selected_provider, controller.signal, claim.selected_model || null, memoryPrompt(this.db, { userId: claim.user_id ?? null }), userLocale(this.db, claim.user_id), timeContext);
+      executionGate = this.beforeClassify ? await this.beforeClassify(claim.user_id, claim.selected_provider) : null;
+      const result = await this.ai.classify(claim.raw, executionGate?.provider ?? claim.selected_provider, controller.signal, claim.selected_model || null, memoryPrompt(this.db, { userId: claim.user_id ?? null }), userLocale(this.db, claim.user_id), timeContext);
+      if (executionGate?.reason) { result.requestedProvider = executionGate.requestedProvider; result.fallbackReason = executionGate.reason; }
       // Разбор идёт здесь, значит и расход считается здесь: без этого учёт
       // видел бы только записи, сохранённые синхронно.
       try {
@@ -102,7 +106,7 @@ export class CaptureJobWorker {
       if (controller.signal.aborted || this.stopping) return;
       const errorCode=safeErrorCodes.has(error?.code) ? error.code : 'unavailable';
       try { if(failCaptureJob(this.db, claim, errorCode)) this.report({event:'capture_job_failed',jobId:claim.id,provider:claim.selected_provider,durationMs:Date.now()-startedAt,errorCode}); } catch {}
-    } finally { clearInterval(heartbeat); controller.signal.removeEventListener('abort', stopHeartbeat); }
+    } finally { executionGate?.release(); clearInterval(heartbeat); controller.signal.removeEventListener('abort', stopHeartbeat); }
   }
 
   wake() {
