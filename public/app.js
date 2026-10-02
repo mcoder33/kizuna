@@ -11,6 +11,7 @@ import { attachFormatToolbar } from "./format-toolbar.js";
 import { openNotes, refreshNotes } from "./notes.js";
 import { mountGuide } from "./guide.js";
 import { phaseOf, coverFor, plural, hm, duration, minutesOf, longDate, shortDate, isWeekend, MEETINGS, DEALS, PHASE_NAMES } from "./today-cover.js";
+import { dayMetric, metricLabels, metricTitle, metricAnnouncement, metricFraction, sparkShape, METRIC_KINDS } from "./day-metric.js";
 import { FILTER_FIELDS, FILTER_STATUSES, FILTER_NONE, DONE_LANE, defaultFilter, readFilter, mergeConditions, activeConditions, toggleValue, sameFilter, matchesFilter, statusAllowsDone, readOrder, orderKeys, moveKey, placeLast, readShown } from "./board-model.js";
 
 const $ = (selector) => document.querySelector(selector);
@@ -195,6 +196,7 @@ function updatePageFromHash() {
   const params = new URLSearchParams(separator >= 0 ? hash.slice(separator + 1) : "");
   const page = document.getElementById(pageId);
   const activePage = page?.classList.contains("app-page") ? pageId : "today";
+  metricPageChanged(activePage);
   // Ссылка из уведомления: открыть карточку записи и убрать параметр из адреса.
   const openId = params.get("open");
   if (openId) { params.delete("open"); history.replaceState(null, "", `#${activePage}${params.size ? `?${params}` : ""}`); openCaptureById(openId); }
@@ -735,6 +737,9 @@ const circlesState = { circles: [], me: null, loading: false, tab: "chat", discu
 // раньше, чем исполнится её код.
 const roomsRefresh = { running: false, again: false, edits: 0 };
 function kcEdited() { roomsRefresh.edits += 1; }
+// Сколько дней истории нужно пилюле метрики: серия считается назад, а неделя и
+// искра берут из них последние семь.
+const METRIC_DAYS = 30;
 const todayState = {
   view: 0,            // смещение дня, показанного в «Дне», от сегодняшнего
   journalView: 0,     // то же для «Закрыто»: у ящиков свои дни
@@ -746,6 +751,9 @@ const todayState = {
   entries: [],
   done: [],     // строки «Закрыто» из /api/done на сегодня
   doneStale: true,
+  doneByDay: null,    // [{date, n}] за тридцать дней: серия, неделя и искра пилюли метрики
+  metricFilter: null, // "late" | "open": пилюля оставила в списке «Дня» только эти дела
+  loaded: false,      // первый ответ /api/day разобран: до него числа дня — нули, а не правда
   todo: [],
   // Общее: полоса «к вам», взятые чужие дела, круги и метки для строк.
   inbox: [],
@@ -798,23 +806,47 @@ function removeExternalFromView(match) {
 // первой отрисовке «Сегодня».
 async function refreshTodayCalendar() {
   if (todayState.calendarLoading || !currentDayDate) return;
+  const date = currentDayDate, timeZone = getTimeZone(), generation = dayTimeZoneGeneration;
   todayState.calendarLoading = true;
-  try { todayState.calendar = pruneRemovedExternal(await request(`/api/calendar?from=${currentDayDate}&to=${shiftDate(currentDayDate, 1)}`)); }
-  catch { todayState.calendar = todayState.calendar || null; }
-  finally { todayState.calendarLoading = false; }
+  try {
+    const calendar = await request(`/api/calendar?from=${date}&to=${shiftDate(date, 1)}`);
+    if (generation !== dayTimeZoneGeneration || timeZone !== getTimeZone() || date !== currentDayDate) return;
+    todayState.calendar = pruneRemovedExternal(calendar);
+  } catch { /* список остаётся прежним */ }
+  finally { if (generation === dayTimeZoneGeneration) todayState.calendarLoading = false; }
+  if (generation !== dayTimeZoneGeneration || date !== currentDayDate) return;
   todayState.calendarStale = false;
   renderToday();
 }
 async function refreshTodayDone() {
   if (todayState.doneLoading || !currentDayDate) return;
+  const date = currentDayDate, timeZone = getTimeZone(), generation = dayTimeZoneGeneration;
   todayState.doneLoading = true;
   try {
-    const closed = await request(`/api/done?from=${currentDayDate}&to=${currentDayDate}`);
+    const [closed, history] = await Promise.all([request(`/api/done?from=${date}&to=${date}`), requestDoneHistory(date)]);
+    if (generation !== dayTimeZoneGeneration || timeZone !== getTimeZone() || date !== currentDayDate) return;
     todayState.done = (closed?.days || []).flatMap((group) => group.items).filter((item) => !item.auto);
+    if (history) todayState.doneByDay = history;
   } catch { /* список остаётся прежним */ }
-  finally { todayState.doneLoading = false; }
+  finally { if (generation === dayTimeZoneGeneration) todayState.doneLoading = false; }
+  if (generation !== dayTimeZoneGeneration || date !== currentDayDate) return;
   todayState.doneStale = false;
   renderToday();
+}
+// Счёт закрытого по дням за METRIC_DAYS дней по дату включительно; не пришёл — null.
+const requestDoneHistory = (date) =>
+  request(`/api/done?from=${shiftDate(date, 1 - METRIC_DAYS)}&to=${date}&only=byDay`).then((history) => history?.byDay || null).catch(() => null);
+// Перечитывание истории в фоне: пришедшее позже устаревшего ответа побеждает, не
+// пришедшее оставляет прежнюю — серия не должна мигать нулём от одного сбоя.
+let doneHistoryToken = 0;
+let dayLoadToken = 0;
+let dayTimeZoneGeneration = 0;
+async function refreshDoneHistory(date) {
+  const token = ++doneHistoryToken, timeZone = getTimeZone(), generation = dayTimeZoneGeneration;
+  const byDay = await requestDoneHistory(date);
+  if (token !== doneHistoryToken || generation !== dayTimeZoneGeneration || timeZone !== getTimeZone() || date !== currentDayDate || !byDay) return;
+  todayState.doneByDay = byDay;
+  paintDayMetric();
 }
 const scheduleOf = (entry) => entry.interpretation.classification.entities.schedule || null;
 // Повтор срока: выпадает ли экземпляр на дату. Зеркало серверного разбора
@@ -939,11 +971,17 @@ function canPostpone(entry, today = currentDayDate) {
   return isActiveTask(entry) && !entry.foreign && entry.mine !== false && Boolean(schedule?.date) && !schedule.repeat && schedule.date <= today;
 }
 const unfinishedTasks = () => todayState.todo.filter((entry) => canPostpone(entry));
+// Дела на сегодня так, как их считают вкладка «День N дел», бейдж дока и пилюля
+// метрики: со сроком сегодня и ждущие уточнения, без встреч и без просрочки — её
+// считает overdueDeals. Число одно на все три места, поэтому и считается в одном.
+const todayDeals = (date = currentDayDate) => todayState.todo.filter((entry) => !isActiveMeeting(entry) && todoOrder(entry, date) > 0 && todoOrder(entry, date) <= 2);
+// Просроченное — то, что во вкладке «День» стоит красным «N просрочено» и лежит на своей полке.
+const overdueDeals = (date = currentDayDate) => todayState.todo.filter((entry) => isOverdue(entry, date));
 function todayTasks() {
   const today = currentDayDate;
   const todays = todayState.todo.filter((entry) => scheduledOn(entry, today));
   return {
-    late: todayState.todo.filter((entry) => isOverdue(entry, today)).length,
+    late: overdueDeals(today).length,
     unfinished: unfinishedTasks().length,
     open: todayState.todo.filter((entry) => isActiveTask(entry) && !isOverdue(entry, today)).length,
     today: todays.length,
@@ -976,7 +1014,10 @@ function recallTab(phase) {
   return false;
 }
 function render(data) {
+  // Наступил новый день — фильтр вчерашнего списка не переживает полночь.
+  if (currentDayDate && currentDayDate !== data.date) resetMetricFilters();
   currentDayDate = data.date;
+  todayState.loaded = true;
   // Взятое чужое дело живёт в дне как своё: оно и есть своё — человек его взял.
   todayState.inbox = data.inbox || [];
   todayState.inboxFolded = data.inboxFolded || [];
@@ -1005,8 +1046,10 @@ function renderToday() {
   // а не на странице целиком.
   const active = document.activeElement;
   const keep = active?.dataset?.captureId && active.closest(".drawers") ? { id: active.dataset.captureId, drawer: active.closest(".drawer")?.id } : null;
-  if (todayState.calendarStale && !$("#today")?.hidden) refreshTodayCalendar();
-  if (todayState.doneStale && !$("#today")?.hidden) refreshTodayDone();
+  // Календарь и закрытое нужны и «Сегодня», и пилюле на «Доске».
+  const needsDay = !$("#today")?.hidden || !$("#board")?.hidden;
+  if (todayState.calendarStale && needsDay) refreshTodayCalendar();
+  if (todayState.doneStale && needsDay) refreshTodayDone();
   const minutes = nowMinutes();
   const phase = phaseOf({ minutes, weekend: isWeekend(currentDayDate) });
   const cover = coverFor({
@@ -1033,8 +1076,11 @@ function renderToday() {
   const journalDate = shiftDate(currentDayDate, todayState.journalView);
   paintTabs(viewDate, journalDate);
   paintDockBadges();
+  // Пилюля считается до списка: фильтр, которому нечего показывать, снимается здесь.
+  paintDayMetric();
   paintJournal(journalDate);
   paintDayList(viewDate);
+  metricRehighlight();
   if (keep && !active.isConnected) {
     // Строку закрыли с клавиатуры — фокус встаёт на следующую, а не теряется.
     const find = (id) => id && keep.drawer && document.querySelector(`#${keep.drawer} [data-capture-id="${CSS.escape(id)}"]`);
@@ -1091,6 +1137,30 @@ function applyCoverComposer(cover = todayState.cover) {
   todayState.placeholder = cover.placeholder;
   captureField.setPlaceholder(cover.placeholder);
 }
+// Слова, которые пилюля подчёркивает по наведению: «N дела просрочено» и «на сегодня».
+// Они находятся в готовой фразе, а не в шаблонах (today-cover.js не знает про
+// пилюлю): текст остаётся тем же, меняется только обёртка.
+function appendBriefText(brief, text) {
+  const late = todayTasks().late;
+  const phrases = [
+    ...(late ? [{ text: t("{count} дело просрочено", { count: late }), kind: "late" }] : []),
+    { text: t(", на сегодня — ").replace(/^[\s,，、·—–:]+|[\s—–:]+$/gu, ""), kind: "open" },
+  ];
+  const matches = phrases.flatMap((phrase) => {
+    const index = phrase.text ? text.indexOf(phrase.text) : -1;
+    return index < 0 ? [] : [{ ...phrase, index }];
+  }).sort((left, right) => left.index - right.index);
+  let last = 0;
+  for (const match of matches) {
+    if (match.index < last) continue;
+    if (match.index > last) brief.append(document.createTextNode(text.slice(last, match.index)));
+    const word = node("span", match.text);
+    word.dataset.w = match.kind;
+    brief.append(word);
+    last = match.index + match.text.length;
+  }
+  if (last < text.length) brief.append(document.createTextNode(text.slice(last)));
+}
 function paintCover(cover, date) {
   // Обложка рассказывает про день, только пока все ящики закрыты. Раскрытый
   // ящик говорит сам: дату — своей полосой дней, дела и встречи — списком, —
@@ -1105,7 +1175,7 @@ function paintCover(cover, date) {
   clear(brief);
   // Бриф собирается узлами, а не HTML: названия встреч и дел — чужой текст.
   for (const part of cover.brief) {
-    if (typeof part === "string") brief.append(document.createTextNode(part));
+    if (typeof part === "string") appendBriefText(brief, part);
     else if (part.b) brief.append(node("b", part.b));
     else if (part.a) {
       const link = node("a", part.a.text);
@@ -1128,6 +1198,7 @@ function paintCover(cover, date) {
 // открытый». Любое переключение возвращает все дни на сегодня: день, куда человек
 // ушёл стрелками, не тянется за ним в соседний ящик и не ждёт его в закрытом.
 function pickTodayTab(key) {
+  todayState.metricFilter = null;
   todayState.tab = key;
   todayState.manual = true;
   todayState.view = 0;
@@ -1207,11 +1278,13 @@ function externalFor(date) {
   return (source?.external || []).filter((item) => item.date === date);
 }
 function setView(offset) {
+  todayState.metricFilter = null;
   todayState.view = offset;
   todayState.tab = "day";
   renderToday();
 }
 function setJournalView(offset) {
+  todayState.metricFilter = null;
   todayState.journalView = offset;
   todayState.tab = "journal";
   renderToday();
@@ -1251,12 +1324,12 @@ function dayCountNode(date) {
   if (date === currentDayDate) {
     // Дела в шапке — сегодняшние, как в утренней сводке: со сроком сегодня и
     // ждущие уточнения. Запас без срока считается у своей полки.
-    const todays = todayState.todo.filter((entry) => !isActiveMeeting(entry) && todoOrder(entry, date) > 0 && todoOrder(entry, date) <= 2);
+    const todays = todayDeals(date);
     const allDay = (todayState.calendar?.external || []).filter((item) => item.date === date && item.allDay).length;
     const meetings = todayMeetings().length + allDay;
     if (calendarConnected() || meetings) parts.push(plural(meetings, MEETINGS));
     parts.push(plural(todays.length, DEALS));
-    const late = todayState.todo.filter((entry) => isOverdue(entry, date)).length;
+    const late = overdueDeals(date).length;
     wrap.append(document.createTextNode(parts.join(" · ")));
     if (late) wrap.append(document.createTextNode(" · "), bindTranslation(node("em", t("{late} просрочено", { late: late })), "{late} просрочено", { late: late }));
     return wrap;
@@ -1272,7 +1345,7 @@ function dayCountNode(date) {
 // сколько закрыто сегодня и сколько дел на сегодня. Ноль — бейдж скрыт.
 function paintDockBadges() {
   const done = doneRows()?.length || 0;
-  const todays = todayState.todo.filter((entry) => !isActiveMeeting(entry) && todoOrder(entry, currentDayDate) > 0 && todoOrder(entry, currentDayDate) <= 2).length;
+  const todays = todayDeals(currentDayDate).length;
   const day = document.querySelector('.dock-item > a[href="#calendar"]');
   if (day && currentDayDate) day.dataset.day = String(Number(currentDayDate.slice(8, 10)));
   for (const [id, count] of [["dock-badge-done", done], ["dock-badge-today", todays]]) {
@@ -1309,6 +1382,480 @@ function paintTabs(date, journalDate) {
     host.append(button);
   }
   for (const [key, panel] of Object.entries(DRAWER_PANELS)) $(`#${panel}`).hidden = todayState.tab !== key;
+}
+// ── Пилюля метрики дня ───────────────────────────────────────────────────────
+// Запланировано · сделано · осталось · просрочено, серия и искра за неделю —
+// одной пилюлей над полем записи на «Сегодня». Числа не считаются заново: это те
+// же списки, что у вкладок «День» и «Закрыто» и бейджей дока (todayDeals,
+// overdueDeals, doneRows), поэтому пилюля сходится с ними по построению. История
+// для серии и искры — todayState.doneByDay; правила счёта и подписи — в
+// day-metric.js, здесь только рисунок и отклик.
+// Пилюля одна и не пересоздаётся: каждый load() обновляет числа на месте — фокус
+// на сегменте не теряется, а изменившееся число подпрыгивает. Свёрнутая пилюля
+// размеров не меняет никогда: подписи раскрываются отдельным слоем поверх.
+const METRIC_ICONS = {
+  planned: '<circle cx="5.2" cy="6.5" r="1.6"/><circle cx="5.2" cy="12" r="1.6"/><circle cx="5.2" cy="17.5" r="1.6"/><path d="M10 6.5h10.2M10 12h10.2M10 17.5h6.4"/>',
+  done: '<circle cx="12" cy="12" r="9"/><path d="M7.9 12.4l2.9 2.9 5.4-5.8"/>',
+  left: '<circle cx="12" cy="12" r="9"/>',
+  late: '<circle cx="12" cy="12" r="9"/><path class="hand" d="M12 12V6.8"/><path d="M12 12l3.5 2.1"/>',
+  streak: '<path d="M12 21.4c-4.2 0-6.9-2.8-6.9-6.6 0-3 1.8-4.9 3.2-6.6.5 1.8 1.3 2.8 2.3 3.2-.3-3.4.7-6.4 3.3-8.9.5 2.9 3.9 5.3 4.6 10.2.7 4.9-2.3 8.7-6.5 8.7z"/><path d="M12 18.4c-1.5 0-2.5-1.1-2.5-2.5 0-1 .6-1.8 1.3-2.5.3.7.7 1 1.2 1.2.1-1.1.5-2 1.2-2.7.9 1 1.6 2.2 1.6 3.4 0 1.7-1.3 3.1-2.8 3.1z" stroke-width="1.5"/>',
+  week: '<path d="M2.6 16.8l4.5-5.6 3.6 3.3 4.3-7.6 3 3.4 3.4-4.4"/><circle cx="21.2" cy="6" r="1.3" fill="currentColor" stroke="none"/>',
+  chev: '<path d="M6 9.5l6 6 6-6"/>',
+};
+const METRIC_SLOTS = { today: "#day-metric", board: "#board-metric" };
+// Что оставляет в списке нажатие: фильтр → вид счётчика, который его держит. На
+// «Сегодня» фильтров два, «сделано» там открывает вкладку; на «Доске» «сделано» —
+// третий: он подсвечивает колонку «Закрыто» и приглушает остальные.
+const METRIC_FILTER_KIND = { late: "late", open: "left", done: "done" };
+const METRIC_KIND_FILTER = { late: "late", left: "open", done: "done" };
+// Наведение подсвечивает то, что счётчик считает; у серии и недели считать в списке нечего.
+const METRIC_HL_TONE = { planned: "ink", done: "green", left: "ink", late: "red" };
+const METRIC_INTENT_MS = 120;
+const METRIC_LEAVE_MS = 150;
+const METRIC_GUTTER = 8;
+// page — страница, на которой пилюля видела человека в прошлый раз: фильтр не переживает уход с неё.
+const metricUi = { metric: null, hover: null, page: undefined };
+const metricDocks = new Set();
+const metricHoverMode = () => Boolean(window.matchMedia?.("(hover: hover) and (pointer: fine)").matches);
+
+const metricSvg = (kind) => `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${METRIC_ICONS[kind]}</svg>`;
+function metricIcon(kind) {
+  const icon = node("span", undefined, "mc-ic");
+  icon.innerHTML = metricSvg(kind);
+  return icon;
+}
+function metricSpark() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "metric-spark");
+  svg.setAttribute("viewBox", "0 0 44 18");
+  svg.setAttribute("aria-hidden", "true");
+  return svg;
+}
+// Сегмент свёрнутой пилюли: значок и число; у «за неделю» число живёт в панели, а в пилюле — одна искра.
+function metricSegment(kind) {
+  const button = node("button", undefined, `mc mc-${kind}`);
+  button.type = "button";
+  button.dataset.mc = kind;
+  if (kind === "week") button.append(metricSpark());
+  else button.append(metricIcon(kind), node("span", "0", "mc-n"));
+  return button;
+}
+// Карточка раскрытой панели: то же число с подписью. Она закрывает сегмент под собой,
+// поэтому нажимается так же, как он; в порядок табуляции не входит — там стоит сам сегмент.
+function metricCard(kind, caption) {
+  const card = node("button", undefined, `mc mc-${kind} mp-card`);
+  card.type = "button";
+  card.tabIndex = -1;
+  card.dataset.pc = kind;
+  const main = node("span", undefined, "mc-main");
+  const number = node("span", "0", "mc-n");
+  if (kind === "week") {
+    const tail = node("span", undefined, "wk-tail");
+    tail.append(metricIcon("week"), number);
+    main.append(metricSpark(), tail);
+  } else main.append(metricIcon(kind), number);
+  card.append(main, node("span", caption, "mc-l"));
+  return card;
+}
+function metricToggle(className, label) {
+  const button = node("button", undefined, className);
+  button.type = "button";
+  button.dataset.tog = "";
+  button.setAttribute("aria-label", label);
+  button.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${METRIC_ICONS.chev}</svg>`;
+  return button;
+}
+function metricStrip(className = "") {
+  const strip = node("div", undefined, `metric-strip ${className}`.trim());
+  strip.setAttribute("aria-hidden", "true");
+  strip.append(node("i"));
+  return strip;
+}
+function mountMetric(slot, place) {
+  clear(slot);
+  slot.dataset.place = place;
+  const dock = node("div", undefined, "metric-dock");
+  dock.dataset.anchor = place === "board" ? "right" : "center";
+  dock._flags = { hover: false, focus: false, pin: false, timer: 0 };
+  const dot = () => { const item = node("i", undefined, "mc-sep"); item.setAttribute("aria-hidden", "true"); return item; };
+  const bar = node("i", undefined, "mc-vbar");
+  bar.setAttribute("aria-hidden", "true");
+  const pill = node("div", undefined, "metric-pill");
+  pill.setAttribute("role", "group");
+  bindTranslation(pill, "Метрика дня", "aria-label");
+  const toggle = metricToggle("mc-tog", t("Раскрыть подписи"));
+  toggle.setAttribute("aria-expanded", "false");
+  pill.append(metricSegment("planned"), dot(), metricSegment("done"), dot(), metricSegment("left"), dot(), metricSegment("late"), bar, metricSegment("streak"), dot(), metricSegment("week"), toggle);
+  const wrap = node("div", undefined, "metric-wrap");
+  wrap.append(pill, metricStrip());
+  // Панель — отдельный слой: верх совпадает с верхом пилюли, в потоке её нет.
+  const panel = node("div", undefined, "metric-panel");
+  panel.setAttribute("role", "group");
+  bindTranslation(panel, "Подписи метрики дня", "aria-label");
+  panel.setAttribute("aria-hidden", "true");
+  const cards = node("div", undefined, "mp-cards");
+  const captions = metricLabels(dayMetric({ today: currentDayDate }));
+  for (const kind of METRIC_KINDS) cards.append(metricCard(kind, captions[kind].caption));
+  const fold = metricToggle("mp-tog", t("Свернуть"));
+  fold.tabIndex = -1;
+  cards.append(fold);
+  panel.append(cards, metricStrip("mp-strip"));
+  dock.append(wrap, panel);
+  // Новые числа объявляются читалке экрана вежливо, не перебивая.
+  const live = node("div", undefined, "sr-only");
+  live.setAttribute("aria-live", "polite");
+  slot.append(dock, live);
+  bindMetric(dock);
+  metricDocks.add(dock);
+  // Числа меняют ширину пилюли на пиксель-другой — раскрытая панель стоит по её центру и идёт следом.
+  new ResizeObserver(() => metricPlace(dock)).observe(pill);
+  return dock;
+}
+
+// ── раскрытие: слой-панель ──
+// Наведение: пауза намерения 120 мс, уход курсора — 150 мс, курсор на панели держит
+// её. Фокус с клавиатуры — сразу. На тач-экране наведения нет: панель открывает
+// нажатие, закрывает — Esc, шеврон или нажатие мимо.
+function metricPlace(dock) {
+  const panel = dock.querySelector(".metric-panel"), pill = dock.querySelector(".metric-pill");
+  if (!panel || !pill?.offsetWidth) return;
+  const dockBox = dock.getBoundingClientRect(), pillBox = pill.getBoundingClientRect();
+  const width = panel.offsetWidth;
+  const right = dock.dataset.anchor === "right";
+  const anchor = right ? pillBox.right : pillBox.left + pillBox.width / 2;
+  const want = right ? pillBox.right - width : anchor - width / 2;
+  const low = METRIC_GUTTER, high = document.documentElement.clientWidth - METRIC_GUTTER - width;
+  const left = high < low ? low : Math.min(Math.max(want, low), high);
+  panel.style.left = `${(left - dockBox.left).toFixed(1)}px`;
+  // Точка привязки для scale: панель вырастает из пилюли, а не из своего центра.
+  panel.style.setProperty("--ox", `${Math.max(0, Math.min(width, anchor - left)).toFixed(1)}px`);
+}
+// Фокус с клавиатуры стоит на сегменте пилюли, а он под панелью: кольцо рисуется на
+// такой же карточке панели.
+function metricMirrorFocus(dock, target = null) {
+  for (const element of dock.querySelectorAll(".kf")) element.classList.remove("kf");
+  if (!target?.closest(".metric-pill")) return;
+  const twin = target.dataset.mc ? dock.querySelector(`[data-pc="${target.dataset.mc}"]`) : target.matches("[data-tog]") ? dock.querySelector(".mp-tog") : null;
+  twin?.classList.add("kf");
+}
+// Подсказка у свёрнутой пилюли — полная фраза и что сделает нажатие. У раскрытой
+// подписи и так на виду, поэтому подсказок там нет.
+function metricTitles(dock) {
+  const open = dock.classList.contains("open");
+  const metric = metricUi.metric;
+  const place = dock.closest(".metric-slot")?.dataset.place;
+  const labels = metric ? metricLabels(metric, { place }) : null;
+  const pressed = metricPressedKind(place);
+  for (const element of dock.querySelectorAll(".metric-pill [data-mc]")) {
+    if (open || !labels) element.removeAttribute("title");
+    else element.title = metricTitle(labels[element.dataset.mc], { pressed: pressed === element.dataset.mc });
+  }
+}
+function metricSync(dock) {
+  const flags = dock._flags;
+  const open = flags.hover || flags.focus || flags.pin;
+  const toggle = dock.querySelector(".mc-tog");
+  toggle.setAttribute("aria-expanded", String(open));
+  toggle.setAttribute("aria-label", open ? t("Свернуть") : t("Раскрыть подписи"));
+  if (open === dock.classList.contains("open")) return;
+  dock.querySelector(".metric-panel").setAttribute("aria-hidden", String(!open));
+  if (open) {
+    metricPlace(dock);
+    const active = document.activeElement;
+    if (active && dock.contains(active) && active.matches(":focus-visible")) metricMirrorFocus(dock, active);
+  } else metricMirrorFocus(dock);
+  dock.classList.toggle("open", open);
+  metricTitles(dock);
+}
+function metricClose(dock) {
+  clearTimeout(dock._flags.timer);
+  Object.assign(dock._flags, { hover: false, focus: false, pin: false });
+  metricSync(dock);
+}
+function bindMetric(dock) {
+  const flags = dock._flags;
+  dock.addEventListener("pointerenter", (event) => {
+    if (event.pointerType !== "mouse" || !metricHoverMode()) return;
+    clearTimeout(flags.timer);
+    if (!flags.hover) flags.timer = setTimeout(() => { flags.hover = true; metricSync(dock); }, motionAllowed() ? METRIC_INTENT_MS : 0);
+  });
+  dock.addEventListener("pointerleave", (event) => {
+    if (event.pointerType !== "mouse") return;
+    clearTimeout(flags.timer);
+    if (flags.hover) flags.timer = setTimeout(() => { flags.hover = false; metricSync(dock); }, METRIC_LEAVE_MS);
+  });
+  dock.addEventListener("focusin", (event) => {
+    if (!event.target.matches(":focus-visible")) return;
+    flags.focus = true;
+    metricSync(dock);
+    metricMirrorFocus(dock, event.target);
+    const kind = event.target.dataset.mc || event.target.dataset.pc;
+    if (kind) metricHighlight(kind);
+  });
+  dock.addEventListener("focusout", (event) => {
+    metricMirrorFocus(dock);
+    if (event.target.dataset?.mc || event.target.dataset?.pc) metricHighlight(null);
+    if (dock.contains(event.relatedTarget)) return;
+    flags.focus = false;
+    metricSync(dock);
+  });
+  // Подсветка: на тач-экране наведения нет, и она не должна залипать после нажатия.
+  dock.addEventListener("mouseover", (event) => {
+    const item = event.target.closest("[data-mc], [data-pc]");
+    const kind = item?.dataset.mc || item?.dataset.pc;
+    if (kind && metricHoverMode() && metricUi.hover !== kind) metricHighlight(kind);
+  });
+  dock.addEventListener("mouseout", (event) => {
+    const item = event.target.closest("[data-mc], [data-pc]");
+    if (item && !item.contains(event.relatedTarget)) metricHighlight(null);
+  });
+  dock.addEventListener("click", (event) => {
+    const toggle = event.target.closest("[data-tog]");
+    if (toggle) {
+      const was = dock.classList.contains("open");
+      clearTimeout(flags.timer);
+      flags.pin = !was;
+      if (was) flags.hover = flags.focus = false;
+      metricSync(dock);
+      return;
+    }
+    const item = event.target.closest("[data-mc], [data-pc]");
+    if (item) metricPress(dock, item.dataset.mc || item.dataset.pc);
+  });
+}
+// Нажатие мимо, Esc и смена размера окна: панель закрывается или встаёт на место.
+document.addEventListener("click", (event) => {
+  const hit = event.target.closest?.(".metric-dock");
+  for (const dock of metricDocks) if (dock !== hit) metricClose(dock);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  for (const dock of metricDocks) metricClose(dock);
+});
+window.addEventListener("resize", () => { for (const dock of metricDocks) metricPlace(dock); });
+
+// ── нажатие на счётчик ──
+function metricRestart(element, className, ms) {
+  if (!element || !motionAllowed()) return;
+  element.classList.remove(className);
+  void element.getBoundingClientRect();
+  element.classList.add(className);
+  clearTimeout(element[`_t${className}`]);
+  element[`_t${className}`] = setTimeout(() => element.classList.remove(className), ms);
+}
+// «Серия» и «за неделю» отвечают на нажатие живой искрой: линия рисуется заново, значок пульсирует.
+function metricReplay(dock, kind) {
+  for (const spark of dock.querySelectorAll(".metric-spark")) metricRestart(spark, "redraw", 1000);
+  for (const part of dock.querySelectorAll(`[data-mc="${kind}"] .mc-ic, [data-pc="${kind}"] .mc-ic, [data-mc="${kind}"] .metric-spark`)) metricRestart(part, "pulse", 700);
+}
+function metricPress(dock, kind) {
+  const flags = dock._flags;
+  // На тач-экране наведения нет: первое нажатие раскрывает подписи, а не действует.
+  if (!dock.classList.contains("open") && !metricHoverMode()) { flags.pin = true; metricSync(dock); return; }
+  if (kind === "streak" || kind === "week") { metricReplay(dock, kind); return; }
+  if (dock.closest(".metric-slot")?.dataset.place === "board") boardMetricPress(kind);
+  else todayMetricPress(kind);
+}
+function todayMetricPress(kind) {
+  if (kind === "done") { pickTodayTab("journal"); return; }
+  if (kind === "planned") {
+    todayState.metricFilter = null;
+    if (todayState.tab !== "day") { todayState.tab = "day"; todayState.manual = true; todayState.view = 0; todayState.journalView = 0; rememberTab(); }
+    renderToday();
+    // Полки вспыхивают, когда список уже перерисован: подсвечиваются заново найденные.
+    metricFlash([...document.querySelectorAll("#todo > .day-group:not(.inbox-group), #todo > .day-head")]);
+    return;
+  }
+  const filter = METRIC_KIND_FILTER[kind];
+  // Нулевой счётчик нечего показывать: «Только просроченные · 0» — пустой список.
+  if (!metricUi.metric?.[kind] && todayState.metricFilter !== filter) return;
+  const next = todayState.metricFilter === filter ? null : filter;
+  // Фильтр живёт в «Дне»: из «Закрыто» или из свёрнутых ящиков нажатие открывает его.
+  if (next && todayState.tab !== "day") { todayState.tab = "day"; todayState.manual = true; todayState.view = 0; todayState.journalView = 0; rememberTab(); }
+  todayState.metricFilter = next;
+  renderToday();
+}
+// «Доска»: нажатие оставляет на ней только это — фильтр живёт атрибутом у #board-columns
+// и #board-flat, карточки и строки не перерисовываются. «Запланировано» снимает фильтр
+// и вспышкой показывает всё; «сделано» ведёт к колонке «Закрыто».
+function boardMetricPress(kind) {
+  if (kind === "planned") {
+    boardState.metricFilter = null;
+    metricBoardApply();
+    paintDayMetric();
+    metricFlash([...document.querySelectorAll("#board-columns .board-column:not(.ghost), #board-flat .g-sec, #board-flat .g-kids")]);
+    return;
+  }
+  const filter = METRIC_KIND_FILTER[kind];
+  // Нулевой счётчик нечего показывать.
+  if (!metricUi.metric?.[kind] && boardState.metricFilter !== filter) return;
+  boardState.metricFilter = boardState.metricFilter === filter ? null : filter;
+  metricBoardApply();
+  paintDayMetric();
+  // Колонка «Закрыто» могла уехать за край ленты — подводим к ней.
+  if (boardState.metricFilter === "done") $(".board-done-column")?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: motionAllowed() ? "smooth" : "auto" });
+}
+// Доска перерисована или фильтр пилюли сменился: атрибут у лент и подсветка по месту.
+function metricBoardApply() {
+  const filter = boardState.metricFilter;
+  for (const id of ["board-columns", "board-flat"]) {
+    const element = document.getElementById(id);
+    if (!element) continue;
+    if (filter) element.dataset.metricFilter = filter;
+    else delete element.dataset.metricFilter;
+  }
+  metricRehighlight();
+}
+// Панель фильтров доски и вид со сгруппированным списком меняют состав карточек — фильтр пилюли снимается.
+function resetBoardMetricFilter() {
+  if (!boardState.metricFilter) return;
+  boardState.metricFilter = null;
+  metricBoardApply();
+  paintDayMetric();
+}
+// Дело со сроком раньше сегодняшнего дня: то же «просрочено», что у пилюли (повтор не просрочивается).
+function boardIsLate(card, closed = false) {
+  return !closed && Boolean(card.due?.date) && !card.due.repeat && card.due.date < (boardState.data?.today || currentDayDate);
+}
+function metricFlash(elements) {
+  for (const element of elements) metricRestart(element, "metric-flash", 1000);
+}
+const metricPressedKind = (place) => METRIC_FILTER_KIND[place === "board" ? boardState.metricFilter : todayState.metricFilter] || null;
+// Фильтры пилюли живут, пока открыты та же страница и тот же день. Первый разбор
+// адреса случается во время чтения модуля — сбрасывать тогда нечего.
+function metricPageChanged(page) {
+  if (metricUi.page !== undefined && metricUi.page !== page) {
+    resetMetricFilters();
+    // Курсор ушёл вместе со страницей, а mouseout на скрытой странице не приходит.
+    metricHighlight(null);
+  }
+  metricUi.page = page;
+}
+function resetMetricFilters() {
+  todayState.metricFilter = null;
+  if (boardState.metricFilter) { boardState.metricFilter = null; metricBoardApply(); }
+}
+
+// ── подсветка по наведению ──
+// Мягкая подложка под тем, что счётчик считает; ушёл курсор — гаснет. Список и
+// вкладки перерисовываются по каждому load(), поэтому подсветка ставится заново.
+function metricHighlight(kind) {
+  metricUi.hover = METRIC_HL_TONE[kind] ? kind : null;
+  for (const element of document.querySelectorAll(".metric-hl")) element.classList.remove("metric-hl");
+  const main = document.querySelector("main");
+  if (!metricUi.hover) { delete main.dataset.metricHl; return; }
+  main.dataset.metricHl = METRIC_HL_TONE[kind];
+  const mark = (elements) => { for (const element of elements) element?.classList.add("metric-hl"); };
+  const all = (selector) => [...document.querySelectorAll(selector)];
+  if (kind === "late") {
+    mark(all("#todo .day-group.late"));
+    mark(all("#todo .day-late > .entry"));
+    mark(all('#today-brief [data-w="late"]'));
+  }
+  if (kind === "left" || kind === "planned") {
+    mark(all("#todo > .day-group:not(.late):not(.stock):not(.inbox-group), #todo .day-group.today"));
+    mark(all("#todo .day-rows:not(.stock) > .entry, #todo > .day-row > .entry"));
+    mark(all('#today-brief [data-w="open"]'));
+  }
+  if (kind === "planned" || kind === "done") mark(all("#tab-journal"));
+  // «Доска»: просрочено — просроченные карточки, сделано — колонка «Закрыто», осталось —
+  // остальные колонки, запланировано — все. В списке то же по разделам и строкам.
+  if (kind === "late") mark(all("#board-columns .board-card.is-late, #board-flat .board-row.is-late"));
+  if (kind === "done") mark(all("#board-columns .board-done-column, #board-flat .g-sec.done, #board-flat .g-kids.done"));
+  if (kind === "left") mark(all("#board-columns .board-column:not(.board-done-column):not(.ghost), #board-flat .g-sec:not(.done), #board-flat .g-kids:not(.done)"));
+  if (kind === "planned") mark(all("#board-columns .board-column:not(.ghost), #board-flat .g-sec, #board-flat .g-kids"));
+}
+const metricRehighlight = () => { if (metricUi.hover) metricHighlight(metricUi.hover); };
+
+// ── рисунок: числа на месте ──
+function paintMetricSpark(svg, points, animate) {
+  const key = points.join(",");
+  if (svg.dataset.points === key) return;
+  svg.dataset.points = key;
+  const { line, area, dot } = sparkShape(points, 44, 18);
+  svg.innerHTML = `<path class="area" d="${area}"/><path class="ln" pathLength="1" d="${line}"/><circle cx="${dot.x}" cy="${dot.y}" r="${dot.r}"/>`;
+  if (animate) metricRestart(svg, "redraw", 1000);
+}
+function paintMetricSlot(slot, metric) {
+  const dock = slot.querySelector(".metric-dock");
+  const first = !slot.dataset.ready;
+  const place = slot.dataset.place;
+  const labels = metricLabels(metric, { place });
+  const pressed = metricPressedKind(place);
+  const pressable = place === "board" ? ["late", "left", "done"] : ["late", "left"];
+  const open = dock.classList.contains("open");
+  dock.querySelector(".mc-tog").setAttribute("aria-label", open ? t("Свернуть") : t("Раскрыть подписи"));
+  dock.querySelector(".mp-tog").setAttribute("aria-label", t("Свернуть"));
+  for (const element of slot.querySelectorAll("[data-mc], [data-pc]")) {
+    const kind = element.dataset.mc || element.dataset.pc;
+    const label = labels[kind];
+    element.setAttribute("aria-label", label.aria);
+    if (pressable.includes(kind)) element.setAttribute("aria-pressed", String(pressed === kind));
+    element.classList.toggle("is-zero", kind === "late" && metric.late === 0);
+    if ("mc" in element.dataset) {
+      if (open) element.removeAttribute("title");
+      else element.title = metricTitle(label, { pressed: pressed === kind });
+    }
+    const caption = element.querySelector(".mc-l");
+    if (caption) caption.textContent = label.caption;
+    const number = element.querySelector(".mc-n");
+    if (number && number.textContent !== label.text) {
+      number.textContent = label.text;
+      if (!first) {
+        metricRestart(number, "bump", 500);
+        if (kind === "done") metricRestart(element.querySelector(".mc-ic"), "pulse", 700);
+      }
+    }
+  }
+  // Новая просрочка: часы качаются один раз.
+  const late = Number(slot.dataset.late ?? metric.late);
+  if (!first && metric.late > late) for (const icon of slot.querySelectorAll(".mc-late .mc-ic")) metricRestart(icon, "wobble", 800);
+  slot.dataset.late = String(metric.late);
+  for (const fill of slot.querySelectorAll(".metric-strip > i")) fill.style.width = `${(metricFraction(metric) * 100).toFixed(1)}%`;
+  for (const svg of slot.querySelectorAll(".metric-spark")) paintMetricSpark(svg, metric.spark, !first);
+  const say = metricAnnouncement(metric);
+  if (!first && slot.dataset.said !== say) slot.querySelector('[aria-live="polite"]').textContent = say;
+  slot.dataset.said = say;
+  slot.dataset.ready = "1";
+}
+function paintDayMetric() {
+  if (!currentDayDate || !todayState.loaded) return;
+  const slots = Object.entries(METRIC_SLOTS).map(([place, selector]) => [place, $(selector)]).filter(([, slot]) => slot);
+  if (!slots.length) return;
+  const today = currentDayDate;
+  const metric = dayMetric({ open: todayDeals(today).length, late: overdueDeals(today).length, done: doneRows()?.length || 0, byDay: todayState.doneByDay, today });
+  metricUi.metric = metric;
+  // Фильтру, которому больше нечего показывать, не место в списке: он снимается сам.
+  if (todayState.metricFilter === "late" && !metric.late) todayState.metricFilter = null;
+  if (todayState.metricFilter === "open" && !metric.left) todayState.metricFilter = null;
+  const dropped = { late: !metric.late, open: !metric.left, done: !metric.done }[boardState.metricFilter];
+  if (dropped) { boardState.metricFilter = null; metricBoardApply(); }
+  for (const [place, slot] of slots) {
+    if (!slot.firstChild) mountMetric(slot, place);
+    paintMetricSlot(slot, metric);
+    slot.hidden = false;
+  }
+}
+
+// ── фильтр списка «Дня» ──
+// Над списком — строка «Только просроченные · 1 · Сбросить»; остальные строки
+// приглушены стилями по атрибуту data-metric-filter у #todo.
+function paintMetricNote(container) {
+  const filter = todayState.metricFilter;
+  if (!filter || !metricUi.metric) return;
+  const late = filter === "late";
+  const note = node("div", undefined, "metric-fnote");
+  const icon = metricIcon(late ? "late" : "left");
+  icon.classList.add(late ? "tone-late" : "tone-muted");
+  const reset = node("button", t("Сбросить"), "metric-fnote-reset");
+  reset.type = "button";
+  reset.addEventListener("click", () => {
+    todayState.metricFilter = null;
+    renderToday();
+    $(`#day-metric [data-mc="${late ? "late" : "left"}"]`)?.focus();
+  });
+  note.append(icon, node("span", late ? t("Только просроченные · {count}", { count: metricUi.metric.late }) : t("Только открытые · {count}", { count: metricUi.metric.left })), reset);
+  container.append(note);
 }
 // Строка с временем слева: карточка записи или чужое событие.
 function rowWithTime(time, child, className = "") {
@@ -1572,8 +2119,11 @@ async function openSharedCard(captureId, { talk = false } = {}) {
 function paintDayList(date) {
   const container = $("#todo");
   clear(container);
+  // Фильтр пилюли относится к сегодняшнему списку: у другого дня своих нет.
+  if (date === currentDayDate && todayState.metricFilter) container.dataset.metricFilter = todayState.metricFilter;
+  else delete container.dataset.metricFilter;
   container.append(dayNavNode(date, { view: todayState.view, onView: setView }));
-  if (date === currentDayDate) { paintTodayList(container); return; }
+  if (date === currentDayDate) { paintMetricNote(container); paintTodayList(container); return; }
   const data = todayState.cache.get(date);
   if (!data) {
     container.append(bindTranslation(node("p", t("Загружаю…"), "empty"), "Загружаю…"));
@@ -1590,6 +2140,7 @@ function shelfHeadEl(text, kind, entries) {
   const movable = entries.filter((entry) => canPostpone(entry));
   if (!movable.length) return label;
   const head = node("div", undefined, "day-head");
+  head.dataset.shelf = kind;
   const act = bindTranslation(node("button", t("перенести всё на завтра"), `day-head-act ${kind}`), "перенести всё на завтра");
   act.type = "button";
   act.addEventListener("click", () => postponeToTomorrow(movable, act));
@@ -1846,28 +2397,43 @@ function todoOrder(entry, today) {
   return 4;
 }
 async function load() {
-  // Календарь на сегодня и завтра нужен «Дню» и брифу. Он грузится вместе с
-  // журналом, но только пока открыта «Сегодня»: на других страницах журнал
-  // перечитывается так же быстро, как раньше, а календарь добирается при
-  // возвращении. Другие дни грузятся, когда их открывают, и забываются при
-  // каждом изменении журнала.
+  const loadToken = ++dayLoadToken, timeZone = getTimeZone();
+  // Календарь на сегодня и завтра нужен «Дню» и брифу, а закрытое сегодня — вкладке
+  // «Закрыто», бейджам дока и пилюле метрики, которая стоит и на «Сегодня», и на
+  // «Доске»: числа пилюли считаются из тех же списков, что вкладки, и должны с ними
+  // сходиться на любой странице. Поэтому всё грузится вместе с журналом каждый раз
+  // — и календарь, и закрытое. Другие дни грузятся, когда их открывают, и
+  // забываются при каждом изменении журнала.
   const todayGuess = currentDayDate || zoneDate(new Date());
-  const onToday = !$("#today")?.hidden;
-  const [day, entries, calendar, closed] = await Promise.all([
+  // История для серии, недели и искры меняется редко (сегодняшний день пилюля берёт
+  // живым), поэтому первый раз её ждут, чтобы серия не мигала, а потом перечитывают
+  // в фоне — журнал не ждёт ещё одного ответа на каждом обновлении.
+  const firstHistory = todayState.doneByDay === null;
+  // Первый разбор адреса зовёт load() раньше, чем модуль дошёл до boardState, — его
+  // читаем уже после микрозадачи. (Без неё вход сразу на «Доску» падал бы здесь.)
+  await null;
+  // Открытая доска перечитывается первой и вместе с остальным, а не после него: её ответ
+  // от журнала дня не зависит, а сервер отвечает по очереди — лишние запросы пилюли не
+  // должны отодвигать доску, на которую человек смотрит.
+  const boardReload = !$("#board")?.hidden && boardState.data ? loadBoard() : null;
+  if (boardReload) await null;
+  const [day, entries, calendar, closed, history] = await Promise.all([
     request("/api/day"),
     request("/api/entries?limit=100"),
-    onToday ? request(`/api/calendar?from=${todayGuess}&to=${shiftDate(todayGuess, 1)}`).catch(() => null) : Promise.resolve(undefined),
+    request(`/api/calendar?from=${todayGuess}&to=${shiftDate(todayGuess, 1)}`).catch(() => null),
     // «Закрыто» рисуется прямо из /api/done: старое дело, закрытое сегодня, не
-    // попадает в последние сто записей, и добирать его карточкой не нужно. Звать
-    // только пока открыта «Сегодня»; на других страницах список ждёт возвращения.
-    onToday ? request(`/api/done?from=${todayGuess}&to=${todayGuess}`).catch(() => null) : Promise.resolve(undefined),
+    // попадает в последние сто записей, и добирать его карточкой не нужно.
+    request(`/api/done?from=${todayGuess}&to=${todayGuess}`).catch(() => null),
+    firstHistory ? requestDoneHistory(todayGuess) : Promise.resolve(null),
   ]);
+  if (loadToken !== dayLoadToken || timeZone !== getTimeZone()) return;
   todayState.cache.clear();
-  if (closed !== undefined && todayGuess === day.date) {
+  if (todayGuess === day.date) {
     todayState.done = (closed?.days || []).flatMap((group) => group.items).filter((item) => !item.auto);
     todayState.doneStale = false;
+    if (history) todayState.doneByDay = history;
   } else todayState.doneStale = true;
-  if (calendar !== undefined && todayGuess === day.date) {
+  if (todayGuess === day.date) {
     todayState.calendar = pruneRemovedExternal(calendar);
     todayState.calendarStale = false;
   } else todayState.calendarStale = true;
@@ -1877,11 +2443,14 @@ async function load() {
   // ухода на другую страницу и обратно. Перечитываются только уже собранные —
   // при старте их собирает переход по хэшу.
   const page = document.querySelector(".app-page:not([hidden])")?.id;
-  if (page === "board" && boardState.data) await loadBoard();
+  if (boardReload) await boardReload;
+  else if (page === "board" && boardState.data) await loadBoard();
   if (page === "circles") await refreshRoomsQuietly();
   if (page === "calendar" && calState.data) await loadCalendar();
   if (page === "reports" && reportsState.loaded) await loadReports();
   if (page === "notes") await refreshNotes();
+  // История пилюли перечитывается последней, когда всё остальное уже на экране.
+  if (loadToken === dayLoadToken && timeZone === getTimeZone() && !firstHistory && todayGuess === day.date) refreshDoneHistory(todayGuess);
 }
 // Движение в приложении одно на всё: предмет не летит через экран и не растёт
 // на глазах — он тихо проявляется там, где его посчитала раскладка. Тот же
@@ -7078,6 +7647,8 @@ const boardState = {
   mobileColumn: null,
   // Подзадачи отдельными карточками: "show" или "hide"; от него зависит запрос доски (boardUrl).
   subs: boardStoredSubs(),
+  // Фильтр пилюли метрики: "late" | "open" | "done" — остальное на доске приглушено.
+  metricFilter: null,
 };
 boardState.filterOpen = activeConditions(boardState.filter).length > 0;
 // «Подзадачи: Показывать» просит у сервера доску с подзадачами карточками; перенос
@@ -7135,6 +7706,8 @@ const kc = {
   circle: null, chat: null, info: null, person: null, table: true, menu: false, talks: false, ctx: null,
   reply: null, share: null, newFrom: null, talk: null, modal: null, invite: null,
   fresh: false, focusField: false, deedFocus: false,
+  // Набранное в «Поручить дело» по кругу и человеку: страница перестраивается целиком.
+  deedDrafts: {},
 };
 const KC_REACTIONS = ["👍", "❤️", "🔥", "🙏", "👀", "✅"];
 // Тип записи — цвет и слово для строки обсуждения.
@@ -8385,6 +8958,13 @@ function kcDeedForm(circle, member) {
   field.type = "text";
   bindTranslation(field, "Что поручить", "placeholder");
   bindTranslation(field, "Дело для {name}", { name: member.name }, "aria-label");
+  // Страницу перестраивает любое событие журнала (в том числе «поток жив» сразу
+  // после открытия), а поле рождается заново пустым: без черновика обновление в
+  // фоне стирало набранное под пальцами.
+  const draftKey = `${circle.id}:${member.id}`;
+  field.dataset.draft = draftKey;
+  field.value = kc.deedDrafts[draftKey] || "";
+  field.addEventListener("input", () => { kc.deedDrafts[draftKey] = field.value; });
   const send = kcEl("button", "kc-btn sm primary", t("Отдать"));
   send.type = "submit";
   form.append(field, send);
@@ -8394,15 +8974,24 @@ function kcDeedForm(circle, member) {
     if (!raw || send.disabled) return;
     send.disabled = true;
     bindTranslation(send, "Отдаю…");
+    // Уходит: страница, перестроенная посреди запроса, не должна вернуть его в поле.
+    kc.deedDrafts[draftKey] = "";
     try {
       const created = await request("/api/captures", { method: "POST", body: JSON.stringify({ raw, primaryType: "todo" }) });
       await request(`/api/captures/${created.entry.id}/assign`, { method: "POST", body: JSON.stringify({ assigneeId: member.id, circleId: circle.id }) });
-      field.value = "";
+      if (!kc.deedDrafts[draftKey]) field.value = "";
       toast(t("Просьба ушла: {name} ответит «беру» или «не я»", { name: member.name }));
       kc.deedFocus = true;
       loadCircles();
       load();
     } catch (error) {
+      // Не ушло: набранное остаётся в черновике и в поле — в том, что успели
+      // перестроить, если оно всё ещё у этого человека.
+      if (!kc.deedDrafts[draftKey]) {
+        kc.deedDrafts[draftKey] = raw;
+        const live = document.getElementById("kc-deed-field");
+        if (live?.dataset.draft === draftKey && !live.value) live.value = raw;
+      }
       toast(error.message || t("Дело не ушло"));
     } finally {
       send.disabled = false;
@@ -8811,7 +9400,7 @@ function boardMetaTags(card) {
 // тянутся и карточки, когда доска разложена по человеку, проекту или
 // источнику: перенос там ничего осмысленного не менял бы.
 function boardCardEl(card, { closed = false, draggable = !closed } = {}) {
-  const element = node("div", undefined, `board-card${closed ? " closed" : ""}`);
+  const element = node("div", undefined, `board-card${closed ? " closed" : ""}${boardIsLate(card, closed) ? " is-late" : ""}`);
   element.draggable = draggable;
   element.dataset.captureId = card.captureId;
   if (card.due?.repeat && card.due.date) element.dataset.occurrence = card.due.date;
@@ -8868,7 +9457,7 @@ function boardCardEl(card, { closed = false, draggable = !closed } = {}) {
 // Строка списка: кружок, название, справа — срок, люди и проект; под названием —
 // родитель (у подзадачи) и полоска подзадач (у дела с ними). Не тянется.
 function boardRowEl(card, { closed = false } = {}) {
-  const row = node("div", undefined, `g-row board-row${closed ? " closed" : ""}`);
+  const row = node("div", undefined, `g-row board-row${closed ? " closed" : ""}${boardIsLate(card, closed) ? " is-late" : ""}`);
   row.dataset.captureId = card.captureId;
   if (card.due?.repeat && card.due.date) row.dataset.occurrence = card.due.date;
   const right = node("span", undefined, "g-right");
@@ -9667,6 +10256,7 @@ function paintBoardFilter() {
 // пересобрана), и фокус возвращается на тот список или галочку, которые трогали.
 // Если условие слилось с уже стоящим, открывается список значений у него.
 function boardFilterChanged(focus = null) {
+  resetBoardMetricFilter();
   const before = boardState.filter.length;
   boardState.filter = mergeConditions(boardState.filter);
   if (focus && boardState.filter.length < before) {
@@ -9727,6 +10317,7 @@ function paintBoardBar() {
 // Вид или группировка сменились: запомнить и перерисовать. Открытое поле
 // быстрого дела не переезжает — колонки, где оно стояло, уже другие.
 function boardChanged() {
+  resetBoardMetricFilter();
   boardRemember();
   boardState.openAdder = null;
   boardState.adderDraft = null;
@@ -9826,6 +10417,7 @@ function renderBoard(source) {
   if (view !== "board") {
     clear($("#board-segments"));
     flat.append(boardListEl(open, closed, data));
+    metricBoardApply();
     return;
   }
   // Доска: колонка на группу первого уровня и «Закрыто» — такая же колонка, по
@@ -9857,6 +10449,7 @@ function renderBoard(source) {
   }
   // Сегмент колонок нужен, когда на телефоне показана одна колонка.
   paintBoardSegments([...lanes.querySelectorAll(".board-column")]);
+  metricBoardApply();
 }
 // Панель над доской, поиск и «+ Дело». «+ Дело» открывает поле в первой своей
 // колонке; там, где колонок человека нет (список, группы-не-колонки),
@@ -12493,8 +13086,20 @@ window.addEventListener("pagent:localechange", () => {
 });
 
 window.addEventListener("pagent:timezonechange", () => {
+  dayTimeZoneGeneration += 1;
+  dayLoadToken += 1;
+  doneHistoryToken += 1;
+  todayState.doneByDay = null;
+  todayState.done = [];
+  todayState.calendar = null;
+  todayState.doneLoading = false;
+  todayState.calendarLoading = false;
+  todayState.doneStale = true;
+  todayState.calendarStale = true;
+  todayState.cache.clear();
   const previousDay = currentDayDate;
   currentDayDate = zoneDate(new Date());
+  if (previousDay !== currentDayDate) resetMetricFilters();
   if (calState.anchor === previousDay) calState.anchor = currentDayDate;
   boardState.locale = null;
   renderToday();

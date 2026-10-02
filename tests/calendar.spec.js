@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { E2E_EMAIL } from "./fixtures/e2e-account.js";
+import { E2E_DB } from "./fixtures/e2e-env.js";
 
 const shift = (date, days) => { const d = new Date(`${date}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); };
 
@@ -23,8 +24,9 @@ test("календарь: неделя, день, месяц, перенос м�
   const calendar = page.locator("#calendar-view");
   await expect(calendar).toBeVisible();
   // У страницы свой пункт в шапке, между «Доской» и «Заметками», и на открытой странице он подсвечен.
-  await expect(page.locator("nav a")).toHaveText(["Сделано", "Сегодня", "Доска", "Календарь", "Заметки"]);
-  await expect(page.locator("nav a.active")).toHaveText("Календарь");
+  // Читаем подписи плиток: число бейджа у «Сделано» и «Сегодня» лежит в той же ссылке.
+  await expect(page.locator("nav a .dock-label")).toHaveText(["Сделано", "Сегодня", "Доска", "Календарь", "Заметки"]);
+  await expect(page.locator("nav a.active .dock-label")).toHaveText("Календарь");
   await expect(page.locator("#calendar .page-heading h2")).toHaveText("Календарь");
   await expect(calendar.locator(".cal-title")).toContainText(String(new Date(`${monday}T12:00:00Z`).getUTCDate()));
   // Дело со временем — блок в сетке, дело без времени — чип в полосе «без
@@ -132,7 +134,7 @@ test("настройки: раздел «Календари» с формами 
 // базу прогона: CalDAV-сервера у e2e нет, а плашка читает только кэш.
 test("плашка чужого события: участники с ответами, повтор, ссылки и мой ответ организатору", async ({ page, request }) => {
   const { default: Database } = await import("better-sqlite3");
-  const db = new Database((process.env.PAGENT_E2E_DB || "/tmp/pagent-e2e.sqlite"));
+  const db = new Database(E2E_DB);
   // Именно e2e-учётка: другие спеки регистрируют ещё пользователей, и «первый
   // попавшийся» в полном прогоне оказывался чужим — события не показывались.
   const user = db.prepare("SELECT id FROM users WHERE email=?").get(E2E_EMAIL);
@@ -229,7 +231,7 @@ test("плашка чужого события: участники с ответ
 // событие уходит с сетки сразу, запрос летит следом. Ошибка возвращает событие.
 test("чужое событие уходит с сетки сразу, а удаление идёт в фоне", async ({ page, request }) => {
   const { default: Database } = await import("better-sqlite3");
-  const db = new Database((process.env.PAGENT_E2E_DB || "/tmp/pagent-e2e.sqlite"));
+  const db = new Database(E2E_DB);
   const user = db.prepare("SELECT id FROM users WHERE email=?").get(E2E_EMAIL);
   db.prepare("DELETE FROM calendar_events").run();
   db.prepare("DELETE FROM calendar_accounts").run();
@@ -281,7 +283,7 @@ test("чужое событие уходит с сетки сразу, а уда
   await expect(pop).toHaveCount(0);
   await expect(page.locator("#toast")).not.toContainText("удалена");
   // CalDAV-сервера у прогона нет: строки убираем сами, как сделал бы провайдер.
-  const after = new Database((process.env.PAGENT_E2E_DB || "/tmp/pagent-e2e.sqlite"));
+  const after = new Database(E2E_DB);
   after.prepare("DELETE FROM calendar_events WHERE uid='u2'").run();
   after.close();
   releaseOk();
@@ -413,6 +415,10 @@ test("прошедшая встреча календаря: «прошла» в 
   // Вчера прошедшая встреча стоит в «Закрыто» того дня тем же образом.
   await journal.locator('.daynav [data-step="-1"]').click();
   await expect(journal.locator(".entry.auto-done")).toContainText("Вчерашний созвон");
+  // Страница ещё раз перечитывает день по сигналу «поток жив» через 120 мс после открытия, и
+  // этот запрос календаря бывает в пути, когда тест уже кончился: обработчик, у которого
+  // закрыли страницу посреди ответа, ронял тест («Response has been disposed»).
+  await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 // Сетка по умолчанию дотягивается до низа окна, а её нижний край тянется
 // рукой: высота переживает перезагрузку, двойной клик возвращает подгонку.

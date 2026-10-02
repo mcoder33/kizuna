@@ -1348,7 +1348,10 @@ test("сбоку щелчок по строке списка и по строк�
   await row("Первое").click();
   await expect(dialog.locator(".card-title")).toHaveText("Первое дело строк");
   // Строка списка — та же запись на странице, а не «мимо»: карточка переключается.
-  await row("Второе").click();
+  // Лента списка стоит по центру, и панель сбоку (правые 56% окна) накрывает середину
+  // названия: щелчок по центру попадал в панель. Поэтому щёлкают у левого края названия,
+  // как ниже на «Сегодня».
+  await row("Второе").click({ position: { x: 10, y: 8 } });
   await expect(dialog.locator(".card-title")).toHaveText("Второе дело строк");
   await expect(dialog).toBeVisible();
   expect(await page.evaluate(() => document.querySelectorAll("dialog[open]").length)).toBe(1);

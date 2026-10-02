@@ -36,7 +36,7 @@ test('catalog has seven identical key sets and named-token parity',()=>{
 test('real catalogs cover count boundaries in all seven locales',()=>{
  const counts=[0,1,2,5,11,21];
  const categories={ru:['many','one','few','many','many','one'],en:['other','one','other','other','other','other'],es:['other','one','other','other','other','other'],'pt-BR':['one','one','other','other','other','other'],de:['other','one','other','other','other','other'],fr:['one','one','other','other','other','other'],ja:['other','other','other','other','other','other']};
- const sources=['{count} встреча','{count} дело','{count} дело просрочено','каждые {count} дня','каждые {count} недели','каждые {count} месяца','каждые {count} года'];
+ const sources=['{count} встреча','{count} день','{count} дело','{count} дело просрочено','каждые {count} дня','каждые {count} недели','каждые {count} месяца','каждые {count} года'];
  for(const locale of SUPPORTED_LOCALES)for(const source of sources){
   assert.equal(typeof catalogs[locale][source],'object',`${locale}: ${source}`);
   for(const [index,count] of counts.entries()){

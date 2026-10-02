@@ -26,7 +26,7 @@ test("закрытая в «Дне» туду видна в «Закрыто» �
   await expect(closedRow).toBeVisible();
   await expect(closedRow.locator(".entry-title")).toHaveCSS("text-decoration-line", "line-through");
 
-  // «Сделано» — свой пункт в шапке, первый, перед «Сегодня».
+  // «Сделано» — свой пункт в шапке, первый, перед «Сегодня»; число закрытого — бейдж в той же ссылке.
   await expect(page.locator('nav a[href="#done"] .dock-label')).toHaveText("Сделано");
   await page.locator('nav a[href="#done"]').click();
   await expect(page).toHaveURL(/#done$/);
