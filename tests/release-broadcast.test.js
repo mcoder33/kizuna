@@ -209,10 +209,24 @@ test('CLI defaults to dry run, emits no chat/token values, and never creates a m
   assert.equal(missing.status, 1); assert.equal(fs.existsSync(absent), false);
 });
 
-test('tracked release manifest fits photo caption and references the public card and install page', () => {
+test('tracked release manifest is sendable as text or a photo with its declared buttons', () => {
   const latest = JSON.parse(fs.readFileSync(new URL('../release-notes/latest.json', import.meta.url), 'utf8'));
   const result = prepareRelease(latest);
-  assert.equal(result.method, 'sendPhoto'); assert.ok(result.payload.caption.length <= 1024);
-  assert.equal(result.payload.photo, `${SITE}/public/release-mac-quick-capture.png`);
-  assert.equal(result.payload.reply_markup.inline_keyboard[0][1].url, `${SITE}/public/mac-download.html`);
+  assert.ok(latest.changes.length > 0);
+  if (latest.image) {
+    assert.equal(result.method, 'sendPhoto');
+    assert.ok(result.payload.caption.length <= 1024);
+    assert.equal(new URL(result.payload.photo).origin, SITE);
+  } else {
+    assert.equal(result.method, 'sendMessage');
+    assert.ok(result.payload.text.length <= 4096);
+    assert.equal(result.payload.link_preview_options.is_disabled, true);
+  }
+  assert.equal(result.payload.parse_mode, undefined);
+  const buttons = result.payload.reply_markup?.inline_keyboard.flat() || [];
+  assert.equal(buttons.length, latest.buttons?.length || 0);
+  for (const button of buttons) {
+    assert.ok(button.text.trim());
+    assert.equal(new URL(button.url).origin, SITE);
+  }
 });
