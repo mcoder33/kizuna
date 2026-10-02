@@ -9,4 +9,4 @@ test-results/
 playwright-report/
 tmp/
 .playwright-mcp/
-tests/fixtures/e2e-state.json
+tests/fixtures/e2e-state*.json

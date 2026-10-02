@@ -140,6 +140,36 @@ test('done: a meeting across midnight closes on the day and hour of its end, not
 const stepOf = async (api, parentId, title) => (await api.post(`/api/captures/${parentId}/subtasks`).send({ title }).expect(201)).body.entry;
 const closeTask = async (api, entry) => { for (const projection of entry.projections.filter(item => item.type === 'task')) await api.post(`/api/projections/${projection.id}/complete`).send({}).expect(200); };
 
+test('done: only=byDay answers with the per-day counts alone, the same numbers as the full answer', async () => {
+  const app = freshApp(), api = authed(app);
+  const yesterday = shiftDate(today(), -1);
+  externalEvent(app, api.user.id, { id: 'past', title: 'Планёрка', start: `${yesterday}T06:00:00.000Z`, end: `${yesterday}T07:00:00.000Z` });
+  const first = await post(api, 'Нужно проверить Hub');
+  const second = await post(api, 'Нужно позвонить в салон');
+  await post(api, 'Нужно остаться открытым');
+  await api.post(`/api/projections/${taskOf(first).id}/complete`).send({}).expect(200);
+  await api.post(`/api/projections/${taskOf(second).id}/complete`).send({}).expect(200);
+  const range = `from=${shiftDate(today(), -6)}&to=${today()}`;
+  const full = (await api.get(`/api/done?${range}`).expect(200)).body;
+  const slim = (await api.get(`/api/done?${range}&only=byDay`).expect(200)).body;
+  assert.equal(slim.byDay.length, 7, 'семь дней диапазона, по записи на день');
+  assert.deepEqual(slim.byDay, full.byDay, 'числа те же, что в обычном ответе');
+  assert.deepEqual(slim.byDay.slice(-2), [{ date: yesterday, n: 1 }, { date: today(), n: 2 }], 'встреча календаря входит в счёт своего дня, как и в обычном ответе');
+  assert.deepEqual(slim.counts, full.counts);
+  assert.deepEqual([slim.from, slim.to, slim.today], [full.from, full.to, full.today]);
+  assert.equal('days' in slim, false, 'строки дел клиенту не нужны');
+  assert.equal('byColumn' in slim, false);
+  assert.ok(full.days.length > 0 && full.byColumn.length > 0, 'обычный ответ по-прежнему с днями и колонками');
+  // окно в тридцать дней — как его зовёт страница
+  const month = (await api.get(`/api/done?from=${shiftDate(today(), -29)}&to=${today()}&only=byDay`).expect(200)).body;
+  assert.equal(month.byDay.length, 30);
+  assert.equal(month.byDay.at(-1).n, 2);
+  // чужое значение — ошибка, а не молчаливый полный ответ
+  await api.get(`/api/done?${range}&only=days`).expect(400);
+  await api.get(`/api/done?${range}&only=byDay&only=days`).expect(400);
+  await request(app).get(`/api/done?${range}&only=byDay`).expect(401);
+});
+
 test('done: a closed subtask is not a row of its own, the closed parent carries {done,total}', async () => {
   const app = freshApp(), api = authed(app);
   const range = `from=${shiftDate(today(), -6)}&to=${today()}`;
@@ -187,4 +217,38 @@ test('done: the day report does not list a closed subtask either; its closed par
   assert.equal(report.feed.some(item => [stock.id, reviewStep.id].includes(item.captureId)), false, 'ленты дня подзадачи тоже не видят');
   const period = (await api.get('/api/reports?period=week').expect(200)).body;
   assert.equal(period.counters.done, 1, 'в отчёте периода закрытые подзадачи не считаются делами: закрыт только «Сделал ревью»');
+});
+
+
+test('done: slim history respects each account zone across midnight and DST without rewriting history', async () => {
+  let clock=new Date('2026-11-01T03:30:00.000Z');
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pagent-done-zones-'));
+  const app=createApp({databasePath:path.join(dir,'test.sqlite'),aiService:fakeModelService({now:()=>clock}),now:()=>clock,calendarKey:Buffer.alloc(32,7)});
+  const ny=authed(app,{email:'ny-done@example.com'}),tokyo=authed(app,{email:'tokyo-done@example.com',role:'user'});
+  await ny.put('/api/settings').send({requestedTimeZone:'America/New_York',locale:'en'}).expect(200);
+  await tokyo.put('/api/settings').send({requestedTimeZone:'Asia/Tokyo',locale:'ja'}).expect(200);
+  // Historical fixtures use their recorded instants; completion commands use the real storage clock.
+  let completionId=0;
+  const recordCompletion=(entry,event='completed',date=null)=>{const projection=taskOf(entry);app.database.prepare('INSERT INTO ledger_events(id,event_type,capture_id,projection_id,interpretation_id,actor,occurred_at,created_at,payload) VALUES(?,?,?,?,?,?,?,?,?)').run(`done-zone-fixture-${++completionId}`,event,entry.id,projection.id,projection.interpretation_id||null,'user',clock.toISOString(),clock.toISOString(),date?JSON.stringify({date}):null);};
+  for(const api of [ny,tokyo]){const entry=await post(api,'Нужно проверить итог');recordCompletion(entry);}
+  externalEvent(app,ny.user.id,{id:'ny-midnight',title:'Late team call',start:'2026-11-01T02:00:00.000Z',end:'2026-11-01T03:15:00.000Z'});
+  const range='from=2026-10-30&to=2026-11-02';
+  async function slim(api){const full=(await api.get(`/api/done?${range}`).expect(200)).body,summary=(await api.get(`/api/done?${range}&only=byDay`).expect(200)).body;
+    assert.deepEqual(summary,{from:full.from,to:full.to,today:full.today,counts:full.counts,byDay:full.byDay});return summary;}
+  let nyHistory=await slim(ny),tokyoHistory=await slim(tokyo);
+  assert.equal(nyHistory.today,'2026-10-31');assert.equal(tokyoHistory.today,'2026-11-01');
+  assert.equal(nyHistory.byDay.find(row=>row.date==='2026-10-31').n,2);
+  assert.equal(tokyoHistory.byDay.find(row=>row.date==='2026-11-01').n,1);assert.equal(tokyoHistory.counts.meetings,0,'foreign calendar not counted');
+  const repeat=await post(ny,'Нужно проверить бэкапы каждый день');
+  clock=new Date('2026-11-01T05:30:00.000Z');recordCompletion(repeat,'occurrence_completed','2026-11-01');
+  clock=new Date('2026-11-01T06:30:00.000Z');const folded=await post(ny,'Нужно проверить повторный час');recordCompletion(folded);
+  nyHistory=await slim(ny);assert.equal(nyHistory.today,'2026-11-01');assert.equal(nyHistory.byDay.find(row=>row.date==='2026-11-01').n,2,'both DST fold instants and recurrence count on same account day');
+  const tables=app.database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT IN ('app_settings','user_sessions','auth_events') ORDER BY name").all().map(row=>row.name);
+  const snapshot=()=>Object.fromEntries(tables.map(name=>[name,app.database.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()]));const before=snapshot();
+  await ny.put('/api/settings').send({requestedTimeZone:'Asia/Tokyo'}).expect(200);
+  nyHistory=await slim(ny);assert.equal(nyHistory.byDay.find(row=>row.date==='2026-10-31').n,0);assert.equal(nyHistory.byDay.find(row=>row.date==='2026-11-01').n,4);
+  assert.deepEqual(snapshot(),before,'timezone change and slim reads preserve every history row');
+  tokyoHistory=await slim(tokyo);assert.equal(tokyoHistory.counts.period,1,'other account remains isolated');
+  for(const query of ['only=','only=days','only=byDay&only=byDay']){const bad=await ny.get(`/api/done?${query}`).expect(400);assert.equal(bad.body.error.code,'invalid_only');assert.equal(bad.body.error.message,'The only parameter must be byDay or omitted.');}
+  const jaError=await tokyo.get('/api/done?only=days').expect(400);assert.equal(jaError.body.error.message,'パラメーターonlyはbyDayを指定するか、省略してください。');
 });

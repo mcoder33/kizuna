@@ -4,15 +4,15 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Kizuna</title>
         <item>
-            <title>1.0.4</title>
-            <pubDate>Fri, 02 Oct 2026 18:59:33 +0400</pubDate>
-            <sparkle:version>5</sparkle:version>
-            <sparkle:shortVersionString>1.0.4</sparkle:shortVersionString>
+            <title>1.0.5</title>
+            <pubDate>Fri, 02 Oct 2026 19:55:57 +0400</pubDate>
+            <sparkle:version>6</sparkle:version>
+            <sparkle:shortVersionString>1.0.5</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://yourkizuna.com/public/downloads/mac/Kizuna-5.zip" length="1966109" type="application/octet-stream" sparkle:edSignature="MUsEWSrX6PHEFnuBRHjEvRfulbfyFhPrb4B9KuWZF4zn/I07zU9hA8kB8IGhcQR4qITnhBfgc9Tn62+M3TPUBQ=="></enclosure>
+            <enclosure url="https://yourkizuna.com/public/downloads/mac/Kizuna-6.zip" length="1965865" type="application/octet-stream" sparkle:edSignature="QlKJdEpBpGjsxQDEmFiZiiwUIebF2tWR4OjWTtyx11c+/q9X48snGgBxCzgSJJd4NupspcrZKqm1Sh35zz1nCQ=="></enclosure>
         </item>
     </channel>
 </rss><!-- sparkle-signatures:
-edSignature: 6qVQbw8m5uUpe4tZxq2PY8jK2iIEGujBo5cz3nmgUW+mCr+YvlEGcjMrFYUpzwn3Zkha0f1OJsrEPdKeMEapAA==
+edSignature: J7GWMUgIWIbCNaCeqxNhvKXoUKZLTxTHyisJjryY4WHX3OR8oRZQ/bh0dS4Uj8Zq8A/2sKDXlUa1GyEkedu3CA==
 length: 1015
 -->

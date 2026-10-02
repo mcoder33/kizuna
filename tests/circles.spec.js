@@ -318,3 +318,64 @@ test("круг: дело человеку прямо за столом и при
   await dissolveCircles(request);
   await request.post(`/api/admin/users/${anyaId}/block`, { data: { reason: "конец прогона" } });
 });
+
+test("поздний результат поручения не заменяет новый черновик после фоновых обновлений", async ({ page, request, browser }) => {
+  await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
+  await dissolveCircles(request);
+  await request.put("/api/settings", { data: { locale: "ru", requestedTimeZone: "Europe/Samara" } });
+  let member = (await (await request.get("/api/admin/users")).json()).users.find(user => user.email === ANYA.email);
+  if (!member) {
+    await request.post("/api/auth/register", { data: ANYA });
+    member = (await (await request.get("/api/admin/users")).json()).users.find(user => user.email === ANYA.email);
+    await request.post(`/api/admin/users/${member.id}/approve`, { data: {} });
+  } else if (member.status !== "active") await request.post(`/api/admin/users/${member.id}/unblock`, { data: {} });
+  const anya = await loginAs(browser, ANYA);
+  try {
+    await anya.page.request.patch("/api/account", { data: { name: "Аня" } });
+    const circle = (await (await request.post("/api/circles", { data: { name: "Черновики" } })).json()).circle;
+    const invite = await (await request.post(`/api/circles/${circle.id}/invite`, { data: {} })).json();
+    await anya.page.request.post(`/api/circles/invite/${invite.token}/accept`, { data: {} });
+    await page.goto("/#circles");
+    await page.getByRole("button", { name: "Поручить дело: Аня" }).click();
+    const field = page.locator("#kc-deed-field");
+    let backgroundNumber = 0;
+    const backgroundRefresh = async () => {
+      const previous = await field.elementHandle();
+      const created = (await (await request.post("/api/captures", { data: { raw: `Фоновое дело ${++backgroundNumber}`, primaryType: "todo" } })).json()).entry;
+      await request.post(`/api/captures/${created.id}/assign`, { data: { assigneeId: member.id, circleId: circle.id } });
+      await expect.poll(() => previous.evaluate(element => !element.isConnected)).toBe(true);
+      await previous.dispose();
+    };
+    for (const fails of [true, false]) {
+      const sent = fails ? "Первое поручение A" : "Второе поручение A";
+      const newer = fails ? "Новый черновик B после ошибки" : "Новый черновик B после успеха";
+      await field.fill(sent);
+      let release, started;
+      const hold = new Promise(resolve => { release = resolve; });
+      const begin = new Promise(resolve => { started = resolve; });
+      await page.route("**/api/captures", async route => {
+        if (route.request().method() !== "POST") return route.continue();
+        started();
+        await hold;
+        if (fails) await route.fulfill({ status: 500, json: { error: { code: "qa_late_failure", message: "Проверка позднего отказа" } } });
+        else await route.continue();
+      });
+      await page.locator(".kc-deed-new button[type=submit]").click();
+      await begin;
+      await backgroundRefresh();
+      await expect(field).toHaveValue("");
+      await field.fill(newer);
+      const completed = page.waitForResponse(response => response.url().endsWith("/api/captures") && response.request().method() === "POST");
+      release();
+      await completed;
+      await expect(page.locator("#toast")).toContainText(fails ? "Проверка позднего отказа" : "Просьба ушла");
+      await page.unroute("**/api/captures");
+      await expect(field).toHaveValue(newer);
+      await backgroundRefresh();
+      await expect(field).toHaveValue(newer);
+    }
+  } finally {
+    await anya.context.close();
+    await dissolveCircles(request);
+  }
+});

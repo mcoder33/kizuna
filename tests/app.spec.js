@@ -69,9 +69,10 @@ test("async capture shows a short success notification and adds the entry to the
 }) => {
   await page.goto("/");
   // В шапке пять разделов и шестерёнка: «Сделано» стоит первым, перед «Сегодня»; Календарь
-  // вернулся между «Доской» и «Заметками», а Круги, «?» и меню модели ушли.
-  await expect(page.locator("header nav a")).toHaveText(["Сделано", "Сегодня", "Доска", "Календарь", "Заметки"]);
-  await expect(page.locator("header nav a.active")).toHaveText("Сегодня");
+  // вернулся между «Доской» и «Заметками», а Круги, «?» и меню модели ушли. Порядок и
+  // активный раздел читаем по подписям плиток: число бейджа лежит в той же ссылке.
+  await expect(page.locator("header nav a .dock-label")).toHaveText(["Сделано", "Сегодня", "Доска", "Календарь", "Заметки"]);
+  await expect(page.locator("header nav a.active .dock-label")).toHaveText("Сегодня");
   // Разделы — док: nav стоит внизу окна по центру, а бейдж «Сегодня» показывает число дел на сегодня.
   const dock = await page.locator("header nav").boundingBox();
   const view = page.viewportSize();
