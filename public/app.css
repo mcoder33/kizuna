@@ -10073,7 +10073,6 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0 0 96px; }
 .language-mode[hidden] { display: none; }
 .language-control .language-select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; margin: 0; padding: 0; cursor: pointer; font-size: 16px; }
 .language-control:focus-within { outline: 2px solid var(--blue-54); outline-offset: 3px; }
-.hello-header .hello-nav { order: 2; }
 .guest-header-actions { position: absolute; top: 20px; right: 22px; display: flex; align-items: center; gap: 10px; }
 .guest-header-actions .auth-theme { position: static; }
 .guest-download-header { max-width: 680px; margin: 0 auto 26px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -10081,7 +10080,4 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0 0 96px; }
 @media (max-width: 390px) {
   header > .header-tail { gap: 4px; }
   .language-control { padding-inline: 6px; gap: 4px; }
-  .hello-header .hello-nav { gap: 10px; }
-  .hello-header .hello-login { padding-inline: 10px; }
-  .hello-header .brand-word { font-size: 18px; }
 }
