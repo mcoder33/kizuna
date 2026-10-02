@@ -477,3 +477,54 @@ test('администратор видит расход каждого рядо
   assert.equal(listed.monthlyLimitUsd, 9);
   await gost.get('/api/admin/users').expect(403);
 });
+
+
+test('registration persists explicit guest locale for both active and pending new accounts', async () => {
+  const application=app(), api=request(application);
+  const first=await api.post('/api/auth/register').send({email:'locale-admin@example.com',password:TEST_PASSWORD,locale:'en',detectedLocale:'ja',userId:'foreign'}).expect(201);
+  assert.equal(first.body.user.status,'active');
+  const settings=(await api.get('/api/settings').set('Cookie',first.headers['set-cookie']).expect(200)).body.settings;
+  assert.equal(settings.locale,'en');assert.equal(settings.detectedLocale,'ja');
+  const pending=(await api.post('/api/auth/register').send({email:'locale-pending@example.com',password:TEST_PASSWORD,locale:'pt-BR',detectedLocale:'de'}).expect(201)).body.user;
+  assert.equal(pending.status,'pending');
+  const read=(id,name)=>application.database.prepare('SELECT value FROM app_settings WHERE key=?').get(`user:${id}:${name}`)?.value;
+  assert.equal(read(pending.id,'locale'),'pt-BR');assert.equal(read(pending.id,'detectedLocale'),'de');
+  assert.equal(read(first.body.user.id,'locale'),'en');assert.equal(read('foreign','locale'),undefined);
+  await api.post('/api/auth/login').send({email:first.body.user.email,password:TEST_PASSWORD,locale:'fr',detectedLocale:'es'}).expect(200);
+  assert.equal(read(first.body.user.id,'locale'),'en');assert.equal(read(first.body.user.id,'detectedLocale'),'ja');
+});
+
+test('legacy registration keeps system defaults and invalid locale fields cannot create accounts', async () => {
+  const application=app(), api=request(application);
+  for(const fields of [{locale:'pt'},{locale:'EN'},{locale:null},{locale:[]},{detectedLocale:'system'},{detectedLocale:'nl'},{detectedLocale:5}]) {
+    const response=await api.post('/api/auth/register').send({email:'invalid-locale@example.com',password:TEST_PASSWORD,...fields}).expect(400);
+    assert.equal(response.body.error.code,'invalid_setting');
+    assert.equal(application.database.prepare('SELECT COUNT(*) n FROM users').get().n,0);
+  }
+  const first=await api.post('/api/auth/register').send({email:'legacy-locale@example.com',password:TEST_PASSWORD}).expect(201);
+  const settings=(await api.get('/api/settings').set('Cookie',first.headers['set-cookie']).expect(200)).body.settings;
+  assert.equal(settings.locale,'system');assert.equal(settings.detectedLocale,null);
+  const pending=(await api.post('/api/auth/register').send({email:'system-locale@example.com',password:TEST_PASSWORD,locale:'system',detectedLocale:null}).expect(201)).body.user;
+  assert.equal(application.database.prepare('SELECT value FROM app_settings WHERE key=?').get(`user:${pending.id}:locale`).value,'system');
+  assert.equal(application.database.prepare('SELECT value FROM app_settings WHERE key=?').get(`user:${pending.id}:detectedLocale`),undefined);
+});
+
+
+test('authenticated app shell carries only validated account language preferences before settings load', async () => {
+  const application=app(), api=authed(application);
+  await api.put('/api/settings').send({locale:'en',detectedLocale:'de'}).expect(200);
+  let shell=await api.get('/').set('Accept-Language','ja').expect(200);
+  assert.match(shell.text,/<html lang="en" data-account-locale="en" data-account-detected-locale="de">/);
+  assert.equal(shell.headers['cache-control'],'no-store');assert.match(shell.headers.vary,/Cookie/);
+  await api.put('/api/settings').send({locale:'system',detectedLocale:'de'}).expect(200);
+  shell=await api.get('/').set('Accept-Language','ja').expect(200);
+  assert.match(shell.text,/<html lang="ja" data-account-locale="system" data-account-detected-locale="de">/);
+  shell=await api.get('/').set('Accept-Language','nl').expect(200);
+  assert.match(shell.text,/<html lang="de" data-account-locale="system" data-account-detected-locale="de">/);
+  const guest=await request(application).get('/').expect(200);assert.doesNotMatch(guest.text,/data-account-(?:detected-)?locale/);
+  const replace=application.database.prepare('UPDATE app_settings SET value=? WHERE key=?');
+  replace.run('" onload="evil',`user:${api.user.id}:locale`);replace.run('" onload="evil',`user:${api.user.id}:detectedLocale`);
+  const fresh=createApp({databasePath:application.database.name,aiService:fakeModelService()});
+  const authenticated=authed(fresh);shell=await authenticated.get('/').set('Accept-Language','ja').expect(200);
+  assert.match(shell.text,/<html lang="ja" data-account-locale="system">/);assert.doesNotMatch(shell.text,/onload="evil/);
+});

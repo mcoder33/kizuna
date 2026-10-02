@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" data-locale-scope="guest">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -14,9 +14,10 @@
     <link rel="stylesheet" href="/public/app.css" />
     <link rel="stylesheet" href="/public/mac-download.css" />
   <script type="module" src="/public/browser-i18n.js"></script>
+    <script type="module" src="/public/language-control.js"></script>
   </head>
   <body class="macapp-page">
-    <a class="macapp-home" href="/" data-i18n="← Вернуться в Кизуну">← Вернуться в Кизуну</a>
+    <div class="guest-download-header"><a class="macapp-home" href="/" data-i18n="← Вернуться в Кизуну">← Вернуться в Кизуну</a><span data-language-control></span></div>
     <main class="macapp-panel" id="main">
       <img class="macapp-icon" src="/public/icon.svg" width="72" height="72" alt="" />
       <p class="macapp-eyebrow" data-i18n="Теперь рядом, в Dock">Теперь рядом, в Dock</p>

@@ -176,7 +176,7 @@ async function snapshotProvider(ai, requested) { if (requested) return requested
 export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.join(__dirname, '..', 'data', 'pagent.sqlite'), aiService, timeZone = process.env.PAGENT_TIMEZONE || 'Europe/Samara', now = () => new Date(), workerOptions, audit = () => {}, secureCookies = process.env.PAGENT_SECURE_COOKIES === 'on', calendarService = null, calendarFetch = globalThis.fetch, calendarWorkerOptions = {}, calendarKey = null, pushTransport = null, reminderWorkerOptions = {}, telegramFetch = globalThis.fetch, telegramOptions = {} } = {}) {
   const db = openDatabase(databasePath);
   const requestText = (req, source, params = {}) => translate(userLocale(db, req.user?.id, requestLanguages(req.get('accept-language'))), source, params);
-  const accounts = createAccounts({ db, now, secureCookies, audit, timeZone: () => configuredTimeZone });
+  const accounts = createAccounts({ db, now, secureCookies, audit, timeZone: () => configuredTimeZone, onPreferencesChanged: () => { stored = readSettings(db); } });
   // Настройки читаются из базы поверх окружения: то, что человек поменял в
   // приложении, сильнее того, что лежит в .env, и применяется без перезапуска.
   let stored = readSettings(db);
@@ -1043,7 +1043,16 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   app.get('/login',(req,res)=>res.sendFile(path.join(__dirname,'..','public','auth.html')));
   // Гостю корень показывает, что это за приложение, а не форму входа: по
   // ссылке человек попадал на поле почты и не понимал, куда пришёл.
-  app.get('/',(req,res)=>res.sendFile(path.join(__dirname,'..','public',req.user?'app.html':'hello.html')));
+  app.get('/',(req,res)=>{
+    if (!req.user) return res.sendFile(path.join(__dirname,'..','public','hello.html'));
+    const preferences = publicSettings(stored, process.env, req.user);
+    const locale = validLocaleSetting(preferences.locale) ? preferences.locale : 'system';
+    const detectedLocale = validDetectedLocale(preferences.detectedLocale) ? preferences.detectedLocale : null;
+    const resolvedLocale = userLocale(db, req.user.id, requestLanguages(req.get('accept-language')));
+    const attributes = `lang="${resolvedLocale}" data-account-locale="${locale}"${detectedLocale ? ` data-account-detected-locale="${detectedLocale}"` : ''}`;
+    const html = fs.readFileSync(path.join(__dirname,'..','public','app.html'),'utf8').replace('<html lang="ru">', `<html ${attributes}>`);
+    res.set('Cache-Control','no-store').vary('Cookie').vary('Accept-Language').type('html').send(html);
+  });
   // Макеты и черновики в репозитории не живут, поэтому и раздавать их нечем:
   // раньше здесь была дверь к концепт-страницам в корне проекта.
   app.use((req,res)=>res.status(404).json({error:{code:'not_found',message:'Не найдено.'}}));

@@ -73,11 +73,29 @@ export function setLocale(choice = 'system', { preferred = [...preferredLanguage
   return next;
 }
 
+const guestLocaleKey = 'pagent.guest-locale';
+function guestChoice() {
+  if (!browser || document.documentElement.dataset.localeScope !== 'guest') return 'system';
+  try {
+    const choice = sessionStorage.getItem(guestLocaleKey);
+    return choice === 'system' ? 'system' : normalizeLocale(choice) || 'system';
+  } catch { return 'system'; }
+}
+export function setGuestLocale(choice) {
+  if (!browser || document.documentElement.dataset.localeScope !== 'guest') return;
+  const validated = choice === 'system' ? 'system' : normalizeLocale(choice) || 'system';
+  try { sessionStorage.setItem(guestLocaleKey, validated); } catch {}
+  setLocale(validated);
+}
 export function initLocale(settings = null) {
   if (!browser) return activeLocale;
-  // Before account settings arrive, only this browser's languages apply.
-  // A previous account's preference must not leak into guests or a new session.
-  const choice = settings ? settings.locale || 'system' : 'system';
+  // The authenticated shell carries only validated authoritative preferences.
+  // Guest sessions never provide an account's initial language.
+  if (!settings && document.documentElement.hasAttribute('data-account-locale')) settings = {
+    locale: document.documentElement.getAttribute('data-account-locale'),
+    detectedLocale: document.documentElement.getAttribute('data-account-detected-locale'),
+  };
+  const choice = settings ? settings.locale || 'system' : guestChoice();
   const detected = normalizeLocale(settings?.detectedLocale);
   storedDetectedLocale = detected;
   setLocale(choice, { preferred: [...preferredLanguages(), ...(detected ? [detected] : [])] });
@@ -97,6 +115,7 @@ export function announceLocaleSaved(settings) {
 }
 export const getDetectedLocale = (fallback = null) => preferredLanguages().map(normalizeLocale).find(Boolean) || normalizeLocale(fallback);
 export const getRequestedLocale = () => requestedLocale;
+export const getLocalePreferences = () => ({ locale: requestedLocale, detectedLocale: storedDetectedLocale });
 
 if (browser) {
   initLocale();

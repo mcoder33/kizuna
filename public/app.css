@@ -10064,3 +10064,24 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0 0 96px; }
 .notes-title[contenteditable="true"][data-placeholder]:empty::before {
   content: attr(data-placeholder);
 }
+
+/* The same native language picker is available before and after sign-in. */
+.language-control { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 36px; padding: 0 8px; border: 1px solid var(--n-90); border-radius: 10px; color: var(--ink); background: var(--n-100); white-space: nowrap; cursor: pointer; font-size: 11px; line-height: 1; }
+.language-control svg { width: 17px; height: 17px; flex: none; }
+.language-code { font-weight: 650; }
+.language-mode { color: var(--n-54); font-size: 9px; }
+.language-mode[hidden] { display: none; }
+.language-control .language-select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; margin: 0; padding: 0; cursor: pointer; font-size: 16px; }
+.language-control:focus-within { outline: 2px solid var(--blue-54); outline-offset: 3px; }
+.hello-header .hello-nav { order: 2; }
+.guest-header-actions { position: absolute; top: 20px; right: 22px; display: flex; align-items: center; gap: 10px; }
+.guest-header-actions .auth-theme { position: static; }
+.guest-download-header { max-width: 680px; margin: 0 auto 26px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.guest-download-header .macapp-home { margin: 0; }
+@media (max-width: 390px) {
+  header > .header-tail { gap: 4px; }
+  .language-control { padding-inline: 6px; gap: 4px; }
+  .hello-header .hello-nav { gap: 10px; }
+  .hello-header .hello-login { padding-inline: 10px; }
+  .hello-header .brand-word { font-size: 18px; }
+}

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" data-locale-scope="guest">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="/public/app.css" />
     <link rel="stylesheet" href="/public/auth.css" />
   <script type="module" src="/public/browser-i18n.js"></script>
+    <script type="module" src="/public/language-control.js"></script>
   </head>
   <body class="auth-body">
     <main class="auth-shell">
@@ -89,6 +90,7 @@
           администратором и заберёт себе журнал, который вёлся до сих пор.
         </p>
       </div>
+      <div class="guest-header-actions"><span data-language-control></span>
       <button
         id="auth-theme"
         class="theme-toggle auth-theme"
@@ -96,6 +98,7 @@
         aria-label="Сменить тему оформления"
         title="Сменить тему оформления"
        data-i18n-attrs="{&quot;aria-label&quot;: &quot;Сменить тему оформления&quot;, &quot;title&quot;: &quot;Сменить тему оформления&quot;}"></button>
+      </div>
     </main>
     <script type="module" src="/public/auth.js"></script>
   </body>

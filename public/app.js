@@ -1,6 +1,7 @@
+import { mountLanguageControls, syncLanguageControls } from "./language-control.js";
 import { normalizeTimeZone } from "./time-zone.js";
 import { getTimeZone, getDetectedTimeZone, initTimeZone, setTimeZone, announceTimeZoneSaved } from "./browser-time-zone.js";
-import { t, getLocale, localizedBuiltins, bindTranslation, initLocale, setLocale, getDetectedLocale, announceLocaleSaved } from "./browser-i18n.js";
+import { t, getLocale, localizedBuiltins, bindTranslation, initLocale, setLocale, getDetectedLocale, announceLocaleSaved, getLocalePreferences } from "./browser-i18n.js";
 import { renderMarkdown, renderInlineMarkdown } from "./markdown.js";
 import { createMarkdownField } from "./markdown-live.js";
 import { attachSlashMenu } from "./slash-menu.js";
@@ -5205,7 +5206,7 @@ const SETTING_FIELDS = [
   "monthlyLimitUsd",
 ];
 const SECRET_FIELDS = ["openaiKey", "geminiKey", "openrouterKey", "googleClientSecret", "telegramBotToken"];
-let appSettings = {};
+let appSettings = getLocalePreferences();
 let settingsPreferenceSaveQueue = Promise.resolve();
 let timeZoneSaveRevision = 0;
 let pendingTimeZoneChoice = null;
@@ -5220,6 +5221,7 @@ function paintSettings(payload, { updatedFields = null, submittedValues = null }
     ? { ...appSettings, ...Object.fromEntries(updatedFields.filter(name => Object.hasOwn(settings, name)).map(name => [name, settings[name]])) }
     : settings;
   initLocale(pendingLocaleChoice === null ? appSettings : { ...appSettings, locale: pendingLocaleChoice });
+  syncLanguageControls();
   if (!updatedFields || updatedFields.some(name => ["requestedTimeZone", "detectedTimeZone", "timeZone"].includes(name))) {
     initTimeZone({ ...payload, settings: appSettings }, pendingTimeZoneChoice);
     paintTimeZoneSetting();
@@ -12435,11 +12437,12 @@ async function refreshRoomsOnce() {
 
 // Locale changes update UI labels and cached views without navigating or
 // recreating the capture editor. Draft values and selection remain in place.
-settingInput("locale")?.addEventListener("change", (event) => {
-  const choice = event.target.value;
+function persistLocale(choice) {
   const revision = ++localeSaveRevision;
   pendingLocaleChoice = choice;
   setLocale(choice);
+  settingInput("locale").value = choice;
+  syncLanguageControls();
   // Serialize account writes so the server cannot finish an older choice last.
   // Only the latest selection can repaint or announce a committed preference.
   settingsPreferenceSaveQueue = settingsPreferenceSaveQueue.then(async () => {
@@ -12451,6 +12454,7 @@ settingInput("locale")?.addEventListener("change", (event) => {
       pendingLocaleChoice = null;
       initLocale(appSettings);
       settingInput("locale").value = appSettings.locale;
+      syncLanguageControls();
       announceLocaleSaved(appSettings);
       loadNotifications();
       paintUpcomingReminders();
@@ -12459,10 +12463,12 @@ settingInput("locale")?.addEventListener("change", (event) => {
       pendingLocaleChoice = null;
       initLocale(appSettings);
       settingInput("locale").value = appSettings.locale || "system";
+      syncLanguageControls();
       toast(error.message);
     }
-  });
-});
+  });}
+settingInput("locale")?.addEventListener("change", event => persistLocale(event.target.value));
+mountLanguageControls(persistLocale);
 window.addEventListener("pagent:localechange", () => {
   renderToday();
   paintThemeButton();

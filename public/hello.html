@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" data-locale-scope="guest">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -26,6 +26,7 @@
     <link rel="stylesheet" href="/public/app.css" />
     <link rel="stylesheet" href="/public/hello.css" />
   <script type="module" src="/public/browser-i18n.js"></script>
+    <script type="module" src="/public/language-control.js"></script>
   </head>
   <body class="hello-body">
     <a class="hello-skip" href="#main" data-i18n="К содержимому">К содержимому</a>
@@ -43,6 +44,7 @@
         <a class="hello-nav-anchor" href="#more" data-i18n="Что умеет">Что умеет</a>
         <a class="hello-nav-anchor" href="/login?join" data-i18n="Ранний доступ">Ранний доступ</a>
         <a class="hello-login" href="/login" data-i18n="Войти">Войти</a>
+        <span data-language-control></span>
       </nav>
     </header>
 

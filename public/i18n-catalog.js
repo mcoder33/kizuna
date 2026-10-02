@@ -2360,7 +2360,8 @@ export const catalogs = {
     "Мишка": "Мишка",
     "Робот": "Робот",
     "Динозаврик": "Динозаврик",
-    "Кит": "Кит"
+    "Кит": "Кит",
+    "Авто": "Авто"
   },
   "en": {
     " {value1} мин": " {value1} min",
@@ -4722,7 +4723,8 @@ export const catalogs = {
     "Мишка": "Teddy bear",
     "Робот": "Robot",
     "Динозаврик": "Little dinosaur",
-    "Кит": "Whale"
+    "Кит": "Whale",
+    "Авто": "Auto"
   },
   "es": {
     " {value1} мин": " {value1} min",
@@ -7084,7 +7086,8 @@ export const catalogs = {
     "Мишка": "Osito",
     "Робот": "Robot",
     "Динозаврик": "Dinosaurio",
-    "Кит": "Ballena"
+    "Кит": "Ballena",
+    "Авто": "Auto"
   },
   "pt-BR": {
     " {value1} мин": " {value1} min",
@@ -9446,7 +9449,8 @@ export const catalogs = {
     "Мишка": "Ursinho",
     "Робот": "Robô",
     "Динозаврик": "Dinossaurinho",
-    "Кит": "Baleia"
+    "Кит": "Baleia",
+    "Авто": "Auto"
   },
   "de": {
     " {value1} мин": " {value1} Min.",
@@ -11808,7 +11812,8 @@ export const catalogs = {
     "Мишка": "Teddybär",
     "Робот": "Roboter",
     "Динозаврик": "Kleiner Dinosaurier",
-    "Кит": "Wal"
+    "Кит": "Wal",
+    "Авто": "Auto"
   },
   "fr": {
     " {value1} мин": " {value1} min",
@@ -14170,7 +14175,8 @@ export const catalogs = {
     "Мишка": "Ourson",
     "Робот": "Robot",
     "Динозаврик": "Petit dinosaure",
-    "Кит": "Baleine"
+    "Кит": "Baleine",
+    "Авто": "Auto"
   },
   "ja": {
     " {value1} мин": " {value1}分",
@@ -16532,6 +16538,7 @@ export const catalogs = {
     "Мишка": "くま",
     "Робот": "ロボット",
     "Динозаврик": "恐竜",
-    "Кит": "クジラ"
+    "Кит": "クジラ",
+    "Авто": "自動"
   }
 };

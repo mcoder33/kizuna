@@ -165,7 +165,7 @@ test('committed locale event waits for success, includes same-language mode chan
   expect(await page.evaluate(() => window.localeSaves.length)).toBe(3);
 });
 
-test('account locale arriving after browser initialization updates module data and subsequent switches', async ({ browser, baseURL }) => {
+test('authoritative account shell initializes module data before settings arrive and subsequent switches', async ({ browser, baseURL }) => {
   const context = await browser.newContext({ locale: 'en-US', baseURL });
   const page = await context.newPage();
   try {
@@ -183,7 +183,7 @@ test('account locale arriving after browser initialization updates module data a
     });
     await page.goto('/#notes');
     await expect.poll(() => settingsHeld).toBe(true);
-    await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+    await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
     releaseSettings();
     await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
     await page.unroute('**/api/settings');
@@ -401,14 +401,16 @@ test('personal timezone follows browser/native detection, preserves manual choic
     expect((await page.request.post(`/api/admin/users/${second.id}/approve`, { data: {} })).ok()).toBeTruthy();
     await page.locator('#setting-requestedTimeZone').selectOption('Europe/Berlin');
     await expect.poll(async () => (await (await page.request.get('/api/settings')).json()).timeZone).toBe('Europe/Berlin');
-    await context.clearCookies();
-    await page.goto('/login');
+    await page.locator('#account-summary').click();
+    await page.locator('#account-logout').click();
+    await page.waitForURL(baseURL + '/login');
     expect((await page.request.post('/api/auth/login', { data: { email: secondEmail, password } })).ok()).toBeTruthy();
     await page.goto('/#settings');
     await expect(page.locator('#setting-requestedTimeZone')).toHaveValue('system');
     await expect.poll(async () => (await (await page.request.get('/api/settings')).json()).timeZone).toBe('America/New_York');
-    await context.clearCookies();
-    await page.goto('/login');
+    await page.locator('#account-summary').click();
+    await page.locator('#account-logout').click();
+    await page.waitForURL(baseURL + '/login');
     await login(page);
     await page.goto('/#settings');
     await expect(page.locator('#setting-requestedTimeZone')).toHaveValue('Europe/Berlin');
@@ -557,4 +559,241 @@ test('a delayed settings GET preserves subsequently committed preferences and ne
     await expect(page.locator('#setting-openaiKey')).toHaveValue('new-draft-while-get-pending');
     expect(await page.evaluate(async () => (await import('/public/browser-time-zone.js')).getTimeZone())).toBe('Europe/Berlin');
   } finally { await context.close(); }
+});
+
+
+const languageControl = page => page.locator('[data-language-control] .language-select');
+async function expectLanguageHeaderFits(page) {
+  await page.evaluate(() => scrollTo(0, 0));
+  const viewport = page.viewportSize();
+  const label = page.locator('.language-control');
+  await expect(label).toBeVisible();
+  const box = await label.boundingBox();
+  const selectReachable = await languageControl(page).evaluate(element => {
+    const box = element.getBoundingClientRect();
+    return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) === element;
+  });
+  expect(selectReachable).toBe(true);
+  const landingBrand = page.locator('.hello-header .brand');
+  if (await landingBrand.count()) {
+    const brandBox = await landingBrand.boundingBox();
+    expect(box.x).toBeGreaterThanOrEqual(brandBox.x + brandBox.width);
+  }
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(viewport.width + 1);
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.y).toBeLessThan(120);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+  for (const action of await page.locator('.header-tail > a, .header-tail > button, .header-tail > details > summary, .hello-login, .guest-header-actions > button').all()) {
+    const bounds = await action.boundingBox();
+    if (!bounds) continue;
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width + 1);
+    const hit = await action.evaluate(element => { const box = element.getBoundingClientRect(); const top = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2); return { reachable: element === top || element.contains(top), action: element.outerHTML.slice(0,160), top: top?.outerHTML.slice(0,160), bounds: {x:box.x,y:box.y,width:box.width,height:box.height} }; });
+    expect(hit.reachable, JSON.stringify({ ...hit, width: viewport.width, url: page.url() })).toBe(true);
+  }
+}
+
+test('guest language control is reachable on landing, signup and download and persists only in the guest session', async ({ browser, baseURL }, testInfo) => {
+  const context = await browser.newContext({ locale: 'ru-RU', baseURL });
+  const page = await context.newPage();
+  const settingsWrites = [];
+  page.on('request', request => { if (request.url().endsWith('/api/settings') && request.method() === 'PUT') settingsWrites.push(request.postData()); });
+  try {
+    await page.goto('/');
+    await expect(languageControl(page)).toHaveValue('system');
+    expect(await languageControl(page).locator('option').evaluateAll(options => options.map(option => option.value))).toEqual(['system', 'ru', 'en', 'es', 'pt-BR', 'de', 'fr', 'ja']);
+    await languageControl(page).selectOption('de');
+    await page.locator('a[href="/login?join"]').first().click();
+    await expect(page.locator('html')).toHaveAttribute('lang', 'de');
+    await expect(languageControl(page)).toHaveValue('de');
+    await page.locator('#auth-email').fill('guest-draft@kizuna.test');
+    await page.locator('#auth-password').fill('guest-password-draft');
+    await languageControl(page).selectOption('ja');
+    await expect(page.locator('#auth-email')).toHaveValue('guest-draft@kizuna.test');
+    await expect(page.locator('#auth-password')).toHaveValue('guest-password-draft');
+    await page.reload();
+    await expect(languageControl(page)).toHaveValue('ja');
+    for (const width of [1440, 320, 375, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const path of ['/', '/login?join', '/public/mac-download.html']) {
+        await page.goto(path);
+        await expect(languageControl(page)).toHaveValue('ja');
+        await expectLanguageHeaderFits(page);
+        if (width === 320 && path === '/') {
+          const screenshotPath = testInfo.outputPath('guest-header-320.png');
+          await page.screenshot({ path: screenshotPath });
+          await testInfo.attach('guest-header-320', { path: screenshotPath, contentType: 'image/png' });
+        }
+      }
+    }
+    await languageControl(page).focus();
+    await page.keyboard.press('f');
+    await page.keyboard.press('Enter');
+    await expect(languageControl(page)).toHaveValue('fr');
+    await page.keyboard.press('Escape');
+    await page.goto('/');
+    await expect(languageControl(page)).toHaveValue('fr');
+    await languageControl(page).selectOption('system');
+    await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
+    await expect(page.locator('.language-mode')).toBeVisible();
+    expect(settingsWrites).toEqual([]);
+    const path = testInfo.outputPath('guest-header-390.png');
+    await page.screenshot({ path });
+    await testInfo.attach('guest-header-390', { path, contentType: 'image/png' });
+  } finally { await context.close(); }
+});
+
+test('app header switches every route without navigation and shares settings persistence with draft safety', async ({ page }, testInfo) => {
+  await login(page);
+  await page.request.put('/api/settings', { data: { locale: 'ru' } });
+  const note = (await (await page.request.post('/api/pages', { data: { title: 'Private language draft page' } })).json()).page;
+  await page.goto('/#today');
+  const capture = page.locator('#capture-form [contenteditable="true"]');
+  await capture.fill('Личная запись <script> and **draft**');
+  for (const width of [1440, 320, 375, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const [route, locale] of [['today', 'en'], ['calendar', 'pt-BR'], ['notes?page=' + note.id, 'ja'], ['settings', 'de']]) {
+      await page.evaluate(route => { location.hash = '#' + route; }, route);
+      await expect(page.locator('#' + route.split('?')[0])).toBeVisible();
+      const before = page.url();
+      await languageControl(page).selectOption(locale);
+      await expect(page.locator('html')).toHaveAttribute('lang', locale);
+      expect(page.url()).toBe(before);
+      await expect(capture).toHaveText('Личная запись <script> and **draft**');
+      await expectLanguageHeaderFits(page);
+    }
+  }
+  await page.evaluate(id => { location.hash = '#notes?page=' + id; }, note.id);
+  const editor = page.locator('#notes [contenteditable="true"]').first();
+  await expect(editor).toBeVisible();
+  await editor.fill('Несохранённый текст **notes** <script>');
+  await languageControl(page).selectOption('fr');
+  await expect(editor).toHaveText('Несохранённый текст **notes** <script>');
+  await page.evaluate(() => { location.hash = '#settings'; });
+  await page.locator('#setting-openaiKey').evaluate(input => { input.value = 'unsubmitted-secret'; });
+  await page.locator('#setting-requestedTimeZone').selectOption('Europe/Berlin');
+  await expect.poll(async () => (await (await page.request.get('/api/settings')).json()).timeZone).toBe('Europe/Berlin');
+  let releaseOlder;
+  const held = new Promise(resolve => { releaseOlder = resolve; });
+  const writes = [];
+  await page.route('**/api/settings', async route => {
+    const choice = route.request().method() === 'PUT' && route.request().postDataJSON()?.locale;
+    if (!choice) return route.continue();
+    writes.push(choice);
+    if (choice === 'de') await held;
+    await route.fulfill({ response: await route.fetch() });
+  });
+  await languageControl(page).selectOption('de');
+  await expect.poll(() => writes.length).toBe(1);
+  await page.locator('#setting-locale').selectOption('ja');
+  await expect(languageControl(page)).toHaveValue('ja');
+  expect(writes).toEqual(['de']);
+  releaseOlder();
+  await expect.poll(async () => (await (await page.request.get('/api/settings')).json()).settings.locale).toBe('ja');
+  await expect(page.locator('#setting-locale')).toHaveValue('ja');
+  await expect(page.locator('#setting-openaiKey')).toHaveValue('unsubmitted-secret');
+  await expect(page.locator('#setting-requestedTimeZone')).toHaveValue('Europe/Berlin');
+  await expectLanguageHeaderFits(page);
+  const path = testInfo.outputPath('app-header-390.png');
+  await page.screenshot({ path });
+  await testInfo.attach('app-header-390', { path, contentType: 'image/png' });
+  await page.reload();
+  await expect(languageControl(page)).toHaveValue('ja');
+});
+
+test('signup keeps the guest language while existing login and logout keep account and guest choices separate', async ({ browser, baseURL }) => {
+  const context = await browser.newContext({ locale: 'en-US', baseURL });
+  const admin = await browser.newContext({ locale: 'en-US', baseURL });
+  const page = await context.newPage();
+  const adminPage = await admin.newPage();
+  try {
+    await login(adminPage);
+    await adminPage.request.put('/api/settings', { data: { locale: 'ja' } });
+    await page.goto('/');
+    await languageControl(page).selectOption('de');
+    await page.locator('a[href="/login?join"]').first().click();
+    await page.locator('#auth-email').fill('header-signup@kizuna.test');
+    await page.locator('#auth-password').fill(password);
+    await page.locator('#auth-password-repeat').fill(password);
+    const registered = page.waitForResponse(response => response.url().endsWith('/api/auth/register'));
+    await page.locator('#auth-submit').click();
+    const registrationResponse = await registered;
+    expect(registrationResponse.request().postDataJSON()).toMatchObject({ locale: 'de', detectedLocale: 'en' });
+    expect(registrationResponse.request().headers()['accept-language']).toBe('de');
+    const confirmation = await page.evaluate(async () => (await import('/public/i18n.js')).translate('de', 'Заявка отправлена. Доступ откроет администратор.'));
+    await expect(page.locator('#auth-notice')).toHaveText(confirmation);
+    await expect(page.locator('html')).toHaveAttribute('lang', 'de');
+    const users = await (await adminPage.request.get('/api/admin/users')).json();
+    const applicant = users.users.find(user => user.email === 'header-signup@kizuna.test');
+    expect(applicant).toBeTruthy();
+    expect((await adminPage.request.post(`/api/admin/users/${applicant.id}/approve`, { data: {} })).ok()).toBeTruthy();
+    await page.locator('#auth-password').fill(password);
+    const shell = page.waitForResponse(response => response.url() === baseURL + '/' && response.request().isNavigationRequest());
+    await page.locator('#auth-submit').click();
+    const shellHtml = await (await shell).text();
+    expect(shellHtml).toMatch(/data-account-locale="de"/);
+    expect(shellHtml).toMatch(/<html[^>]*lang="de"/);
+    await page.waitForURL(baseURL + '/');
+    await expect(languageControl(page)).toHaveValue('de');
+    await expect(page.locator('html')).toHaveAttribute('lang', 'de');
+    await page.locator('#account-summary').click();
+    await page.locator('#account-logout').click();
+    await page.waitForURL(baseURL + '/login');
+    await expect(languageControl(page)).toHaveValue('de');
+    await languageControl(page).selectOption('fr');
+    await page.locator('#auth-email').fill(email);
+    await page.locator('#auth-password').fill(password);
+    await page.locator('#auth-submit').click();
+    await page.waitForURL(baseURL + '/');
+    await expect(languageControl(page)).toHaveValue('ja');
+    expect(await page.evaluate(() => sessionStorage.getItem('pagent.guest-locale'))).toBe('fr');
+    await languageControl(page).selectOption('es');
+    await expect.poll(async () => (await (await page.request.get('/api/settings')).json()).settings.locale).toBe('es');
+    await page.locator('#account-summary').click();
+    await page.locator('#account-logout').click();
+    await page.waitForURL(baseURL + '/login');
+    await expect(languageControl(page)).toHaveValue('fr');
+    await expect(page.locator('html')).toHaveAttribute('lang', 'fr');
+  } finally { await context.close(); await admin.close(); }
+});
+
+
+test('failed early header language write rolls back to authoritative shell while settings GET is pending', async ({ browser, baseURL }) => {
+  const context = await browser.newContext({ locale: 'ja-JP', baseURL });
+  const page = await context.newPage();
+  let releaseSettings;
+  const held = new Promise(resolve => { releaseSettings = resolve; });
+  let settingsHeld = false;
+  try {
+    await login(page);
+    await page.request.put('/api/settings', { data: { locale: 'en', detectedLocale: 'ja' } });
+    await page.route('**/api/settings', async route => {
+      if (route.request().method() === 'GET') {
+        const response = await route.fetch();
+        settingsHeld = true;
+        await held;
+        await route.fulfill({ response });
+      } else if (route.request().postDataJSON()?.locale === 'fr') {
+        await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { message: 'Unavailable' } }) });
+      } else await route.continue();
+    });
+    await page.goto('/');
+    await expect.poll(() => settingsHeld).toBe(true);
+    await expect(languageControl(page)).toHaveValue('en');
+    await page.evaluate(() => { window.localeSaves = []; window.addEventListener('pagent:localesaved', event => window.localeSaves.push(event.detail)); });
+    const capture = page.locator('#capture-form [contenteditable="true"]');
+    await capture.fill('Private early draft **unchanged**');
+    const failed = page.waitForResponse(response => response.url().endsWith('/api/settings') && response.request().method() === 'PUT' && response.status() === 503);
+    await languageControl(page).selectOption('fr');
+    await failed;
+    await expect(languageControl(page)).toHaveValue('en');
+    await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+    await expect(capture).toHaveText('Private early draft **unchanged**');
+    expect(await page.evaluate(() => window.localeSaves)).toEqual([]);
+    releaseSettings();
+    await expect(page.locator('#setting-locale')).toHaveValue('en');
+    await expect(languageControl(page)).toHaveValue('en');
+    expect((await (await page.request.get('/api/settings')).json()).settings.locale).toBe('en');
+  } finally { releaseSettings(); await context.close(); }
 });

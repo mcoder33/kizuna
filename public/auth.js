@@ -1,4 +1,4 @@
-import { t } from "./browser-i18n.js";
+import { t, getLocale, getRequestedLocale, getDetectedLocale } from "./browser-i18n.js";
 // Вход, регистрация и второй фактор. Одна форма на три состояния, потому что
 // это один разговор: «кто ты» — «докажи» — «тебя ещё не пустили».
 const $ = (selector) => document.querySelector(selector);
@@ -47,7 +47,7 @@ function paint() {
 async function send(path, body) {
   const response = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "Accept-Language": getLocale() },
     body: JSON.stringify(body),
   });
   const payload = await response.json().catch(() => ({}));
@@ -68,6 +68,8 @@ form.addEventListener("submit", async (event) => {
       const { ok, payload } = await send("/api/auth/register", {
         email: address,
         password: password.value,
+        locale: getRequestedLocale(),
+        ...(getDetectedLocale() ? { detectedLocale: getDetectedLocale() } : {}),
       });
       if (!ok) return show(error, payload.error?.message || t("Не получилось зарегистрироваться."));
       // Первый — сразу внутрь: он и есть администратор, подтверждать его некому.
@@ -77,7 +79,7 @@ form.addEventListener("submit", async (event) => {
       password.value = "";
       repeat.value = "";
       paint();
-      return show(notice, payload.message || t("Заявка отправлена. Доступ откроет администратор."));
+      return show(notice, payload.message ? t(payload.message) : t("Заявка отправлена. Доступ откроет администратор."));
     }
 
     const { ok, status, payload } = await send("/api/auth/login", {
