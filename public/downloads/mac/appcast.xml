@@ -1,0 +1,18 @@
+<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Kizuna</title>
+        <item>
+            <title>1.0.4</title>
+            <pubDate>Fri, 02 Oct 2026 18:59:33 +0400</pubDate>
+            <sparkle:version>5</sparkle:version>
+            <sparkle:shortVersionString>1.0.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://yourkizuna.com/public/downloads/mac/Kizuna-5.zip" length="1966109" type="application/octet-stream" sparkle:edSignature="MUsEWSrX6PHEFnuBRHjEvRfulbfyFhPrb4B9KuWZF4zn/I07zU9hA8kB8IGhcQR4qITnhBfgc9Tn62+M3TPUBQ=="></enclosure>
+        </item>
+    </channel>
+</rss><!-- sparkle-signatures:
+edSignature: 6qVQbw8m5uUpe4tZxq2PY8jK2iIEGujBo5cz3nmgUW+mCr+YvlEGcjMrFYUpzwn3Zkha0f1OJsrEPdKeMEapAA==
+length: 1015
+-->
