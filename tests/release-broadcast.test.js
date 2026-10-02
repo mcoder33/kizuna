@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import Database from 'better-sqlite3';
-import { RELEASE_CARDS, selectSeasonalReleaseCard } from '../server/release-cards.js';
+import { RELEASE_CARDS, selectSeasonalReleaseCard, applySeasonalDefault } from '../server/release-cards.js';
 import { announceRelease, prepareRelease, readBroadcastSource, broadcastExitCode } from '../server/release-broadcast.js';
 
 const TOKEN = `123456789:${'x'.repeat(32)}`;
@@ -322,4 +322,30 @@ test('every seasonal card has a tracked PNG asset available for deployment', () 
     assert.deepEqual(content.subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), url);
     assert.ok(content.readUInt32BE(16) > 0 && content.readUInt32BE(20) > 0, url);
   }
+});
+
+test('automatic release defaults omitted media to seasonal while standalone, plain and manual choices stay intact', t => {
+  const auto = applySeasonalDefault(note, true);
+  assert.equal(prepareRelease(auto).method, 'sendPhoto');
+  assert.equal(auto.seasonalImage, true);
+  assert.equal(note.seasonalImage, undefined);
+  assert.equal(prepareRelease(applySeasonalDefault(note)).method, 'sendMessage');
+  const plain = { ...note, seasonalImage: false };
+  assert.equal(applySeasonalDefault(plain, true), plain);
+  assert.equal(prepareRelease(plain).method, 'sendMessage');
+  assert.equal(applySeasonalDefault(photo, true), photo);
+  assert.equal(prepareRelease(photo).payload.photo, photo.image);
+  assert.throws(() => prepareRelease(applySeasonalDefault({ ...note, seasonalImage: 'yes' }, true)), /invalid_manifest/);
+  const f = fixture(t);
+  const manifestPath = path.join(f.dir, 'auto-note.json');
+  fs.writeFileSync(manifestPath, JSON.stringify(note));
+  const args = ['scripts/announce-release.mjs', '--database', f.filename, '--manifest', manifestPath, '--seasonal-default', '--release-date', '2026-03-02T08:00:00Z'];
+  const result = spawnSync(process.execPath, args, { encoding: 'utf8', env: { ...process.env, DOTENV_CONFIG_PATH: path.join(f.dir, 'absent.env') } });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).image, SITE + '/public/release-cards/spring-mon.png');
+  fs.writeFileSync(manifestPath, JSON.stringify(plain));
+  const plainResult = spawnSync(process.execPath, args, { encoding: 'utf8', env: { ...process.env, DOTENV_CONFIG_PATH: path.join(f.dir, 'absent.env') } });
+  assert.equal(plainResult.status, 0, plainResult.stderr);
+  assert.equal(JSON.parse(plainResult.stdout).image, undefined);
+  assert.equal(fs.existsSync(f.receiptsPath), false);
 });

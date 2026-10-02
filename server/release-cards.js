@@ -13,3 +13,11 @@ export function selectSeasonalReleaseCard(date, timeZone = 'Europe/Samara') {
   const season = month >= 3 && month <= 5 ? 'spring' : month >= 6 && month <= 8 ? 'summer' : month >= 9 && month <= 11 ? 'autumn' : 'winter';
   return `${SITE}/public/release-cards/${season}-${parts.weekday.toLowerCase()}.png`;
 }
+
+// Auto-release fills an omitted choice; explicit plain or manual media wins.
+export function applySeasonalDefault(manifest, enabled = false) {
+  if (enabled && manifest.seasonalImage === undefined && !manifest.image) {
+    return { ...manifest, seasonalImage: true };
+  }
+  return manifest;
+}

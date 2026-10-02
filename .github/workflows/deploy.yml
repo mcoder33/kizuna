@@ -87,7 +87,7 @@ jobs:
         run: |
           node - <<'NODE'
           const fs = require('fs');
-          const manifest = JSON.parse(fs.readFileSync('release-notes/latest.json', 'utf8'));
+          let manifest = JSON.parse(fs.readFileSync('release-notes/latest.json', 'utf8'));
           if (!manifest.id || !manifest.title || !Array.isArray(manifest.changes)) {
             throw new Error('Некорректный release-notes/latest.json');
           }
@@ -96,7 +96,8 @@ jobs:
           }
           if (manifest.seasonalImage && manifest.image) throw new Error('Выберите image или seasonalImage');
           (async () => {
-            const { RELEASE_CARDS } = await import('./server/release-cards.js');
+            const { RELEASE_CARDS, applySeasonalDefault } = await import('./server/release-cards.js');
+            manifest = applySeasonalDefault(manifest, true);
             const images = manifest.seasonalImage ? RELEASE_CARDS : (manifest.image ? [manifest.image] : []);
             for (const image of images) {
               const url = new URL(image);
@@ -141,5 +142,5 @@ jobs:
             exit 1
           fi
           cd /opt/kizuna/app
-          sudo -u kizuna env DOTENV_CONFIG_PATH=/opt/kizuna/.env node scripts/announce-release.mjs --send --release-sha "$expected" --release-date "$released_at"
+          sudo -u kizuna env DOTENV_CONFIG_PATH=/opt/kizuna/.env node scripts/announce-release.mjs --send --seasonal-default --release-sha "$expected" --release-date "$released_at"
           REMOTE_ANNOUNCE
