@@ -93,6 +93,8 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
     private var awaitingLogin = false
     private var previousApp: NSRunningApplication?
     var onLogin: (() -> Void)?
+    var preventsRestart: Bool { busy || unconfirmed || !editor.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    func hideForRestart() { panel.orderOut(nil) }
 
     init(webView: WKWebView, origin: URL) {
         self.webView = webView; self.origin = origin
