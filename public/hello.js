@@ -283,6 +283,12 @@ if (figure && app && bar && controls && pauseButton) {
     pauseButton.setAttribute("aria-pressed", String(demo.paused));
   });
   document.getElementById("demo-again").addEventListener("click", restart);
+  window.addEventListener("pagent:localechange", () => {
+    const wasPaused = demo.paused;
+    restart();
+    if (wasPaused) pauseButton.click();
+    fit();
+  });
   if ("IntersectionObserver" in window) {
     new IntersectionObserver(([entry]) => { demo.seen = entry.intersectionRatio >= 0.3; }, { threshold: [0, 0.3] }).observe(figure);
   }
