@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { dateInZone } from './reports.js';
 import { createTaskSearchService } from './task-search.js';
+import { createTelegramTaskSearchAccess } from './telegram-day-access.js';
 
 export const TASK_SEARCH_LABEL = 'Найти';
 export const TASK_SEARCH_COMMANDS = [{ command: 'find', description: 'Найти задачи по человеку, теме или периоду' }];
@@ -68,7 +69,7 @@ export function renderTaskSearchResult(result, { appUrl, nextCallback = null } =
 }
 
 // A plugin for the shared summary router. It never dispatches Telegram updates itself.
-export function installTelegramTaskSearch({ menuRouter, db, search = createTaskSearchService(db), currentBinding = null, now = () => new Date(), timeZone = () => 'Europe/Samara' } = {}) {
+export function installTelegramTaskSearch({ menuRouter, db, search = createTaskSearchService(db), currentBinding = null, canAccess = createTelegramTaskSearchAccess(), now = () => new Date(), timeZone = () => 'Europe/Samara' } = {}) {
   const required = ['registerPreflight', 'registerMessageRoute', 'registerPendingMode', 'registerCallbackRoute', 'registerReplyKeyboardButton', 'replyKeyboard', 'canAccessMenu'];
   if (!menuRouter || required.some(name => typeof menuRouter[name] !== 'function')) return { installed: false, reason: 'shared_menu_router_required' };
   const sessions = new Map(), pages = new Map(), claimedMessages = new WeakSet(), claimedCallbacks = new WeakSet();
@@ -83,7 +84,8 @@ export function installTelegramTaskSearch({ menuRouter, db, search = createTaskS
     return actual && bindingKey(actual) === bindingKey(link) ? actual : null;
   };
   const bindingFresh = link => dbBinding(link) && (!currentBinding || currentBinding(link));
-  const fresh = link => bindingFresh(link) && menuRouter.canAccessMenu(link);
+  const searchAllowed = link => Boolean(link && (typeof canAccess === 'function' && canAccess(link.user_id)));
+  const fresh = link => bindingFresh(link) && searchAllowed(link);
   const generation = link => search.generation?.(link.user_id) || 0;
   const scope = link => `${bindingKey(link)}:${generation(link)}`;
   const baseKey = link => `${link.telegram_id}:${link.chat_id}`;
@@ -102,21 +104,22 @@ export function installTelegramTaskSearch({ menuRouter, db, search = createTaskS
     if (sessions.size > LIMIT) sessions.delete(sessions.keys().next().value);
     return next;
   }
-  function clear(link, interactions, { keepCriteria = false } = {}) {
+  function clear(link, interactions, { keepCriteria = false, preserveSharedMode = false } = {}) {
     const state = session(link);
     state.revision = ++revision;
     state.pendingUntil = null; state.expiredPending = false;
     if (!keepCriteria) { state.lastCriteria = null; state.contextUntil = 0; }
-    interactions.clear(link); clearPages(link); deleteIntent.run(baseKey(link));
+    if (!preserveSharedMode || interactions.get(link)?.mode === 'task-search') interactions.clear(link);
+    clearPages(link); deleteIntent.run(baseKey(link));
   }
   function beginIntent(link, state) {
     state.pendingUntil = now().getTime() + TTL;
     writeIntent.run(baseKey(link), link.user_id, scope(link), new Date(state.pendingUntil).toISOString(), now().toISOString());
   }
   function discardRevokedContext(link, interactions) {
-    if (!bindingFresh(link) || menuRouter.canAccessMenu(link)) return;
+    if (!bindingFresh(link) || searchAllowed(link)) return;
     const state = session(link);
-    if (!pendingSearch(state, interactions, link)) { clear(link, interactions); return; }
+    if (!pendingSearch(state, interactions, link)) { clear(link, interactions, { preserveSharedMode: true }); return; }
     state.revision = ++revision;
     state.lastCriteria = null; state.contextUntil = 0;
     state.pendingUntil = null; state.expiredPending = true;
@@ -162,7 +165,7 @@ export function installTelegramTaskSearch({ menuRouter, db, search = createTaskS
     return true;
   }
 
-  menuRouter.registerReplyKeyboardButton(TASK_SEARCH_LABEL, { row: 0, visible: link => Boolean(link && menuRouter.canAccessMenu(link)) });
+  menuRouter.registerReplyKeyboardButton(TASK_SEARCH_LABEL, { row: 0, visible: link => fresh(link) });
   menuRouter.registerPendingMode('task-search', { accept: text => Boolean(text.trim()), consume: (link, text, data, message) => executeQuery(link, text, message, menuRouter.interactions, data.send) });
   menuRouter.registerPreflight(async ({ message, callback, link, interactions, send }) => {
     const actor = callback?.from || message?.from, chat = callback?.message?.chat || message?.chat;
@@ -170,11 +173,15 @@ export function installTelegramTaskSearch({ menuRouter, db, search = createTaskS
     const key = callback ? callbackKey(callback) : messageKey(message);
     if (key && receipt.get(key)) return true;
     const state = session(link);
-    if (!menuRouter.canAccessMenu(link)) {
+    if (!searchAllowed(link)) {
       const wasPending = pendingSearch(state, interactions, link);
-      clear(link, interactions);
+      clear(link, interactions, { preserveSharedMode: true });
       if (callback) return String(callback.data || '').startsWith('ts:');
       const text = typeof message.text === 'string' ? message.text.trim() : '';
+      if (plainText(message) && !forwarded(message) && (commandName(text) === 'find' || text === TASK_SEARCH_LABEL)) {
+        await send(link, 'Поиск пока недоступен. Сводка дня и календарь — в меню ниже.', menuRouter.replyKeyboard(link));
+        return true;
+      }
       if (wasPending && plainText(message) && !forwarded(message) && !commandName(text) && text !== TASK_SEARCH_LABEL && text !== 'Отмена') {
         if (!claim(link, message, 'query')) return true;
         await send(link, 'Режим поиска сброшен: доступ к меню отключён. Это сообщение не сохранено. Можно снова писать задачи.');
