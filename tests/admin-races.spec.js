@@ -78,7 +78,7 @@ test('поздний ответ списка пользователей сохр
   } finally { held.release(); }
 });
 
-test('новая заявка и пожелание через SSE не сбрасывают несохранённый выбор уведомлений', async ({ page, request }) => {
+test('пожелания через SSE не сбрасывают несохранённый выбор уведомлений', async ({ page, request }) => {
   // Observe the real administration event, without replacing the event stream.
   await page.addInitScript(() => {
     window.administrationEvents = 0;
@@ -93,24 +93,17 @@ test('новая заявка и пожелание через SSE не сбра
     };
   });
   await page.goto('/#admin/service/notifications');
-  const checkbox = page.locator('#admin-delivery-settings input[name="signup:telegram"]');
+  const checkbox = page.locator('#admin-delivery-settings input[name="feedback:telegram"]');
   await expect(checkbox).toBeChecked();
   await expect.poll(() => page.evaluate(() => window.administrationStreams.some(stream => stream.readyState === EventSource.OPEN))).toBe(true);
   await checkbox.uncheck();
-  const beforeSignup = await page.evaluate(() => window.administrationEvents);
-  const email = `race-signup-${randomUUID()}@kizuna.test`;
-  expect((await request.post('/api/auth/register', { data: { email, password: 'admin-race-registration-password' } })).status()).toBe(201);
-  await expect.poll(() => page.evaluate(() => window.administrationEvents)).toBeGreaterThan(beforeSignup);
-  await expect(page.locator('#admin-notices')).toContainText(email);
-  await expect(checkbox).not.toBeChecked();
-
   const beforeFeedback = await page.evaluate(() => window.administrationEvents);
   const text = `Пожелание во время настройки уведомлений ${randomUUID()}`;
   await createFeedback(request, text);
   await expect.poll(() => page.evaluate(() => window.administrationEvents)).toBeGreaterThan(beforeFeedback);
   await expect(page.locator('#admin-notices')).toContainText(text);
   await expect(checkbox).not.toBeChecked();
-  expect((await (await request.get('/api/admin/notification-settings')).json()).preferences.signup.telegram).toBe(true);
+  expect((await (await request.get('/api/admin/notification-settings')).json()).preferences.feedback.telegram).toBe(true);
 });
 
 test('поля пожелания становятся доступны только после загрузки учётной записи', async ({ page }) => {

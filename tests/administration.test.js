@@ -236,75 +236,42 @@ test('feedback pagination preserves same-time rows, author isolation and status 
   assert.equal((await admin.get('/api/admin/feedback').query({ limit: 100 }).expect(200)).body.feedback.length, 100);
 });
 
-test('signup notifies active admins in the app and only their linked Telegram chats', async t => {
-  const ctx = fixture(t);
-  const admin = authed(ctx.app);
-  const unlinked = authed(ctx.app, { email: 'unlinked@kizuna.test' });
-  const ordinary = seedUser(ctx.app, { email: 'ordinary@kizuna.test', role: 'user' });
-  const blocked = seedUser(ctx.app, { email: 'blocked@kizuna.test', role: 'admin', status: 'blocked' });
-  const pending = seedUser(ctx.app, { email: 'pending@kizuna.test', role: 'admin', status: 'pending' });
-  linkTelegram(ctx, admin.user, 777001);
-  linkTelegram(ctx, ordinary, 777002);
-  linkTelegram(ctx, blocked, 777003);
-  linkTelegram(ctx, pending, 777004);
-  await enableTelegram(ctx, admin);
-  const newUser = await signup(ctx);
-  assert.equal(newUser.status, 'pending');
+test('signup is immediately active with a session and sends no administrative notice', async t => {
+  const ctx = fixture(t); const admin = authed(ctx.app);
+  linkTelegram(ctx, admin.user); await enableTelegram(ctx, admin);
+  const guest = request.agent(ctx.app);
+  const registration = await guest.post('/api/auth/register').send({ email: 'immediate@kizuna.test', password: TEST_PASSWORD }).expect(201);
+  assert.equal(registration.body.user.status, 'active');
+  const sessionCookie = registration.headers['set-cookie'].map(value => value.split(';')[0]).join('; ');
+  assert.equal((await guest.get('/api/auth/state').set('Cookie', sessionCookie).expect(200)).body.authenticated, true);
   await ctx.app.notificationsDelivered();
-  assert.deepEqual(notifications(ctx, 'signup').map(row => row.user_id).sort(), [admin.user.id, unlinked.user.id].sort());
-  assert.deepEqual(deliveries(ctx).map(row => [row.user_id, row.state]), [[admin.user.id, 'sent']]);
-  assert.equal(ctx.fake.said().length, 1);
-  assert.equal(ctx.fake.said()[0].chatId, 777001);
-  assert.match(ctx.fake.said()[0].text, /new-user@kizuna\.test/);
-  assert.equal(ctx.fake.said()[0].markup.inline_keyboard[0][0].url, `https://kizuna.example/#admin/inbox?user=${newUser.id}`);
-  assert.equal((await inbox(admin)).notifications[0].data.url, `/#admin/inbox?user=${newUser.id}`);
-  assert.ok((await inbox(admin)).pending.some(user => user.id === newUser.id));
+  assert.deepEqual(notifications(ctx, 'signup'), []); assert.deepEqual(deliveries(ctx), []); assert.deepEqual(ctx.fake.said(), []);
+  assert.deepEqual((await inbox(admin)).pending, []);
 });
 
-test('approving or rejecting a signup resolves all app notices and cancels an undelivered Telegram notice', async t => {
-  const ctx = fixture(t);
-  const admin = authed(ctx.app);
-  const secondAdmin = authed(ctx.app, { email: 'second@kizuna.test' });
-  linkTelegram(ctx, admin.user);
-  for (const action of ['approve', 'reject']) {
-    const user = await signup(ctx, `${action}@kizuna.test`);
-    await admin.post(`/api/admin/users/${user.id}/${action}`).send({}).expect(200);
-    assert.equal((await inbox(admin)).notifications.length, 0);
-    assert.equal((await inbox(secondAdmin)).notifications.length, 0);
-    assert.equal(deliveries(ctx).find(row => row.event_key === `signup:${user.id}`).state, 'cancelled');
-    assert.ok(!(await inbox(admin)).pending.some(item => item.id === user.id));
-  }
-  assert.ok(notifications(ctx, 'signup').every(row => row.resolved_at && row.read_at));
-  assert.deepEqual(ctx.fake.said(), []);
+test('obsolete signup approval actions cannot change an active account', async t => {
+  const ctx = fixture(t); const admin = authed(ctx.app); const user = await signup(ctx);
+  for (const action of ['approve', 'reject']) await admin.post(`/api/admin/users/${user.id}/${action}`).send({}).expect(404);
+  assert.equal(ctx.db.prepare('SELECT status FROM users WHERE id=?').get(user.id).status, 'active');
+  assert.deepEqual((await inbox(admin)).pending, []); assert.deepEqual(notifications(ctx, 'signup'), []);
 });
 
-test('admin channel preferences independently control signup and feedback app/Telegram delivery', async t => {
-  const ctx = fixture(t);
-  const admin = authed(ctx.app);
+test('feedback app and Telegram channels remain independent; legacy signup preferences produce no events', async t => {
+  const ctx = fixture(t); const admin = authed(ctx.app);
   const user = authed(ctx.app, { email: 'author@kizuna.test', role: 'user' });
-  linkTelegram(ctx, admin.user);
-  await enableTelegram(ctx, admin);
-  await admin.put('/api/admin/notification-settings').send({ preferences: preferences({ signupApp: false, feedbackTelegram: false }) }).expect(200);
-  const registered = await signup(ctx);
-  const thread = (await submit(user, 'channels').expect(201)).body.feedback;
+  linkTelegram(ctx, admin.user); await enableTelegram(ctx, admin);
+  await admin.put('/api/admin/notification-settings').send({ preferences: preferences({ feedbackTelegram: false }) }).expect(200);
+  await signup(ctx); const first = (await submit(user, 'app-only').expect(201)).body.feedback;
   await ctx.app.notificationsDelivered();
-  assert.equal(notifications(ctx, 'signup').length, 0);
+  assert.equal(notifications(ctx, 'feedback').length, 1); assert.deepEqual(notifications(ctx, 'signup'), []);
+  assert.deepEqual(deliveries(ctx), []); assert.deepEqual(ctx.fake.said(), []);
+  assert.ok((await inbox(admin)).feedback.some(item => item.id === first.id));
+  await admin.put('/api/admin/notification-settings').send({ preferences: preferences({ feedbackApp: false }) }).expect(200);
+  const second = (await submit(user, 'telegram-only').expect(201)).body.feedback;
+  await ctx.app.notificationsDelivered();
   assert.equal(notifications(ctx, 'feedback').length, 1);
-  assert.equal(deliveries(ctx).length, 1);
-  assert.equal(deliveries(ctx)[0].event_key, `signup:${registered.id}`);
+  assert.equal(deliveries(ctx)[0].event_key, `feedback:${second.id}`); assert.equal(deliveries(ctx)[0].state, 'sent');
   assert.equal(ctx.fake.said().length, 1);
-  const box = await inbox(admin);
-  assert.ok(box.pending.some(item => item.id === registered.id), 'turning off alerts does not discard the request');
-  assert.ok(box.feedback.some(item => item.id === thread.id));
-
-  await admin.put('/api/admin/notification-settings').send({ preferences: preferences({ signupTelegram: false, feedbackApp: false }) }).expect(200);
-  const secondSignup = await signup(ctx, 'app-only@kizuna.test');
-  const secondFeedback = (await submit(user, 'channels-second').expect(201)).body.feedback;
-  await ctx.app.notificationsDelivered();
-  assert.equal(notifications(ctx, 'signup')[0].group_key, `signup:${secondSignup.id}`);
-  assert.equal(notifications(ctx, 'feedback').length, 1);
-  assert.equal(deliveries(ctx).find(row => row.event_key === `feedback:${secondFeedback.id}`).state, 'sent');
-  assert.equal(ctx.fake.said().length, 2);
 });
 
 test('notification settings validate the complete channel matrix and list no inactive recipient', async t => {
@@ -352,9 +319,9 @@ test('reading and clearing the personal bell leaves administration notices untou
   assert.equal(dismissed.dismissed.length, 1);
   assert.ok(administrationRows().every(row => row.read_at === null && row.dismissed_at === null));
   const ids = administrationRows().map(row => row.id);
-  assert.equal((await admin.post('/api/notifications/read?scope=personal').send({ ids }).expect(200)).body.changed, 2);
+  assert.equal((await admin.post('/api/notifications/read?scope=personal').send({ ids }).expect(200)).body.changed, 1);
   assert.ok(administrationRows().every(row => row.read_at !== null && row.dismissed_at === null));
-  assert.equal((await inbox(admin)).notifications.length, 2, 'reading a notice does not handle the request');
+  assert.equal((await inbox(admin)).notifications.length, 1, 'reading a notice does not handle the request');
 });
 
 test('Telegram failure does not fail feedback; the persisted queue retries after a restart without a duplicate', async t => {

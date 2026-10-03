@@ -7,14 +7,15 @@ async function userSession({ browser, playwright, request }, suffix, viewport = 
   const response = await api.post('/api/auth/register', { data: { email, password, locale: 'ru' } });
   expect(response.status()).toBe(201);
   const { user } = await response.json();
-  expect((await request.post(`/api/admin/users/${user.id}/approve`, { data: {} })).status()).toBe(200);
+  expect(user.status).toBe('active');
+  expect((await (await api.get('/api/auth/state')).json()).authenticated).toBe(true);
   expect((await api.post('/api/auth/login', { data: { email, password } })).status()).toBe(200);
   const context = await browser.newContext({ storageState: await api.storageState(), viewport, locale: 'ru-RU', timezoneId: 'Europe/Samara' });
   const page = await context.newPage();
   return { page, context, api, user, email };
 }
 
-test('администрирование отделено от личных настроек и работает на телефоне', async ({ page }) => {
+test('администрирование отделено от личных настроек и работает на телефоне', async ({ page }, testInfo) => {
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto('/#settings');
   await expect(page.locator('#setting-name')).toBeVisible();
@@ -31,21 +32,21 @@ test('администрирование отделено от личных на
   await expect(page.locator('#setting-timeZone')).toBeVisible();
   await page.goto('/#admin/service/notifications');
   await expect(page.locator('#admin-delivery-settings')).toContainText('Получатели');
-  await expect(page.locator('#admin-delivery-settings input[type=checkbox]')).toHaveCount(4);
-  await page.screenshot({ path: 'tmp/admin-preview/desktop.png', fullPage: true });
+  await expect(page.locator('#admin-delivery-settings input[type=checkbox]')).toHaveCount(2);
+  await page.screenshot({ path: testInfo.outputPath('desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('#admin-navigation')).toBeVisible();
   await page.locator('#admin-navigation summary').click();
   await page.locator('#admin-navigation a[data-admin-section=users]').click();
   await expect(page.locator('#admin-title')).toHaveText('Пользователи');
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.screenshot({ path: 'tmp/admin-preview/mobile.png', fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('mobile.png'), fullPage: true });
   await page.locator('.admin-topbar a[href="#today"]').last().click();
   await expect(page.locator('body > header')).toBeVisible();
   expect(errors).toEqual([]);
 });
 
-test('пожелание проходит от пользователя до ответа администратора', async ({ page, browser, playwright, request }) => {
+test('пожелание проходит от пользователя до ответа администратора', async ({ page, browser, playwright, request }, testInfo) => {
   const sender = await userSession({ browser, playwright, request }, 'reply');
   try {
     await sender.page.goto('/#feedback');
@@ -64,7 +65,7 @@ test('пожелание проходит от пользователя до о�
     await expect(card).toContainText('Можно уточнить детали');
     await card.getByLabel('Статус пожелания').selectOption('considering');
     await card.getByLabel('Ответ пользователю').fill('Спасибо, добавили в план.');
-    await page.screenshot({ path: 'tmp/admin-preview/feedback-review.png', fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath('feedback-review.png'), fullPage: true });
     await card.getByRole('button', { name: 'Сохранить', exact: true }).click();
     await expect(card).toContainText('Спасибо, добавили в план.');
     await sender.page.reload();
@@ -78,7 +79,7 @@ test('пожелание проходит от пользователя до о�
   } finally { await sender.context.close(); await sender.api.dispose(); }
 });
 
-test('черновик переживает сбой сети, содержимое безопасно и повтор не создаёт дубль', async ({ browser, playwright, request }) => {
+test('черновик переживает сбой сети, содержимое безопасно и повтор не создаёт дубль', async ({ browser, playwright, request }, testInfo) => {
   const sender = await userSession({ browser, playwright, request }, 'draft', { width: 390, height: 844 });
   try {
     await sender.page.goto('/#feedback');
@@ -99,6 +100,6 @@ test('черновик переживает сбой сети, содержим�
     await expect(sender.page.locator('#my-feedback img')).toHaveCount(0);
     expect((await (await sender.api.get('/api/feedback')).json()).feedback).toHaveLength(1);
     await expect.poll(() => sender.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await sender.page.screenshot({ path: 'tmp/admin-preview/feedback-dark-mobile.png', fullPage: true });
+    await sender.page.screenshot({ path: testInfo.outputPath('feedback-dark-mobile.png'), fullPage: true });
   } finally { await sender.context.close(); await sender.api.dispose(); }
 });

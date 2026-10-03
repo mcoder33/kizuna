@@ -62,13 +62,14 @@ export function mountAdministration({ request, toast, accountKnown, loadUsers, l
   }
   function paintBadge() {
     if (!inbox) return;
-    const count = inbox.pending.length + (inbox.feedbackCount ?? inbox.feedback.length);
+    const count = inbox.feedbackCount ?? inbox.feedback.length;
     for (const node of document.querySelectorAll('[data-admin-count]')) { node.textContent = String(count); node.hidden = !count; }
-    const unread = inbox.notifications.filter(item => !item.readAt).length;
+    const notices = inbox.notifications.filter(item => item.kind === 'feedback');
+    const unread = notices.filter(item => !item.readAt).length;
     for (const node of root.querySelectorAll('[data-admin-notice-count]')) { node.textContent = String(unread); node.hidden = !unread; }
     const list = root.querySelector('#admin-notices'); list.replaceChildren();
-    for (const item of inbox.notifications) {
-      const link = el('a', `${t(item.kind === 'signup' ? 'Новая заявка на вход' : 'Новое пожелание')} · ${item.text}`, 'admin-notice');
+    for (const item of notices) {
+      const link = el('a', `${t('Новое пожелание')} · ${item.text}`, 'admin-notice');
       if (typeof item.data.url !== 'string' || !item.data.url.startsWith('/#admin')) continue;
       link.href = item.data.url.slice(1);
       link.addEventListener('click', () => { void request('/api/notifications/read', { method: 'POST', body: JSON.stringify({ ids: [item.id] }) }).then(refreshBadge).catch(() => {}); });
@@ -147,7 +148,7 @@ export function mountAdministration({ request, toast, accountKnown, loadUsers, l
       card.append(link); wrap.append(card);
     }
     const empty = root.querySelector('#admin-inbox-empty');
-    empty.hidden = Boolean(inbox.pending.length || (inbox.feedbackCount ?? inbox.feedback.length));
+    empty.hidden = Boolean(inbox.feedbackCount ?? inbox.feedback.length);
     if (inbox.feedbackCount > inbox.feedback.length) {
       const link = el('a', t('Показать все пожелания'), 'secondary'); link.href = '#admin/feedback?status=new'; wrap.append(link);
     }
@@ -157,7 +158,7 @@ export function mountAdministration({ request, toast, accountKnown, loadUsers, l
     if (ticket !== revision || route().page !== 'admin' || route().section !== 'service' || route().tab !== 'notifications') return;
     const wrap = root.querySelector('#admin-delivery-settings'); wrap.replaceChildren();
     const form = el('form', undefined, 'admin-delivery-form');
-    for (const [kind, title] of [['signup', 'Новая заявка на вход'], ['feedback', 'Новое пожелание']]) {
+    for (const [kind, title] of [['feedback', 'Новое пожелание']]) {
       const row = el('fieldset'); row.append(el('legend', t(title)));
       for (const [channel, title] of [['app', 'В приложении'], ['telegram', 'В Telegram']]) {
         const label = el('label', undefined, 'admin-delivery-choice');
@@ -167,7 +168,7 @@ export function mountAdministration({ request, toast, accountKnown, loadUsers, l
       form.append(row);
     }
     const save = el('button', t('Сохранить'), 'primary'); save.type = 'submit'; form.append(save);
-    const readPrefs = () => Object.fromEntries(['signup', 'feedback'].map(kind => [kind, Object.fromEntries(['app', 'telegram'].map(channel => [channel, form.elements.namedItem(`${kind}:${channel}`).checked]))]));
+    const readPrefs = () => ({ signup: { ...data.preferences.signup }, feedback: Object.fromEntries(['app', 'telegram'].map(channel => [channel, form.elements.namedItem(`feedback:${channel}`).checked])) });
     form.addEventListener('change', () => { notificationDraft = readPrefs(); syncEditing(); });
     form.addEventListener('submit', async event => {
       event.preventDefault(); save.disabled = true;
