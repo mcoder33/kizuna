@@ -1,5 +1,5 @@
 import { openTodoSharing as openSharingDialog } from "./todo-sharing.js";
-import { createCollaborativeEditor } from "./collaboration.bundle.js";
+import { createCollaborativeEditor, listPendingDrafts, readPendingDraft } from "./collaboration.bundle.js";
 import { uiStorage, receiveUiPreferences, refreshUiPreferences, startUiPreferenceSync } from "./ui-preferences.js";
 import { safeExternalUrl } from "./safe-url.js";
 import { mountLanguageControls, syncLanguageControls } from "./language-control.js";
@@ -4053,7 +4053,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   caption.hidden = true;
   caption.setAttribute("aria-controls", "card-subtask-map");
   titleCopy.append(collaborativeCard?.captureId === entry.id ? collaborativeCard.titleElement : cardTitle, caption);
-  if (entry.canPublish) { const shareButton = node("button", t("Поделиться"), "secondary todo-share-button"); shareButton.type = "button"; shareButton.addEventListener("click", () => openTodoSharing(entry)); titleCopy.append(shareButton); }
+  if (entry.mine || entry.canPublish) { const shareButton = node("button", t("Поделиться"), "secondary todo-share-button"); shareButton.type = "button"; shareButton.disabled = !entry.canPublish; if (!entry.canPublish) shareButton.title = t("Сначала создайте круг в разделе «За столом»."); shareButton.addEventListener("click", () => openTodoSharing(entry)); titleCopy.append(shareButton); if (!entry.canPublish) titleCopy.append(node("small", t("Сначала создайте круг в разделе «За столом»."), "todo-share-unavailable")); }
   head.append(titleCopy);
   area.append(head);
   if (hasTick && doneState.done) area.append(cardDoneBlock(entry, doneState));
@@ -6137,6 +6137,34 @@ let currentUser = null;
 // ждёт этого, чтобы отличить свои реплики от чужих.
 let resolveAccountKnown = () => {};
 const accountKnown = new Promise((resolve) => { resolveAccountKnown = resolve; });
+
+async function openLocalDrafts(captureId = null) {
+  const state = await request('/api/auth/state');
+  if (!state.authenticated) return false;
+  const userId = state.user.id;
+  const drafts = (await listPendingDrafts(userId)).filter(draft => !captureId || draft.captureId === captureId);
+  if (!drafts.length) return false;
+  const dialog = node('dialog', undefined, 'todo-share-dialog local-draft-dialog');
+  const content = node('div', undefined, 'todo-share-content');
+  content.append(node('h2', t('Черновики на устройстве')), node('p', t('Доступ закрыт · черновик сохранён на устройстве.')));
+  for (const draft of drafts) {
+    // A fresh identity fence is required before reading each account-scoped cache.
+    const identity = await request('/api/auth/state');
+    if (!identity.authenticated || identity.user.id !== userId) return false;
+    const text = await readPendingDraft(draft);
+    const afterRead = await request('/api/auth/state');
+    if (!afterRead.authenticated || afterRead.user.id !== userId) return false;
+    const field = node('textarea', undefined, 'collaborative-draft'); field.readOnly = true; field.value = text;
+    field.setAttribute('aria-label', t('Черновик для копирования'));
+    const copy = node('button', t('Скопировать черновик'), 'secondary'); copy.type = 'button';
+    copy.addEventListener('click', async () => { const identity = await request('/api/auth/state'); if (!identity.authenticated || identity.user.id !== userId) { dialog.close(); return; } field.select(); try { await navigator.clipboard.writeText(text); } catch {} });
+    content.append(field, copy);
+  }
+  const close = node('button', t('Закрыть'), 'secondary'); close.type = 'button'; close.addEventListener('click', () => dialog.close());
+  content.append(close); dialog.append(content); document.body.append(dialog); dialog.addEventListener('close', () => dialog.remove(), { once: true }); dialog.showModal();
+  return true;
+}
+$('#account-local-drafts')?.addEventListener('click', () => { $('.account-menu')?.removeAttribute('open'); openLocalDrafts().then(found => { if (!found) toast(t('Нет несохранённых черновиков.')); }).catch(error => toast(error.message)); });
 
 const roleNames = { get admin() { return t("администратор"); }, get user() { return t("пользователь"); } };
 
@@ -11840,7 +11868,7 @@ async function openCaptureById(id, { subtasks = false } = {}) {
   // По ссылке карточка открывается так же, как по клику в списке: с вопросом
   // модели, если разбор неуверенный. subtasks — сразу на разделе «Подзадачи».
   try { const { entry } = await request(`/api/captures/${encodeURIComponent(id)}`); const review = reviewFromEntry(entry); cardScrollTarget = subtasks ? id : null; showCorrection(entry, review.level === "high" ? undefined : review); }
-  catch (error) { toast(error.message); }
+  catch (error) { if (![403,404].includes(error.status) || !await openLocalDrafts(id)) toast(error.message); }
 }
 $("#push-enable")?.addEventListener("click", () => enablePush().catch((error) => { toast(error.message || t("Не удалось включить уведомления")); paintPush(); }));
 $("#push-disable")?.addEventListener("click", () => disablePush().catch((error) => toast(error.message)));

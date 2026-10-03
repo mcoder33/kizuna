@@ -1,6 +1,8 @@
 // Shared web, server and macOS system phrases. User content is never translated.
 export const catalogs = {
   "ru": {
+    "Черновики на устройстве": "Черновики на устройстве",
+    "Нет несохранённых черновиков.": "Нет несохранённых черновиков.",
     "Аккаунт изменился. Черновик сохранён для прежнего аккаунта.": "Аккаунт изменился. Черновик сохранён для прежнего аккаунта.",
     "В работе": "В работе",
     "Версия документа изменилась. Скопируйте черновик и откройте туду заново.": "Версия документа изменилась. Скопируйте черновик и откройте туду заново.",
@@ -2454,6 +2456,8 @@ export const catalogs = {
     "Код из приложения или резервный код": "Код из приложения или резервный код"
   },
   "en": {
+    "Черновики на устройстве": "Drafts on this device",
+    "Нет несохранённых черновиков.": "No unsaved drafts.",
     "Аккаунт изменился. Черновик сохранён для прежнего аккаунта.": "The account changed. Your draft is saved for the previous account.",
     "В работе": "In progress",
     "Версия документа изменилась. Скопируйте черновик и откройте туду заново.": "The document version changed. Copy your draft and reopen the todo.",
@@ -4905,6 +4909,8 @@ export const catalogs = {
     "Код из приложения или резервный код": "Authenticator code or recovery code"
   },
   "es": {
+    "Черновики на устройстве": "Borradores en este dispositivo",
+    "Нет несохранённых черновиков.": "No hay borradores sin guardar.",
     "Аккаунт изменился. Черновик сохранён для прежнего аккаунта.": "La cuenta cambió. El borrador se guarda para la cuenta anterior.",
     "В работе": "En curso",
     "Версия документа изменилась. Скопируйте черновик и откройте туду заново.": "La versión cambió. Copia el borrador y vuelve a abrir la tarea.",
@@ -7357,6 +7363,8 @@ export const catalogs = {
     "Код из приложения или резервный код": "Código de autenticación o código de recuperación"
   },
   "pt-BR": {
+    "Черновики на устройстве": "Rascunhos neste dispositivo",
+    "Нет несохранённых черновиков.": "Não há rascunhos não salvos.",
     "Аккаунт изменился. Черновик сохранён для прежнего аккаунта.": "A conta mudou. O rascunho está salvo para a conta anterior.",
     "В работе": "Em andamento",
     "Версия документа изменилась. Скопируйте черновик и откройте туду заново.": "A versão mudou. Copie o rascunho e reabra a tarefa.",
@@ -9809,6 +9817,8 @@ export const catalogs = {
     "Код из приложения или резервный код": "Código do autenticador ou código de recuperação"
   },
   "de": {
+    "Черновики на устройстве": "Entwürfe auf diesem Gerät",
+    "Нет несохранённых черновиков.": "Keine ungespeicherten Entwürfe.",
     "Аккаунт изменился. Черновик сохранён для прежнего аккаунта.": "Das Konto wurde gewechselt. Der Entwurf bleibt für das vorherige Konto gespeichert.",
     "В работе": "In Arbeit",
     "Версия документа изменилась. Скопируйте черновик и откройте туду заново.": "Die Dokumentversion wurde geändert. Kopiere den Entwurf und öffne die Aufgabe erneut.",
@@ -12260,6 +12270,8 @@ export const catalogs = {
     "Код из приложения или резервный код": "Authentifizierungscode oder Wiederherstellungscode"
   },
   "fr": {
+    "Черновики на устройстве": "Brouillons sur cet appareil",
+    "Нет несохранённых черновиков.": "Aucun brouillon non enregistré.",
     "Аккаунт изменился. Черновик сохранён для прежнего аккаунта.": "Le compte a changé. Le brouillon est conservé pour le compte précédent.",
     "В работе": "En cours",
     "Версия документа изменилась. Скопируйте черновик и откройте туду заново.": "La version a changé. Copiez le brouillon et rouvrez la tâche.",
@@ -14712,6 +14724,8 @@ export const catalogs = {
     "Код из приложения или резервный код": "Code d’authentification ou code de récupération"
   },
   "ja": {
+    "Черновики на устройстве": "この端末の下書き",
+    "Нет несохранённых черновиков.": "未保存の下書きはありません。",
     "Аккаунт изменился. Черновик сохранён для прежнего аккаунта.": "アカウントが変わりました。下書きは以前のアカウント用に保存されています。",
     "В работе": "進行中",
     "Версия документа изменилась. Скопируйте черновик и откройте туду заново.": "文書のバージョンが変わりました。下書きをコピーしてタスクを開き直してください。",

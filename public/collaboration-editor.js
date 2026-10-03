@@ -57,7 +57,16 @@ export function createCollaborativeEditor({ captureId, userId, generation, onTex
   const editable = new Compartment();
   const titleEditable = new Compartment();
   const storageName = `pagent-collaboration:${userId}:${captureId}:${generation}`;
-  const setStatus = text => { if (!disposed) status.textContent = text; };
+  let statusKey = 'Подключаем совместный редактор…';
+  const setStatus = text => { statusKey = text; if (!disposed) status.textContent = t(text); };
+  const translateEditor = () => {
+    status.textContent = t(statusKey); exportButton.textContent = t('Скопировать черновик');
+    draft.setAttribute('aria-label', t('Черновик для копирования'));
+    bodyElement.querySelector('.prop-section').textContent = t('Заметка');
+    titleView?.contentDOM.setAttribute('aria-label', t('Название туду'));
+    bodyView?.contentDOM.setAttribute('aria-label', t('Описание туду'));
+  };
+  window.addEventListener('pagent:localechange', translateEditor);
   const textChanged = () => onText({ title: doc?.getText('title').toString() || '', body: doc?.getText('body').toString() || '', revision });
   const refreshDraft = () => { if (!doc) return; draft.value = `${doc?.getText('title').toString() || ''}
 
@@ -67,7 +76,7 @@ ${doc?.getText('body').toString() || ''}`; };
     exportButton.hidden = false; refreshDraft(); draft.hidden = false;
     if (!doc && !disposed) {
       const recovery = new Y.Doc(); const saved = new IndexeddbPersistence(storageName, recovery);
-      saved.whenSynced.then(() => { if (!disposed) draft.value = `${recovery.getText('title')}\n\n${recovery.getText('body')}`; return saved.destroy(); }).catch(() => setStatus(t('Не удалось прочитать черновик на устройстве.'))).finally(() => recovery.destroy());
+      saved.whenSynced.then(() => { if (!disposed) draft.value = `${recovery.getText('title')}\n\n${recovery.getText('body')}`; return saved.destroy(); }).catch(() => setStatus('Не удалось прочитать черновик на устройстве.')).finally(() => recovery.destroy());
     }
     if (bodyView) bodyView.dispatch({ effects: editable.reconfigure(EditorView.editable.of(false)) });
     if (titleView) titleView.dispatch({ effects: titleEditable.reconfigure(EditorView.editable.of(false)) });
@@ -83,7 +92,7 @@ ${doc?.getText('body').toString() || ''}`; };
   function sendPending() {
     if (terminal || !authorized) return;
     for (const item of [...pending.values()].sort((a, b) => a.sequence - b.sequence)) { const { sequence, ...frame } = item; send(frame); }
-    if (pending.size) setStatus(t('Сохраняем…'));
+    if (pending.size) setStatus('Сохраняем…');
   }
   function queueUpdate(update) {
     const message = { type: 'update', operationId: crypto.randomUUID(), baseRevision: revision, update: toBase64(update), sequence: ++updateSequence };
@@ -91,7 +100,7 @@ ${doc?.getText('body').toString() || ''}`; };
     const { sequence: localSequence, ...immediateFrame } = message; send(immediateFrame);
     setStatus(authorized ? t('Сохраняем…') : t('Нет связи · черновик на устройстве'));
     persistenceQueue = persistenceQueue.then(() => outboxRequest(outbox, 'readwrite', store => store.put(message))).then(() => { if (pending.has(message.operationId)) { const { sequence, ...frame } = message; send(frame); } }).catch(() => {
-      setStatus(t('Не удалось сохранить черновик на устройстве. Скопируйте его.')); exportButton.hidden = false;
+      setStatus('Не удалось сохранить черновик на устройстве. Скопируйте его.'); exportButton.hidden = false;
     });
   }
   function applyPresence(states) {
@@ -149,7 +158,7 @@ ${doc?.getText('body').toString() || ''}`; };
     transportReady = true;
     awareness.setLocalStateField('user', { name: message.actor.name, color: '#4f83cc', colorLight: '#4f83cc33' });
     sendPending(); textChanged();
-    if (!pending.size) setStatus(t('Сохранено'));
+    if (!pending.size) setStatus('Сохранено');
   }
   function connect() {
     if (disposed || disposing || terminal || !navigator.onLine) return;
@@ -169,7 +178,7 @@ ${doc?.getText('body').toString() || ''}`; };
           revision = Math.max(revision, message.revision || 0);
           pending.delete(message.operationId);
           persistenceQueue = persistenceQueue.then(() => outboxRequest(outbox, 'readwrite', store => store.delete(message.operationId)));
-          if (!pending.size) setStatus(t('Сохранено'));
+          if (!pending.size) setStatus('Сохранено');
           textChanged();
         } else if (message.type === 'awareness' && awareness) applyPresence(message.states);
         else if (message.type === 'revoked') retainDraft(t('Доступ закрыт · черновик сохранён на устройстве.'));
@@ -181,7 +190,7 @@ ${doc?.getText('body').toString() || ''}`; };
       authorized = false;
       if (event.code === 1008) return retainDraft(t('Доступ закрыт · черновик сохранён на устройстве.'));
       if (!terminal) {
-        setStatus(t('Нет связи · черновик на устройстве')); exportButton.hidden = false;
+        setStatus('Нет связи · черновик на устройстве'); exportButton.hidden = false;
         Promise.all([fetch(`/api/captures/${encodeURIComponent(captureId)}/collaboration`), fetch('/api/auth/state')]).then(async ([access, response]) => {
           if (disposed || terminal || channel !== socket) return;
           const account = await response.json();
@@ -198,7 +207,7 @@ ${doc?.getText('body').toString() || ''}`; };
   let disposal;
   function dispose() {
     if (disposal) return disposal;
-    disposing = true; clearTimeout(reconnectTimer);
+    disposing = true; window.removeEventListener('pagent:localechange', translateEditor); clearTimeout(reconnectTimer);
     if (awareness) awareness.setLocalState(null);
     titleView?.destroy(); bodyView?.destroy();
     window.removeEventListener('online', onOnline); window.removeEventListener('offline', onOffline); window.removeEventListener('pagehide', onPageHide);
@@ -218,4 +227,28 @@ ${doc?.getText('body').toString() || ''}`; };
   window.addEventListener('online', onOnline); window.addEventListener('offline', onOffline); window.addEventListener('pagehide', onPageHide);
   connect();
   return { captureId, generation, titleElement, bodyElement, dispose, flush: () => persistenceQueue, get revision() { return revision; }, get terminal() { return terminal; }, revoke: retainDraft, refreshDraft };
+}
+
+// Copy-only recovery never establishes a transport or replays operations.
+export async function listPendingDrafts(userId) {
+  if (!indexedDB.databases) return [];
+  const prefix = `pagent-collaboration:${userId}:`;
+  const names = (await indexedDB.databases()).map(database => database.name).filter(name => name?.startsWith(prefix) && name.endsWith(':outbox'));
+  const drafts = [];
+  for (const name of names) {
+    const db = await openOutbox(name);
+    try {
+      if (!(await outboxRequest(db, 'readonly', store => store.count()))) continue;
+      const storageName = name.slice(0, -7);
+      const [captureId, generation] = storageName.slice(prefix.length).split(':');
+      if (!/^[0-9a-f-]{36}$/i.test(captureId) || !generation) continue;
+      drafts.push({ captureId, storageName });
+    } finally { db.close(); }
+  }
+  return drafts;
+}
+export async function readPendingDraft(draft) {
+  const doc = new Y.Doc(); const persistence = new IndexeddbPersistence(draft.storageName, doc);
+  try { await persistence.whenSynced; return `${doc.getText('title')}\n\n${doc.getText('body')}`; }
+  finally { await persistence.destroy(); doc.destroy(); }
 }

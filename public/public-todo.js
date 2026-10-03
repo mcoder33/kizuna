@@ -6,7 +6,7 @@ const status = document.getElementById('public-status');
 const article = document.getElementById('public-todo');
 const join = document.getElementById('public-join');
 join.textContent = t('Работать вместе');
-let stream, unavailable = false;
+let stream, unavailable = false, consentInProgress = false;
 function paint(todo) {
   if (unavailable) return;
   document.getElementById('public-title').textContent = todo.title || t('Без названия');
@@ -17,15 +17,16 @@ function paint(todo) {
   status.textContent = '';
 }
 function revoke(message = t('Ссылка недоступна. Попросите автора прислать новую.')) {
-  unavailable = true; stream?.close(); article.hidden = true; status.textContent = message; forgetShare();
+  unavailable = true; stream?.close(); article.hidden = true; status.textContent = message; if (!consentInProgress) forgetShare();
 }
 async function workTogether() {
   if (unavailable) return;
-  join.disabled = true;
+  join.disabled = true; consentInProgress = true;
+  let leavingForAuth = false;
   try {
     const state = await (await fetch('/api/auth/state')).json();
     if (!state.authenticated) {
-      if (rememberShare(token)) location.assign('/login?join');
+      if (rememberShare(token)) { leavingForAuth = true; location.assign('/login?join'); }
       return;
     }
     const response = await fetch(`/api/public/todos/${encodeURIComponent(token)}/join`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ consent: true }) });
@@ -35,7 +36,7 @@ async function workTogether() {
     if (/^\/#today\?open=[0-9a-f-]{36}$/i.test(data.returnTo)) location.assign(data.returnTo);
     else throw new Error(t('Не удалось открыть туду.'));
   } catch (error) { status.textContent = error.message; }
-  finally { join.disabled = false; }
+  finally { join.disabled = false; if (!leavingForAuth) consentInProgress = false; }
 }
 join.addEventListener('click', workTogether);
 try {

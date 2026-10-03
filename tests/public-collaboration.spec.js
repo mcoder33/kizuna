@@ -1,13 +1,17 @@
+import { catalogs } from '../public/i18n-catalog.js';
 import { totpCode } from '../server/auth.js';
 import { test, expect } from '@playwright/test';
 
-async function setup(request) {
+async function setup(request, { separateCircle = false } = {}) {
   const capture = await request.post('/api/captures', { data: { raw: 'Совместная туду', provider: 'fallback' } });
   expect(capture.status()).toBe(201);
   const { entry } = await capture.json();
-  const circleResponse = await request.post('/api/circles', { data: { name: `Работа вместе ${Date.now()}` } });
-  expect(circleResponse.status()).toBe(201);
-  const { circle } = await circleResponse.json();
+  const { circles } = await (await request.get('/api/circles')).json();
+  let circle = !separateCircle && circles.find(item => item.name === 'Работа вместе · автотест');
+  if (!circle) {
+    const circleResponse = await request.post('/api/circles', { data: { name: separateCircle ? `Отдельный круг ${Date.now()}` : 'Работа вместе · автотест' } });
+    expect(circleResponse.status()).toBe(201); ({ circle } = await circleResponse.json());
+  }
   const response = await request.post(`/api/captures/${entry.id}/public-shares`, { data: { circleId: circle.id } });
   expect(response.status()).toBe(201);
   return { entry, circle, share: await response.json() };
@@ -53,7 +57,8 @@ test('public consent/signup opens the same collaborative todo; typing, own undo,
     await append(page, 'OWNER_UNDO'); await expect(body(second)).toContainText('OWNER_UNDO');
     await page.keyboard.press('ControlOrMeta+z');
     await expect(body(page)).not.toContainText('OWNER_UNDO'); await expect(body(page)).toContainText('Beta');
-    await expect(second.locator('.collaborative-presence')).toContainText('e2e');
+    const { user: owner } = await (await request.get('/api/auth/state')).json();
+    await expect(second.locator('.collaborative-presence')).toContainText(owner.name || owner.email.split('@')[0]);
     await guest.setOffline(true); await append(second, 'OFFLINE');
     await expect(second.locator('.collaborative-status')).not.toHaveText('Сохранено');
     await append(page, 'ONLINE');
@@ -101,13 +106,16 @@ for (const width of [375, 768, 1440]) test(`sharing and collaborative editor fit
 });
 
 
+const editorAccounts = new Map();
 async function editorContext(browser, share, accountSuffix = 'editor') {
   const context = await browser.newContext({ storageState: { cookies: [], origins: [] }, locale: 'ru-RU' });
   const page = await context.newPage();
   await page.goto(share.url);
-  const account = { email: `${accountSuffix}-${Date.now()}-${Math.random().toString(16).slice(2)}@kizuna.test`, password: 'collaboration-password-2026' };
-  const registered = await page.request.post('/api/auth/register', { data: account }); expect(registered.status()).toBe(201);
-  const { user } = await registered.json();
+  let account = editorAccounts.get(accountSuffix);
+  const creating = !account;
+  account ||= { email: `${accountSuffix}-${Date.now()}-${Math.random().toString(16).slice(2)}@kizuna.test`, password: 'collaboration-password-2026' };
+  const registered = await page.request.post(creating ? '/api/auth/register' : '/api/auth/login', { data: account }); expect(registered.status()).toBe(creating ? 201 : 200);
+  const { user } = await registered.json(); editorAccounts.set(accountSuffix, account);
   expect((await page.request.post(`/api/public/todos/${share.token}/join`, { data: { consent: true } })).status()).toBe(200);
   return { context, page, user, account };
 }
@@ -159,7 +167,7 @@ test('another account cannot replay the previous account draft after cookie swit
 });
 
 test('tab-local return preserves separate share tokens through password and TOTP login', async ({ request, browser }) => {
-  const first = await setup(request), second = await setup(request);
+  const first = await setup(request), second = await setup(request, { separateCircle: true });
   const actor = await editorContext(browser, first.share, 'mfa');
   try {
     const setupMfa = await (await actor.page.request.post('/api/auth/totp/setup')).json();
@@ -189,6 +197,7 @@ test('revoked invitation during signup leaves an active account without joining'
   const context = await browser.newContext({ storageState: { cookies: [], origins: [] } }); const page = await context.newPage();
   try {
     await page.goto(share.url); await page.getByRole('button', { name: 'Работать вместе', exact: true }).click();
+    await expect(page).toHaveURL(/\/login\?join$/);
     expect((await request.delete(`/api/captures/${entry.id}/public-shares/${share.id}`)).status()).toBe(200);
     await page.locator('#auth-email').fill(`revoked-signup-${Date.now()}@kizuna.test`); await page.locator('#auth-password').fill('collaboration-password-2026'); await page.locator('#auth-password-repeat').fill('collaboration-password-2026'); await page.locator('#auth-submit').click();
     await expect(page.locator('#public-status')).toContainText('Ссылка недоступна');
@@ -246,7 +255,7 @@ test('legacy notes keep revision across successive saves and preserve a conflict
   const failed = page.waitForResponse(response => response.url().endsWith(`/api/captures/${entry.id}/notes`) && response.request().method() === 'POST');
   unblock(); expect((await failed).status()).toBe(409);
   await expect(field).toContainText('LOCAL_CONFLICT_DRAFT');
-  await page.locator('.notes-side-add').click();
+  await page.getByRole('button', { name: 'Новая страница', exact: true }).click();
   await expect(field).toContainText('LOCAL_CONFLICT_DRAFT');
   await expect(page).toHaveURL(new RegExp(`page=${entry.id}`));
 });
@@ -267,4 +276,70 @@ test('publishing waits for the personal body draft before initializing the share
   await page.getByRole('button', { name: 'Создать публичную ссылку', exact: true }).click();
   await expect(body(page)).toContainText('DRAFT_BEFORE_PUBLICATION');
   expect((await (await request.get(`/api/captures/${entry.id}`)).json()).entry.note.body).toContain('DRAFT_BEFORE_PUBLICATION');
+});
+
+
+test('a denied reload exposes only the signed-in account pending draft for copying', async ({ request, browser }) => {
+  const { entry, circle, share } = await setup(request); const actor = await editorContext(browser, share);
+  try {
+    await open(actor.page, entry.id); await actor.context.setOffline(true);
+    await append(actor.page, 'UNSYNCED_RECOVERY_MARKER'); await waitForOutbox(actor.page, actor.user.id, entry.id, 1);
+    await actor.page.close();
+    expect((await request.delete(`/api/circles/${circle.id}/members/${actor.user.id}`)).status()).toBe(200);
+    await actor.context.setOffline(false); const recovered = await actor.context.newPage();
+    await recovered.goto(`/#today?open=${entry.id}`);
+    await expect(recovered.locator('.local-draft-dialog .collaborative-draft')).toHaveValue(/UNSYNCED_RECOVERY_MARKER/);
+    await expect(recovered.getByRole('button', { name: 'Скопировать черновик', exact: true })).toBeVisible();
+    await recovered.locator('.local-draft-dialog').getByRole('button', { name: 'Закрыть', exact: true }).click();
+    await recovered.locator('#account-summary').click(); await recovered.locator('#account-local-drafts').click();
+    await expect(recovered.locator('.local-draft-dialog .collaborative-draft')).toHaveValue(/UNSYNCED_RECOVERY_MARKER/);
+    expect((await (await request.get(`/api/captures/${entry.id}`)).json()).entry.note.body).not.toContain('UNSYNCED_RECOVERY_MARKER');
+  } finally { await actor.context.close(); }
+});
+
+
+test('all seven locales translate the shared editor, sharing dialog and guest consent', async ({ page, request, browser }) => {
+  const { entry, share } = await setup(request);
+  for (const locale of ['ru', 'en', 'es', 'pt-BR', 'de', 'fr', 'ja']) {
+    expect((await request.put('/api/settings', { data: { locale } })).status()).toBe(200);
+    await page.goto(`/#today?open=${entry.id}`); await page.reload(); await page.goto(`/#today?open=${entry.id}`); await expect(body(page)).toBeVisible();
+    await expect(page.locator('.collaborative-status')).toHaveText(catalogs[locale]['Сохранено']);
+    await page.locator('.todo-share-button').click();
+    await expect(page.locator('.todo-share-dialog h2')).toHaveText(catalogs[locale]['Поделиться туду']);
+    await page.locator('.todo-share-dialog').getByRole('button', { name: catalogs[locale]['Закрыть'], exact: true }).click();
+    const guest = await browser.newContext({ storageState: { cookies: [], origins: [] }, locale });
+    try {
+      const guestPage = await guest.newPage(); await guestPage.goto(share.url);
+      await expect(guestPage.locator('#public-join')).toHaveText(catalogs[locale]['Работать вместе']);
+      await expect(guestPage.locator('#public-consent-text')).not.toBeEmpty();
+      if (locale !== 'ru') await expect(guestPage.locator('#public-consent-text')).not.toContainText('Вы присоединитесь');
+    } finally { await guest.close(); }
+  }
+  await request.put('/api/settings', { data: { locale: 'ru' } });
+});
+
+
+test('an author without circles sees why publication is unavailable', async ({ browser }) => {
+  const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+  try {
+    const page = await context.newPage(); await page.goto('/login');
+    expect((await page.request.post('/api/auth/register', { data: { email: `no-circle-${Date.now()}@kizuna.test`, password: 'collaboration-password-2026' } })).status()).toBe(201);
+    const { entry } = await (await page.request.post('/api/captures', { data: { raw: 'Без круга', provider: 'fallback' } })).json();
+    await page.goto(`/#today?open=${entry.id}`);
+    await expect(page.locator('.todo-share-button')).toBeVisible(); await expect(page.locator('.todo-share-button')).toBeDisabled();
+    await expect(page.locator('.todo-share-button')).toHaveAttribute('title', 'Сначала создайте круг в разделе «За столом».');
+  } finally { await context.close(); }
+});
+
+
+test('remote card-mode preference preserves the mounted editor and its own undo', async ({ page, request }) => {
+  const { entry } = await setup(request); await open(page, entry.id);
+  await page.evaluate(() => { window.originalCollaborationNode = document.querySelector('.collaborative-body-host .cm-content'); });
+  await append(page, 'UNDO_SURVIVES_MODE'); await expect(page.locator('.collaborative-status')).toHaveText('Сохранено');
+  const { userId } = await (await request.get('/api/ui-preferences')).json();
+  expect((await request.patch('/api/ui-preferences', { data: { userId, changes: { 'kizuna-card-mode': 'side' } } })).status()).toBe(200);
+  await expect(page.locator('#review-dialog')).toHaveAttribute('data-mode', 'side');
+  expect(await page.evaluate(() => window.originalCollaborationNode === document.querySelector('.collaborative-body-host .cm-content'))).toBe(true);
+  await body(page).click(); await page.keyboard.press('ControlOrMeta+z'); await expect(body(page)).not.toContainText('UNDO_SURVIVES_MODE');
+  await request.patch('/api/ui-preferences', { data: { userId, changes: { 'kizuna-card-mode': 'center' } } });
 });

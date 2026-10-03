@@ -463,6 +463,7 @@ const listed = (page, counts) => ({
   id: page.id, title: page.title, type: page.type, project: page.project, tags: page.tags,
   createdAt: page.createdAt, updatedAt: page.updatedAt, parentKey: page.parentKey, position: page.position,
   placed: page.placed, excerpt: plain(page.body).slice(0, 220), links: counts.get(page.id) || 0,
+  documentRevision: page.documentRevision, collaboration: page.collaboration,
 });
 
 export function pagesOverview(db, userId) {

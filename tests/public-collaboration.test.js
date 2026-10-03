@@ -206,3 +206,22 @@ test('revoked share auth return serves safe HTML404 shell while APIs remain unav
   await member.post(`/api/public/todos/${link.token}/join`).send({consent:true}).expect(404);
   assert.equal(membership(app.database,circle.id,member.user.id).role,'member');
 });
+
+test('notes page detail/list retain canonical revision for first, successive and stale legacy saves',async t=>{
+  const {db,owner,circle}=await fixture(t);
+  const page=(await owner.post('/api/pages').send({title:'Canonical note'}).expect(201)).body.page;
+  await owner.post(`/api/captures/${page.id}/public-shares`).send({circleId:circle.id}).expect(201);
+  const doc=readDocument(ensureDocument(db,page.id));
+  applyDocumentUpdate(db,page.id,{update:edit(doc,'body','initial checkpoint'),operationId:'notes-initial',actorId:owner.user.id});
+  applyDocumentUpdate(db,page.id,{update:edit(doc,'body',' latest live body'),operationId:'notes-live',actorId:owner.user.id});
+  applyDocumentUpdate(db,page.id,{update:edit(doc,'title',' live title'),operationId:'notes-title',actorId:owner.user.id});
+  const row=documentRow(db,page.id),detail=(await owner.get(`/api/pages/${page.id}`).expect(200)).body.page;
+  assert.equal(detail.body,row.body);assert.equal(detail.title,row.title);assert.equal(detail.documentRevision,row.revision);assert.equal(detail.collaboration.revision,row.revision);assert.equal(detail.collaboration.generation,row.generation);
+  const listed=(await owner.get('/api/pages').expect(200)).body.pages.find(item=>item.id===page.id);assert.equal(listed.documentRevision,row.revision);assert.equal(listed.collaboration.generation,row.generation);
+  const first=(await owner.post(`/api/captures/${page.id}/notes`).send({body:detail.body+' first save',expectedRevision:detail.documentRevision}).expect(200)).body.entry.note;
+  assert.ok(first.revision>detail.documentRevision);
+  const second=(await owner.post(`/api/captures/${page.id}/notes`).send({body:first.body+' successive save',expectedRevision:first.revision}).expect(200)).body.entry.note;
+  assert.ok(second.revision>first.revision);
+  await owner.post(`/api/captures/${page.id}/notes`).send({body:'stale overwritten body',expectedRevision:detail.documentRevision}).expect(409);
+  const after=(await owner.get(`/api/pages/${page.id}`).expect(200)).body.page;assert.equal(after.body,second.body);assert.equal(after.documentRevision,second.revision);doc.destroy();
+});
