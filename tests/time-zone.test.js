@@ -44,7 +44,7 @@ test('personal zones isolate settings and midnight views while accounting stays 
    const left=(await a.get(route).expect(200)).body,right=(await b.get(route).expect(200)).body;
    assert.equal(left.today,'2026-09-30');assert.equal(right.today,'2026-10-01');
   }
-  assert.equal((await a.get('/api/settings')).body.spend.month,'2026-10');assert.equal((await b.get('/api/settings')).body.spend.month,'2026-10');
+  assert.equal((await a.get(`/api/admin/usage?userId=${a.user.id}`).expect(200)).body.spend.month,'2026-10');assert.equal((await a.get(`/api/admin/usage?userId=${b.user.id}`).expect(200)).body.spend.month,'2026-10');
   const left=(await a.get('/api/board')).body.columns[0],right=(await b.get('/api/board')).body.columns[0];
   assert.equal(left.name,'Tasks');assert.equal(right.name,'タスク');
   await a.patch(`/api/board/columns/${left.id}`).send({name:'Дела'}).expect(200);
@@ -95,7 +95,7 @@ test('background reminders, quiet hours and stale digests use each recipient zon
   await a.put('/api/settings').send({requestedTimeZone:'America/New_York',remindDefault:'0'}).expect(200);
   await b.put('/api/settings').send({requestedTimeZone:'Asia/Tokyo',remindDefault:'0'}).expect(200);
   const first=(await a.post('/api/captures').send({raw:'First 山田',provider:'fallback',due:{date:'2026-10-02',time:'09:00',remind:0}}).expect(201)).body.entry;
-  const second=(await b.post('/api/captures').send({raw:'Second 山田',provider:'fallback',due:{date:'2026-10-02',time:'09:00',remind:0}}).expect(201)).body.entry;
+  const second=(await b.post('/api/captures').send({raw:'Second 山田',due:{date:'2026-10-02',time:'09:00',remind:0}}).expect(201)).body.entry;
   const moments=app.reminders.candidates();assert.equal(moments.find(x=>x.captureId===first.id).remindAt.toISOString(),'2026-10-02T13:00:00.000Z');assert.equal(moments.find(x=>x.captureId===second.id).remindAt.toISOString(),clock.toISOString());
   const sent=await app.reminders.tick();assert.deepEqual(sent.map(x=>x.captureId),[second.id]);
   assert.equal(isQuiet('22:00-08:00',clock,'Asia/Tokyo'),false);assert.equal(isQuiet('22:00-08:00',clock,'Europe/Berlin'),true);
@@ -140,7 +140,7 @@ test('synchronous fallback captures receive each account zone and preserve raw i
   const a=authed(app),b=authed(app,{email:'sync@tz.test',role:'user'});
   for(const [api,zone,date,raw] of [[a,'America/New_York','2026-09-30','原文 山田'],[b,'Asia/Tokyo','2026-10-01','Original Мария']]){
    await api.put('/api/settings').send({requestedTimeZone:zone}).expect(200);
-   const entry=(await api.post('/api/captures').send({raw,provider:'fallback',timeContext:{timeZone:'UTC'}}).expect(201)).body.entry;
+   const entry=(await api.post('/api/captures').send({raw,timeContext:{timeZone:'UTC'}}).expect(201)).body.entry;
    assert.equal(entry.raw,raw);assert.equal(entry.interpretation.classification.entities.schedule.date,date);assert.deepEqual(calls.at(-1)[6],{timeZone:zone,referenceAt:instant.toISOString()});
   }
  }finally{app.database.close();}

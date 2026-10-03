@@ -47,9 +47,11 @@ test('period report counts by captures: counters, tails, projects and discipline
   assert.notEqual(report.discipline.medianDays,null);
   assert.equal(report.pulse.columns.length,7);
   assert.equal(report.pulse.columns.reduce((total,column)=>total+column.total,0),5);
-  assert.equal(report.service.quality.corrections,1);
-  assert.equal(report.service.quality.topField.field,'people');
-  assert.equal(typeof report.service.usage.calls,'number');
+  assert.equal(report.service,undefined);
+  const {service}=(await api.get('/api/admin/reports?period=week').expect(200)).body;
+  assert.equal(service.quality.corrections,1);
+  assert.equal(service.quality.topField.field,'people');
+  assert.equal(typeof service.usage.calls,'number');
   // Периоды: месяц включает сегодняшние записи, «всё время» начинается с первой.
   assert.equal((await api.get('/api/reports?period=month').expect(200)).body.counters.captures,5);
   const everything=(await api.get('/api/reports?period=all').expect(200)).body;

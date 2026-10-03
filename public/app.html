@@ -260,7 +260,6 @@
         <div class="reports-controls">
           <div class="reports-tabs" role="tablist" aria-label="Вкладки обзора" data-i18n-attrs="{&quot;aria-label&quot;: &quot;Вкладки обзора&quot;}">
             <button type="button" data-reports-tab="day" aria-pressed="true" data-i18n="День">День</button>
-            <button type="button" data-reports-tab="service" aria-pressed="false" data-i18n="Служебное">Служебное</button>
             <button type="button" data-reports-tab="life" aria-pressed="false" data-i18n="Записи">Записи</button>
           </div>
           <div class="reports-period" id="reports-period" role="group" aria-label="Период" hidden data-i18n-attrs="{&quot;aria-label&quot;: &quot;Период&quot;}">
@@ -276,7 +275,6 @@
         </div>
         <div id="reports-life" class="reports-view" hidden></div>
         <div id="reports-day" class="reports-view"></div>
-        <div id="reports-service" class="reports-view" hidden></div>
       </section>
 
       <section id="brief" class="app-page" hidden>
@@ -415,11 +413,24 @@
 <nav class="admin-service-tabs" aria-label="Настройки сервиса" data-i18n-attrs='{"aria-label":"Настройки сервиса"}'>
 <a href="#admin/service/ai" data-service-tab="ai" data-i18n="ИИ и ключи">ИИ и ключи</a>
 <a href="#admin/service/integrations" data-service-tab="integrations" data-i18n="Интеграции">Интеграции</a>
+<a href="#admin/service/usage" data-service-tab="usage" data-i18n="Расходы">Расходы</a>
 <a href="#admin/service/limits" data-service-tab="limits" data-i18n="Лимиты">Лимиты</a>
 <a href="#admin/service/notifications" data-service-tab="notifications" data-i18n="Уведомления">Уведомления</a>
 <a href="#admin/service/memory" data-service-tab="memory" data-i18n="Общие правила">Общие правила</a>
 </nav>
 <div data-service-panel="ai">
+<fieldset class="settings-group">
+            <legend data-i18n="Разбор записей">Разбор записей</legend>
+            <label class="setting" for="ai-provider"
+              ><span class="setting-name" data-i18n="Провайдер">Провайдер</span
+              ><select id="ai-provider" aria-label="Провайдер ИИ" data-i18n-attrs="{&quot;aria-label&quot;: &quot;Провайдер ИИ&quot;}"></select
+            ></label>
+            <label class="setting model-picker" for="ai-model" hidden
+              ><span class="setting-name" data-i18n="Модель">Модель</span
+              ><select id="ai-model" aria-label="Модель ИИ" data-i18n-attrs="{&quot;aria-label&quot;: &quot;Модель ИИ&quot;}"></select
+            ></label>
+            <p id="ai-status" class="setting-hint status" role="status" data-i18n="Проверяем ИИ…">Проверяем ИИ…</p>
+          </fieldset>
 <fieldset class="settings-group">
             <legend data-i18n="Ключи">Ключи</legend>
             <label class="setting" for="setting-openaiKey"
@@ -484,21 +495,8 @@
             </p>
           </fieldset>
 <fieldset class="settings-group">
-            <legend data-i18n="Журнал">Журнал</legend>
-            <label class="setting" for="setting-aiProvider"
-              >
-<span class="setting-name" data-i18n="Разбирает записи по умолчанию">Разбирает записи по умолчанию</span
-              >
-<select id="setting-aiProvider">
-                <option value="fallback" data-i18n="Без модели">Без модели</option>
-                <option value="openai">OpenAI</option>
-                <option value="openrouter">OpenRouter</option>
-                <option value="gemini">Google Gemini</option>
-                <option value="codex-cli">Codex CLI</option>
-                <option value="claude-cli">Claude CLI</option>
-              </select>
-</label
-            >
+            <legend data-i18n="Параметры">Параметры</legend>
+
             <!-- Ручки модели: докрутить под другую модель, не правя код. -->
             <label class="setting" for="setting-modelTemperature"
               >
@@ -587,6 +585,18 @@
 <p class="setting-hint">
 <a href="#settings" data-i18n="Личное подключение Telegram и календарей — в настройках профиля">Личное подключение Telegram и календарей — в настройках профиля</a>
 </p>
+</div>
+<div data-service-panel="usage" hidden>
+<p class="setting-hint" data-i18n="Расходы и качество разбора по всему приложению. Расход каждого пользователя — в разделе «Пользователи».">Расходы и качество разбора по всему приложению. Расход каждого пользователя — в разделе «Пользователи».</p>
+<fieldset class="settings-group">
+            <legend data-i18n="Расходы">Расходы</legend>
+
+
+            <div id="usage-table" class="usage"></div>
+            <p class="setting-hint" data-i18n="Токены считает провайдер. В сумму входят только вызовы с известной ценой; остальные отмечены отдельно.">Токены считает провайдер. В сумму входят только вызовы с известной ценой; остальные отмечены отдельно.</p>
+          </fieldset>
+<label class="setting"><span class="setting-name" data-i18n="Период">Период</span><select id="admin-usage-period"><option value="week" data-i18n="Неделя">Неделя</option><option value="month" data-i18n="Месяц">Месяц</option><option value="all" data-i18n="Всё время">Всё время</option></select></label>
+<div id="admin-reports-service" class="reports-view"></div>
 </div>
 <div data-service-panel="limits" hidden>
 <fieldset class="settings-group">
@@ -826,18 +836,7 @@
             </div>
           </fieldset>
 
-          <fieldset class="settings-group">
-            <legend data-i18n="Разбор записей">Разбор записей</legend>
-            <label class="setting" for="ai-provider"
-              ><span class="setting-name" data-i18n="Провайдер">Провайдер</span
-              ><select id="ai-provider" aria-label="Провайдер ИИ" data-i18n-attrs="{&quot;aria-label&quot;: &quot;Провайдер ИИ&quot;}"></select
-            ></label>
-            <label class="setting model-picker" for="ai-model" hidden
-              ><span class="setting-name" data-i18n="Модель">Модель</span
-              ><select id="ai-model" aria-label="Модель ИИ" data-i18n-attrs="{&quot;aria-label&quot;: &quot;Модель ИИ&quot;}"></select
-            ></label>
-            <p id="ai-status" class="setting-hint status" role="status" data-i18n="Проверяем ИИ…">Проверяем ИИ…</p>
-          </fieldset>
+
 
           <fieldset class="settings-group">
             <legend data-i18n="Память помощника">Память помощника</legend>
@@ -980,22 +979,7 @@
             </div>
           </fieldset>
 
-          <fieldset class="settings-group">
-            <legend data-i18n="Расходы">Расходы</legend>
-            <p class="setting-hint" id="spend-state"></p>
 
-
-            <div id="usage-table" class="usage"></div>
-            <p class="setting-hint" data-i18n="Токены считает сам провайдер, деньги — по его же цене за токен.
-              Где цены нет, вызов попадает в «без цены» и в сумму не входит.
-              Минуты разговора нам не видны: звук идёт мимо сервера, поэтому у
-              голоса считаются только сами разговоры.">
-              Токены считает сам провайдер, деньги — по его же цене за токен.
-              Где цены нет, вызов попадает в «без цены» и в сумму не входит.
-              Минуты разговора нам не видны: звук идёт мимо сервера, поэтому у
-              голоса считаются только сами разговоры.
-            </p>
-          </fieldset>
 
           <div class="settings-bar">
 
@@ -1025,13 +1009,7 @@
               версии 2 — это ваши локальные персональные данные: он содержит
               исходные записи, их версии, отчёты и историю обработки.
             </p>
-            <p class="provider-note" data-i18n="Codex CLI и Claude CLI используют лимиты и кредиты авторизованного
-              локального аккаунта. При недоступности выбранного провайдера
-              Кизуна сохранит запись без разбора, не меняя ваш выбор.">
-              Codex CLI и Claude CLI используют лимиты и кредиты авторизованного
-              локального аккаунта. При недоступности выбранного провайдера
-              Кизуна сохранит запись без разбора, не меняя ваш выбор.
-            </p>
+
           </div>
           <div class="settings-actions">
             <a class="secondary" href="/api/export" data-i18n="Экспорт JSON">Экспорт JSON</a

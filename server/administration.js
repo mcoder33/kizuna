@@ -197,7 +197,7 @@ export function createAdministration({ db, now = () => new Date(), sendTelegram,
       pending: db.prepare("SELECT id,email,display_name AS name,created_at AS createdAt FROM users WHERE status='pending' ORDER BY created_at DESC").all(),
       feedback: listFeedback({ status: 'new', limit: 100 }).feedback,
       feedbackCount: db.prepare("SELECT COUNT(*) AS n FROM feedback WHERE status='new'").get().n,
-      notifications: db.prepare("SELECT id,kind,text,data_json AS data,created_at AS createdAt,read_at AS readAt FROM notifications WHERE user_id=? AND kind IN ('signup','feedback') AND resolved_at IS NULL ORDER BY created_at DESC LIMIT 100").all(req.user.id).map(row => ({ ...row, data: JSON.parse(row.data) })),
+      notifications: db.prepare("SELECT id,kind,text,data_json AS data,created_at AS createdAt,read_at AS readAt FROM notifications WHERE user_id=? AND kind IN ('signup','feedback','spend') AND resolved_at IS NULL ORDER BY created_at DESC LIMIT 100").all(req.user.id).map(row => ({ ...row, data: JSON.parse(row.data) })),
     }));
     app.get('/api/admin/notification-settings', requireAdmin, (req, res) => res.json({ preferences: adminNotificationPrefs(db), botConfigured: botConfigured(),
       recipients: admins().map(user => ({ ...user, telegramLinked: Boolean(db.prepare('SELECT 1 FROM telegram_links WHERE user_id=?').get(user.id)) })),

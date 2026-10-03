@@ -324,7 +324,7 @@ test('an author without circles sees why publication is unavailable', async ({ b
   try {
     const page = await context.newPage(); await page.goto('/login');
     expect((await page.request.post('/api/auth/register', { data: { email: `no-circle-${Date.now()}@kizuna.test`, password: 'collaboration-password-2026' } })).status()).toBe(201);
-    const { entry } = await (await page.request.post('/api/captures', { data: { raw: 'Без круга', provider: 'fallback' } })).json();
+    const { entry } = await (await page.request.post('/api/captures', { data: { raw: 'Без круга' } })).json();
     await page.goto(`/#today?open=${entry.id}`);
     await expect(page.locator('.todo-share-button')).toBeVisible(); await expect(page.locator('.todo-share-button')).toBeDisabled();
     await expect(page.locator('.todo-share-button')).toHaveAttribute('title', 'Сначала создайте круг в разделе «За столом».');

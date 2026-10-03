@@ -26,7 +26,7 @@ export function feedbackCard(item, { admin = false } = {}) {
   return card;
 }
 
-export function mountAdministration({ request, toast, accountKnown, loadUsers, loadSettings }) {
+export function mountAdministration({ request, toast, accountKnown, loadUsers, loadSettings, loadAi, loadUsage }) {
   const root = document.querySelector('#admin');
   let active = 'inbox', feedback = [], inbox = null, revision = 0, editing = false, nextCursor = null, feedbackRequest = 0, searchTimer;
   const drafts = new Map();
@@ -51,7 +51,7 @@ export function mountAdministration({ request, toast, accountKnown, loadUsers, l
       link.classList.toggle('active', selected);
       if (selected) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current');
     }
-    const tabs = ['ai', 'integrations', 'limits', 'notifications', 'memory'];
+    const tabs = ['ai', 'integrations', 'usage', 'limits', 'notifications', 'memory'];
     const tab = tabs.includes(current.tab) ? current.tab : 'ai';
     for (const panel of root.querySelectorAll('[data-service-panel]')) panel.hidden = panel.dataset.servicePanel !== tab;
     for (const link of root.querySelectorAll('[data-service-tab]')) {
@@ -64,12 +64,12 @@ export function mountAdministration({ request, toast, accountKnown, loadUsers, l
     if (!inbox) return;
     const count = inbox.feedbackCount ?? inbox.feedback.length;
     for (const node of document.querySelectorAll('[data-admin-count]')) { node.textContent = String(count); node.hidden = !count; }
-    const notices = inbox.notifications.filter(item => item.kind === 'feedback');
+    const notices = inbox.notifications.filter(item => item.kind !== 'signup');
     const unread = notices.filter(item => !item.readAt).length;
     for (const node of root.querySelectorAll('[data-admin-notice-count]')) { node.textContent = String(unread); node.hidden = !unread; }
     const list = root.querySelector('#admin-notices'); list.replaceChildren();
     for (const item of notices) {
-      const link = el('a', `${t('Новое пожелание')} · ${item.text}`, 'admin-notice');
+      const link = el('a', `${t(item.kind === 'spend' ? 'Расходы' : 'Новое пожелание')} · ${item.text}`, 'admin-notice');
       if (typeof item.data.url !== 'string' || !item.data.url.startsWith('/#admin')) continue;
       link.href = item.data.url.slice(1);
       link.addEventListener('click', () => { void request('/api/notifications/read', { method: 'POST', body: JSON.stringify({ ids: [item.id] }) }).then(refreshBadge).catch(() => {}); });
@@ -235,6 +235,8 @@ export function mountAdministration({ request, toast, accountKnown, loadUsers, l
       if (current.section === 'service') {
         await loadSettings();
         if (ticket !== revision || route().page !== 'admin') return;
+        if (current.tab === 'ai' || current.tab === undefined) await loadAi();
+        if (current.tab === 'usage') await loadUsage();
         if (current.tab === 'notifications') await notificationSettings(ticket);
         if (current.tab === 'memory') await loadMemory(ticket);
       }
