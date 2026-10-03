@@ -12,7 +12,7 @@ test("ролик на главной проходит день по правил
   const demo = page.locator("#demo-app");
   const playUntil = (check) => expect.poll(async () => { await page.clock.runFor(300); return check(); }, { timeout: 30_000 }).toBe(true);
 
-  await expect(page.getByRole("link", { name: "Оставить заявку" }).first()).toHaveAttribute("href", "/login?join");
+  await expect(page.getByRole("link", { name: "Начать пользоваться" }).first()).toHaveAttribute("href", "/login?join");
   await expect(demo.locator('[data-id="parcel"]')).toBeVisible();
 
   // Одна фраза — две записи: дело на полке «на сегодня», встреча у завтрашнего дня.

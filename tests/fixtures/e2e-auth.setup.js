@@ -12,11 +12,11 @@ setup('первый администратор заходит и сохраня�
   if (state.needsBootstrap) {
     // Пустое приложение само открывает регистрацию: входить некому. Форма та
     // же, что и у человека, — сломайся она, это видно здесь, а не позже.
-    await expect(page.getByRole('button', { name: 'Отправить заявку' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Зарегистрироваться' })).toBeVisible();
     await page.getByLabel('Почта').fill(E2E_EMAIL);
     await page.getByLabel('Пароль', { exact: true }).fill(E2E_PASSWORD);
     await page.getByLabel('Пароль ещё раз').fill(E2E_PASSWORD);
-    await page.getByRole('button', { name: 'Отправить заявку' }).click();
+    await page.getByRole('button', { name: 'Зарегистрироваться' }).click();
   } else {
     await page.getByLabel('Почта').fill(E2E_EMAIL);
     await page.getByLabel('Пароль', { exact: true }).fill(E2E_PASSWORD);

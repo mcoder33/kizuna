@@ -10,7 +10,7 @@ import request from 'supertest';
 import { createApp } from '../server/index.js';
 import { fakeModelService } from './helpers/fake-model.js';
 import { authed, seedUser, TEST_PASSWORD } from './helpers/auth.js';
-import { recordUsage, monthBounds, monthlySpend, openVoiceSession, closeVoiceSession } from '../server/db.js';
+import { openDatabase, recordUsage, monthBounds, monthlySpend, openVoiceSession, closeVoiceSession } from '../server/db.js';
 import { totpCode, verifyTotp, base32Encode, base32Decode, hashPassword, verifyPassword, generateRecoveryCodes, normalizeRecoveryCode, validEmail, passwordProblem } from '../server/auth.js';
 
 function app(options = {}) {
@@ -66,7 +66,7 @@ test('резервные коды не повторяются и сравнив�
 });
 
 // ── регистрация и первый администратор ───────────────────────────────────────
-test('первый зарегистрировавшийся становится администратором, остальные ждут', async () => {
+test('первый зарегистрировавшийся становится администратором, остальные сразу входят', async () => {
   const api = request(app());
   const state = (await api.get('/api/auth/state').expect(200)).body;
   assert.equal(state.needsBootstrap, true);
@@ -77,10 +77,15 @@ test('первый зарегистрировавшийся становится
   assert.equal(first.user.status, 'active');
   assert.equal(first.user.email, 'first@example.com', 'адрес приводится к нижнему регистру');
 
-  const second = (await api.post('/api/auth/register').send({ email: 'second@example.com', password: 'another-long-password' }).expect(201)).body;
+  const secondResponse = await api.post('/api/auth/register').send({ email: 'second@example.com', password: 'another-long-password' }).expect(201);
+  const second = secondResponse.body;
+  const stateAfterSignup = await api.get('/api/auth/state').set('Cookie', secondResponse.headers['set-cookie']).expect(200);
+  assert.equal(stateAfterSignup.body.authenticated, true);
+  assert.equal(stateAfterSignup.body.user.id, second.user.id);
+  await api.get('/api/entries').set('Cookie', secondResponse.headers['set-cookie']).expect(200);
   assert.equal(second.first, false);
   assert.equal(second.user.role, 'user');
-  assert.equal(second.user.status, 'pending');
+  assert.equal(second.user.status, 'active');
 
   await api.post('/api/auth/register').send({ email: 'FIRST@example.com', password: 'yet-another-password' }).expect(409);
   await api.post('/api/auth/register').send({ email: 'third@example.com', password: 'короткий' }).expect(400);
@@ -112,16 +117,14 @@ test('вход требует пароль, а «нет такого адрес�
   assert.ok(cookie.includes('SameSite=Lax'), 'кука не уходит на чужой сайт');
 });
 
-test('заявка и блокировка закрывают вход, одобрение открывает', async () => {
+test('регистрация сразу открывает вход, блокировка закрывает', async () => {
   const application = app();
   const admin = authed(application, { email: 'admin@example.com' });
   const api = request(application);
   await api.post('/api/auth/register').send({ email: 'gost@example.com', password: 'gost-long-password' }).expect(201);
-  await api.post('/api/auth/login').send({ email: 'gost@example.com', password: 'gost-long-password' }).expect(403);
 
   const users = (await admin.get('/api/admin/users').expect(200)).body.users;
   const gost = users.find((user) => user.email === 'gost@example.com');
-  await admin.post(`/api/admin/users/${gost.id}/approve`).expect(200);
   await api.post('/api/auth/login').send({ email: 'gost@example.com', password: 'gost-long-password' }).expect(200);
 
   const blocked = (await admin.post(`/api/admin/users/${gost.id}/block`).send({ reason: 'ушёл' }).expect(200)).body;
@@ -355,7 +358,6 @@ test('новому человеку открыто всё, но с потолк�
   const api = request(application);
   await api.post('/api/auth/register').send({ email: 'gost@example.com', password: 'gost-long-password' }).expect(201);
   const gost = (await admin.get('/api/admin/users')).body.users.find(user => user.email === 'gost@example.com');
-  await admin.post(`/api/admin/users/${gost.id}/approve`).expect(200);
   const login = await api.post('/api/auth/login').send({ email: 'gost@example.com', password: 'gost-long-password' }).expect(200);
   const cookie = login.headers['set-cookie'].find(value => value.startsWith('pagent_session='));
   // Потолок виден администратору рядом с расходом — доллар, а не «общий».
@@ -369,16 +371,15 @@ test('новому человеку открыто всё, но с потолк�
   assert.equal(admin.user.monthly_limit_usd, null);
 });
 
-test('очередь заявок не бесконечна', async () => {
+test('старые pending заявки не закрывают регистрацию', async () => {
   const application = app();
   authed(application, { email: 'admin@example.com' });
   const api = request(application);
-  // Пятьдесят нерассмотренных заявок — потолок: дальше очередь закрывается,
-  // чтобы в ней не утонули настоящие люди.
+  // Legacy pending accounts may remain anomalous, but no queue gates new signup.
   for (let index = 0; index < 50; index += 1)
     seedUser(application, { email: `pending-${index}@example.com`, role: 'user', status: 'pending' });
-  const refused = await api.post('/api/auth/register').send({ email: 'last@example.com', password: 'very-long-password' }).expect(429);
-  assert.equal(refused.body.error.code, 'too_many_pending');
+  const registered = await api.post('/api/auth/register').send({ email: 'last@example.com', password: 'very-long-password' }).expect(201);
+  assert.equal(registered.body.user.status, 'active');
 });
 
 // ── потолок расходов на месяц ────────────────────────────────────────────────
@@ -482,14 +483,14 @@ test('администратор видит расход каждого рядо
 });
 
 
-test('registration persists explicit guest locale for both active and pending new accounts', async () => {
+test('registration persists explicit guest locale for all immediately active accounts', async () => {
   const application=app(), api=request(application);
   const first=await api.post('/api/auth/register').send({email:'locale-admin@example.com',password:TEST_PASSWORD,locale:'en',detectedLocale:'ja',userId:'foreign'}).expect(201);
   assert.equal(first.body.user.status,'active');
   const settings=(await api.get('/api/settings').set('Cookie',first.headers['set-cookie']).expect(200)).body.settings;
   assert.equal(settings.locale,'en');assert.equal(settings.detectedLocale,'ja');
   const pending=(await api.post('/api/auth/register').send({email:'locale-pending@example.com',password:TEST_PASSWORD,locale:'pt-BR',detectedLocale:'de'}).expect(201)).body.user;
-  assert.equal(pending.status,'pending');
+  assert.equal(pending.status,'active');
   const read=(id,name)=>application.database.prepare('SELECT value FROM app_settings WHERE key=?').get(`user:${id}:${name}`)?.value;
   assert.equal(read(pending.id,'locale'),'pt-BR');assert.equal(read(pending.id,'detectedLocale'),'de');
   assert.equal(read(first.body.user.id,'locale'),'en');assert.equal(read('foreign','locale'),undefined);
@@ -530,4 +531,56 @@ test('authenticated app shell carries only validated account language preference
   const fresh=createApp({databasePath:application.database.name,aiService:fakeModelService()});
   const authenticated=authed(fresh);shell=await authenticated.get('/').set('Accept-Language','ja').expect(200);
   assert.match(shell.text,/<html lang="ja" data-account-locale="system">/);assert.doesNotMatch(shell.text,/onload="evil/);
+});
+
+// R2: simultaneous hashing must not produce two bootstrap administrators.
+test('concurrent signup produces exactly one administrator and two sessions', async () => {
+  const application = app();
+  const responses = await Promise.all(['a', 'b'].map(name => request(application).post('/api/auth/register')
+    .send({ email: `${name}@concurrent.test`, password: TEST_PASSWORD }).expect(201)));
+  assert.equal(responses.filter(response => response.body.first).length, 1);
+  assert.equal(responses.filter(response => response.body.user.role === 'admin').length, 1);
+  for (const response of responses) {
+    assert.equal(response.body.user.status, 'active');
+    const state = await request(application).get('/api/auth/state').set('Cookie', response.headers['set-cookie']).expect(200);
+    assert.equal(state.body.user.id, response.body.user.id);
+  }
+});
+
+test('pending activation migration runs once and preserves denied accounts and roles', () => {
+  const filename = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pagent-pending-')), 'test.sqlite');
+  let db = openDatabase(filename);
+  const statuses = [['pending', 'user'], ['blocked', 'user'], ['rejected', 'user'], ['pending', 'admin']];
+  for (const [status, role] of statuses) db.prepare(`INSERT INTO users(id,email,password_hash,status,role,created_at)
+    VALUES(?,?,?,?,?,?)`).run(`${status}-${role}`, `${status}-${role}@example.test`, 'hash', status, role, new Date().toISOString());
+  db.prepare(`INSERT INTO users(id,email,password_hash,status,role,created_at,blocked_at)
+    VALUES('flagged','flagged@example.test','hash','pending','user',?,?)`).run(new Date().toISOString(), new Date().toISOString());
+  db.prepare('DELETE FROM schema_migrations WHERE version=27').run();
+  db.close();
+  db = openDatabase(filename);
+  const read = id => db.prepare('SELECT * FROM users WHERE id=?').get(id);
+  assert.equal(read('pending-user').status, 'active');
+  assert.ok(read('pending-user').approved_at);
+  assert.equal(read('pending-user').approved_by, null);
+  assert.equal(read('pending-user').role, 'user');
+  assert.equal(read('blocked-user').status, 'blocked');
+  assert.equal(read('rejected-user').status, 'rejected');
+  assert.equal(read('pending-admin').status, 'pending');
+  assert.equal(read('pending-admin').role, 'admin');
+  assert.equal(read('flagged').status, 'pending');
+  db.prepare("UPDATE users SET status='pending' WHERE id='pending-user'").run();
+  db.close();
+  db = openDatabase(filename);
+  assert.equal(read('pending-user').status, 'pending', 'migration must not repeatedly activate future anomalies');
+  db.close();
+});
+
+test('legacy rejected accounts remain denied and approval endpoints are retired', async () => {
+  const application = app();
+  const admin = authed(application);
+  const user = seedUser(application, { email: 'rejected@example.test', role: 'user', status: 'rejected' });
+  const response = await request(application).post('/api/auth/login').send({ email: user.email, password: TEST_PASSWORD }).expect(403);
+  assert.equal(response.body.error.code, 'account_rejected');
+  await admin.post(`/api/admin/users/${user.id}/approve`).expect(404);
+  await admin.post(`/api/admin/users/${user.id}/reject`).expect(404);
 });

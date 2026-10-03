@@ -2,6 +2,7 @@
 // к ней обычной записью, приходит полосой «к вам», а разговор о нём идёт в
 // карточке. Два контекста браузера — два человека: у каждого свой день.
 import { test, expect } from "@playwright/test";
+import { registerGuest } from "./fixtures/e2e-account.js";
 import { E2E_EMAIL, E2E_PASSWORD } from "./fixtures/e2e-account.js";
 
 const ANYA = { email: "anya@kizuna.test", password: "anya-very-long-password" };
@@ -28,13 +29,11 @@ async function loginAs(browser, { email, password }) {
 test("круг: приглашение, просьба, «беру» и разговор с призывом", async ({ page, request, browser }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   await dissolveCircles(request);
-  // Второй человек заводится заявкой и одобряется администратором — обычным путём.
+  // Второй человек регистрируется и сразу получает доступ.
   const existing = (await (await request.get("/api/admin/users")).json()).users.find((user) => user.email === ANYA.email);
   if (!existing) {
-    const registered = await request.post("/api/auth/register", { data: ANYA });
-    expect(registered.status()).toBe(201);
-    const pending = (await (await request.get("/api/admin/users")).json()).users.find((user) => user.email === ANYA.email);
-    await request.post(`/api/admin/users/${pending.id}/approve`, { data: {} });
+    const registered = await registerGuest(request, ANYA);
+    expect(registered.status).toBe(201);
   }
   // Имена: без них в круге стояли бы почтовые адреса.
   await request.patch("/api/account", { data: { name: "Саша" } });
@@ -212,9 +211,7 @@ test("круг: дело человеку прямо за столом и при
   if (existing) {
     if (existing.status !== "active") await request.post(`/api/admin/users/${existing.id}/unblock`, { data: {} });
   } else {
-    await request.post("/api/auth/register", { data: ANYA });
-    const pending = (await (await request.get("/api/admin/users")).json()).users.find((user) => user.email === ANYA.email);
-    await request.post(`/api/admin/users/${pending.id}/approve`, { data: {} });
+    expect((await registerGuest(request, ANYA)).status).toBe(201);
   }
   await request.patch("/api/account", { data: { name: "Саша" } });
   const circle = (await (await request.post("/api/circles", { data: { name: "Хаб" } })).json()).circle;
@@ -325,9 +322,8 @@ test("поздний результат поручения не заменяет
   await request.put("/api/settings", { data: { locale: "ru", requestedTimeZone: "Europe/Samara" } });
   let member = (await (await request.get("/api/admin/users")).json()).users.find(user => user.email === ANYA.email);
   if (!member) {
-    await request.post("/api/auth/register", { data: ANYA });
+    expect((await registerGuest(request, ANYA)).status).toBe(201);
     member = (await (await request.get("/api/admin/users")).json()).users.find(user => user.email === ANYA.email);
-    await request.post(`/api/admin/users/${member.id}/approve`, { data: {} });
   } else if (member.status !== "active") await request.post(`/api/admin/users/${member.id}/unblock`, { data: {} });
   const anya = await loginAs(browser, ANYA);
   try {

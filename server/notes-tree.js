@@ -1,3 +1,4 @@
+import { currentTitle } from './collaboration-storage.js';
 // Заметки как страницы: дерево, ссылки, базы и дела из строк заметки.
 //
 // Страница — обычная запись с типом «заметка» или «идея». Своего у страницы
@@ -53,11 +54,12 @@ function plain(text) {
 // ── страницы пользователя ──────────────────────────────────────────────────
 function pageRows(db, userId) {
   return db.prepare(`SELECT c.id, c.raw, c.created_at, i.classification_json, i.created_at AS interpreted_at,
-      n.body AS note_body, n.version AS note_version, n.created_at AS noted_at,
+      COALESCE(d.body,n.body) AS note_body, d.title AS canonical_title, d.revision AS document_revision, d.generation AS document_generation, n.version AS note_version, COALESCE(d.updated_at,n.created_at) AS noted_at,
       p.capture_id AS placed, p.parent_id AS place_parent, p.source AS place_source
     FROM captures c
     JOIN interpretations i ON i.capture_id=c.id AND i.status='active'
     LEFT JOIN capture_notes n ON n.capture_id=c.id AND n.status='active'
+    LEFT JOIN collaborative_documents d ON d.capture_id=c.id
     LEFT JOIN note_places p ON p.capture_id=c.id
     WHERE c.deleted_at IS NULL AND c.user_id IS ?
       AND json_extract(i.classification_json,'$.primaryType') IN ('note','idea_question')
@@ -70,7 +72,7 @@ function toPage(row) {
   const updatedAt = [row.created_at, row.interpreted_at, row.noted_at].filter(Boolean).sort().at(-1);
   return {
     id: row.id,
-    title: String(classification.summary || plain(row.raw).slice(0, PAGE_TITLE_LIMIT) || 'Без названия'),
+    title: String(row.canonical_title ?? classification.summary ?? plain(row.raw).slice(0, PAGE_TITLE_LIMIT)) || 'Без названия',
     type: classification.primaryType,
     project: classification.entities?.projects?.[0] || null,
     tags: Array.isArray(classification.tags) ? classification.tags.filter(tag => typeof tag === 'string') : [],
@@ -81,6 +83,8 @@ function toPage(row) {
     placeSource: row.place_source ?? null,
     body,
     noteVersion: row.note_version ?? null,
+    documentRevision: row.document_revision ?? null,
+    collaboration: row.document_generation ? {enabled:true,generation:row.document_generation,revision:row.document_revision} : null,
   };
 }
 
@@ -286,7 +290,7 @@ function backlinksOf(db, userId, page) {
   for (const row of rows) {
     if (row.to_id === null && lower(row.label) !== lower(page.title)) continue;
     if (out.has(row.from_id)) continue;
-    const summary = parseJson(row.classification_json, {})?.summary;
+    const summary = currentTitle(db,row.from_id || row.id,parseJson(row.classification_json, {})?.summary);
     out.set(row.from_id, { id: row.from_id, title: summary || plain(row.raw).slice(0, 120), context: row.context });
   }
   return [...out.values()];
@@ -305,12 +309,12 @@ function mentionsOf(db, userId, page, linked) {
   const out = [];
   for (const row of rows) {
     if (linked.has(row.id)) continue;
-    const text = String(row.body ?? row.raw ?? '').replace(/!?\[\[[^\]\n]+\]\]/g, match => ' '.repeat(match.length));
+    const text = String(activeNote(db,row.id)?.body ?? row.body ?? row.raw ?? '').replace(/!?\[\[[^\]\n]+\]\]/g, match => ' '.repeat(match.length));
     const at = text.toLocaleLowerCase('ru-RU').indexOf(needle);
     if (at < 0) continue;
     const start = Math.max(0, at - 70);
     const context = `${start ? '…' : ''}${plain(text.slice(start, at + title.length + 50))}…`;
-    const summary = parseJson(row.classification_json, {})?.summary;
+    const summary = currentTitle(db,row.from_id || row.id,parseJson(row.classification_json, {})?.summary);
     out.push({ id: row.id, title: summary || plain(row.raw).slice(0, 120), context });
     if (out.length >= 20) break;
   }
@@ -532,7 +536,7 @@ function deedState(db, userId, row) {
   const onBoard = projections.length > 0;
   return {
     captureId: row.id,
-    title: classification.summary || plain(row.raw),
+    title: currentTitle(db,row.id,classification.summary || plain(row.raw)),
     state: done ? 'done' : onBoard ? 'open' : 'other',
     type: classification.primaryType,
     projectionIds: projections,

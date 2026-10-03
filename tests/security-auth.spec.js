@@ -1,13 +1,12 @@
 import { test, expect } from '@playwright/test';
+import { registerGuest } from './fixtures/e2e-account.js';
 import { totpCode } from '../server/auth.js';
 
 test('MFA reauthentication errors retain the dialog and allow a successful retry', async ({ browser, request }) => {
   const email = `security-mfa-${Date.now()}@kizuna.test`;
   const password = 'security-password-2026';
-  const registration = await request.post('/api/auth/register', { data: { email, password } });
-  expect(registration.status()).toBe(201);
-  const { user } = await registration.json();
-  expect((await request.post(`/api/admin/users/${user.id}/approve`, { data: {} })).status()).toBe(200);
+  const registration = await registerGuest(request, { email, password });
+  expect(registration.status).toBe(201);
   const context = await browser.newContext({ storageState: { cookies: [], origins: [] }, locale: 'ru-RU' });
   const page = await context.newPage();
   const errors = []; page.on('pageerror', error => errors.push(error.message));

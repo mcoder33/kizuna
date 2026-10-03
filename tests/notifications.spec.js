@@ -2,6 +2,7 @@
 // гасится одним «Беру» в ленте — и в полосе «к вам» тоже; призыв в открытую
 // вкладку всплывает в углу; что куда приходит, человек решает в настройках.
 import { test, expect } from "@playwright/test";
+import { registerGuest } from "./fixtures/e2e-account.js";
 
 const ANYA = { email: "bell-anya@kizuna.test", password: "anya-very-long-password" };
 
@@ -16,10 +17,9 @@ async function ensureUser(request, person) {
     if (existing.status !== "active") await request.post(`/api/admin/users/${existing.id}/unblock`, { data: {} });
     return existing.id;
   }
-  await request.post("/api/auth/register", { data: person });
-  const pending = (await (await request.get("/api/admin/users")).json()).users.find((user) => user.email === person.email);
-  await request.post(`/api/admin/users/${pending.id}/approve`, { data: {} });
-  return pending.id;
+  const registered = await registerGuest(request, person);
+  expect(registered.status).toBe(201);
+  return registered.body.user.id;
 }
 async function loginAs(browser, { email, password }, name) {
   const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });

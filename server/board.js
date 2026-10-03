@@ -1,3 +1,4 @@
+import { currentTitle } from './collaboration-storage.js';
 import { userLocale } from './locale.js';
 import { translate } from '../public/i18n.js';
 // Доска: канбан по открытым делам — задачам и встречам, не закрытым чекбоксом.
@@ -54,7 +55,7 @@ function deedCards(db, userId, timeZone, now = new Date(), borrowed = [], { with
   const ownSubtask = row => subtaskCards && row.subtask === 1 && (row.user_id ?? null) === (userId ?? null);
   const standing = subtaskCards ? standingSubtasks(rows, ownSubtask) : null;
   const byId = subtaskCards ? new Map(rows.map(row => [row.id, row])) : null;
-  const titleOf = id => { try { return JSON.parse(byId.get(id)?.classification_json).summary || ''; } catch { return ''; } };
+  const titleOf = id => { try { return currentTitle(db,id,JSON.parse(byId.get(id)?.classification_json).summary || ''); } catch { return ''; } };
   const projections = db.prepare(`SELECT p.id, p.capture_id, p.projection_type FROM projections p JOIN captures c ON c.id=p.capture_id WHERE p.status='active' AND c.deleted_at IS NULL AND ${mine} AND p.projection_type IN ('task','meeting_event')`).all(...who);
   const completion = completionEvents(db);
   // Скрепка на карточке: сколько живых вложений у записи.
@@ -86,7 +87,7 @@ function deedCards(db, userId, timeZone, now = new Date(), borrowed = [], { with
       captureId: row.id,
       ...(isClosed ? { closedAt, closedDate: dateInZone(new Date(closedAt), timeZone) } : {}),
       createdAt: row.created_at,
-      title: classification.summary || '',
+      title: currentTitle(db,row.id,classification.summary || ''),
       type: classification.primaryType,
       // У повтора срок — ближайший экземпляр от сегодняшнего дня.
       due: schedule?.date ? { date: schedule.repeat ? effectiveDate(schedule, dateInZone(now, timeZone)) || schedule.date : schedule.date, time: schedule.time || null, ...(schedule.repeat ? { repeat: describeRepeat(schedule.repeat) } : {}) } : null,

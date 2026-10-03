@@ -1,8 +1,8 @@
 // Учётная запись глазами человека: вход закрывает приложение, тема
-// переключается и запоминается, администратор видит заявку и решает её, а
+// переключается и запоминается, администратор управляет блокировками, а
 // второй фактор показывает то, что нужно поднести к телефону.
 import { test, expect } from "@playwright/test";
-import { E2E_EMAIL, E2E_PASSWORD } from "./fixtures/e2e-account.js";
+import { E2E_EMAIL, E2E_PASSWORD, registerGuest } from "./fixtures/e2e-account.js";
 
 test("без входа приложение не открывается", async ({ browser }) => {
   // Отдельный контекст без сохранённой куки: так выглядит первый приход.
@@ -69,19 +69,12 @@ test("тема переключается из шапки, переживает 
     .toBe("light");
 });
 
-test("администратор видит заявку, одобряет её и может заблокировать", async ({ page, request }) => {
+test("администратор видит активного пользователя и может заблокировать", async ({ page, request }) => {
   const email = `gost-${Date.now()}@kizuna.test`;
-  const registered = await request.post("/api/auth/register", {
-    data: { email, password: "gost-very-long-password" },
-  });
-  expect(registered.status()).toBe(201);
+  const registered = await registerGuest(request, { email, password: "gost-very-long-password" });
+  expect(registered.status).toBe(201);
 
   await page.goto("/#admin");
-  const pending = page.locator("#admin-pending .admin-user").filter({ hasText: email });
-  await expect(pending).toBeVisible();
-  await expect(pending).toContainText("ждёт подтверждения");
-
-  await pending.getByRole("button", { name: "Одобрить" }).click();
   const approved = page.locator("#admin-users .admin-user").filter({ hasText: email });
   await expect(approved).toContainText("работает");
 
@@ -114,9 +107,9 @@ test("в строке человека видно активность: поло
   await expect(activity).toContainText("без уведомлений");
   // Заведённый только что человек ещё ничего не писал — это видно меткой.
   const email = `tihiy-${Date.now()}@kizuna.test`;
-  await request.post("/api/auth/register", { data: { email, password: "tihiy-very-long-password" } });
+  expect((await registerGuest(request, { email, password: "tihiy-very-long-password" })).status).toBe(201);
   await page.reload();
-  const fresh = page.locator("#admin-pending .admin-user").filter({ hasText: email });
+  const fresh = page.locator("#admin-users .admin-user").filter({ hasText: email });
   await expect(fresh.locator(".admin-activity")).toContainText("записей нет");
 });
 
@@ -169,11 +162,9 @@ test("выход возвращает на страницу входа", async (
 
 test("администратор ставит человеку потолок расходов на месяц", async ({ page, request }) => {
   const email = `limit-${Date.now()}@kizuna.test`;
-  expect((await request.post("/api/auth/register", { data: { email, password: "limit-very-long-password" } })).status()).toBe(201);
+  expect((await registerGuest(request, { email, password: "limit-very-long-password" })).status).toBe(201);
 
   await page.goto("/#admin");
-  const pending = page.locator("#admin-pending .admin-user").filter({ hasText: email });
-  await pending.getByRole("button", { name: "Одобрить" }).click();
 
   const card = page.locator("#admin-users .admin-user").filter({ hasText: email });
   // Новому человеку потолок уже стоит: доллар на пробу, дальше решает хозяин.
@@ -256,4 +247,28 @@ test("без выбора и со старым системным режимом
     await page.emulateMedia({ colorScheme: 'dark' });
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   }
+});
+
+
+test("обычная регистрация сразу открывает приложение без одобрения", async ({ browser }, testInfo) => {
+  const context = await browser.newContext({ storageState: { cookies: [], origins: [] }, locale: "ru-RU" });
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", error => errors.push(error.message));
+  try {
+    await page.goto("/login?join");
+    await expect(page.locator("#auth-lead")).toContainText("сразу начните");
+    await page.getByLabel("Почта").fill(`signup-${Date.now()}@kizuna.test`);
+    await page.getByLabel("Пароль", { exact: true }).fill("signup-very-long-password");
+    await page.locator("#auth-password-repeat").fill("signup-very-long-password");
+    await page.getByRole("button", { name: "Зарегистрироваться", exact: true }).click();
+    await expect(page.locator("#today")).toBeVisible();
+    const state = await (await page.request.get("/api/auth/state")).json();
+    expect(state.authenticated).toBe(true);
+    expect(state.user.status).toBe("active");
+    expect(state.user.role).toBe("user");
+    expect((await page.request.get("/api/admin/users")).status()).toBe(403);
+    expect(errors).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath("immediate-signup.png") });
+  } finally { await context.close(); }
 });

@@ -2,6 +2,7 @@
 // @, подтверждает, что тот увидит запись, — и Илья находит её в «Обсуждениях»,
 // читает разговор и уходит из записи сам. Круга у них нет.
 import { test, expect } from "@playwright/test";
+import { registerGuest } from "./fixtures/e2e-account.js";
 
 const ILYA = { email: "ilya@kizuna.test", password: "ilya-very-long-password" };
 
@@ -19,10 +20,9 @@ async function ensureUser(request, account) {
   const find = async () => (await (await request.get("/api/admin/users")).json()).users.find((user) => user.email === account.email);
   let user = await find();
   if (!user) {
-    expect((await request.post("/api/auth/register", { data: account })).status()).toBe(201);
+    expect((await registerGuest(request, account)).status).toBe(201);
     user = await find();
   }
-  if (user.status === "pending") await request.post(`/api/admin/users/${user.id}/approve`, { data: {} });
   if (user.status === "blocked") await request.post(`/api/admin/users/${user.id}/unblock`, { data: {} });
   return user;
 }

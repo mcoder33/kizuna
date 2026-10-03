@@ -1,3 +1,4 @@
+import { shareReturnPath } from './share-intent.js';
 import { t, getLocale, getRequestedLocale, getDetectedLocale } from "./browser-i18n.js";
 // Вход, регистрация и второй фактор. Одна форма на три состояния, потому что
 // это один разговор: «кто ты» — «докажи» — «тебя ещё не пустили».
@@ -32,9 +33,9 @@ function paint() {
   const registering = mode === "register";
   $("#auth-title").textContent = registering ? t("Регистрация") : t("Вход");
   $("#auth-lead").textContent = registering
-    ? t("Заведите учётную запись. Доступ откроет администратор — вы получите его, когда он подтвердит заявку.")
+    ? t("Создайте учётную запись и сразу начните пользоваться Кизуной.")
     : t("Журнал у каждого свой: записи, отчёты и память видит только их автор.");
-  submit.textContent = registering ? t("Отправить заявку") : needsCode ? t("Подтвердить") : t("Войти");
+  submit.textContent = registering ? t("Зарегистрироваться") : needsCode ? t("Подтвердить") : t("Войти");
   $("#auth-switch").textContent = registering ? t("Войти") : t("Зарегистрироваться");
   $("#auth-switch-text").textContent = registering ? t("Уже есть доступ?") : t("Нет учётной записи?");
   $("#auth-repeat-field").hidden = !registering;
@@ -72,14 +73,7 @@ form.addEventListener("submit", async (event) => {
         ...(getDetectedLocale() ? { detectedLocale: getDetectedLocale() } : {}),
       });
       if (!ok) return show(error, payload.error?.message || t("Не получилось зарегистрироваться."));
-      // Первый — сразу внутрь: он и есть администратор, подтверждать его некому.
-      if (payload.first) return location.replace("/");
-      mode = "login";
-      needsCode = false;
-      password.value = "";
-      repeat.value = "";
-      paint();
-      return show(notice, payload.message ? t(payload.message) : t("Заявка отправлена. Доступ откроет администратор."));
+      return location.replace(shareReturnPath());
     }
 
     const { ok, status, payload } = await send("/api/auth/login", {
@@ -87,7 +81,7 @@ form.addEventListener("submit", async (event) => {
       password: password.value,
       code: code.value.trim() || undefined,
     });
-    if (ok) return location.replace("/");
+    if (ok) return location.replace(shareReturnPath());
     if (payload.error?.code === "totp_required") {
       needsCode = true;
       paint();
@@ -138,7 +132,7 @@ paintTheme();
 (async () => {
   try {
     const state = await (await fetch("/api/auth/state")).json();
-    if (state.authenticated) return location.replace("/");
+    if (state.authenticated) return location.replace(shareReturnPath());
     if (state.needsBootstrap) {
       mode = "register";
       $("#auth-bootstrap").hidden = false;

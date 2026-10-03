@@ -21,7 +21,6 @@ import { monthlySpend, writeSettings } from './db.js';
 import { validLocaleSetting, validDetectedLocale } from './locale.js';
 import { resolveLocale, translate } from '../public/i18n.js';
 import { avatarUrl, avatarPresets, choosePreset, saveAvatarImage, avatarImage, forgetAvatar, AVATAR_IMAGE_LIMIT } from './avatars.js';
-import { notify } from './notifications.js';
 import {
   createUser, findUserByEmail, findUserById, countUsers, listUsers, updateUser, adoptOrphanRecords,
   createSession, findSessionUser, touchSession, deleteSession, deleteUserSessions, purgeExpiredSessions, countUserSessions,
@@ -45,7 +44,6 @@ export function publicUser(row) {
   };
 }
 
-const PENDING_LIMIT = 50;
 const fail = (res, status, code, message, extra = {}) => res.status(status).json({ error: { code, message, ...extra } });
 
 export function createAccounts({ db, now = () => new Date(), secureCookies = false, audit = () => {}, sessionTtlMs = SESSION_TTL_MS, timeZone = () => 'UTC', onPreferencesChanged = () => {}, admissionOptions = {} } = {}) {
@@ -70,13 +68,6 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
       if (value !== undefined && !valid(value)) return { error: [400, 'invalid_setting', translate(resolveLocale(locale, [detectedLocale]), 'Некорректное значение настройки: {name}.', { name })] };
     }
     let first = needsBootstrap();
-    // Регистрация открыта всем, а решает администратор — значит, очередь заявок
-    // легко забить и утопить в ней настоящих людей. Больше полусотни
-    // нерассмотренных заявок держать незачем: сначала разберите эти.
-    if (!first && listUsers(db).filter(user => user.status === 'pending').length >= PENDING_LIMIT) {
-      logEvent(db, { email: address, event: 'register', result: 'queue_full' });
-      return { error: [429, 'too_many_pending', 'Очередь заявок переполнена. Попробуйте позже.'] };
-    }
     if (findUserByEmail(db, address)) {
       logEvent(db, { email: address, event: 'register', result: 'duplicate' });
       return { error: [409, 'email_taken', 'Такой адрес уже зарегистрирован.'] };
@@ -85,19 +76,16 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
     // Hashing yields: another registration may have completed in the meantime.
     first = needsBootstrap();
     if (findUserByEmail(db, address)) return { error: [409, 'email_taken', 'Такой адрес уже зарегистрирован.'] };
-    if (!first && listUsers(db).filter(user => user.status === 'pending').length >= PENDING_LIMIT) return { error: [429, 'too_many_pending', 'Очередь заявок переполнена. Попробуйте позже.'] };
     const user = createUser(db, {
       email: address, passwordHash,
-      role: first ? 'admin' : 'user', status: first ? 'active' : 'pending',
+      role: first ? 'admin' : 'user', status: 'active',
     });
     const preferences = {};
     if (locale !== undefined) preferences[`user:${user.id}:locale`] = locale;
     if (detectedLocale !== undefined && detectedLocale !== null) preferences[`user:${user.id}:detectedLocale`] = detectedLocale;
     if (Object.keys(preferences).length) { writeSettings(db, preferences); onPreferencesChanged(); }
-    if (first) {
-      updateUser(db, user.id, { approved_at: at(), approved_by: user.id });
-      adoptOrphanRecords(db, user.id);
-    }
+    updateUser(db, user.id, { approved_at: at() });
+    if (first) adoptOrphanRecords(db, user.id);
     logEvent(db, { userId: user.id, email: address, event: 'register', result: 'succeeded', detail: first ? 'bootstrap-admin' : null });
     note({ event: 'user_registered', result: 'succeeded', role: first ? 'admin' : 'user' });
     return { user: findUserById(db, user.id), first, userAgent };
@@ -162,7 +150,7 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
     const refreshed = findUserById(db, user.id);
     if (!refreshed || refreshed.password_hash !== user.password_hash) return { error: wrong };
     user = refreshed;
-    if (user.status === 'pending') { logEvent(db, { userId: user.id, email: address, event: 'login', result: 'pending' }); return { error: [403, 'account_pending', 'Заявка ждёт подтверждения администратора.'] }; }
+    if (user.status === 'pending') { logEvent(db, { userId: user.id, email: address, event: 'login', result: 'pending' }); return { error: [403, 'account_pending', 'Учётная запись недоступна. Обратитесь к администратору.'] }; }
     if (user.status === 'rejected') { logEvent(db, { userId: user.id, email: address, event: 'login', result: 'rejected' }); return { error: [403, 'account_rejected', 'В доступе отказано.'] }; }
     if (user.status === 'blocked') { logEvent(db, { userId: user.id, email: address, event: 'login', result: 'blocked' }); return { error: [403, 'account_blocked', user.blocked_reason ? `Доступ закрыт: ${user.blocked_reason}` : 'Доступ закрыт администратором.'] }; }
     // Второй фактор проверяется последним: спрашивать код у того, кто не знает
@@ -229,14 +217,8 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
       try {
         const result = await registerAccount({ email: req.body?.email, password: req.body?.password, locale: req.body?.locale, detectedLocale: req.body?.detectedLocale, userAgent: req.get('user-agent') });
         if (result.error) return fail(res, ...result.error);
-        // Первого администратора незачем заставлять входить ещё раз — он уже
-        // доказал, что знает пароль, придумав его минуту назад.
-        if (result.first) { setSessionCookie(res, issueSession(result.user, { userAgent: req.get('user-agent') })); return res.status(201).json({ user: publicUser(findUserById(db, result.user.id)), first: true }); }
-        // Заявку разбирает администратор — и узнаёт о ней сразу, а не когда
-        // случайно заглянет в «Пользователей».
-        for (const admin of listUsers(db).filter(user => user.role === 'admin' && user.status === 'active'))
-          notify(db, { userId: admin.id, kind: 'signup', lead: 'Новая заявка на вход:', template: { lead: { source: 'Новая заявка на вход:' } }, text: result.user.email, meta: ['доступ открывает администратор'], metaTemplates: [{source:'доступ открывает администратор'}], data: { url: '/#admin' } });
-        res.status(201).json({ user: publicUser(result.user), first: false, message: 'Заявка отправлена. Доступ откроет администратор.' });
+        setSessionCookie(res, issueSession(result.user, { userAgent: req.get('user-agent') }));
+        res.status(201).json({ user: publicUser(findUserById(db, result.user.id)), first: result.first });
       } catch (error) { if (error?.code === 'auth_busy') { res.set('Retry-After', '1'); fail(res, 429, 'too_many_attempts', 'Слишком много попыток. Попробуйте позже.'); } else next(error); }
     });
 
@@ -408,13 +390,7 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
         const lastAdmin = target.role === 'admin' && target.status === 'active' && activeAdmins() <= 1;
         const guard = (message) => fail(res, 409, 'last_admin', message);
 
-        if (action === 'approve') {
-          if (!['pending','rejected'].includes(target.status)) return fail(res, 409, 'invalid_status', 'Одобрять можно только заявку.');
-          updateUser(db, target.id, { status: 'active', approved_at: at(), approved_by: req.user.id, blocked_at: null, blocked_reason: null });
-        } else if (action === 'reject') {
-          if (target.status !== 'pending') return fail(res, 409, 'invalid_status', 'Отклонить можно только заявку.');
-          updateUser(db, target.id, { status: 'rejected' });
-        } else if (action === 'block') {
+        if (action === 'block') {
           if (lastAdmin) return guard('Это последний администратор — закрывать ему доступ некому.');
           const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 200) : null;
           updateUser(db, target.id, { status: 'blocked', blocked_at: at(), blocked_reason: reason || null });

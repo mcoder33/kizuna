@@ -229,7 +229,7 @@ export async function refreshNotes() {
 async function navigate(route) {
   const token = ++navToken;
   closePicker();
-  await saveEditor();
+  if (await saveEditor() === false) { if (state.route) history.replaceState(null, "", hashFor(state.route)); return; }
   try {
     if (route.kind === "title") {
       const base = state.overview?.bases.find((item) => item.name.toLocaleLowerCase("ru-RU") === route.title.trim().toLocaleLowerCase("ru-RU"));
@@ -486,7 +486,7 @@ async function dropPage(pageId, kind, key, zone) {
   order.splice(Math.max(0, index), 0, pageId);
   if (parentKey === page.parentKey && order.join() === childrenOf(parentKey).map((item) => item.id).join()) return;
   try {
-    await saveEditor();
+    if (await saveEditor() === false) return;
     if (parentKey?.startsWith("project:")) {
       const name = parentKey.slice(8);
       if (page.project !== name) await call(`/api/captures/${page.id}/corrections`, "POST", { project: name });
@@ -509,7 +509,7 @@ async function dropPage(pageId, kind, key, zone) {
 // ── создание ───────────────────────────────────────────────────────────────
 async function newPage(parent, title = t("Без названия")) {
   try {
-    await saveEditor();
+    if (await saveEditor() === false) return;
     const detail = await call("/api/pages", "POST", { title, parent });
     forgetLinkPages();
     if (parent && parent !== "root") { state.expanded.add(parent); saveExpanded(); }
@@ -682,7 +682,7 @@ function showBacklinks() {
 async function deletePage(detail) {
   const { page } = detail;
   // Набранное перед удалением сохраняется: вернуть — значит вернуть и его.
-  await saveEditor();
+  if (await saveEditor() === false) return;
   try {
     await call(`/api/captures/${encodeURIComponent(page.id)}`, "DELETE");
   } catch (error) {
@@ -707,7 +707,7 @@ async function renamePage(page, title) {
   if (!next) { title.textContent = page.title; return; }
   if (next === page.title) return;
   try {
-    await call(`/api/captures/${page.id}/corrections`, "POST", { summary: next });
+    await call(`/api/captures/${page.id}/corrections`, "POST", { summary: next, expectedRevision: page.documentRevision });
     forgetLinkPages();
     page.title = next;
     await loadOverview();
@@ -804,7 +804,9 @@ function editorFor(page) {
     if (!dirty && !focused && page.body !== current) {
       editor.field.setValue(page.body);
       editor.saved = page.body;
+      editor.documentRevision = page.documentRevision;
     }
+    if (!dirty && !focused && page.body === editor.saved) editor.documentRevision = page.documentRevision;
     return editor.wrap;
   }
   if (editor) destroyEditor();
@@ -826,7 +828,7 @@ function editorFor(page) {
   deedButton.hidden = true;
   deedButton.addEventListener("mousedown", (event) => event.preventDefault());
   wrap.append(field.element, deedButton);
-  editor = { pageId: page.id, field, wrap, slash, format, links, deedButton, saved: page.body, timer: 0, saving: null, again: false };
+  editor = { pageId: page.id, field, wrap, slash, format, links, deedButton, saved: page.body, documentRevision: page.documentRevision, timer: 0, saving: null, again: false };
   field.setValue(page.body);
   editor.saved = page.body;
 
@@ -901,12 +903,14 @@ async function saveEditor() {
   if (!current) return;
   clearTimeout(current.timer);
   const value = current.field.getValue();
-  if (value === current.saved) return current.saving;
+  if (value === current.saved) return current.saving || true;
   if (current.saving) { current.again = true; return current.saving; }
   current.saving = (async () => {
     try {
-      const result = await call(`/api/captures/${current.pageId}/notes`, "POST", { body: value });
+      const result = await call(`/api/captures/${current.pageId}/notes`, "POST", { body: value, expectedRevision: current.documentRevision });
       current.saved = value;
+      current.documentRevision = result.entry.note?.revision ?? result.entry.collaboration?.revision;
+      if (state.detail?.page.id === current.pageId) state.detail.page.documentRevision = current.documentRevision;
       if (state.detail?.page.id === current.pageId) {
         state.detail.page.body = value;
         state.detail.page.noteVersion = result.entry.note?.version ?? state.detail.page.noteVersion;
@@ -914,8 +918,10 @@ async function saveEditor() {
         const label = document.getElementById("notes-version");
         if (label) label.textContent = versionLabel(state.detail.page);
       }
+      return true;
     } catch (error) {
       deps.toast(error.message);
+      return false;
     } finally {
       current.saving = null;
       if (current.again) { current.again = false; if (editor === current) scheduleSave(); }
@@ -952,7 +958,7 @@ async function makeDeed(index) {
   if (!editor || !Number.isInteger(index)) return;
   const current = editor;
   current.deedButton.hidden = true;
-  await saveEditor();
+  if (await saveEditor() === false) return;
   const text = current.field.lineAt(index);
   try {
     const result = await call(`/api/pages/${current.pageId}/deeds`, "POST", { line: index, text });
@@ -1457,7 +1463,7 @@ async function chooseIcon(anchor, key, value, current) {
 }
 async function applyPlace(page, key) {
   try {
-    await saveEditor();
+    if (await saveEditor() === false) return;
     if (key.startsWith("project:")) {
       const name = key.slice(8);
       if (page.project !== name) await call(`/api/captures/${page.id}/corrections`, "POST", { project: name });

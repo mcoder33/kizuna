@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { registerGuest } from './fixtures/e2e-account.js';
 
 const email = 'i18n-web@kizuna.test';
 const password = 'i18n-web-password-123';
@@ -393,12 +394,8 @@ test('personal timezone follows browser/native detection, preserves manual choic
     // A second account in the same browser must initialize from its own
     // preference and the device, never the previous account's manual choice.
     const secondEmail = 'timezone-second@kizuna.test';
-    const registration = await page.request.post('/api/auth/register', { data: { email: secondEmail, password } });
-    expect(registration.status()).toBe(201);
-    const users = await (await page.request.get('/api/admin/users')).json();
-    const second = users.users.find(user => user.email === secondEmail);
-    expect(second).toBeTruthy();
-    expect((await page.request.post(`/api/admin/users/${second.id}/approve`, { data: {} })).ok()).toBeTruthy();
+    const registration = await registerGuest(page.request, { email: secondEmail, password });
+    expect(registration.status).toBe(201);
     await page.locator('#setting-requestedTimeZone').selectOption('Europe/Berlin');
     await expect.poll(async () => (await (await page.request.get('/api/settings')).json()).timeZone).toBe('Europe/Berlin');
     await page.locator('#account-summary').click();
@@ -716,21 +713,12 @@ test('signup keeps the guest language while existing login and logout keep accou
     await page.locator('#auth-email').fill('header-signup@kizuna.test');
     await page.locator('#auth-password').fill(password);
     await page.locator('#auth-password-repeat').fill(password);
+    const shell = page.waitForResponse(response => response.url() === baseURL + '/' && response.request().isNavigationRequest());
     const registered = page.waitForResponse(response => response.url().endsWith('/api/auth/register'));
     await page.locator('#auth-submit').click();
     const registrationResponse = await registered;
     expect(registrationResponse.request().postDataJSON()).toMatchObject({ locale: 'de', detectedLocale: 'en' });
     expect(registrationResponse.request().headers()['accept-language']).toBe('de');
-    const confirmation = await page.evaluate(async () => (await import('/public/i18n.js')).translate('de', 'Заявка отправлена. Доступ откроет администратор.'));
-    await expect(page.locator('#auth-notice')).toHaveText(confirmation);
-    await expect(page.locator('html')).toHaveAttribute('lang', 'de');
-    const users = await (await adminPage.request.get('/api/admin/users')).json();
-    const applicant = users.users.find(user => user.email === 'header-signup@kizuna.test');
-    expect(applicant).toBeTruthy();
-    expect((await adminPage.request.post(`/api/admin/users/${applicant.id}/approve`, { data: {} })).ok()).toBeTruthy();
-    await page.locator('#auth-password').fill(password);
-    const shell = page.waitForResponse(response => response.url() === baseURL + '/' && response.request().isNavigationRequest());
-    await page.locator('#auth-submit').click();
     const shellHtml = await (await shell).text();
     expect(shellHtml).toMatch(/data-account-locale="de"/);
     expect(shellHtml).toMatch(/<html[^>]*lang="de"/);

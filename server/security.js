@@ -25,7 +25,15 @@ export function createHttpSecurity({ publicUrl = process.env.PAGENT_PUBLIC_URL, 
     if (origins.has(parsed.origin) || ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname)) return parsed.origin;
     throw new Error('Untrusted request host');
   }
+  function allowedOrigin(req, { required = false } = {}) {
+    const origin=req.headers?.origin;
+    if (!origin) return !required;
+    if(req.headers?.['sec-fetch-site']==='cross-site')return false;
+    if(origins.has(origin))return true;
+    try { return origin===baseUrl(req.get ? req : {...req,get:name=>req.headers?.[name.toLowerCase()],protocol:loopbackProxy(req.socket?.remoteAddress)&&req.headers?.['x-forwarded-proto']==='https'?'https':'http'}); } catch { return false; }
+  }
   return {
+    allowedOrigin,
     secureCookies: Boolean(secureCookies || configured?.protocol === 'https:'), baseUrl,
     middleware(req, res, next) {
       res.set({ 'Content-Security-Policy': "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'", 'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff' });

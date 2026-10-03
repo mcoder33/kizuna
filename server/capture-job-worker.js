@@ -88,7 +88,7 @@ export class CaptureJobWorker {
       if (claim.overrides_json) {
         try { result.classification = applyUserOverrides(result.classification, overrides, new Date(timeContext.referenceAt), timeContext.timeZone); } catch {}
       }
-      if (completeCaptureJob(this.db, claim, result, { timeZone: timeContext.timeZone, referenceAt: timeContext.referenceAt })) {
+      if (completeCaptureJob(this.db, claim, result, { timeZone: timeContext.timeZone, referenceAt: timeContext.referenceAt, completedAt: this.now().toISOString() })) {
         // Просьба уходит человеку и тогда, когда разбор закончился в фоне:
         // иначе «Ане — прислать смету» из очереди не дошло бы ни до кого.
         // Пересланное из Telegram написал не хозяин журнала: коллега, чьё

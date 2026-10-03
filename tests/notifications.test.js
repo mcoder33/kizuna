@@ -280,13 +280,13 @@ test('потолок расходов: по одному уведомлению 
   assert.deepEqual(spend.map(item => item.lead), ['Потрачено 100%', 'Потрачено 80%']);
 });
 
-test('заявка на вход приходит администратору, а неясная запись из фона ждёт уточнения и гаснет после него', async () => {
+test('регистрация не требует уведомления администратору, а неясная запись из фона ждёт уточнения и гаснет после него', async () => {
   // Часы настоящие: аренда задания разбора живёт по ним.
   const app = freshApp();
   const admin = authed(app);
   await authed(app).post('/api/auth/register').send({ email: 'newbie@kizuna.test', password: 'long-password-123' }).expect(201);
   const signup = (await feed(admin)).notifications.find(item => item.kind === 'signup');
-  assert.equal(signup.text, 'newbie@kizuna.test');
+  assert.equal(signup, undefined);
 
   app.captureJobWorker.start();
   try {

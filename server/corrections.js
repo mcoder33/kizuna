@@ -68,7 +68,7 @@ export function correctionPatchError(patch) {
 // Ключ операции делает повтор того же запроса безвредным; у голоса он свой на
 // каждый вызов — иначе «убери повтор», «верни», «убери снова» третьим разом
 // считался бы повтором первого и молча ничего не менял.
-export function correctCapture(db, { captureId, userId = null, patch, operationKey = null, source = 'correction', timeZone = 'Europe/Samara' }) {
+export function correctCapture(db, { captureId, userId = null, patch, operationKey = null, source = 'correction', timeZone = 'Europe/Samara', expectedRevision, requireRevision = false }) {
   const active = getAggregate(db, captureId);
   if (!active) return { error: { status: 404, code: 'not_found', message: 'Запись не найдена.' } };
   const invalid = correctionPatchError(patch);
@@ -78,12 +78,12 @@ export function correctCapture(db, { captureId, userId = null, patch, operationK
   const original = JSON.parse(active.classification_json);
   const classification = correctedClassification(original, patch);
   const review = gateClassification(classification);
-  const replacement = replaceInterpretation(db, captureId, classification, 'manual', { ...patch, patch, operationKey: key, requestFingerprint }, shouldMaterializeProjections(classification),null,{timeZone});
+  const replacement = replaceInterpretation(db, captureId, classification, 'manual', { ...patch, patch, operationKey: key, requestFingerprint }, shouldMaterializeProjections(classification),null,{timeZone,expectedRevision,requireRevision,actorId:userId});
   if (replacement?.conflict) return { error: { status: 409, code: 'idempotency_conflict', message: 'Ключ уже использован для другого уточнения.' } };
   if (review.level === 'high') resolveNotifications(db, { userId, kind: 'clarify', captureId });
   // Поправка — это урок: в следующий раз такую же запись разбирают уже
   // правильно, и человек не решает то же самое дважды. Повтор того же запроса
   // (replayed) ничему не учит — он ничего и не менял.
   if (!replacement?.replayed) learnQuietly(db, { userId, captureId, raw: active.raw || '', before: original, after: classification, source });
-  return { entry: fullEntry(db, getAggregate(db, captureId)), undoGroupId: replacement.undoGroupId, review, replayed: Boolean(replacement.replayed) };
+  return { entry: fullEntry(db, getAggregate(db, captureId),userId), undoGroupId: replacement.undoGroupId, review, replayed: Boolean(replacement.replayed) };
 }

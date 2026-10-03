@@ -1,3 +1,4 @@
+import { currentTitle } from './collaboration-storage.js';
 // Подзадачи — дочерние записи-дела, связанные с родителем через
 // parent_capture_id: те же строки, что отделённые намерения и дела из строк
 // заметки. Карточке нужно всё дерево целиком с прогрессом, поэтому оно
@@ -88,7 +89,7 @@ function collect(db, rootIds, userId, { today, onlySubtasks = false }) {
       const node = {
         id: row.id,
         parentId: row.parent_id,
-        title: classification.summary || '',
+        title: currentTitle(db,row.id,classification.summary || ''),
         done: closed || occurrenceDone,
         closed,
         occurrence,
@@ -184,7 +185,7 @@ export function ancestorsOf(db, captureId, userId) {
     if (row.user_id !== userId && !canSeeCapture(db, row.id, userId)) break;
     seen.add(row.id);
     const classification = parse(row.classification_json, {});
-    chain.unshift({ id: row.id, title: classification.summary || '', type: classification.primaryType || null });
+    chain.unshift({ id: row.id, title: currentTitle(db,row.id,classification.summary || ''), type: classification.primaryType || null });
     current = row.id;
   }
   return chain;

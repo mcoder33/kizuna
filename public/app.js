@@ -1,3 +1,5 @@
+import { openTodoSharing as openSharingDialog } from "./todo-sharing.js";
+import { createCollaborativeEditor } from "./collaboration.bundle.js";
 import { safeExternalUrl } from "./safe-url.js";
 import { mountLanguageControls, syncLanguageControls } from "./language-control.js";
 import { normalizeTimeZone } from "./time-zone.js";
@@ -58,6 +60,7 @@ let bootstrapInFlight = false,
   memoryController = null;
 const completionInFlight = new Set();
 const correctionResponses = new Map();
+async function openTodoSharing(entry) { const saved = await flushCard(); if (saved?.some(value => value === false)) { toast(t("Не удалось сохранить изменения. Повторите перед публикацией.")); return; } return openSharingDialog(entry, { request, userId: currentUser.id, refresh: () => rerenderCard(entry.id) }); }
 function correctionOperationKey(body) {
   let hash = 2166136261;
   for (const character of body) {
@@ -85,9 +88,9 @@ async function requestResponse(url, options = {}) {
     // углу бессмысленно — дальше всё равно ничего не откроется.
     // A valid session can still need a fresh second factor for this action.
     const reauthenticationError = ["totp_required", "invalid_totp"].includes(data?.error?.code);
-    if (response.status === 401 && !reauthenticationError) { location.replace("/login"); throw new Error(t("Нужно войти.")); }
+    if (response.status === 401 && !reauthenticationError) { if (collaborativeCard) collaborativeCard.revoke(t("Сессия завершена · скопируйте черновик перед входом.")); else location.replace("/login"); throw Object.assign(new Error(t("Нужно войти.")), { status: 401, code: data?.error?.code }); }
     if (!response.ok)
-      throw new Error(data?.error?.message || t("Не удалось выполнить действие."));
+      throw Object.assign(new Error(data?.error?.message || t("Не удалось выполнить действие.")), { status: response.status, code: data?.error?.code });
     return { response, data };
   })();
   if (cacheKey) correctionResponses.set(cacheKey, pending);
@@ -1923,6 +1926,9 @@ function appear(element, { shift = 10, duration = APPEAR_DURATION, base = "" } =
 // Незаписанная правка заметки: карточку закрывают крестиком, фоном и Esc —
 // и во всех трёх случаях набранное должно остаться, а не пропасть.
 let flushCardBody = null;
+let collaborativeCard = null;
+let activeCardEntry = null;
+function disposeCollaborativeCard() { const old = collaborativeCard; collaborativeCard = null; old?.dispose().catch(() => {}); }
 // Свойства уходят на сервер так же, как заметка: при закрытии карточки, без
 // отдельной кнопки. Ссылка снимается до вызова — второй раз ничего не улетит.
 let flushCardProps = null;
@@ -1967,6 +1973,8 @@ const cardDrafts = new Map();
 let cardStepView = "list";
 const cardCollapsed = new Set();
 function resetCardFocus() {
+  disposeCollaborativeCard();
+  activeCardEntry = null;
   cardNavToken += 1;
   cardStack = [];
   cardEntryId = null;
@@ -2004,6 +2012,7 @@ new MutationObserver(() => {
 // Список, из которого открыли (pendingCardList), остаётся — его только что
 // назвал тот, кто открыл.
 function leaveCardForPage() {
+  disposeCollaborativeCard();
   const dialog = $("#review-dialog");
   cardNavToken += 1;
   clearTimeout(cardAdvance);
@@ -2288,6 +2297,8 @@ function attachmentsBlock(entry) {
   input.className = "sr-only";
   input.id = `attach-${entry.id}`;
   add.type = "button";
+  add.hidden = entry.mine === false;
+  input.disabled = add.hidden;
   add.addEventListener("click", () => input.click());
 
   const paint = () => {
@@ -2314,6 +2325,7 @@ function attachmentsBlock(entry) {
       open.append(node("span", attachment.filename, "file-name"));
       open.addEventListener("click", () => previewAttachment(attachment));
       remove.type = "button";
+      remove.hidden = entry.mine === false;
       bindTranslation(remove, "Убрать вложение", "title");
       bindTranslation(remove, "Убрать {filename}", { filename: attachment.filename }, "aria-label");
       remove.addEventListener("click", async () => {
@@ -2334,6 +2346,7 @@ function attachmentsBlock(entry) {
   };
 
   const upload = async (list) => {
+    if (entry.mine === false) return;
     for (const file of list) {
       try {
         const response = await fetch(`/api/captures/${entry.id}/attachments`, {
@@ -3000,6 +3013,7 @@ function cardDiscussion(entry) {
 // контракт памяти запрещает менять источник, поэтому оно версионируется
 // на сервере со ссылкой supersedes.
 function cardBody(entry) {
+  if (collaborativeCard?.captureId === entry.id) { flushCardBody = collaborativeCard.flush; return collaborativeCard.bodyElement; }
   const wrap = node("section", undefined, "card-body"),
     hint = bindTranslation(node("p", t("Markdown оформляется прямо в тексте · ⌘/Ctrl + Enter — сохранить · закроете карточку — сохранится само"), "card-body-hint"), "Markdown оформляется прямо в тексте · ⌘/Ctrl + Enter — сохранить · закроете карточку — сохранится само"),
     label = bindTranslation(node("p", t("Заметка"), "prop-section"), "Заметка");
@@ -3026,6 +3040,7 @@ function cardBody(entry) {
   const formatBar = attachFormatToolbar(field, { prefs: window.pagentText });
   closeCardSlashMenu = () => { slashMenu.destroy(); formatBar.destroy(); linkMenu.destroy(); closeCardSlashMenu = null; };
   field.setValue(body);
+  field.setDisabled(entry.canEdit === false || entry.mine === false && !entry.canEdit);
   // Подсказка не прячется, а гаснет: строка под полем остаётся на месте, и
   // blur перед нажатием на подзадачу не сдвигает кнопку из-под курсора.
   const showHint = (shown) => hint.classList.toggle("shown", shown);
@@ -3038,6 +3053,7 @@ function cardBody(entry) {
   const save = () => {
     if (inflight) return inflight;
     const next = field.getValue();
+    if (entry.canEdit === false || entry.mine === false && !entry.canEdit) return Promise.resolve();
     if (next === body) return Promise.resolve();
     // Обещание записывается раньше, чем поле выключится: выключение снимает
     // фокус, blur зовёт save() снова — и получает то же обещание.
@@ -3046,7 +3062,7 @@ function cardBody(entry) {
       try {
         const result = await request(`/api/captures/${entry.id}/notes`, {
           method: "POST",
-          body: JSON.stringify({ body: next }),
+          body: JSON.stringify({ body: next, expectedRevision: entry.collaboration?.revision }),
         });
         body = result.entry.note?.body || "";
         entry.note = result.entry.note;
@@ -3055,9 +3071,10 @@ function cardBody(entry) {
         await load();
       } catch (error) {
         toast(error.message);
+        return false;
       } finally {
         inflight = null;
-        field.setDisabled(false);
+        field.setDisabled(entry.canEdit === false || entry.mine === false && !entry.canEdit);
       }
     });
     return inflight;
@@ -3414,7 +3431,7 @@ function cardDoneState(entry, shownOccurrence = cardOccurrence) {
   return { c, schedule, projections, closed, occurrence, occurrenceDone, done: closed || occurrenceDone, taken, assignment, own: entry.mine !== false, completedAt, meeting: c.primaryType === "meeting_event", today };
 }
 // Кружок есть у своего дела и встречи и у дела, взятого у человека из круга.
-const cardHasTick = (entry, state) => state.projections.length > 0 && !isReportedWork(entry) && (state.own || state.taken);
+const cardHasTick = (entry, state) => state.projections.length > 0 && !isReportedWork(entry) && (entry.canComplete ?? (state.own || state.taken));
 function cardDoneWords(state) {
   if (state.occurrenceDone) return state.occurrence === state.today ? t("Готово на сегодня") : t("Готово на {value1}", { value1: scheduleLabel({ state: "ok", date: state.occurrence, time: null }) });
   const verb = state.meeting ? t("Прошла") : t("Сделано");
@@ -3424,6 +3441,11 @@ function cardDoneWords(state) {
   return t("{verb} {when} в {value3}", { verb: verb, when: when, value3: notifyClock(state.completedAt) });
 }
 async function setCardDone(entry, state, completing) {
+  if (entry.collaboration?.enabled && entry.canEdit) {
+    const meta = await request(`/api/captures/${entry.id}/collaboration`);
+    await request(`/api/captures/${entry.id}/commands`, { method: "POST", body: JSON.stringify({ operationId: crypto.randomUUID(), expectedRevision: meta.structureRevision, command: { type: "completion", completed: completing, ...(state.occurrence ? { occurrence: state.occurrence } : {}) } }) });
+    return;
+  }
   if (state.occurrence) {
     // Повтор: отметка — про показанный день, серия живёт дальше.
     const projectionId = state.projections.find((item) => item.type === "task")?.id || completableProjections(entry)[0]?.id;
@@ -3604,7 +3626,7 @@ function scrollCardTo(element, { smooth = false } = {}) {
 // одних данных. Дуга вокруг кружка и подпись под названием считают только
 // конечные шаги: ветка с детьми — не единица, итоги и заметки — не шаги.
 function cardSubtasks(entry, { halo, caption }) {
-  const own = entry.mine !== false;
+  const own = entry.canEdit ?? entry.mine !== false;
   const section = node("section", undefined, "card-subtasks");
   section.id = "card-subtasks";
   section.hidden = true;
@@ -3849,8 +3871,10 @@ function cardSubtasks(entry, { halo, caption }) {
     if (!title) return;
     submit.disabled = true;
     try {
-      const result = await request(`/api/captures/${encodeURIComponent(entry.id)}/subtasks${currentDayDate ? `?day=${encodeURIComponent(currentDayDate)}` : ""}`, { method: "POST", body: JSON.stringify({ title }) });
-      adopt(result.tree);
+      const result = entry.collaboration?.enabled
+        ? await request(`/api/captures/${entry.id}/commands`, { method: "POST", body: JSON.stringify({ operationId: crypto.randomUUID(), expectedRevision: (await request(`/api/captures/${entry.id}/collaboration`)).structureRevision, command: { type: "subtask.create", title } }) })
+        : await request(`/api/captures/${encodeURIComponent(entry.id)}/subtasks${currentDayDate ? `?day=${encodeURIComponent(currentDayDate)}` : ""}`, { method: "POST", body: JSON.stringify({ title }) });
+      if (result.tree) adopt(result.tree); else await refresh();
       input.value = "";
       paint();
       input.focus();
@@ -3863,6 +3887,19 @@ function cardSubtasks(entry, { halo, caption }) {
   return section;
 }
 function showReview(entry, review, undoGroupId, provenance) {
+  if (entry.collaboration?.enabled && entry.canEdit && !currentUser) {
+    const token = ++cardNavToken;
+    request('/api/auth/state').then(state => { if (token !== cardNavToken) return; currentUser = state.user; if (currentUser) showReview(entry, review, undoGroupId, provenance); }).catch(error => toast(error.message));
+    return;
+  }
+  if (entry.collaboration === undefined) {
+    const token = ++cardNavToken;
+    request(`/api/captures/${entry.id}`).then(({ entry: full }) => {
+      if (token === cardNavToken) showReview(full, review, undoGroupId, provenance);
+    }).catch(error => toast(error.message));
+    return;
+  }
+  if (collaborativeCard && (collaborativeCard.captureId !== entry.id || collaborativeCard.generation !== entry.collaboration?.generation || entry.canEdit === false)) disposeCollaborativeCard();
   const area = $("#review"),
     dialog = $("#review-dialog"),
     c = entry.interpretation.classification;
@@ -3890,6 +3927,12 @@ function showReview(entry, review, undoGroupId, provenance) {
   // остаётся у корня и ждёт возвращения.
   if (!cardStack.length) adoptCardList(entry, !dialog.open || fromPage);
   cardEntryId = entry.id;
+  if (entry.collaboration?.enabled && entry.canEdit && !collaborativeCard) {
+    collaborativeCard = createCollaborativeEditor({ captureId: entry.id, userId: currentUser.id, generation: entry.collaboration.generation,
+      onText: text => { if (activeCardEntry?.id !== entry.id) return; activeCardEntry.interpretation.classification.summary = text.title; activeCardEntry.note = { ...activeCardEntry.note, body: text.body }; activeCardEntry.collaboration.revision = text.revision; },
+    });
+  }
+  activeCardEntry = entry;
   const doneState = cardDoneState(entry);
   const hasTick = cardHasTick(entry, doneState);
   // Заголовок правится на месте: клик превращает его в поле, Enter сохраняет
@@ -3900,6 +3943,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   // Правки свойств, ещё не ушедшие на сервер (форма собирается ниже).
   let pendingProps = () => null;
   const startTitleEdit = () => {
+    if (entry.canEdit === false || entry.mine === false && !entry.canEdit || collaborativeCard?.captureId === entry.id) return;
     const editor = document.createElement("textarea");
     editor.className = "card-title-edit";
     editor.value = c.summary;
@@ -3982,7 +4026,8 @@ function showReview(entry, review, undoGroupId, provenance) {
   caption.type = "button";
   caption.hidden = true;
   caption.setAttribute("aria-controls", "card-subtask-map");
-  titleCopy.append(cardTitle, caption);
+  titleCopy.append(collaborativeCard?.captureId === entry.id ? collaborativeCard.titleElement : cardTitle, caption);
+  if (entry.canPublish) { const shareButton = node("button", t("Поделиться"), "secondary todo-share-button"); shareButton.type = "button"; shareButton.addEventListener("click", () => openTodoSharing(entry)); titleCopy.append(shareButton); }
   head.append(titleCopy);
   area.append(head);
   if (hasTick && doneState.done) area.append(cardDoneBlock(entry, doneState));
@@ -4392,11 +4437,12 @@ function showReview(entry, review, undoGroupId, provenance) {
     ask.append(only, all, cancel);
     remove.replaceWith(ask);
   });
+  remove.hidden = entry.mine === false;
   footerRow.append(remove);
   // Чужая запись открыта только на чтение: правит её автор, а исполнитель
   // просит словами — в обсуждении, которое тут же ниже. Молча подсовывать
   // поля, которые сервер всё равно не примет, — обман.
-  if (entry.mine === false) {
+  if (entry.canEdit === false || entry.mine === false && !entry.canEdit) {
     for (const control of props.querySelectorAll("input, select, textarea, button")) control.disabled = true;
     remove.hidden = true;
     const author = entry.author?.name || entry.assignment?.assigner?.name;
@@ -5984,6 +6030,18 @@ function reloadJournalSoon() {
   clearTimeout(journalReloadTimer);
   journalReloadTimer = setTimeout(() => {
     load().catch(() => {});
+    if (cardEntryId && $("#review-dialog").open) {
+      const id = cardEntryId;
+      request(`/api/captures/${id}`).then(({ entry }) => {
+        if (cardEntryId !== id || !$("#review-dialog").open) return;
+        if (collaborativeCard?.terminal) return;
+        if (entry.canEdit !== activeCardEntry?.canEdit ||
+          (!entry.canEdit && entry.collaboration?.enabled && entry.collaboration.revision !== activeCardEntry?.collaboration?.revision) ||
+          entry.collaboration?.structureRevision !== activeCardEntry?.collaboration?.structureRevision) {
+          showCardInner(entry, reviewFromEntry(entry));
+        }
+      }).catch(error => { if (cardEntryId === id && !collaborativeCard) cardSnack(error.message); });
+    }
   }, 120);
 }
 function listenToJournal() {
@@ -6368,7 +6426,7 @@ $("#password-submit")?.addEventListener("click", async (event) => {
 
 // ── администрирование ────────────────────────────────────────────────────────
 const statusNames = {
-  get pending() { return t("ждёт подтверждения"); },
+  get pending() { return t("доступ закрыт"); },
   get active() { return t("работает"); },
   get blocked() { return t("заблокирован"); },
   get rejected() { return t("отклонён"); },
@@ -6477,12 +6535,6 @@ function userRow(user, { lastAdmin = false, days = null } = {}) {
   if (user.activity) row.append(activityLine(user.activity, days));
 
   const actions = node("div", null, "admin-user-actions");
-  if (user.status === "pending") {
-    actions.append(adminButton(t("Одобрить"), "primary", () => adminAction(user.id, "approve")));
-    actions.append(adminButton(t("Отклонить"), "secondary", () => adminAction(user.id, "reject")));
-  }
-  if (user.status === "rejected")
-    actions.append(adminButton(t("Всё-таки пустить"), "secondary", () => adminAction(user.id, "approve")));
   // Последнего администратора не закрыть и не разжаловать: иначе приложение
   // осталось бы без хозяина. Сервер это тоже проверяет — здесь просто не
   // предлагаем того, что всё равно не выйдет.
@@ -6547,16 +6599,11 @@ async function loadAdmin() {
     box.append(node("p", error.message, "empty"));
     return;
   }
-  const pendingBox = $("#admin-pending-list");
-  const pending = payload.users.filter((user) => user.status === "pending");
-  clear(pendingBox);
-  $("#admin-pending").hidden = !pending.length;
   const admins = payload.users.filter((user) => user.role === "admin" && user.status === "active");
   const soleAdmin = admins.length === 1 ? admins[0].id : null;
   const days = payload.activityDays || null;
-  for (const user of pending) pendingBox.append(userRow(user, { days }));
   clear(box);
-  for (const user of payload.users.filter((user) => user.status !== "pending"))
+  for (const user of payload.users)
     box.append(userRow(user, { lastAdmin: user.id === soleAdmin, days }));
 
   const events = $("#admin-events");
@@ -8226,6 +8273,12 @@ function kcCircleInfo(item) {
     const deeds = member.openDeeds || 0;
     members.append(kcButton("kc-row kc-person", [avatarEl(member), kcEl("span", "kc-row-text", kcEl("span", "kc-row-title", member.id === currentUser?.id ? t("{name} · вы", { name: member.name }) : member.name), kcEl("span", "kc-row-sub", deeds ? `${deeds} ${pluralRu(deeds, t("открытое дело"), t("открытых дела"), t("открытых дел"))}` : t("открытых дел нет"))), member.role === "owner" ? kcEl("span", "kc-row-side", t("хозяин")) : null], () => kcInfoOpen("person", member.id)));
   }
+  if (circle.role === "owner") for (const member of circle.removedMembers || []) {
+    members.append(kcRow("personAdd", t("{name} · доступ закрыт", { name: member.name }), null, async () => {
+      try { await request(`/api/circles/${circle.id}/members/${member.id}/restore`, { method: "POST", body: "{}" }); await loadCircles(); }
+      catch (error) { toast(error.message); }
+    }, { side: kcEl("span", null, t("Восстановить")) }));
+  }
   const leave = kcEl("div", "kc-sect", circle.role === "owner"
     ? kcRow("exit", t("Распустить круг"), null, () => kcDissolve(circle), { danger: true })
     : kcRow("exit", t("Покинуть круг"), null, () => kcLeaveCircle(circle), { danger: true }));
@@ -8387,6 +8440,10 @@ function kcPersonEl(item, member) {
   const more = (member.openDeeds || 0) - deeds.length;
   const acts = me ? null : kcEl("div", "kc-person-acts",
     kcButton("kc-btn sm tone", t("@ Позвать в разговоре"), () => { kcInfoClose(); kcInsertCall(member.name); }));
+  if (circle.role === "owner" && !me && member.role !== "owner") acts.append(kcButton("kc-btn sm", t("Удалить из круга"), async () => {
+    try { await request(`/api/circles/${circle.id}/members/${member.id}`, { method: "DELETE" }); kc.info = "main"; await loadCircles(); }
+    catch (error) { toast(error.message); }
+  }));
   const avatar = avatarEl(member);
   avatar.classList.add("huge");
   return kcEl("div", `kc-sub ${kcTone(circle.color)}`,
