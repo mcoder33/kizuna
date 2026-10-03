@@ -30,7 +30,7 @@ import { describeRepeat } from './repeat.js';
 import { dateInZone, shiftDate } from './reports.js';
 import { reviewDay } from './day-review.js';
 import { createTelegramDayDelivery } from './telegram-day-delivery.js';
-import { createTelegramDaySummaryRouter } from './telegram-day-summary.js';
+import { createTelegramDaySummaryRouter, DAY_SUMMARY_COMMANDS } from './telegram-day-summary.js';
 
 export const TELEGRAM_API = 'https://api.telegram.org';
 export const LINK_TTL_MS = 15 * 60 * 1000;
@@ -314,6 +314,8 @@ export function createTelegramService({
   onSettingsChanged = () => {},
   summaryBatchSize = 40,
   canAccessDaySummary = () => false,
+  onCaptureSaved = () => {},
+  additionalCommands = () => [],
   attachmentLimit = 10 * 1024 * 1024,
   requestTimeoutMs = 20000,
   maxResponseBytes = 2 * 1024 * 1024,
@@ -414,6 +416,9 @@ export function createTelegramService({
   // @BotFather, не трогаем: заполняем, только если его нет.
   async function setupBot() {
     await call('setMyCommands', { commands: [{ command: 'help', description: 'Как записывать в Кизуну' }] }).catch(() => {});
+    for (const link of db.prepare("SELECT l.* FROM telegram_links l JOIN users u ON u.id=l.user_id WHERE u.status='active'").iterate()) {
+      await setupPrivateCommands(link);
+    }
     const current = await call('getMyDescription', {}).catch(() => null);
     if (current && !current.description) await call('setMyDescription', { description: 'Пишите или пересылайте сюда сообщения — Кизуна запишет их в ваш журнал и разберёт: дела, встречи, заметки, идеи.' }).catch(() => {});
     const short = await call('getMyShortDescription', {}).catch(() => null);
@@ -436,6 +441,16 @@ export function createTelegramService({
     const link=linkByTelegram(from.id);return link && String(link.chat_id)===String(chat.id) && currentBinding(link)?link:null;
   }
   const menuRouter=createTelegramDaySummaryRouter({db,canAccess:canAccessDaySummary,now,timeZone,review:dayReview,finalReview:finalDayReview,authorize:authorizeMessage,currentBinding,send:(chatId,text,extra)=>say(chatId,text,null,extra),acknowledge:id=>call('answerCallbackQuery',{callback_query_id:id}),onSettingsChanged});
+  async function setupPrivateCommands(link) {
+    if (!link || !currentBinding(link) || String(link.chat_id) !== String(link.telegram_id)) return;
+    const scope = { type: 'chat', chat_id: link.chat_id };
+    const commands = menuRouter.canAccessMenu(link) ? additionalCommands() : [];
+    if (!commands.length) {
+      await call('deleteMyCommands', { scope }).catch(() => {});
+      return;
+    }
+    await call('setMyCommands', { scope, commands: [...DAY_SUMMARY_COMMANDS, { command: 'help', description: 'Как записывать в Кизуну' }, ...commands] }).catch(() => {});
+  }
   const dayDelivery=createTelegramDayDelivery({db,canAccess:canAccessDaySummary,now,timeZone,currentBinding,enabled:()=>Boolean(token()),prepareReview:dayReview,currentReview:menuRouter.currentReview,send:(chatId,text,extra)=>say(chatId,text,null,extra),audit:note,batchSize:summaryBatchSize});
   async function createLink(userId, appUrl = null) {
     if (!token()) return { error: 'telegram_off' };
@@ -473,7 +488,9 @@ export function createTelegramService({
     })();
     note({ event: 'telegram_linked', result: 'succeeded' });
     try { onLink(row.user_id); } catch {}
-    await quietly(say(chatId, TELEGRAM_TEXTS.linked,null,{reply_markup:menuRouter.replyKeyboard({user_id:row.user_id})}));
+    const linked = linkByTelegram(message.from.id);
+    await setupPrivateCommands(linked);
+    if (linked && currentBinding(linked)) await quietly(say(chatId, TELEGRAM_TEXTS.linked,null,{reply_markup:menuRouter.replyKeyboard(linked)}));
   }
 
   // ── приём ──
@@ -569,6 +586,8 @@ export function createTelegramService({
     sending.add(queued.jobId);
     try {
       db.transaction(() => { messages.forEach((message, index) => insert.run(chatId, message.message_id, link.user_id, queued.captureId, index === 0 ? queued.jobId : null, index === 0 && extra.length ? extra.join('\n') : null, at())); })();
+      try { onCaptureSaved({ captureId: queued.captureId, userId: link.user_id, messages, link }); }
+      catch { note({ event: 'telegram_source_metadata_failed' }); }
       for (const file of files) {
         try { if (!attach({ captureId: queued.captureId, filename: file.filename, contentType: file.contentType, bytes: file.bytes })) problems.push(`«${file.filename}» не приложен.`); }
         catch { problems.push(`«${file.filename}» не приложен.`); }
