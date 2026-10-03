@@ -48,6 +48,7 @@ bash desktop/macos/build.sh --universal
 desktop/macos/dist/Kizuna.app/Contents/MacOS/Kizuna --self-test
 python3 desktop/macos/Tests/test-updates.py
 bash desktop/macos/Tests/test-reminders.sh
+bash desktop/macos/Tests/test-capture.sh
 bash desktop/macos/Tests/test-notifications.sh
 # Supervised; macOS may ask permission for a separate local test app:
 python3 desktop/macos/test-notifications-integration.py
@@ -76,6 +77,7 @@ Close the demo window or press **Ctrl+C** in the Terminal to stop it and remove 
 ## Behavior and limits
 
 - Press **Command-Shift-Space** to open a small new-entry window from any app while Kizuna is running. Closing the main window leaves the app available from the menu bar.
+- The quick-capture field follows the web field’s theme, colors, typography and translated placeholder. Enter inserts a new line; Command+Enter or Control+Enter saves. Escape closes the panel and retains the draft. The most recent appearance is kept for offline launches.
 - The menu bar draws the Kizuna torii mark as a transparent monochrome template, so macOS adapts it to light and dark appearances.
 - Notifications require explicit opt-in from the app menu or the notification controls in Settings. The same controls show native permission status, disable delivery on this Mac, and send a local test banner. A macOS denial explains where to restore permission. While the app runs (including with its window closed), it checks about once a minute and immediately after wake, activation, and login. It handles up to the 60 most recent items, once per successfully delivered notification ID; failed OS submissions are retried. Quiet hours and per-kind account preferences still apply. Historical items at first login are not replayed. Delivery while the app is quit or the Mac is asleep is not provided.
 - The current day refreshes across midnight and immediately after wake/activation without reloading the web page or discarding drafts.
