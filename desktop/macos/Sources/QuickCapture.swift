@@ -14,22 +14,27 @@ private final class CapturePanel: NSPanel {
 private final class CaptureEditor: NSTextView {
     var onSubmit: (() -> Void)?
     var onDismiss: (() -> Void)?
+    var onFocus: ((Bool) -> Void)?
+    var placeholder = ""
+    var placeholderColor = NSColor.placeholderTextColor
+    override func becomeFirstResponder() -> Bool { let result = super.becomeFirstResponder(); if result { onFocus?(true) }; return result }
+    override func resignFirstResponder() -> Bool { let result = super.resignFirstResponder(); if result { onFocus?(false) }; return result }
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         if string.isEmpty && !hasMarkedText() {
-            (L("Записать дело…") as NSString).draw(at: NSPoint(x: textContainerInset.width + (textContainer?.lineFragmentPadding ?? 0), y: textContainerInset.height),
-                withAttributes: [.font: font ?? NSFont.systemFont(ofSize: 22), .foregroundColor: NSColor.placeholderTextColor])
+            ((placeholder.isEmpty ? L("Какая мысль зацепила?") : placeholder) as NSString).draw(at: NSPoint(x: textContainerInset.width + (textContainer?.lineFragmentPadding ?? 0), y: textContainerInset.height),
+                withAttributes: [.font: font ?? NSFont.systemFont(ofSize: 17), .foregroundColor: placeholderColor])
         }
     }
     override func keyDown(with event: NSEvent) {
         if !hasMarkedText() {
             if event.keyCode == 53 { onDismiss?(); return }
-            if [36, 76].contains(event.keyCode), !event.modifierFlags.contains(.shift) { onSubmit?(); return }
+            if QuickCapturePolicy.shouldSubmit(event.keyCode, modifiers: event.modifierFlags, composing: false) { onSubmit?(); return }
         }
         super.keyDown(with: event)
     }
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if !hasMarkedText(), [36, 76].contains(event.keyCode), event.modifierFlags.contains(.command) {
+        if QuickCapturePolicy.shouldSubmit(event.keyCode, modifiers: event.modifierFlags, composing: hasMarkedText()) {
             onSubmit?(); return true
         }
         return super.performKeyEquivalent(with: event)
@@ -37,6 +42,9 @@ private final class CaptureEditor: NSTextView {
 }
 
 enum QuickCapturePolicy {
+    static func shouldSubmit(_ key: UInt16, modifiers: NSEvent.ModifierFlags, composing: Bool) -> Bool {
+        !composing && [36, 76].contains(key) && !modifiers.intersection([.command, .control]).isEmpty
+    }
     static func validText(_ text: String) -> Bool { !text.isEmpty && text.utf16.count <= 10_000 }
     static func confirmed(_ data: [String: Any], origin: URL) -> Bool {
         guard let captureID = data["captureId"] as? String, UUID(uuidString: captureID) != nil,
@@ -58,7 +66,12 @@ enum QuickCapturePolicy {
         check(!confirmed(hostile, origin: DesktopOrigin.production))
         hostile = envelope; hostile["jobId"] = "wrong"
         check(!confirmed(hostile, origin: DesktopOrigin.production))
-        print("PASS: quick capture policy (6 checks)")
+        check(!shouldSubmit(36, modifiers: [], composing: false))
+        check(!shouldSubmit(36, modifiers: .shift, composing: false))
+        check(shouldSubmit(36, modifiers: .command, composing: false))
+        check(shouldSubmit(76, modifiers: .control, composing: false))
+        check(!shouldSubmit(36, modifiers: .command, composing: true))
+        print("PASS: quick capture policy (11 checks)")
     }
 }
 
@@ -68,9 +81,12 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
     private let origin: URL
     private let panel: CapturePanel
     private let editor = CaptureEditor()
-    private let message = NSTextField(wrappingLabelWithString: L("Enter — сохранить · Esc — закрыть"))
-    private var messageText: () -> String = { L("Enter — сохранить · Esc — закрыть") }
-    private let submitButton = NSButton(title: "", target: nil, action: nil)
+    private let message = NSTextField(wrappingLabelWithString: L("⌘+Enter — отправить, Enter — новая строка"))
+    private var messageText: () -> String = { L("⌘+Enter — отправить, Enter — новая строка") }
+    private let submitButton = CaptureSubmitButton(title: "", target: nil, action: nil)
+    private let surface = CaptureSurface()
+    private var palette = CaptureAppearance.fallback(dark: true)
+    private var paddingConstraints: [NSLayoutConstraint] = []
     private let scroll = NSScrollView()
     private var editorHeight: NSLayoutConstraint!
     private var messageHeight: NSLayoutConstraint!
@@ -99,7 +115,7 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
 
     init(webView: WKWebView, origin: URL) {
         self.webView = webView; self.origin = origin
-        panel = CapturePanel(contentRect: NSRect(x: 0, y: 0, width: 600, height: 100),
+        panel = CapturePanel(contentRect: NSRect(x: 0, y: 0, width: 800, height: 165),
                              styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         super.init()
         panel.title = L("Быстрая запись — Кизуна"); panel.titleVisibility = .hidden
@@ -108,46 +124,66 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
         panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         panel.delegate = self; panel.isMovableByWindowBackground = true
-        let base = NSVisualEffectView(); base.material = .popover; base.state = .active; base.blendingMode = .behindWindow
-        base.wantsLayer = true; base.layer?.cornerRadius = 20; base.layer?.masksToBounds = true
+        let base = surface
         panel.contentView = base
-        let mark = NSImageView()
-        mark.image = KizunaIcon.menuBarTemplate(size: 23)
-        mark.contentTintColor = .secondaryLabelColor; mark.imageScaling = .scaleProportionallyUpOrDown
-        mark.setAccessibilityElement(false)
-        editor.isRichText = false; editor.font = .systemFont(ofSize: 22); editor.backgroundColor = .clear
+        editor.isRichText = false; editor.font = .systemFont(ofSize: 17); editor.backgroundColor = .clear
         editor.drawsBackground = false; editor.textColor = .labelColor; editor.insertionPointColor = .labelColor
-        editor.textContainerInset = NSSize(width: 0, height: 8)
+        editor.textContainerInset = NSSize(width: 0, height: 5)
         editor.isVerticallyResizable = true; editor.isHorizontallyResizable = false
         editor.autoresizingMask = [.width]; editor.textContainer?.widthTracksTextView = true
-        editor.textContainer?.containerSize = NSSize(width: 464, height: CGFloat.greatestFiniteMagnitude)
+        editor.textContainer?.containerSize = NSSize(width: 752, height: CGFloat.greatestFiniteMagnitude)
         editor.allowsUndo = true; editor.delegate = self; editor.setAccessibilityLabel(L("Новая запись"))
         editor.onSubmit = { [weak self] in self?.submit() }
         editor.onDismiss = { [weak self] in self?.hide(restoreFocus: true) }
+        editor.onFocus = { [weak self] in self?.surface.focused = $0 }
         scroll.drawsBackground = false; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
         scroll.scrollerStyle = .overlay; scroll.borderType = .noBorder
-        scroll.documentView = editor; editor.frame = NSRect(x: 0, y: 0, width: 464, height: 44)
-        message.font = .systemFont(ofSize: 11); message.textColor = .tertiaryLabelColor
+        scroll.documentView = editor; editor.frame = NSRect(x: 0, y: 0, width: 752, height: 44)
+        message.font = .systemFont(ofSize: 12)
         submitButton.isBordered = false; submitButton.target = self; submitButton.action = #selector(submitAction)
-        submitButton.image = NSImage(systemSymbolName: "arrow.up.circle.fill", accessibilityDescription: L("Сохранить запись"))
-        submitButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 27, weight: .regular)
-        submitButton.contentTintColor = .secondaryLabelColor; submitButton.toolTip = L("Сохранить (Enter)")
+        submitButton.toolTip = L("Сохранить запись — {CAPTURE_MOD}+Enter", ["CAPTURE_MOD": "⌘"])
         submitButton.setAccessibilityLabel(L("Сохранить запись"))
-        submitButton.isEnabled = false; submitButton.isHidden = true
-        for view in [mark, scroll, message, submitButton] { view.translatesAutoresizingMaskIntoConstraints = false; base.addSubview(view) }
-        editorHeight = scroll.heightAnchor.constraint(equalToConstant: 44)
+        submitButton.isEnabled = false
+        for view in [scroll, message, submitButton] { view.translatesAutoresizingMaskIntoConstraints = false; base.addSubview(view) }
+        editorHeight = scroll.heightAnchor.constraint(equalToConstant: 58)
         messageHeight = message.heightAnchor.constraint(equalToConstant: 14)
-        NSLayoutConstraint.activate([
-            mark.leadingAnchor.constraint(equalTo: base.leadingAnchor, constant: 24), mark.topAnchor.constraint(equalTo: base.topAnchor, constant: 26),
-            mark.widthAnchor.constraint(equalToConstant: 23), mark.heightAnchor.constraint(equalToConstant: 23),
-            scroll.leadingAnchor.constraint(equalTo: mark.trailingAnchor, constant: 13), scroll.topAnchor.constraint(equalTo: base.topAnchor, constant: 16),
-            scroll.trailingAnchor.constraint(equalTo: submitButton.leadingAnchor, constant: -12), editorHeight,
-            submitButton.trailingAnchor.constraint(equalTo: base.trailingAnchor, constant: -20), submitButton.topAnchor.constraint(equalTo: base.topAnchor, constant: 22),
-            submitButton.widthAnchor.constraint(equalToConstant: 32), submitButton.heightAnchor.constraint(equalToConstant: 32),
-            message.leadingAnchor.constraint(equalTo: scroll.leadingAnchor, constant: 5), message.trailingAnchor.constraint(equalTo: base.trailingAnchor, constant: -24),
-            message.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 8), message.bottomAnchor.constraint(equalTo: base.bottomAnchor, constant: -14), messageHeight
+        paddingConstraints = [
+            scroll.leadingAnchor.constraint(equalTo: base.leadingAnchor, constant: 24),
+            scroll.topAnchor.constraint(equalTo: base.topAnchor, constant: 24),
+            scroll.trailingAnchor.constraint(equalTo: base.trailingAnchor, constant: -24),
+            submitButton.trailingAnchor.constraint(equalTo: base.trailingAnchor, constant: -24),
+            submitButton.bottomAnchor.constraint(equalTo: base.bottomAnchor, constant: -24)
+        ]
+        NSLayoutConstraint.activate(paddingConstraints + [
+            editorHeight, messageHeight,
+            submitButton.widthAnchor.constraint(equalToConstant: 38), submitButton.heightAnchor.constraint(equalToConstant: 38),
+            message.leadingAnchor.constraint(equalTo: scroll.leadingAnchor, constant: 5),
+            message.trailingAnchor.constraint(lessThanOrEqualTo: submitButton.leadingAnchor, constant: -18),
+            message.centerYAnchor.constraint(equalTo: submitButton.centerYAnchor)
         ])
+        if let saved = UserDefaults.standard.dictionary(forKey: "KizunaCaptureAppearance"), let value = CaptureAppearance.read(saved) {
+            applyAppearance(value)
+        } else { applyAppearance(.fallback(dark: NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)) }
         message.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+    }
+
+    func syncAppearance(_ snapshot: [String: Any]) {
+        guard let value = CaptureAppearance.read(snapshot) else { return }
+        UserDefaults.standard.set(snapshot, forKey: "KizunaCaptureAppearance")
+        applyAppearance(value)
+    }
+    private func applyAppearance(_ value: CaptureAppearance) {
+        palette = value; surface.palette = value; submitButton.palette = value
+        panel.appearance = NSAppearance(named: value.dark ? .darkAqua : .aqua)
+        editor.font = value.editorFont; editor.textColor = value.ink; editor.insertionPointColor = value.caret
+        editor.placeholder = value.placeholder; editor.placeholderColor = value.placeholderColor
+        let paragraph = NSMutableParagraphStyle(); paragraph.minimumLineHeight = value.lineHeight
+        editor.defaultParagraphStyle = paragraph
+        editor.typingAttributes[.paragraphStyle] = paragraph
+        if let storage = editor.textStorage { storage.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: storage.length)) }
+        message.textColor = value.muted
+        for (index, constraint) in paddingConstraints.enumerated() { constraint.constant = index < 2 ? value.padding : -value.padding }
+        if editorHeight != nil { updateLayout() }
     }
 
     private func setMessage(_ value: @autoclosure @escaping () -> String) {
@@ -157,7 +193,7 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
     func refreshLocale() {
         panel.title = L("Быстрая запись — Кизуна")
         editor.setAccessibilityLabel(L("Новая запись"))
-        submitButton.toolTip = L("Сохранить (Enter)")
+        submitButton.toolTip = L("Сохранить запись — {CAPTURE_MOD}+Enter", ["CAPTURE_MOD": "⌘"])
         submitButton.setAccessibilityLabel(L("Сохранить запись"))
         message.stringValue = messageText()
         editor.needsDisplay = true
@@ -169,8 +205,8 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
         previousApp = NSWorkspace.shared.frontmostApplication
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
         if let frame = screen?.visibleFrame {
-            let width = min(600, frame.width - 40)
-            panel.setFrame(NSRect(x: frame.midX - width / 2, y: frame.minY + frame.height * 0.68 - 100, width: width, height: 100), display: true)
+            let width = min(800, frame.width - 40)
+            panel.setFrame(NSRect(x: frame.midX - width / 2, y: frame.minY + frame.height * 0.68 - 165, width: width, height: 165), display: true)
         }
         updateLayout()
         panel.makeKeyAndOrderFront(nil); panel.makeFirstResponder(editor)
@@ -179,7 +215,7 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
     func resumeAfterLogin() {
         guard awaitingLogin else { return }
         awaitingLogin = false
-        setMessage(L("Вход выполнен. Нажмите Enter, чтобы сохранить черновик."))
+        setMessage(L("Вход выполнен.") + " " + L("Сохранить запись — {CAPTURE_MOD}+Enter", ["CAPTURE_MOD": "⌘"]))
         show()
     }
     private func hide(restoreFocus: Bool) {
@@ -195,32 +231,32 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
         if raw.isEmpty && !unconfirmed { attempt = nil }
         submitButton.isEnabled = !busy && QuickCapturePolicy.validText(raw)
         if !QuickCapturePolicy.validText(raw) && !raw.isEmpty { setMessage(L("В записи может быть не больше 10 000 символов.")) }
-        else if !busy && !unconfirmed { setMessage(L("Enter — сохранить · Esc — закрыть")) }
+        else if !busy && !unconfirmed { setMessage(L("⌘+Enter — отправить, Enter — новая строка")) }
         updateLayout()
     }
     private func updateLayout() {
         guard let container = editor.textContainer, let manager = editor.layoutManager else { return }
         panel.contentView?.layoutSubtreeIfNeeded()
         manager.ensureLayout(for: container)
-        // Include the extra line fragment, so Shift+Enter grows immediately.
+        // Include the extra line fragment, so Enter grows immediately.
         let textHeight = max(manager.usedRect(for: container).height, manager.extraLineFragmentRect.maxY)
-        let desiredEditor = min(208, max(44, ceil(textHeight + editor.textContainerInset.height * 2)))
-        let messageWidth = max(160, panel.frame.width - 89)
+        let desiredEditor = min((panel.screen?.visibleFrame.height ?? 700) * 0.4, max(ceil(palette.fontSize * 3.4), ceil(textHeight + editor.textContainerInset.height * 2)))
+        let messageWidth = max(160, panel.frame.width - palette.padding * 2 - 61)
         let labelRect = (message.stringValue as NSString).boundingRect(with: NSSize(width: messageWidth, height: 100),
-            options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: message.font ?? NSFont.systemFont(ofSize: 11)])
+            options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: message.font ?? NSFont.systemFont(ofSize: 12)])
         let desiredMessage = max(14, ceil(labelRect.height))
         editorHeight.constant = desiredEditor; messageHeight.constant = desiredMessage
-        let height = 16 + desiredEditor + 8 + desiredMessage + 14
+        let height = palette.padding * 2 + desiredEditor + 21 + max(38, desiredMessage)
         var frame = panel.frame; frame.origin.y += frame.height - height; frame.size.height = height
         panel.setFrame(frame, display: true)
         panel.contentView?.layoutSubtreeIfNeeded()
         editor.needsDisplay = true
-        submitButton.isHidden = editor.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     private func setBusy(_ value: Bool) {
         busy = value; editor.isEditable = !value && !unconfirmed
         submitButton.isEnabled = !value && QuickCapturePolicy.validText(editor.string.trimmingCharacters(in: .whitespacesAndNewlines))
-        submitButton.contentTintColor = value ? .tertiaryLabelColor : .secondaryLabelColor
+        submitButton.alphaValue = value ? 0.65 : 1
+        submitButton.needsDisplay = true
         updateLayout()
     }
     private enum CaptureError: Error { case login, changedAccount, message(String) }
@@ -302,7 +338,7 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
                 }
                 self.editor.string = ""; self.editor.undoManager?.removeAllActions(); self.attempt = nil
                 self.unconfirmed = false
-                self.setMessage(L("Enter — сохранить · Esc — закрыть"))
+                self.setMessage(L("⌘+Enter — отправить, Enter — новая строка"))
                 self.hide(restoreFocus: true)
             } catch CaptureError.login {
                 self.awaitingLogin = true; self.setMessage(L("Войдите в Кизуну. Черновик останется здесь."))
@@ -313,7 +349,7 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
                 self.setMessage(message)
             } catch {
                 if self.unconfirmed {
-                    self.setMessage(L("Нет подтверждения. Текст защищён от изменений: нажмите Enter для безопасного повтора."))
+                    self.setMessage(L("Сервер не подтвердил сохранение. Повторите отправку.") + " " + L("Сохранить запись — {CAPTURE_MOD}+Enter", ["CAPTURE_MOD": "⌘"]))
                 } else {
                     self.setMessage(L("Нет связи с сервером. Черновик сохранён — попробуйте ещё раз."))
                 }
