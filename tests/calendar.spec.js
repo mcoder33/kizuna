@@ -435,6 +435,10 @@ test("сетка календаря встаёт по высоте окна и �
   // Высота в пикселях округляется по-разному в сетке и в окне — допуск в пиксель.
   const off = (target) => async () => Math.abs((await height()) - target);
   const pageOverflow = () => page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
+  // WKWebView может обрезать слой дока по границе короткой страницы, хотя
+  // ссылки ещё доступны для клика. Весь док должен оставаться внутри страницы.
+  const dockOutsidePage = () => page.evaluate(() => Math.max(0,
+    document.querySelector('nav.dock').getBoundingClientRect().bottom - document.body.getBoundingClientRect().bottom));
   // Страница встаёт в окно целиком: сетка забрала всё место, но окно не
   // прокручивается и пустоты под календарём нет.
   await expect.poll(pageOverflow).toBeLessThanOrEqual(1);
@@ -453,14 +457,23 @@ test("сетка календаря встаёт по высоте окна и �
   await page.mouse.move(x, edge - 50, { steps: 5 });
   await page.mouse.up();
   await expect.poll(off(fitted - 50)).toBeLessThanOrEqual(1);
+  await expect.poll(dockOutsidePage).toBeLessThanOrEqual(1);
   await page.reload();
   await expect(scroll).toBeVisible();
   await expect.poll(off(fitted - 50)).toBeLessThanOrEqual(1);
+  await expect.poll(dockOutsidePage).toBeLessThanOrEqual(1);
+
+  // Увеличение окна с сохранённой короткой сеткой тоже не обрезает док.
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await expect.poll(off(fitted - 50)).toBeLessThanOrEqual(1);
+  await expect.poll(dockOutsidePage).toBeLessThanOrEqual(1);
+  await page.setViewportSize({ width: 1440, height: 900 });
 
   // Двойной клик по краю — снова по окну.
   const again = await scroll.boundingBox();
   await page.mouse.dblclick(again.x + again.width / 2, again.y + again.height - 1);
   await expect.poll(off(fitted)).toBeLessThanOrEqual(1);
+  await expect.poll(dockOutsidePage).toBeLessThanOrEqual(1);
   expect(await page.evaluate(() => window.pagentPreferenceStorage.getItem("kizuna-calendar-height"))).toBeNull();
 });
 
