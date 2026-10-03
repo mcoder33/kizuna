@@ -11,10 +11,12 @@ import { occurrencesOf } from './occurrences.js';
 import { migrateNotifications } from './notifications.js';
 import { migrateNotesTree } from './notes-schema.js';
 import { migrateAdministration } from './admin-schema.js';
+import { registerDaySummaryHistoryClock, migrateDaySummaryHistory, exportDaySummaryHistory, resetDaySummaryHistory, daySummaryHistoryRowCount } from './day-summary-history.js';
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
   const db = new Database(filename);
+  registerDaySummaryHistoryClock(db);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   migrate(db);
@@ -34,6 +36,7 @@ export function openDatabase(filename) {
   })();
   retirePublicCollaboration(db);
   repairMissingProjections(db);
+  migrateDaySummaryHistory(db);
   return db;
 }
 
@@ -1520,11 +1523,12 @@ const ownedRows = {
 const mineWhere = table => 'WHERE ' + ownedRows[table][0];
 function exportRowCount(db, userId) { return exportTables.reduce((total, table) => total + db.prepare(`SELECT COUNT(*) AS count FROM ${table} ${mineWhere(table)}`).get(userId).count, 0); }
 export function exportLedger(db, userId = null) {
-  const rowCount = exportRowCount(db, userId);
+  const rowCount = exportRowCount(db, userId) + daySummaryHistoryRowCount(db,userId);
   if (rowCount > EXPORT_ROW_LIMIT) return { limitExceeded:true, rowCount, rowLimit:EXPORT_ROW_LIMIT };
   const mine = (table, columns, order) => db.prepare(`SELECT ${columns} FROM ${table} ${mineWhere(table)} ORDER BY ${order}`).all(userId);
   return {
     schemaVersion:3,
+    daySummaryHistory:exportDaySummaryHistory(db,userId),
     exportedAt:now(),
     dataClassification:'local-personal-data',
     rowLimit:EXPORT_ROW_LIMIT,
@@ -1551,6 +1555,7 @@ export function resetLedger(db, userId = null) {
     try {
       // Порядок важен: сначала то, что ссылается, потом то, на что ссылаются.
       for (const table of ['telegram_messages','note_icons','note_order','note_links','note_places','note_bases','agent_memories','activity_events','reminder_sends','daily_brief_sources','daily_briefs','ledger_events','capture_job_events','capture_jobs','corrections','projections','comment_mentions','comment_reactions','comment_reads','comments','capture_people','assignments','capture_circles','interpretations','capture_attachments','capture_notes','usage_events','board_placements','board_columns','calendar_links','calendar_events','calendar_accounts','captures']) db.prepare(`DELETE FROM ${table} ${mineWhere(table)}`).run(userId);
+      resetDaySummaryHistory(db, userId);
     } finally { createLedgerEventGuards(db); }
   });
 }

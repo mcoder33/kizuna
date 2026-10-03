@@ -38,6 +38,10 @@ export function createFakeTelegram({ token = FAKE_BOT_TOKEN, username = 'kizuna_
     for (const wake of [...waiters]) wake();
     return update;
   }
+  function pushCallback(data,fields={}) {
+    const update={update_id:updateId++,callback_query:{id:`callback-${updateId}`,from:user,message:message({from:{id:424242,is_bot:true},chat:{id:user.id,type:'private'}}),data,...fields}};
+    pending.push(update);for(const wake of [...waiters])wake();return update;
+  }
   function addFile(bytes, name = 'file.bin') {
     const fileId = `file-${fileSeq++}`;
     files.set(fileId, { path: `files/${fileId}/${name}`, bytes: Buffer.from(bytes) });
@@ -72,6 +76,7 @@ export function createFakeTelegram({ token = FAKE_BOT_TOKEN, username = 'kizuna_
       case 'editMessageText':
         sent.push({ method: name, params });
         return ok({ message_id: params.message_id, chat: { id: params.chat_id, type: 'private' }, text: params.text });
+      case 'answerCallbackQuery': sent.push({method:name,params});return ok(true);
       case 'sendChatAction': return ok(true);
       case 'setMyCommands': bot.commands = params.commands || []; return ok(true);
       case 'getMyDescription': return ok({ description: bot.description });
@@ -120,5 +125,5 @@ export function createFakeTelegram({ token = FAKE_BOT_TOKEN, username = 'kizuna_
   }
   // Что бот сказал: отправленное и исправленное — по порядку.
   const said = () => sent.map(entry => ({ method: entry.method, text: entry.params.text, chatId: entry.params.chat_id, replyTo: entry.params.reply_parameters?.message_id ?? null, messageId: entry.result?.message_id ?? entry.params.message_id, markup: entry.params.reply_markup ?? null }));
-  return { token, username, user, bot, push, addFile, pending, sent, said, handle, fetch };
+  return { token, username, user, bot, push, pushCallback, addFile, pending, sent, said, handle, fetch };
 }

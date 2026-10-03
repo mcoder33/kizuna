@@ -14,7 +14,7 @@ import { createFakeTelegram } from './helpers/fake-telegram.js';
 // опрос крутится руками: pollOnce забирает сообщения, flush складывает пачки.
 // Локальный .env не должен подменять бота или адрес Кизуны: файл тестов идёт
 // своим процессом, и чистка окружения здесь больше никого не задевает.
-for (const name of ['PAGENT_TELEGRAM_BOT_TOKEN', 'PAGENT_TELEGRAM_API_BASE', 'PAGENT_PUBLIC_URL']) delete process.env[name];
+for (const name of ['PAGENT_TELEGRAM_BOT_TOKEN', 'PAGENT_TELEGRAM_API_BASE', 'PAGENT_PUBLIC_URL', 'PAGENT_TELEGRAM_DAY_SUMMARY_USER_IDS']) delete process.env[name];
 // «Сейчас» у тестов — в будущем: аренду задания разбора база сверяет с
 // настоящими часами, и прошедшее время просрочило бы её сразу.
 const NOW = new Date('2031-09-24T09:00:00Z'); // 13:00 в Самаре
@@ -103,10 +103,14 @@ test('a stranger gets directions, a group gets silence, and nothing lands in the
   assert.equal(count(ctx.db, 'captures'), 0);
   // Команда не становится записью: бот отвечает подсказкой.
   ctx.fake.push({ text: '/help' });
+  await deliver(ctx.app);
+  assert.match(ctx.fake.said().at(-1).text, /Пишите сюда или пересылайте сообщения/);
   ctx.fake.push({ text: '/settings' });
   await deliver(ctx.app);
   assert.equal(count(ctx.db, 'captures'), 0);
-  assert.match(ctx.fake.said().at(-1).text, /Пишите сюда или пересылайте сообщения/);
+  const settings=ctx.fake.said().at(-1);
+  assert.match(settings.text, /Пишите сюда или пересылайте сообщения/);
+  assert.equal(settings.markup, null);
 });
 
 test('a message is recorded and parsed exactly like the main page input', async () => {
@@ -440,4 +444,16 @@ test('Telegram RPC response size and body deadline apply beyond long polling', a
     await assert.rejects(telegram.ensureBot(), error => error.code === (stalled ? 'request_timeout' : 'response_too_large'));
     assert.equal(cancelled, true);
   }
+});
+
+
+test('server allowlist exposes working day/settings only to the configured owner and revokes live',async t=>{
+ const ctx=fixture();t.after(()=>ctx.db.close());t.after(()=>{delete process.env.PAGENT_TELEGRAM_DAY_SUMMARY_USER_IDS;});
+ process.env.PAGENT_TELEGRAM_DAY_SUMMARY_USER_IDS=ctx.api.user.id;
+ await connect(ctx);assert.deepEqual(ctx.fake.said().at(-1).markup.keyboard,[['☀️ Сегодня','🗓 Другой день'],['⚙️ Настройки сводок']]);
+ ctx.fake.push({text:'/today'});await deliver(ctx.app);assert.match(ctx.fake.said().at(-1).text,/Обзор за/);
+ ctx.fake.push({text:'/settings'});await deliver(ctx.app);assert.match(ctx.fake.said().at(-1).text,/Утро: выключено, 09:00/);
+ assert.equal((await ctx.api.put('/api/settings').send({telegramDaySummary:'x'}).expect(400)).body.error.code,'unknown_setting');
+ process.env.PAGENT_TELEGRAM_DAY_SUMMARY_USER_IDS=ctx.api.user.id+',*';
+ ctx.fake.push({text:'/settings'});await deliver(ctx.app);assert.match(ctx.fake.said().at(-1).text,/Пишите сюда/);assert.equal(ctx.fake.said().at(-1).markup,null);
 });

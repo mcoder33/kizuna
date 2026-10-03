@@ -28,6 +28,9 @@ import { gateClassification } from './classifier.js';
 import { readSettings, writeSettings } from './db.js';
 import { describeRepeat } from './repeat.js';
 import { dateInZone, shiftDate } from './reports.js';
+import { reviewDay } from './day-review.js';
+import { createTelegramDayDelivery } from './telegram-day-delivery.js';
+import { createTelegramDaySummaryRouter } from './telegram-day-summary.js';
 
 export const TELEGRAM_API = 'https://api.telegram.org';
 export const LINK_TTL_MS = 15 * 60 * 1000;
@@ -306,6 +309,11 @@ export function createTelegramService({
   attach = () => false,
   describe = () => null,
   onLink = () => {},
+  dayReview = input => reviewDay(db,input),
+  finalDayReview = input => reviewDay(db,input),
+  onSettingsChanged = () => {},
+  summaryBatchSize = 40,
+  canAccessDaySummary = () => false,
   attachmentLimit = 10 * 1024 * 1024,
   requestTimeoutMs = 20000,
   maxResponseBytes = 2 * 1024 * 1024,
@@ -419,6 +427,16 @@ export function createTelegramService({
     const row = db.prepare('SELECT username,name,linked_at FROM telegram_links WHERE user_id=?').get(userId);
     return row ? { username: row.username || null, name: row.name || null, linkedAt: row.linked_at } : null;
   }
+  function currentBinding(link) {
+    const current=linkByTelegram(link.telegram_id);
+    return Boolean(current && current.user_id===link.user_id && String(current.chat_id)===String(link.chat_id) && current.linked_at===link.linked_at && userActive(link.user_id) && db.prepare("SELECT 1 FROM users WHERE id=? AND status='active'").get(link.user_id));
+  }
+  function authorizeMessage(from,chat) {
+    if(!from || from.is_bot || chat?.type!=='private' || String(chat.id)!==String(from.id))return null;
+    const link=linkByTelegram(from.id);return link && String(link.chat_id)===String(chat.id) && currentBinding(link)?link:null;
+  }
+  const menuRouter=createTelegramDaySummaryRouter({db,canAccess:canAccessDaySummary,now,timeZone,review:dayReview,finalReview:finalDayReview,authorize:authorizeMessage,currentBinding,send:(chatId,text,extra)=>say(chatId,text,null,extra),acknowledge:id=>call('answerCallbackQuery',{callback_query_id:id}),onSettingsChanged});
+  const dayDelivery=createTelegramDayDelivery({db,canAccess:canAccessDaySummary,now,timeZone,currentBinding,enabled:()=>Boolean(token()),prepareReview:dayReview,currentReview:menuRouter.currentReview,send:(chatId,text,extra)=>say(chatId,text,null,extra),audit:note,batchSize:summaryBatchSize});
   async function createLink(userId, appUrl = null) {
     if (!token()) return { error: 'telegram_off' };
     let me;
@@ -437,7 +455,7 @@ export function createTelegramService({
     const row = db.prepare('SELECT chat_id FROM telegram_links WHERE user_id=?').get(userId);
     db.prepare('DELETE FROM telegram_links WHERE user_id=?').run(userId);
     db.prepare('DELETE FROM telegram_codes WHERE user_id=?').run(userId);
-    if (row) quietly(say(row.chat_id, TELEGRAM_TEXTS.unlinked));
+    if (row) quietly(say(row.chat_id, TELEGRAM_TEXTS.unlinked,null,{reply_markup:{remove_keyboard:true}}));
     return Boolean(row);
   }
   async function linkWithCode(message, code) {
@@ -455,7 +473,7 @@ export function createTelegramService({
     })();
     note({ event: 'telegram_linked', result: 'succeeded' });
     try { onLink(row.user_id); } catch {}
-    await quietly(say(chatId, TELEGRAM_TEXTS.linked));
+    await quietly(say(chatId, TELEGRAM_TEXTS.linked,null,{reply_markup:menuRouter.replyKeyboard({user_id:row.user_id})}));
   }
 
   // ── приём ──
@@ -463,13 +481,18 @@ export function createTelegramService({
   // Незнакомая «/команда» получает подсказку, а не становится записью.
   const COMMAND = /^\/([a-z_]+)(?:@\w+)?(?:\s+(\S+))?\s*$/i;
   async function take(update) {
+    if(update.callback_query) return menuRouter.routeCallback(update.callback_query,{update});
     const message = update.message;
     if (!message || message.chat?.type !== 'private' || !message.from || message.from.is_bot) return;
-    const command = !originOf(message) && typeof message.text === 'string' ? COMMAND.exec(message.text.trim()) : null;
-    if (command?.[1].toLowerCase() === 'start' && command[2]) return linkWithCode(message, command[2]);
+    const command = !originOf(message) && typeof message.text === 'string' ? (COMMAND.exec(message.text.trim()) || /^\/(today|day|settings)(?:@\w+)?(?:\s+.*)?$/i.exec(message.text.trim())) : null;
+    if (command?.[1].toLowerCase() === 'start' && command[2]) {
+      if(await menuRouter.beforeLinkCommand(message,{update}))return;
+      return linkWithCode(message, command[2]);
+    }
     const link = linkByTelegram(message.from.id);
-    if (command) { await quietly(say(message.chat.id, link ? TELEGRAM_TEXTS.help : TELEGRAM_TEXTS.notLinked)); return; }
-    if (!link) { await quietly(say(message.chat.id, TELEGRAM_TEXTS.notLinked, message.message_id)); return; }
+    if(link && authorizeMessage(message.from,message.chat) && await menuRouter.routeMessage(message,{forwarded:Boolean(originOf(message)),update}))return;
+    if (command) { await quietly(say(message.chat.id, link ? TELEGRAM_TEXTS.help : TELEGRAM_TEXTS.notLinked,null,link && currentBinding(link)?{reply_markup:menuRouter.replyKeyboard(link)}:{})); return; }
+    if (!link || String(link.chat_id)!==String(message.chat.id) || String(message.chat.id)!==String(message.from.id)) { await quietly(say(message.chat.id, TELEGRAM_TEXTS.notLinked, message.message_id)); return; }
     if (db.prepare('SELECT 1 FROM telegram_messages WHERE chat_id=? AND message_id=?').get(message.chat.id, message.message_id)) return;
     const group = held.get(message.chat.id) || { chatId: message.chat.id, link, items: [], lastAt: 0 };
     group.items.push({ updateId: update.update_id, message });
@@ -489,7 +512,7 @@ export function createTelegramService({
     const timer = setTimeout(() => controller?.abort(), (timeout + 15) * 1000);
     timer.unref?.();
     let updates;
-    try { updates = await call('getUpdates', { offset, timeout, allowed_updates: ['message'] }, { signal: controller.signal }); }
+    try { updates = await call('getUpdates', { offset, timeout, allowed_updates: ['message','callback_query'] }, { signal: controller.signal }); }
     finally { clearTimeout(timer); controller = null; }
     for (const update of updates || []) {
       if (!Number.isInteger(update?.update_id) || update.update_id < offset || seen.has(update.update_id)) continue;
@@ -673,5 +696,5 @@ export function createTelegramService({
     } catch {}
     return say(chatId, text, null, buttonUrl ? { reply_markup: { inline_keyboard: [[{ text: translate(userLocale(db, userId), 'Открыть в Кизуне'), url: buttonUrl }]] } } : {});
   }
-  return { start, stop, reconfigure, status, linkOf, createLink, unlink, answer, pollOnce, flush, ensureBot, catchUp, sendAdminNotification };
+  return { start, stop, reconfigure, status, linkOf, createLink, unlink, answer, pollOnce, flush, ensureBot, catchUp, sendAdminNotification, menuRouter, tick:dayDelivery.tick };
 }
