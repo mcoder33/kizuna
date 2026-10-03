@@ -14,6 +14,7 @@
     <meta name="theme-color" content="#c73e3a" />
     <script src="/public/theme.js"></script>
     <link rel="stylesheet" href="/public/app.css" />
+    <link rel="stylesheet" href="/public/administration.css" />
     <link rel="stylesheet" href="/public/notes.css" />
     <link rel="stylesheet" href="/public/guide.css" />
     <link rel="stylesheet" href="/public/mac-download.css" />
@@ -82,7 +83,8 @@
         <div class="account-menu-popover">
           <p id="account-email" class="account-email"></p>
           <p id="account-role" class="account-role"></p>
-          <a id="account-admin-link" href="#admin" hidden data-i18n="Пользователи">Пользователи</a>
+          <a id="account-admin-link" href="#admin/inbox" hidden><span data-i18n="Администрирование">Администрирование</span> <span class="admin-count" data-admin-count hidden></span></a>
+          <a href="#feedback" data-i18n="Поделиться пожеланием">Поделиться пожеланием</a>
           <a href="#settings" data-i18n="Настройки и учётная запись">Настройки и учётная запись</a>
           <a id="account-guide-link" href="#guide" data-i18n="Как пользоваться">Как пользоваться</a>
           <button id="account-mac-download" class="linklike" type="button" aria-haspopup="dialog" aria-controls="mac-download-dialog" data-i18n="Скачать для Mac">Скачать для Mac</button>
@@ -313,51 +315,375 @@
           ></div>
         </section>
       </section>
-      <section id="admin" class="app-page" hidden>
-        <section class="settings-form" aria-label="Пользователи" data-i18n-attrs="{&quot;aria-label&quot;: &quot;Пользователи&quot;}">
-          <div class="page-heading">
-            <p class="eyebrow" data-i18n="ПОЛЬЗОВАТЕЛИ">ПОЛЬЗОВАТЕЛИ</p>
-            <h2 data-i18n="Кого пускать">Кого пускать</h2>
-            <p data-i18n="Зарегистрироваться может кто угодно, но до подтверждения заявка
-              никуда не ведёт. У каждого свой журнал: одобрив человека, вы
-              открываете ему приложение, а не свои записи.">
-              Зарегистрироваться может кто угодно, но до подтверждения заявка
-              никуда не ведёт. У каждого свой журнал: одобрив человека, вы
-              открываете ему приложение, а не свои записи.
+<section id="admin" class="app-page admin-page" hidden aria-label="Администрирование" data-i18n-attrs='{"aria-label":"Администрирование"}'>
+<div class="admin-topbar">
+<a href="#today" class="admin-brand">Kizuna <span data-i18n="Администрирование">Администрирование</span>
+</a>
+<div class="admin-topbar-actions">
+<details id="admin-notices-menu">
+<summary>
+<span data-i18n="Уведомления">Уведомления</span> <span class="admin-count" data-admin-notice-count hidden>
+</span>
+</summary>
+<div id="admin-notices" class="admin-notices">
+</div>
+</details>
+<a href="#today" data-i18n="Вернуться в Кизуну">Вернуться в Кизуну</a>
+</div>
+</div>
+<div class="admin-layout">
+<aside class="admin-sidebar">
+<nav aria-label="Администрирование" data-i18n-attrs='{"aria-label":"Администрирование"}'>
+<a href="#admin/inbox" data-admin-section="inbox">
+<span data-i18n="Входящие">Входящие</span>
+<span class="admin-count" data-admin-count hidden>
+</span>
+</a>
+<a href="#admin/users" data-admin-section="users">
+<span data-i18n="Пользователи">Пользователи</span>
+</a>
+<a href="#admin/feedback" data-admin-section="feedback">
+<span data-i18n="Обратная связь">Обратная связь</span>
+</a>
+<a href="#admin/service" data-admin-section="service">
+<span data-i18n="Настройки сервиса">Настройки сервиса</span>
+</a>
+<a href="#admin/history" data-admin-section="history">
+<span data-i18n="История">История</span>
+</a>
+</nav>
+</aside>
+<div class="admin-content">
+<details id="admin-navigation" class="admin-mobile-nav">
+<summary data-i18n="Разделы администрирования">Разделы администрирования</summary>
+<nav>
+<a href="#admin/inbox" data-admin-section="inbox">
+<span data-i18n="Входящие">Входящие</span>
+<span class="admin-count" data-admin-count hidden>
+</span>
+</a>
+<a href="#admin/users" data-admin-section="users">
+<span data-i18n="Пользователи">Пользователи</span>
+</a>
+<a href="#admin/feedback" data-admin-section="feedback">
+<span data-i18n="Обратная связь">Обратная связь</span>
+</a>
+<a href="#admin/service" data-admin-section="service">
+<span data-i18n="Настройки сервиса">Настройки сервиса</span>
+</a>
+<a href="#admin/history" data-admin-section="history">
+<span data-i18n="История">История</span>
+</a>
+</nav>
+</details>
+<h1 id="admin-title">Входящие</h1>
+<p id="admin-error" role="alert" class="admin-warning">
+</p>
+<section data-admin-panel="inbox">
+<p class="setting-hint" data-i18n="Новые заявки на вход и пожелания пользователей">Новые заявки на вход и пожелания пользователей</p>
+<div id="admin-pending" class="admin-group" hidden>
+<h2 data-i18n="Ждут решения">Ждут решения</h2>
+<div id="admin-pending-list" class="admin-list">
+</div>
+</div>
+<div id="admin-inbox-feedback" class="admin-feedback-list">
+</div>
+<p id="admin-inbox-empty" class="empty" data-i18n="Всё разобрано">Всё разобрано</p>
+</section>
+<section data-admin-panel="users" hidden>
+<p class="setting-hint" data-i18n="У каждого свой журнал: доступ к приложению не открывает чужие записи.">У каждого свой журнал: доступ к приложению не открывает чужие записи.</p>
+<div id="admin-users" class="admin-list">
+</div>
+</section>
+<section data-admin-panel="feedback" hidden>
+<div class="admin-filters">
+<label>
+<span data-i18n="Статус пожелания">Статус пожелания</span>
+<select id="admin-feedback-filter">
+<option value="" data-i18n="Все">Все</option>
+<option value="new" data-i18n="Новое">Новое</option>
+<option value="considering" data-i18n="На рассмотрении">На рассмотрении</option>
+<option value="done" data-i18n="Сделано">Сделано</option>
+<option value="later" data-i18n="Позже">Позже</option>
+</select>
+</label>
+<label>
+<span data-i18n="Поиск">Поиск</span>
+<input id="admin-feedback-search" type="search" />
+</label>
+</div>
+<div id="admin-feedback-list" class="admin-feedback-list">
+</div>
+</section>
+<section data-admin-panel="service" hidden>
+<nav class="admin-service-tabs" aria-label="Настройки сервиса" data-i18n-attrs='{"aria-label":"Настройки сервиса"}'>
+<a href="#admin/service/ai" data-service-tab="ai" data-i18n="ИИ и ключи">ИИ и ключи</a>
+<a href="#admin/service/integrations" data-service-tab="integrations" data-i18n="Интеграции">Интеграции</a>
+<a href="#admin/service/limits" data-service-tab="limits" data-i18n="Лимиты">Лимиты</a>
+<a href="#admin/service/notifications" data-service-tab="notifications" data-i18n="Уведомления">Уведомления</a>
+<a href="#admin/service/memory" data-service-tab="memory" data-i18n="Общие правила">Общие правила</a>
+</nav>
+<div data-service-panel="ai">
+<fieldset class="settings-group">
+            <legend data-i18n="Ключи">Ключи</legend>
+            <label class="setting" for="setting-openaiKey"
+              >
+<span class="setting-name">OpenAI</span
+              >
+<input
+                id="setting-openaiKey"
+                type="password"
+                autocomplete="off"
+                placeholder="sk-…"
+              />
+<span class="setting-state" id="state-openaiKey">
+</span
+            >
+</label>
+            <label class="setting" for="setting-geminiKey"
+              >
+<span class="setting-name">Google Gemini</span
+              >
+<input
+                id="setting-geminiKey"
+                type="password"
+                autocomplete="off"
+                placeholder="AI…"
+              />
+<span class="setting-state" id="state-geminiKey">
+</span
+            >
+</label>
+            <label class="setting" for="setting-openrouterKey"
+              >
+<span class="setting-name">OpenRouter</span
+              >
+<input
+                id="setting-openrouterKey"
+                type="password"
+                autocomplete="off"
+                placeholder="sk-or-…"
+              />
+<span class="setting-state" id="state-openrouterKey">
+</span
+            >
+</label>
+
+
+
+            <p class="setting-hint">
+              <span data-i18n="Пустое поле оставляет ключ как есть. Чтобы убрать введённый здесь
+              ключ и снова взять его из">Пустое поле оставляет ключ как есть. Чтобы убрать введённый здесь
+              ключ и снова взять его из</span> <code>.env</code>
+<span data-i18n=", нажмите «Забыть».
+              Для Google Calendar нужен свой проект в Google Cloud с клиентом
+              OAuth типа «веб-приложение» и адресом возврата">, нажмите «Забыть».
+              Для Google Calendar нужен свой проект в Google Cloud с клиентом
+              OAuth типа «веб-приложение» и адресом возврата</span>
+              <code data-i18n="адрес Кизуны">&lt;адрес Кизуны&gt;/api/calendar/google/callback</code>
+<span data-i18n=".
+              Бота Telegram заводят у">.
+              Бота Telegram заводят у</span> <code>@BotFather</code> <span data-i18n="командой">командой</span>
+              <code>/newbot</code> <span data-i18n="— он пришлёт токен для этого поля.">— он пришлёт токен для этого поля.</span>
             </p>
-          </div>
-          <div id="admin-pending" class="admin-group" hidden>
-            <h3 data-i18n="Ждут решения">Ждут решения</h3>
-            <div id="admin-pending-list" class="admin-list"></div>
-          </div>
-          <div class="admin-group">
-            <h3 data-i18n="Учётные записи">Учётные записи</h3>
-            <div id="admin-users" class="admin-list"></div>
-          </div>
-          <div class="admin-group">
-            <h3 data-i18n="Последние входы">Последние входы</h3>
-            <div id="admin-events" class="admin-events"></div>
-          </div>
-        </section>
-      </section>
+          </fieldset>
+<fieldset class="settings-group">
+            <legend data-i18n="Журнал">Журнал</legend>
+            <label class="setting" for="setting-aiProvider"
+              >
+<span class="setting-name" data-i18n="Разбирает записи по умолчанию">Разбирает записи по умолчанию</span
+              >
+<select id="setting-aiProvider">
+                <option value="fallback" data-i18n="Без модели">Без модели</option>
+                <option value="openai">OpenAI</option>
+                <option value="openrouter">OpenRouter</option>
+                <option value="gemini">Google Gemini</option>
+                <option value="codex-cli">Codex CLI</option>
+                <option value="claude-cli">Claude CLI</option>
+              </select>
+</label
+            >
+            <!-- Ручки модели: докрутить под другую модель, не правя код. -->
+            <label class="setting" for="setting-modelTemperature"
+              >
+<span class="setting-name" data-i18n="Температура разбора">Температура разбора</span
+              >
+<input id="setting-modelTemperature" type="number" min="0" max="2" step="0.1" placeholder="0"
+            />
+</label>
+            <label class="setting" for="setting-modelMaxTokens"
+              >
+<span class="setting-name" data-i18n="Потолок ответа, токенов">Потолок ответа, токенов</span
+              >
+<input id="setting-modelMaxTokens" type="number" min="256" max="32000" step="256" placeholder="6000"
+            />
+</label>
+            <label class="setting" for="setting-modelReasoning"
+              >
+<span class="setting-name" data-i18n="Рассуждение модели">Рассуждение модели</span
+              >
+<select id="setting-modelReasoning">
+                <option value="off" data-i18n="Без рассуждения">Без рассуждения</option>
+                <option value="low" data-i18n="Короткое">Короткое</option>
+                <option value="medium" data-i18n="Среднее">Среднее</option>
+                <option value="high" data-i18n="Длинное">Длинное</option>
+              </select>
+</label
+            >
+            <p class="setting-hint" data-i18n="Разбор записи — извлечение полей по схеме, поэтому по умолчанию
+              температура ноль и короткое рассуждение. Модели разные: если
+              выбранная отвечает обрывками или спорит со схемой, докрутите здесь.">
+              Разбор записи — извлечение полей по схеме, поэтому по умолчанию
+              температура ноль и короткое рассуждение. Модели разные: если
+              выбранная отвечает обрывками или спорит со схемой, докрутите здесь.
+            </p>
+
+          </fieldset>
+<div class="setting-actions">
+<button id="settings-forget" class="secondary" type="button" data-i18n="Забыть ключи">
+              Забыть ключи
+            </button>
+</div>
+</div>
+<div data-service-panel="integrations" hidden>
+<fieldset class="settings-group">
+<legend data-i18n="Интеграции">Интеграции</legend>
+<label class="setting" for="setting-googleClientId"
+              >
+<span class="setting-name" data-i18n="Google Calendar · ID клиента">Google Calendar · ID клиента</span
+              >
+<input
+                id="setting-googleClientId"
+                type="text"
+                autocomplete="off"
+                placeholder="…apps.googleusercontent.com"
+            />
+</label>
+<label class="setting" for="setting-googleClientSecret"
+              >
+<span class="setting-name" data-i18n="Google Calendar · секрет клиента">Google Calendar · секрет клиента</span
+              >
+<input
+                id="setting-googleClientSecret"
+                type="password"
+                autocomplete="off"
+                placeholder="GOCSPX-…"
+              />
+<span class="setting-state" id="state-googleClientSecret">
+</span
+            >
+</label>
+<label class="setting" for="setting-telegramBotToken"
+              >
+<span class="setting-name" data-i18n="Telegram · токен бота">Telegram · токен бота</span
+              >
+<input
+                id="setting-telegramBotToken"
+                type="password"
+                autocomplete="off"
+                placeholder="123456789:AA…"
+              />
+<span class="setting-state" id="state-telegramBotToken">
+</span
+            >
+</label>
+</fieldset>
+<p class="setting-hint">
+<a href="#settings" data-i18n="Личное подключение Telegram и календарей — в настройках профиля">Личное подключение Telegram и календарей — в настройках профиля</a>
+</p>
+</div>
+<div data-service-panel="limits" hidden>
+<fieldset class="settings-group">
+<legend data-i18n="Часовой пояс сервиса">Часовой пояс сервиса</legend>
+<label class="setting" for="setting-timeZone"
+              >
+<span class="setting-name" data-i18n="Часовой пояс">Часовой пояс</span
+              >
+<input
+                id="setting-timeZone"
+                type="text"
+                list="known-timezones"
+                placeholder="Europe/Samara"
+              />
+</label
+            >
+</fieldset>
+<fieldset class="settings-group">
+<legend data-i18n="Лимит по умолчанию">Лимит по умолчанию</legend>
+<label class="setting" for="setting-monthlyLimitUsd"
+              >
+<span class="setting-name" data-i18n="Потолок на месяц, $">Потолок на месяц, $</span
+              >
+<input
+                id="setting-monthlyLimitUsd"
+                type="number"
+                min="0"
+                step="1"
+                placeholder="без потолка"
+             data-i18n-attrs="{&quot;placeholder&quot;: &quot;без потолка&quot;}"/>
+</label>
+<p class="setting-hint" data-i18n="Этот лимит действует для каждого пользователя без личного лимита. Пустое поле — без ограничения, ноль — без платного ИИ. Личный лимит задаётся в разделе «Пользователи».">Этот лимит действует для каждого пользователя без личного лимита. Пустое поле — без ограничения, ноль — без платного ИИ. Личный лимит задаётся в разделе «Пользователи».</p>
+</fieldset>
+</div>
+<div data-service-panel="notifications" hidden>
+<div id="admin-delivery-settings">
+</div>
+</div>
+<div data-service-panel="memory" hidden>
+<p class="setting-hint" data-i18n="Эти правила действуют для всех пользователей. Личная память помощника — в настройках профиля.">Эти правила действуют для всех пользователей. Личная память помощника — в настройках профиля.</p>
+<div id="admin-memory-list">
+</div>
+<form id="admin-memory-form">
+<label>
+<span data-i18n="Новое правило">Новое правило</span>
+<input id="admin-memory-new" maxlength="500" required />
+</label>
+<button id="admin-memory-save" class="primary" type="submit" data-i18n="Запомнить для всех">Запомнить для всех</button>
+</form>
+</div>
+<p id="admin-settings-status" class="setting-state" role="status">
+</p>
+</section>
+<section data-admin-panel="history" hidden>
+<label>
+<span data-i18n="Поиск">Поиск</span>
+<input id="admin-history-search" type="search" />
+</label>
+<div id="admin-events" class="admin-events">
+</div>
+</section>
+</div>
+</div>
+</section>
       <!-- «Как пользоваться»: всё внутри рисует public/guide.js. -->
       <section id="guide" class="app-page guide-page" hidden aria-label="Как пользоваться" data-i18n-attrs="{&quot;aria-label&quot;: &quot;Как пользоваться&quot;}"></section>
+<section id="feedback" class="app-page feedback-page" hidden aria-label="Обратная связь" data-i18n-attrs='{"aria-label":"Обратная связь"}'>
+<div class="page-heading">
+<p class="eyebrow">KIZUNA</p>
+<h1 data-i18n="Чего вам не хватает?">Чего вам не хватает?</h1>
+<p data-i18n="Расскажите, что помогло бы вам пользоваться Кизуной. Мы прочитаем каждое пожелание.">Расскажите, что помогло бы вам пользоваться Кизуной. Мы прочитаем каждое пожелание.</p>
+</div>
+<form id="feedback-form">
+<label for="feedback-text" data-i18n="Ваше пожелание">Ваше пожелание</label>
+<textarea id="feedback-text" rows="6" maxlength="3000" required disabled>
+</textarea>
+<label class="admin-delivery-choice">
+<input id="feedback-contact" type="checkbox" disabled />
+<span data-i18n="Можно уточнить детали в приложении">Можно уточнить детали в приложении</span>
+</label>
+<button class="primary" type="submit" disabled data-i18n="Отправить пожелание">Отправить пожелание</button>
+<p id="feedback-status" role="status" aria-live="polite">
+</p>
+</form>
+<section id="my-feedback-group" hidden>
+<h2 data-i18n="Мои пожелания">Мои пожелания</h2>
+<div id="my-feedback" class="admin-feedback-list">
+</div>
+</section>
+</section>
       <section id="settings" class="app-page" hidden>
         <section class="settings-form" aria-label="Настройки приложения" data-i18n-attrs="{&quot;aria-label&quot;: &quot;Настройки приложения&quot;}">
-          <div class="page-heading">
-            <p class="eyebrow" data-i18n="НАСТРОЙКИ">НАСТРОЙКИ</p>
-            <h2 data-i18n="Как работает Кизуна">Как работает Кизуна</h2>
-            <p>
-              <span data-i18n="Раньше это правилось только в файле">Раньше это правилось только в файле</span> <code>.env</code> <span data-i18n="с
-              перезапуском. Здесь всё применяется сразу; ключи хранятся на этом
-              компьютере и в браузер не возвращаются — видно только последние
-              знаки.">с
-              перезапуском. Здесь всё применяется сразу; ключи хранятся на этом
-              компьютере и в браузер не возвращаются — видно только последние
-              знаки.</span>
-            </p>
-            <p><a href="#guide" data-i18n="Как пользоваться Кизуной →">Как пользоваться Кизуной →</a></p>
-          </div>
+          <div class="page-heading"><p class="eyebrow" data-i18n="НАСТРОЙКИ">НАСТРОЙКИ</p><h2 data-i18n="Ваш профиль и приложение">Ваш профиль и приложение</h2><p><a href="#guide" data-i18n="Как пользоваться Кизуной →">Как пользоваться Кизуной →</a></p></div>
 
           <!-- Учётная запись — первой: лицо, имя и тему ищут в настройках чаще
                всего, а ключи и календари настраивают один раз. -->
@@ -427,75 +753,7 @@
             </div>
           </fieldset>
 
-          <fieldset class="settings-group">
-            <legend data-i18n="Ключи">Ключи</legend>
-            <label class="setting" for="setting-openaiKey"
-              ><span class="setting-name">OpenAI</span
-              ><input
-                id="setting-openaiKey"
-                type="password"
-                autocomplete="off"
-                placeholder="sk-…"
-              /><span class="setting-state" id="state-openaiKey"></span
-            ></label>
-            <label class="setting" for="setting-geminiKey"
-              ><span class="setting-name">Google Gemini</span
-              ><input
-                id="setting-geminiKey"
-                type="password"
-                autocomplete="off"
-                placeholder="AI…"
-              /><span class="setting-state" id="state-geminiKey"></span
-            ></label>
-            <label class="setting" for="setting-openrouterKey"
-              ><span class="setting-name">OpenRouter</span
-              ><input
-                id="setting-openrouterKey"
-                type="password"
-                autocomplete="off"
-                placeholder="sk-or-…"
-              /><span class="setting-state" id="state-openrouterKey"></span
-            ></label>
-            <label class="setting" for="setting-googleClientId"
-              ><span class="setting-name" data-i18n="Google Calendar · ID клиента">Google Calendar · ID клиента</span
-              ><input
-                id="setting-googleClientId"
-                type="text"
-                autocomplete="off"
-                placeholder="…apps.googleusercontent.com"
-            /></label>
-            <label class="setting" for="setting-googleClientSecret"
-              ><span class="setting-name" data-i18n="Google Calendar · секрет клиента">Google Calendar · секрет клиента</span
-              ><input
-                id="setting-googleClientSecret"
-                type="password"
-                autocomplete="off"
-                placeholder="GOCSPX-…"
-              /><span class="setting-state" id="state-googleClientSecret"></span
-            ></label>
-            <label class="setting" for="setting-telegramBotToken"
-              ><span class="setting-name" data-i18n="Telegram · токен бота">Telegram · токен бота</span
-              ><input
-                id="setting-telegramBotToken"
-                type="password"
-                autocomplete="off"
-                placeholder="123456789:AA…"
-              /><span class="setting-state" id="state-telegramBotToken"></span
-            ></label>
-            <p class="setting-hint">
-              <span data-i18n="Пустое поле оставляет ключ как есть. Чтобы убрать введённый здесь
-              ключ и снова взять его из">Пустое поле оставляет ключ как есть. Чтобы убрать введённый здесь
-              ключ и снова взять его из</span> <code>.env</code><span data-i18n=", нажмите «Забыть».
-              Для Google Calendar нужен свой проект в Google Cloud с клиентом
-              OAuth типа «веб-приложение» и адресом возврата">, нажмите «Забыть».
-              Для Google Calendar нужен свой проект в Google Cloud с клиентом
-              OAuth типа «веб-приложение» и адресом возврата</span>
-              <code data-i18n="адрес Кизуны">&lt;адрес Кизуны&gt;/api/calendar/google/callback</code><span data-i18n=".
-              Бота Telegram заводят у">.
-              Бота Telegram заводят у</span> <code>@BotFather</code> <span data-i18n="командой">командой</span>
-              <code>/newbot</code> <span data-i18n="— он пришлёт токен для этого поля.">— он пришлёт токен для этого поля.</span>
-            </p>
-          </fieldset>
+
 
           <fieldset class="settings-group" id="calendar-settings">
             <legend data-i18n="Календари">Календари</legend>
@@ -607,60 +865,11 @@
              data-i18n-attrs="{&quot;placeholder&quot;: &quot;Например: созвоны с подрядчиком — это встречи&quot;}"/></label>
             <div class="setting-actions">
               <button id="memory-add" class="secondary" type="button" data-i18n="Запомнить">Запомнить</button>
-              <label class="memory-shared" id="memory-shared-row" hidden
-                ><input id="memory-shared" type="checkbox" /><span data-i18n="общее для всех">общее для всех</span></label
-              >
+
             </div>
           </fieldset>
 
-          <fieldset class="settings-group">
-            <legend data-i18n="Журнал">Журнал</legend>
-            <label class="setting" for="setting-aiProvider"
-              ><span class="setting-name" data-i18n="Разбирает записи по умолчанию">Разбирает записи по умолчанию</span
-              ><select id="setting-aiProvider">
-                <option value="fallback" data-i18n="Без модели">Без модели</option>
-                <option value="openai">OpenAI</option>
-                <option value="openrouter">OpenRouter</option>
-                <option value="gemini">Google Gemini</option>
-                <option value="codex-cli">Codex CLI</option>
-                <option value="claude-cli">Claude CLI</option>
-              </select></label
-            >
-            <!-- Ручки модели: докрутить под другую модель, не правя код. -->
-            <label class="setting" for="setting-modelTemperature"
-              ><span class="setting-name" data-i18n="Температура разбора">Температура разбора</span
-              ><input id="setting-modelTemperature" type="number" min="0" max="2" step="0.1" placeholder="0"
-            /></label>
-            <label class="setting" for="setting-modelMaxTokens"
-              ><span class="setting-name" data-i18n="Потолок ответа, токенов">Потолок ответа, токенов</span
-              ><input id="setting-modelMaxTokens" type="number" min="256" max="32000" step="256" placeholder="6000"
-            /></label>
-            <label class="setting" for="setting-modelReasoning"
-              ><span class="setting-name" data-i18n="Рассуждение модели">Рассуждение модели</span
-              ><select id="setting-modelReasoning">
-                <option value="off" data-i18n="Без рассуждения">Без рассуждения</option>
-                <option value="low" data-i18n="Короткое">Короткое</option>
-                <option value="medium" data-i18n="Среднее">Среднее</option>
-                <option value="high" data-i18n="Длинное">Длинное</option>
-              </select></label
-            >
-            <p class="setting-hint" data-i18n="Разбор записи — извлечение полей по схеме, поэтому по умолчанию
-              температура ноль и короткое рассуждение. Модели разные: если
-              выбранная отвечает обрывками или спорит со схемой, докрутите здесь.">
-              Разбор записи — извлечение полей по схеме, поэтому по умолчанию
-              температура ноль и короткое рассуждение. Модели разные: если
-              выбранная отвечает обрывками или спорит со схемой, докрутите здесь.
-            </p>
-            <label class="setting" for="setting-timeZone" style="display:none"
-              ><span class="setting-name" data-i18n="Часовой пояс">Часовой пояс</span
-              ><input
-                id="setting-timeZone"
-                type="text"
-                list="known-timezones"
-                placeholder="Europe/Samara"
-              /></label
-            >
-          </fieldset>
+
 
           <fieldset class="settings-group">
             <legend data-i18n="Напоминания">Напоминания</legend>
@@ -778,24 +987,8 @@
           <fieldset class="settings-group">
             <legend data-i18n="Расходы">Расходы</legend>
             <p class="setting-hint" id="spend-state"></p>
-            <label class="setting" for="setting-monthlyLimitUsd"
-              ><span class="setting-name" data-i18n="Потолок на месяц, $">Потолок на месяц, $</span
-              ><input
-                id="setting-monthlyLimitUsd"
-                type="number"
-                min="0"
-                step="1"
-                placeholder="без потолка"
-             data-i18n-attrs="{&quot;placeholder&quot;: &quot;без потолка&quot;}"/></label>
-            <p class="setting-hint" data-i18n="Общий потолок для всех. Личный ставится каждому отдельно в разделе
-              «Пользователи» и сильнее общего. Когда потолок исчерпан, записи
-              продолжают сохраняться, но разбираются по правилам, без платной
-              модели, и разговор не начинается.">
-              Общий потолок для всех. Личный ставится каждому отдельно в разделе
-              «Пользователи» и сильнее общего. Когда потолок исчерпан, записи
-              продолжают сохраняться, но разбираются по правилам, без платной
-              модели, и разговор не начинается.
-            </p>
+
+
             <div id="usage-table" class="usage"></div>
             <p class="setting-hint" data-i18n="Токены считает сам провайдер, деньги — по его же цене за токен.
               Где цены нет, вызов попадает в «без цены» и в сумму не входит.
@@ -809,9 +1002,7 @@
           </fieldset>
 
           <div class="settings-bar">
-            <button id="settings-forget" class="secondary" type="button" data-i18n="Забыть ключи">
-              Забыть ключи
-            </button>
+
             <span id="settings-status" class="setting-state" role="status"></span>
           </div>
         </section>

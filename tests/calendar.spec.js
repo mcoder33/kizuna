@@ -124,7 +124,8 @@ test("настройки: раздел «Календари» с формами 
   await section.locator("#calendar-connect-cancel").click();
   await expect(section.locator("#calendar-connect")).toBeHidden();
   await expect(section.locator("#calendar-google")).toHaveClass(/is-disabled/);
-  // Поля Google лежат в «Ключах», секрет наружу не возвращается.
+  // Ключи сервиса лежат в администрировании; секрет наружу не возвращается.
+  await page.goto("/#admin/service/integrations");
   await expect(page.locator("#setting-googleClientId")).toBeVisible();
   await expect(page.locator("#state-googleClientSecret")).toHaveText("не настроен");
 });

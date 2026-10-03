@@ -1,4 +1,6 @@
 // Shared web, server and macOS system phrases. User content is never translated.
+import { adminCatalogs } from './admin-i18n.js';
+
 export const catalogs = {
   "ru": {
     "Уведомления запрещены в macOS. Разрешите их в Системных настройках → Уведомления → Кизуна.": "Уведомления запрещены в macOS. Разрешите их в Системных настройках → Уведомления → Кизуна.",
@@ -16847,3 +16849,5 @@ export const catalogs = {
     "Код из приложения или резервный код": "認証アプリのコードまたはリカバリーコード"
   }
 };
+
+for (const [locale, phrases] of Object.entries(adminCatalogs)) Object.assign(catalogs[locale], phrases);

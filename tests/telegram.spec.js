@@ -18,9 +18,12 @@ test("написанное боту Telegram ложится на «Сегодн�
   try {
     // Администратор вставляет токен бота в «Ключах» — раздел ждёт, пока бот
     // выйдет на связь.
+    await page.goto('/#admin/service/integrations');
     const token = page.locator("#setting-telegramBotToken");
     await token.fill(TOKEN);
     await token.blur();
+    await expect(page.locator('#admin-settings-status')).toHaveText('Сохранено');
+    await page.goto('/#settings');
     await expect(state).toContainText("@kizuna_test_bot на связи", { timeout: 15000 });
 
     // «Подключить» даёт ссылку на бота и код для телефона.

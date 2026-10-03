@@ -9,6 +9,7 @@ import { occursOn, nextOccurrence, normalizeSkip } from './repeat.js';
 import { occurrencesOf } from './occurrences.js';
 import { migrateNotifications } from './notifications.js';
 import { migrateNotesTree } from './notes-schema.js';
+import { migrateAdministration } from './admin-schema.js';
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -18,6 +19,7 @@ export function openDatabase(filename) {
   migrate(db);
   migrateNotifications(db);
   migrateNotesTree(db);
+  migrateAdministration(db);
   const linkColumns = new Set(db.prepare('PRAGMA table_info(calendar_links)').all().map(column => column.name));
   if (!linkColumns.has('export_time_zone')) db.exec('ALTER TABLE calendar_links ADD COLUMN export_time_zone TEXT');
   db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)').run(26, now());

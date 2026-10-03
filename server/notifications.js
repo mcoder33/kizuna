@@ -39,6 +39,8 @@ export const NOTIFICATION_KINDS = {
   calendar_error: { group: 'other', label: 'Календарь перестал обновляться', hint: 'нужно переподключить', bell: true, phone: false },
   spend: { group: 'other', label: 'Расходы подошли к потолку', hint: 'на 80% и на 100% месячного', bell: true, phone: false },
   signup: { group: 'other', label: 'Новая заявка на вход', hint: 'только администратору', bell: true, phone: true, admin: true },
+  feedback: { group: 'other', label: 'Новое пожелание', hint: 'только администратору', bell: true, phone: true, admin: true },
+  feedback_reply: { group: 'other', label: 'Ответ на ваше пожелание', hint: '', bell: true, phone: false },
 };
 export const NOTIFICATION_RETENTION_DAYS = 30;
 export const DEFAULT_QUIET_HOURS = '22:00-08:00';
@@ -163,10 +165,10 @@ export function mutedCalendarsOf(db, userId) {
  * дописывается в неё (число, последние лица), а не ложится рядом. once — повод
  * случается один раз на ключ: сводка за день, порог расходов, приглашение.
  */
-export function notify(db, { userId, kind, actorId = null, captureId = null, roomId = null, circleId = null, assignmentId = null, accountId = null, eventUid = null, lead = null, text, meta = [], data = {}, template = null, textTemplate = null, metaTemplates = null, group = null, once = false, at = now() }) {
+export function notify(db, { userId, kind, actorId = null, captureId = null, roomId = null, circleId = null, assignmentId = null, accountId = null, eventUid = null, lead = null, text, meta = [], data = {}, template = null, textTemplate = null, metaTemplates = null, group = null, once = false, force = false, at = now() }) {
   const rule = NOTIFICATION_KINDS[kind];
   if (!rule || !userId || actorId === userId) return null;
-  if (!notificationPrefs(db, userId)[kind].bell) return null;
+  if (!force && !notificationPrefs(db, userId)[kind].bell) return null;
   if (accountId && MUTABLE_CALENDAR_KINDS.has(kind) && mutedCalendarsOf(db, userId).has(accountId)) return null;
   if (once && group && db.prepare('SELECT 1 FROM notifications WHERE user_id=? AND group_key=?').get(userId, group)) return null;
   const payload = { ...data, ...(metaTemplates ? {metaTemplates} : {}), ...(template || textTemplate ? { template: { ...template, ...(textTemplate ? {text:textTemplate} : {}) } } : {}), meta: meta.filter(Boolean).map(item => clip(item, 120)).slice(0, 4) };
@@ -252,24 +254,24 @@ export function serializeNotification(row, locale = 'ru', {timeZone = null, at =
   };
 }
 
-export function listNotifications(db, userId, { before = null, limit = PAGE_SIZE, stillWaits = () => true } = {}) {
+export function listNotifications(db, userId, { before = null, limit = PAGE_SIZE, stillWaits = () => true, scope = 'all' } = {}) {
   // Ждущее ответа сверяется с делом: просьбу могли снять, встречу — отменить,
   // а ответить могли и из карточки. Устаревшее закрывается при чтении ленты.
   for (const row of db.prepare('SELECT * FROM notifications WHERE user_id=? AND waits=1 AND resolved_at IS NULL').all(userId))
     if (!stillWaits(row)) resolveNotification(db, row.id);
-  const rows = db.prepare(`SELECT * FROM notifications WHERE user_id=? AND snoozed_until IS NULL AND dismissed_at IS NULL ${before ? 'AND updated_at < ?' : ''} ORDER BY updated_at DESC LIMIT ?`)
+  const rows = db.prepare(`SELECT * FROM notifications WHERE user_id=? AND snoozed_until IS NULL AND dismissed_at IS NULL ${scope === 'personal' ? "AND kind NOT IN ('signup','feedback')" : ''} ${before ? 'AND updated_at < ?' : ''} ORDER BY updated_at DESC LIMIT ?`)
     .all(...(before ? [userId, before, limit] : [userId, limit]));
   return { notifications: rows, nextCursor: rows.length === limit ? rows.at(-1).updated_at : null };
 }
-export function notificationCounts(db, userId) {
+export function notificationCounts(db, userId, { scope = 'all' } = {}) {
   const row = db.prepare(`SELECT
       SUM(CASE WHEN waits=1 AND resolved_at IS NULL AND snoozed_until IS NULL THEN 1 ELSE 0 END) AS waits,
       SUM(CASE WHEN read_at IS NULL AND snoozed_until IS NULL THEN 1 ELSE 0 END) AS unread
-    FROM notifications WHERE user_id=? AND dismissed_at IS NULL`).get(userId);
+    FROM notifications WHERE user_id=? AND dismissed_at IS NULL ${scope === 'personal' ? "AND kind NOT IN ('signup','feedback')" : ''}`).get(userId);
   return { waits: row.waits || 0, unread: row.unread || 0 };
 }
 
-export function readNotifications(db, userId, { ids = null, captureId = null, roomId = null, at = now() } = {}) {
+export function readNotifications(db, userId, { ids = null, captureId = null, roomId = null, scope = 'all', at = now() } = {}) {
   if (Array.isArray(ids)) {
     const clean = ids.filter(id => typeof id === 'string').slice(0, 200);
     if (!clean.length) return 0;
@@ -277,13 +279,13 @@ export function readNotifications(db, userId, { ids = null, captureId = null, ro
   }
   if (captureId) return db.prepare('UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL AND capture_id=? AND waits=0').run(at, userId, captureId).changes;
   if (roomId) return db.prepare('UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL AND room_id=?').run(at, userId, roomId).changes;
-  return db.prepare('UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL').run(at, userId).changes;
+  return db.prepare(`UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL ${scope === 'personal' ? "AND kind NOT IN ('signup','feedback')" : ''}`).run(at, userId).changes;
 }
 
 // Убрать из ленты: открытое, закрытое делом или ненужное. Ждущее ответа не
 // убирается — просьба и приглашение уходят, только когда на них ответили.
 // Возвращает, что убрано: по этому списку «Вернуть» кладёт строки обратно.
-export function dismissNotifications(db, userId, { ids = null, captureId = null, kinds = null, all = false, at = now() } = {}) {
+export function dismissNotifications(db, userId, { ids = null, captureId = null, kinds = null, all = false, scope = 'all', at = now() } = {}) {
   const where = ['dismissed_at IS NULL', 'NOT (waits=1 AND resolved_at IS NULL)'], args = [];
   if (userId) { where.push('user_id=?'); args.push(userId); }
   if (Array.isArray(ids)) {
@@ -292,7 +294,10 @@ export function dismissNotifications(db, userId, { ids = null, captureId = null,
     where.push(`id IN (${clean.map(() => '?').join(',')})`); args.push(...clean);
   } else if (captureId) { where.push('capture_id=?'); args.push(captureId); }
   // Очистить ленту — то, что в ней видно: отложенное вернётся в свой срок.
-  else if (all && userId) where.push('snoozed_until IS NULL');
+  else if (all && userId) {
+    where.push('snoozed_until IS NULL');
+    if (scope === 'personal') where.push("kind NOT IN ('signup','feedback')");
+  }
   else return [];
   if (Array.isArray(kinds) && kinds.length) { where.push(`kind IN (${kinds.map(() => '?').join(',')})`); args.push(...kinds); }
   const rows = db.prepare(`SELECT id, user_id FROM notifications WHERE ${where.join(' AND ')}`).all(...args);

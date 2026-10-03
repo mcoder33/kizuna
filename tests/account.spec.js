@@ -76,14 +76,16 @@ test("администратор видит заявку, одобряет её 
   });
   expect(registered.status()).toBe(201);
 
-  await page.goto("/#admin");
+  await page.goto("/#admin/inbox");
   const pending = page.locator("#admin-pending .admin-user").filter({ hasText: email });
   await expect(pending).toBeVisible();
   await expect(pending).toContainText("ждёт подтверждения");
 
   await pending.getByRole("button", { name: "Одобрить" }).click();
+  await page.goto("/#admin/users");
   const approved = page.locator("#admin-users .admin-user").filter({ hasText: email });
   await expect(approved).toContainText("работает");
+  await approved.locator(".admin-user-management > summary").click();
 
   // Блокировка спрашивает причину и сразу видна в списке.
   page.once("dialog", (dialog) => dialog.accept("проверка"));
@@ -101,7 +103,7 @@ test("администратор видит заявку, одобряет её 
 // с полосой по дням, а у молчащего — метка вместо догадок.
 test("в строке человека видно активность: полоса дней, записи за период и подключения", async ({ page, request }) => {
   await request.post("/api/captures", { data: { raw: "Запись ради строки активности" } });
-  await page.goto("/#admin");
+  await page.goto("/#admin/users");
   const self = page.locator("#admin-users .admin-user").filter({ hasText: E2E_EMAIL });
   const activity = self.locator(".admin-activity");
   await expect(activity).toBeVisible();
@@ -115,15 +117,16 @@ test("в строке человека видно активность: поло
   // Заведённый только что человек ещё ничего не писал — это видно меткой.
   const email = `tihiy-${Date.now()}@kizuna.test`;
   await request.post("/api/auth/register", { data: { email, password: "tihiy-very-long-password" } });
-  await page.reload();
+  await page.goto("/#admin/inbox");
   const fresh = page.locator("#admin-pending .admin-user").filter({ hasText: email });
   await expect(fresh.locator(".admin-activity")).toContainText("записей нет");
 });
 
 test("последнего администратора не предлагают ни заблокировать, ни разжаловать", async ({ page }) => {
-  await page.goto("/#admin");
+  await page.goto("/#admin/users");
   const self = page.locator("#admin-users .admin-user").filter({ hasText: E2E_EMAIL });
   await expect(self).toContainText("администратор");
+  await self.locator(".admin-user-management > summary").click();
   await expect(self.getByRole("button", { name: "Заблокировать" })).toHaveCount(0);
   await expect(self.getByRole("button", { name: "Снять администратора" })).toHaveCount(0);
 });
@@ -171,20 +174,23 @@ test("администратор ставит человеку потолок р
   const email = `limit-${Date.now()}@kizuna.test`;
   expect((await request.post("/api/auth/register", { data: { email, password: "limit-very-long-password" } })).status()).toBe(201);
 
-  await page.goto("/#admin");
+  await page.goto("/#admin/inbox");
   const pending = page.locator("#admin-pending .admin-user").filter({ hasText: email });
   await pending.getByRole("button", { name: "Одобрить" }).click();
+  await page.goto("/#admin/users");
 
   const card = page.locator("#admin-users .admin-user").filter({ hasText: email });
   // Новому человеку потолок уже стоит: доллар на пробу, дальше решает хозяин.
   await expect(card).toContainText("в этом месяце $0.00 из $1");
 
   // Потолок правится полем прямо в карточке, а не вопросом в модальном окне.
+  await card.locator(".admin-user-management > summary").click();
   await card.locator('input[data-key="monthlyLimitUsd"]').fill("7");
   await card.getByRole("button", { name: "Сохранить пределы" }).click();
 
   const saved = page.locator("#admin-users .admin-user").filter({ hasText: email });
   await expect(saved).toContainText("в этом месяце $0.00 из $7");
+  await saved.locator(".admin-user-management > summary").click();
   await expect(saved.locator('input[data-key="monthlyLimitUsd"]')).toHaveValue("7");
 
   // Пустое поле возвращает человека под общий потолок, а не обнуляет его.
@@ -198,7 +204,9 @@ test("свой расход за месяц виден в настройках",
   await page.goto("/#settings");
   await expect(page.locator("#spend-state")).toContainText("потрачено");
   await expect(page.locator("#spend-state")).toContainText("осталось");
+  await page.goto("/#admin/service/limits");
   await expect(page.locator("#setting-monthlyLimitUsd")).toHaveValue("50");
+  await page.goto("/#settings");
   // Возвращаем как было: потолок общий, и он касается остальных проверок.
   expect((await request.put("/api/settings", { data: { monthlyLimitUsd: "" } })).status()).toBe(200);
   // Перезагрузка, а не переход по тому же адресу: адрес и хэш те же, и переход
