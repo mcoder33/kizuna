@@ -445,12 +445,12 @@ export function createTelegramService({
   async function setupPrivateCommands(link) {
     if (!link || !currentBinding(link) || String(link.chat_id) !== String(link.telegram_id)) return;
     const scope = { type: 'chat', chat_id: link.chat_id };
-    const commands = menuRouter.canAccessMenu(link) ? additionalCommands() : [];
+    const commands = menuRouter.canAccessMenu(link) ? [...DAY_SUMMARY_COMMANDS, { command: 'help', description: 'Как записывать в Кизуну' }, ...additionalCommands(link)] : [];
     if (!commands.length) {
       await call('deleteMyCommands', { scope }).catch(() => {});
       return;
     }
-    await call('setMyCommands', { scope, commands: [...DAY_SUMMARY_COMMANDS, { command: 'help', description: 'Как записывать в Кизуну' }, ...commands] }).catch(() => {});
+    await call('setMyCommands', { scope, commands }).catch(() => {});
   }
   const dayDelivery=createTelegramDayDelivery({db,canAccess:canAccessDaySummary,now,timeZone,currentBinding,enabled:()=>Boolean(token()),prepareReview:dayReview,currentReview:menuRouter.currentReview,send:(chatId,text,extra)=>say(chatId,text,null,extra),audit:note,batchSize:summaryBatchSize});
   async function createLink(userId, appUrl = null) {
@@ -593,7 +593,7 @@ export function createTelegramService({
         try { if (!attach({ captureId: queued.captureId, filename: file.filename, contentType: file.contentType, bytes: file.bytes })) problems.push(`«${file.filename}» не приложен.`); }
         catch { problems.push(`«${file.filename}» не приложен.`); }
       }
-      const sent = await quietly(say(chatId, [queued.spent ? TELEGRAM_TEXTS.savingByRules : TELEGRAM_TEXTS.saving, ...extra].join('\n'), head.message_id));
+      const sent = await quietly(say(chatId, [queued.spent ? TELEGRAM_TEXTS.savingByRules : TELEGRAM_TEXTS.saving, ...extra].join('\n'), head.message_id, currentBinding(link) ? {reply_markup:menuRouter.replyKeyboard(link)} : {}));
       if (sent?.message_id) db.prepare('UPDATE telegram_messages SET reply_id=? WHERE chat_id=? AND message_id=?').run(sent.message_id, chatId, head.message_id);
     } finally { sending.delete(queued.jobId); }
     note({ event: 'telegram_capture_queued', result: 'succeeded', messages: messages.length, files: files.length });

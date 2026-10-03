@@ -23,7 +23,7 @@ export function createFakeTelegram({ token = FAKE_BOT_TOKEN, username = 'kizuna_
   const sent = [];
   const files = new Map();
   const waiters = new Set();
-  const bot = { description: '', shortDescription: '', commands: [], photos: [] };
+  const bot = { description: '', shortDescription: '', commands: [], scopedCommands: new Map(), photos: [] };
   const user = { id: 777001, is_bot: false, first_name: 'Саша', username: 'sasha' };
 
   function message(fields = {}) {
@@ -78,7 +78,11 @@ export function createFakeTelegram({ token = FAKE_BOT_TOKEN, username = 'kizuna_
         return ok({ message_id: params.message_id, chat: { id: params.chat_id, type: 'private' }, text: params.text });
       case 'answerCallbackQuery': sent.push({method:name,params});return ok(true);
       case 'sendChatAction': return ok(true);
-      case 'setMyCommands': bot.commands = params.commands || []; return ok(true);
+      case 'setMyCommands':
+        if (params.scope) bot.scopedCommands.set(String(params.scope.chat_id), params.commands || []);
+        else bot.commands = params.commands || [];
+        return ok(true);
+      case 'deleteMyCommands': bot.scopedCommands.delete(String(params.scope?.chat_id)); return ok(true);
       case 'getMyDescription': return ok({ description: bot.description });
       case 'setMyDescription': bot.description = params.description || ''; return ok(true);
       case 'getMyShortDescription': return ok({ short_description: bot.shortDescription });
