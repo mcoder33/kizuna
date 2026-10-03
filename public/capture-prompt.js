@@ -1,9 +1,9 @@
 const PHRASES = [
-  "О чём думаете?",
-  "What’s on your mind?",
-  "何を考えていますか？",
-  "¿En qué piensas?",
-  "À quoi pensez-vous ?",
+  "Какая мысль зацепила?",
+  "What thought caught your attention?",
+  "どんな考えが心に引っかかりましたか？",
+  "¿Qué idea te llamó la atención?",
+  "Quelle idée a retenu votre attention ?",
 ];
 
 // The prompt lives outside the editable field, so its animation never changes
