@@ -22,37 +22,59 @@ async function drag(page, selector, dx, dy) {
 const cssValue = (page, selector, name) => page.locator(selector).evaluate((element, key) => element.style.getPropertyValue(key), name);
 const values = async request => (await (await request.get('/api/ui-preferences')).json()).values;
 
-test('existing anonymous sizes migrate once and never leak into a later account', async ({ page, browser, request }) => {
-  const context = await browser.newContext({ storageState: { cookies: await page.context().cookies(), origins: [] }, viewport: { width: 1440, height: 900 } });
+test('existing anonymous sizes migrate once and never leak into a later account', async ({ browser, request, playwright, baseURL }) => {
+  // Other scenarios explicitly reset the shared account's display keys to null.
+  // Migration must respect those resets; use an account whose sizes are absent.
+  const account = await playwright.request.newContext({ baseURL, storageState: { cookies: [], origins: [] } });
+  const password = 'preference-sync-password';
+  const firstEmail = `legacy-view-${Date.now()}@kizuna.test`;
+  const registration = await account.post('/api/auth/register', { data: { email: firstEmail, password } });
+  expect(registration.status()).toBe(201);
+  const { user } = await registration.json();
+  expect((await request.post(`/api/admin/users/${user.id}/approve`, { data: {} })).ok()).toBe(true);
+  expect((await account.post('/api/auth/login', { data: { email: firstEmail, password } })).ok()).toBe(true);
+  expect((await account.patch('/api/ui-preferences', { data: { userId: user.id, changes: { 'kizuna-board-filter': '[]' } } })).ok()).toBe(true);
+  const savedState = await account.storageState();
+  // Reuse only the account's cookies so this browser has no legacy owner.
+  const storageState = { cookies: savedState.cookies, origins: [] };
+  const context = await browser.newContext({ storageState, viewport: { width: 1440, height: 900 } });
+  const otherContext = await browser.newContext({ storageState, viewport: { width: 1440, height: 900 } });
+  const page = await otherContext.newPage();
   const legacy = await context.newPage();
-  await legacy.addInitScript(() => {
-    localStorage.setItem('kizuna-capture-width', '960');
-    localStorage.setItem('kizuna-card-mode', 'side');
-    localStorage.setItem('kizuna-board-filter', '[{"field":"who","op":"=","values":["Private name"]}]');
-  });
-  await ready(legacy);
-  await expect.poll(async () => (await values(request))['kizuna-capture-width']).toBe('960');
-  expect((await values(request))['kizuna-card-mode']).toBe('side');
-  expect((await values(request))['kizuna-board-filter']).toBe('[]');
-  expect(await cssValue(legacy, '#today', '--capture-width')).toBe('960px');
-  await ready(page);
-  expect(await cssValue(page, '#today', '--capture-width')).toBe('960px');
-  await expect(page.locator('#review-dialog')).toHaveAttribute('data-mode', 'side');
-  const email = `view-sync-${Date.now()}@kizuna.test`, password = 'preference-sync-password';
-  const registered = await (await request.post('/api/auth/register', { data: { email, password } })).json();
-  expect((await request.post(`/api/admin/users/${registered.user.id}/approve`, { data: {} })).ok()).toBe(true);
-  expect((await context.request.post('/api/auth/login', { data: { email, password } })).ok()).toBe(true);
-  // The old document must not upload its queue under the new session cookie.
-  await legacy.evaluate(async () => {
-    const { uiStorage, flushUiPreferences } = await import('/public/ui-preferences.js');
-    uiStorage.setItem('kizuna-capture-width', '1000');
-    await flushUiPreferences();
-  });
-  expect(await values(context.request)).toEqual({});
-  await ready(legacy);
-  expect(await cssValue(legacy, '#today', '--capture-width')).toBe('');
-  await expect(legacy.locator('#review-dialog')).toHaveAttribute('data-mode', 'center');
-  await context.close();
+  try {
+    await legacy.addInitScript(() => {
+      localStorage.setItem('kizuna-capture-width', '960');
+      localStorage.setItem('kizuna-card-mode', 'side');
+      localStorage.setItem('kizuna-board-filter', '[{"field":"who","op":"=","values":["Private name"]}]');
+    });
+    await ready(legacy);
+    expect(await legacy.evaluate(() => localStorage.getItem('kizuna-ui-preferences-legacy-owner'))).toBe(user.id);
+    await expect.poll(async () => (await values(account))['kizuna-capture-width']).toBe('960');
+    expect((await values(account))['kizuna-card-mode']).toBe('side');
+    expect((await values(account))['kizuna-board-filter']).toBe('[]');
+    expect(await cssValue(legacy, '#today', '--capture-width')).toBe('960px');
+    await ready(page);
+    expect(await cssValue(page, '#today', '--capture-width')).toBe('960px');
+    await expect(page.locator('#review-dialog')).toHaveAttribute('data-mode', 'side');
+    const email = `view-sync-${Date.now()}@kizuna.test`;
+    const registered = await (await request.post('/api/auth/register', { data: { email, password } })).json();
+    expect((await request.post(`/api/admin/users/${registered.user.id}/approve`, { data: {} })).ok()).toBe(true);
+    expect((await context.request.post('/api/auth/login', { data: { email, password } })).ok()).toBe(true);
+    // The old document must not upload its queue under the new session cookie.
+    await legacy.evaluate(async () => {
+      const { uiStorage, flushUiPreferences } = await import('/public/ui-preferences.js');
+      uiStorage.setItem('kizuna-capture-width', '1000');
+      await flushUiPreferences();
+    });
+    expect(await values(context.request)).toEqual({});
+    await ready(legacy);
+    expect(await cssValue(legacy, '#today', '--capture-width')).toBe('');
+    await expect(legacy.locator('#review-dialog')).toHaveAttribute('data-mode', 'center');
+  } finally {
+    await context.close();
+    await otherContext.close();
+    await account.dispose();
+  }
 });
 
 test('two independent browsers sync dimensions and modes live, preserve drafts and restore on a fresh device', async ({ page, browser, request }) => {

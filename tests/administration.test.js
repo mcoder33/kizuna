@@ -352,7 +352,7 @@ test('reading and clearing the personal bell leaves administration notices untou
   assert.equal(dismissed.dismissed.length, 1);
   assert.ok(administrationRows().every(row => row.read_at === null && row.dismissed_at === null));
   const ids = administrationRows().map(row => row.id);
-  assert.equal((await admin.post('/api/notifications/read').send({ ids }).expect(200)).body.changed, 2);
+  assert.equal((await admin.post('/api/notifications/read?scope=personal').send({ ids }).expect(200)).body.changed, 2);
   assert.ok(administrationRows().every(row => row.read_at !== null && row.dismissed_at === null));
   assert.equal((await inbox(admin)).notifications.length, 2, 'reading a notice does not handle the request');
 });
