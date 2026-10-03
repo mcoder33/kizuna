@@ -49,6 +49,8 @@ desktop/macos/dist/Kizuna.app/Contents/MacOS/Kizuna --self-test
 python3 desktop/macos/Tests/test-updates.py
 bash desktop/macos/Tests/test-reminders.sh
 bash desktop/macos/Tests/test-notifications.sh
+# Supervised; macOS may ask permission for a separate local test app:
+python3 desktop/macos/test-notifications-integration.py
 # With npm dependencies and Playwright Chromium installed:
 node --test desktop/macos/Tests/restart-guard.test.cjs
 ```
@@ -56,6 +58,8 @@ node --test desktop/macos/Tests/restart-guard.test.cjs
 The integration test creates disposable app bundles with unique identifiers, an ephemeral signing key and a loopback HTTP server. Its ten scenarios test a real signed update from build 1 to build 2 including relaunch, deferred restart for a draft, deferral, cancellation, a corrupted archive, a modified feed, an unavailable server, no new version, the new reminder controls with background suppression and manual bypass, and a manual check requested during Sparkle’s asynchronous installer probe. The reminder scenario uses an injected clock and scheduler without waiting an hour. The Foundation checks cover persistence, version scope, local midnight through daylight-saving changes, due checks, busy retries and stale callbacks. Neither test opens the user's installed Kizuna or contacts production. `dist/update-banner.png` is a render of the native banner from this fixture.
 
 Developer ID signing/notarization and Gatekeeper behavior on another Mac still need validation before public distribution. The local integration test deliberately uses ad-hoc signed fixture applications; it does not establish notarization readiness.
+
+The native notification smoke uses a separate `~/Applications/Kizuna Notification Test.app` with its own bundle identifier and permission. It compiles the production polling code, uses a nonpersistent WKWebView and loopback HTTP only, then verifies real macOS delivery with a closed window, silent historical items, session-cookie transport, and deduplication. It removes its harmless test notification afterward. It does not access the installed Kizuna or its account. The first run may need permission for the test app; a timeout fails explicitly and stops only its own process.
 
 ## Try the update interactively
 
