@@ -34,7 +34,7 @@ export function summaryEligibility({preferences,phase,timeZone,now}){
   return{eligible:true,...schedule,due,timeZone,phase};
 }
 
-export function createTelegramDayDelivery({db,now=()=>new Date(),timeZone,currentBinding,enabled=()=>true,prepareReview,currentReview,send,audit=()=>{},batchSize=40}){
+export function createTelegramDayDelivery({db,canAccess=()=>false,now=()=>new Date(),timeZone,currentBinding,enabled=()=>true,prepareReview,currentReview,send,audit=()=>{},batchSize=40}){
   const size=Math.max(1,Math.min(100,Math.floor(Number(batchSize)||40)));
   let cursor='',inFlight=null,recovered=false;
   const report=event=>audit(event);
@@ -43,6 +43,7 @@ export function createTelegramDayDelivery({db,now=()=>new Date(),timeZone,curren
   const sameReceiptBinding=(receipt,link)=>receipt.telegram_user_id===String(link.telegram_id)&&receipt.chat_id===String(link.chat_id)&&receipt.binding_linked_at===link.linked_at;
   function finish(link,selection,status,errorCode=null,extra={}){updateSummaryReceipt(db,{userId:link.user_id,date:selection.date,phase:selection.phase,status,errorCode,now:now().toISOString(),...extra});report({event:'telegram_summary_delivery',phase:selection.phase,status,errorCode});}
   async function deliver(link,phase){
+    if(!canAccess(link.user_id))return;
     const selection=eligible(link,phase);if(!currentBinding(link)||!enabled())return;
     for(const old of db.prepare("SELECT local_date FROM telegram_summary_receipts WHERE user_id=? AND phase=? AND status='retry' AND local_date<>? LIMIT 10").all(link.user_id,phase,selection.date))finish(link,{date:old.local_date,phase},'failed','retry_day_expired');
     const receipt=receiptOf.get(link.user_id,selection.date,phase);
@@ -56,10 +57,12 @@ export function createTelegramDayDelivery({db,now=()=>new Date(),timeZone,curren
     }
     if(!selection.eligible){if(receipt?.status==='retry'&&selection.reason!=='before_due')finish(link,selection,'failed',selection.reason);return;}
     const input={userId:link.user_id,date:selection.date,phase,telegramUserId:link.telegram_id,chatId:link.chat_id,linkedAt:link.linked_at,dueAt:new Date(selection.due).toISOString(),graceDeadline:new Date(selection.due+SUMMARY_GRACE_MS).toISOString(),scheduleSignature:selection.signature,now:now().toISOString()};
+    if(!canAccess(link.user_id))return;
     if(receipt){if(!claimSummaryRetry(db,input))return;}else if(!reserveSummaryReceipt(db,input))return;
     let sending=false;
     try{
       await prepareReview({userId:link.user_id,date:selection.date,timeZone:selection.timeZone,now:now(),phase});
+      if(!canAccess(link.user_id)){finish(link,selection,'failed','access_revoked');return;}
       if(!currentBinding(link)){finish(link,selection,'failed','binding_changed');return;}
       if(!enabled()){finish(link,selection,'failed','telegram_disabled');return;}
       const current=eligible(link,phase);
@@ -68,6 +71,7 @@ export function createTelegramDayDelivery({db,now=()=>new Date(),timeZone,curren
       if(!overview){finish(link,selection,'failed','binding_changed');return;}
       const text=renderDaySummary(overview),markup=summaryNavigation(selection.date,selection.date,link.app_url);
       const finalSelection=eligible(link,phase),sendAt=now().getTime();
+      if(!canAccess(link.user_id)){finish(link,selection,'failed','access_revoked');return;}
       if(!currentBinding(link)||!enabled()||!finalSelection.eligible||finalSelection.date!==selection.date||finalSelection.signature!==input.scheduleSignature||sendAt<Date.parse(input.dueAt)||sendAt>Date.parse(input.graceDeadline)||dateInZone(new Date(sendAt),selection.timeZone)!==selection.date){finish(link,selection,'failed','final_eligibility_changed');return;}
       sending=true;
       const sent=await send(link.chat_id,text,{reply_markup:markup});
@@ -88,7 +92,7 @@ export function createTelegramDayDelivery({db,now=()=>new Date(),timeZone,curren
     const query=db.prepare("SELECT l.* FROM telegram_links l JOIN users u ON u.id=l.user_id WHERE u.status='active' AND l.user_id>? ORDER BY l.user_id LIMIT ?");
     let users=query.all(cursor,size);if(!users.length&&cursor){cursor='';users=query.all(cursor,size);}
     if(users.length)cursor=users.at(-1).user_id;
-    for(const link of users)for(const phase of ['morning','evening'])await deliver(link,phase);
+    for(const link of users.filter(link=>canAccess(link.user_id)))for(const phase of ['morning','evening'])await deliver(link,phase);
   }
   function tick(){
     if(inFlight)return inFlight;

@@ -10,8 +10,12 @@ const sources = [
   { table:'capture_people', kind:'participant', key:r=>`json_array(${r}.capture_id,${r}.user_id)`, owner:r=>`(SELECT user_id FROM captures WHERE id=${r}.capture_id)`, subject:r=>`${r}.user_id`, fields:r=>`json_object('capture_id',${r}.capture_id,'user_id',${r}.user_id,'removed_at',${r}.removed_at)` },
 ];
 
-export function migrateDaySummaryHistory(db, at = new Date().toISOString(), { now = () => new Date() } = {}) {
+export function registerDaySummaryHistoryClock(db, { now = () => new Date() } = {}) {
   db.function('day_summary_observed_at', () => now().toISOString());
+}
+
+export function migrateDaySummaryHistory(db, at = new Date().toISOString(), { now = () => new Date() } = {}) {
+  registerDaySummaryHistoryClock(db, { now });
   for(const operation of ['insert','update','delete','key_change'])db.exec(`DROP TRIGGER IF EXISTS day_summary_collaborative_documents_${operation}`);
   db.exec(`CREATE TABLE IF NOT EXISTS day_summary_history_meta (id INTEGER PRIMARY KEY CHECK(id=1), observed_from TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS day_summary_user_resets (user_id TEXT PRIMARY KEY, reset_at TEXT NOT NULL);

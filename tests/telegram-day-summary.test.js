@@ -4,16 +4,17 @@ import { openDatabase, createUser, createLedger, readSettings } from '../server/
 import { reviewDay } from '../server/day-review.js';
 import { createTelegramService } from '../server/telegram.js';
 import { createFakeTelegram } from './helpers/fake-telegram.js';
-import { DAY_SUMMARY_LABELS, summaryReplyKeyboard, readSummaryPreferences, renderDaySummary, safeSummaryLink, summaryPreferences, weekdayReviewDate } from '../server/telegram-day-summary.js';
+import { createTelegramDaySummaryRouter, DAY_SUMMARY_LABELS, summaryReplyKeyboard, readSummaryPreferences, renderDaySummary, safeSummaryLink, summaryPreferences, weekdayReviewDate } from '../server/telegram-day-summary.js';
 
-function fixture(t,{dayReview=null}={}) {
+function fixture(t,{dayReview=null,access=true}={}) {
   const db=openDatabase(':memory:');t.after(()=>db.close());const userId=createUser(db,{email:'telegram-day@example.org',passwordHash:'test',status:'active'}).id;
   const fake=createFakeTelegram();let now=new Date('2026-10-03T12:00:00Z'),cache=readSettings(db),changes=0;const captures=[],reviews=[],attachments=[];
   db.prepare('INSERT INTO telegram_links(user_id,telegram_id,chat_id,app_url,linked_at) VALUES(?,?,?,?,?)').run(userId,fake.user.id,fake.user.id,'https://kizuna.example','2026-09-30T10:00:00Z');
-  const service=createTelegramService({db,token:()=>fake.token,fetch:fake.fetch,now:()=>now,clock:()=>now.getTime(),timeZone:()=> 'Europe/Samara',userActive:id=>db.prepare("SELECT status FROM users WHERE id=?").get(id)?.status==='active',onSettingsChanged:stored=>{cache=stored;changes++;},
+  let allowed=access;
+  const service=createTelegramService({db,canAccessDaySummary:id=>allowed && id===userId,token:()=>fake.token,fetch:fake.fetch,now:()=>now,clock:()=>now.getTime(),timeZone:()=> 'Europe/Samara',userActive:id=>db.prepare("SELECT status FROM users WHERE id=?").get(id)?.status==='active',onSettingsChanged:stored=>{cache=stored;changes++;},
     dayReview:async input=>{reviews.push(input);return dayReview?dayReview(input):{...input,planned:[],done:[],remaining:[{id:'todo',title:'Написать отчёт'}],overdue:[],added:[],meetings:[{title:'Созвон',time:'16:00',end:'17:00'}],counts:{remaining:1,meetings:1},historyCoverage:{gaps:[]}};},
     queueCapture:async input=>{captures.push(input);const saved=createLedger(db,{raw:input.raw,userId:input.userId,classification:{primaryType:'task',summary:input.raw,entities:{schedule:null}},provider:'manual'});return{captureId:saved.captureId,jobId:`job-${captures.length}`};},attach:input=>{attachments.push(input);return true;},describe:()=>null,avatar:()=>Buffer.alloc(0),groupWindowMs:0});
-  return{db,userId,fake,service,captures,reviews,attachments,setNow:value=>{now=new Date(value);},get cache(){return cache;},get changes(){return changes;},messages:()=>fake.sent.filter(x=>x.method==='sendMessage'),acks:()=>fake.sent.filter(x=>x.method==='answerCallbackQuery'),async text(text,fields={}){fake.push({text,...fields});await service.pollOnce();await service.flush({force:true});},async callback(data,fields={}){fake.pushCallback(data,fields);await service.pollOnce();}};
+  return{db,userId,fake,service,setAccess:value=>{allowed=value;},captures,reviews,attachments,setNow:value=>{now=new Date(value);},get cache(){return cache;},get changes(){return changes;},messages:()=>fake.sent.filter(x=>x.method==='sendMessage'),acks:()=>fake.sent.filter(x=>x.method==='answerCallbackQuery'),async text(text,fields={}){fake.push({text,...fields});await service.pollOnce();await service.flush({force:true});},async callback(data,fields={}){fake.pushCallback(data,fields);await service.pollOnce();}};
 }
 
 test('exact persistent keyboard, slash day/date navigation and HTTPS selected date link do not create tasks',async t=>{
@@ -52,8 +53,8 @@ test('renderer bounds Unicode, counts omissions and renders literal plain text; 
  for(const url of ['http://kizuna.example','https://user:password@kizuna.example','https://localhost','https://127.0.0.1','javascript:alert(1)'])assert.equal(safeSummaryLink(url,'2026-10-01'),null);assert.equal(safeSummaryLink('https://kizuna.example/sub?q=secret#other','2026-10-01'),'https://kizuna.example/sub/#today?date=2026-10-01');assert.deepEqual(summaryPreferences('{broken').weekdays,[1,2,3,4,5,6,7]);assert.equal(weekdayReviewDate('покажи в пятницу','2026-10-03'),'2026-10-02');assert.equal(weekdayReviewDate('Надо покажи в пятницу отчёт','2026-10-03'),null);
 });
 
-test('actual bot setup registers today/day/settings/help commands without a real API',async t=>{
- const ctx=fixture(t);ctx.service.start();try{for(let i=0;i<100 && ctx.fake.bot.commands.length===0;i++)await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(ctx.fake.bot.commands.map(command=>command.command),['today','day','settings','help']);}finally{await ctx.service.stop();}
+test('actual bot setup keeps the global command menu help-only even for an allowed owner',async t=>{
+ const ctx=fixture(t);ctx.service.start();try{for(let i=0;i<100 && ctx.fake.bot.commands.length===0;i++)await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(ctx.fake.bot.commands.map(command=>command.command),['help']);}finally{await ctx.service.stop();}
 });
 test('invalid bare time reports error without task creation, and weekday request is anchored',async t=>{
  const ctx=fixture(t);await ctx.callback('tds:time:morning');await ctx.text('25:00');assert.equal(ctx.captures.length,0);assert.equal(readSummaryPreferences(ctx.db,ctx.userId).morning.time,'09:00');await ctx.text('08:00');assert.equal(readSummaryPreferences(ctx.db,ctx.userId).morning.time,'08:00');await ctx.text('покажи в пятницу');assert.equal(ctx.reviews.at(-1).date,'2026-10-02');await ctx.text('Надо покажи в пятницу отчёт');assert.equal(ctx.captures.length,1);
@@ -80,7 +81,7 @@ test('async preparation followed by current busy-mode reread removes old titles 
 
 test('extension pending mode receives actual message and registered keyboard button uses common menu',async t=>{
  const ctx=fixture(t),router=ctx.service.menuRouter,link=ctx.db.prepare('SELECT * FROM telegram_links WHERE user_id=?').get(ctx.userId);let consumed;
- router.registerReplyKeyboardButton('Дополнение');router.registerPendingMode('extension',{accept:text=>text==='значение',consume:(bound,text,data,message)=>{consumed={bound,text,data,message};}});router.registerMessageRoute(async({text,link,interactions,send})=>{if(text!=='Дополнение')return false;assert.equal(interactions.get(link),null);interactions.begin(link,'extension',{marker:7});await send(link,'Введите значение',router.replyKeyboard());return true;});
+ router.registerReplyKeyboardButton('Дополнение');router.registerPendingMode('extension',{accept:text=>text==='значение',consume:(bound,text,data,message)=>{consumed={bound,text,data,message};}});router.registerMessageRoute(async({text,link,interactions,send})=>{if(text!=='Дополнение')return false;assert.equal(interactions.get(link),null);interactions.begin(link,'extension',{marker:7});await send(link,'Введите значение',router.replyKeyboard(link));return true;});
  await ctx.text('/today');assert.deepEqual(ctx.messages()[0].params.reply_markup.keyboard[0],[DAY_SUMMARY_LABELS.today,DAY_SUMMARY_LABELS.day,'Дополнение']);router.interactions.begin(link,'date');await ctx.text('Дополнение');const message=ctx.fake.push({text:'значение'}).message;await ctx.service.pollOnce();await ctx.service.flush({force:true});assert.deepEqual(consumed.message,message);assert.equal(consumed.message.message_id,message.message_id);assert.equal(consumed.bound.user_id,link.user_id);assert.equal(consumed.data.marker,7);assert.equal(ctx.captures.length,0);
 });
 test('extension callback route shares auth and single acknowledgement',async t=>{
@@ -100,5 +101,33 @@ test('handled preflight sees original update and prevents pending clear/capture;
 test('/start invalid and used codes cancel pending; valid code rebinds, preflight skips before both',async t=>{
  const ctx=fixture(t),router=ctx.service.menuRouter,oldLink=ctx.db.prepare('SELECT * FROM telegram_links WHERE user_id=?').get(ctx.userId);router.interactions.begin(oldLink,'date');await ctx.text('/start invalid');assert.equal(router.interactions.get(oldLink),null);await ctx.text('2026-10-01');assert.equal(ctx.reviews.length,0);assert.equal(ctx.captures.length,1);
  const other=createUser(ctx.db,{email:'rebound@example.org',passwordHash:'test',status:'active'}).id,issued=await ctx.service.createLink(other,'https://kizuna.example'),code=new URL(issued.url).searchParams.get('start');router.interactions.begin(oldLink,'date');let preflights=0;router.registerPreflight(({message})=>{preflights++;return message?.message_id===4242;});const before=ctx.messages().length;await ctx.text(`/start ${code}`,{message_id:4242});assert.equal(preflights,1);assert.equal(ctx.messages().length,before);assert.equal(router.interactions.get(oldLink).mode,'date');assert.equal(ctx.db.prepare('SELECT user_id FROM telegram_links WHERE telegram_id=?').get(ctx.fake.user.id).user_id,ctx.userId);
- await ctx.text(`/start ${code}`);assert.equal(preflights,2);assert.equal(router.interactions.get(oldLink),null);const newLink=ctx.db.prepare('SELECT * FROM telegram_links WHERE telegram_id=?').get(ctx.fake.user.id);assert.equal(newLink.user_id,other);router.interactions.begin(newLink,'time',{phase:'morning'});await ctx.text(`/start ${code}`);assert.equal(preflights,3);assert.equal(router.interactions.get(newLink),null);assert.equal(readSummaryPreferences(ctx.db,other).morning.time,'09:00');
+ await ctx.text(`/start ${code}`);assert.equal(preflights,2);assert.equal(router.interactions.get(oldLink),null);const newLink=ctx.db.prepare('SELECT * FROM telegram_links WHERE telegram_id=?').get(ctx.fake.user.id);assert.equal(newLink.user_id,other);router.interactions.begin(newLink,'extension',{phase:'morning'});await ctx.text(`/start ${code}`);assert.equal(preflights,3);assert.equal(router.interactions.get(newLink),null);assert.equal(readSummaryPreferences(ctx.db,other).morning.time,'09:00');
+});
+
+
+test('non-owner direct commands show legacy help and plain buttons, weekdays, forwards and files stay capture',async t=>{
+ const ctx=fixture(t,{access:false});
+ for(const text of ['/today','/day 2026-10-01','/day invalid extra arguments','/settings','/help']){await ctx.text(text);assert.match(ctx.messages().at(-1).params.text,/Пишите сюда/);assert.equal(ctx.messages().at(-1).params.reply_markup,undefined);}
+ for(const text of Object.values(DAY_SUMMARY_LABELS))await ctx.text(text);
+ await ctx.text('покажи в понедельник');await ctx.text('/today',{forward_origin:{type:'hidden_user',sender_user_name:'Друг',date:1}});
+ const fileId=ctx.fake.addFile(Buffer.from('payload'),'note.txt');ctx.fake.push({document:{file_id:fileId,file_name:'note.txt'}});await ctx.service.pollOnce();await ctx.service.flush({force:true});
+ assert.equal(ctx.captures.length,6);assert.equal(ctx.reviews.length,0);assert.equal(ctx.changes,0);assert.equal(ctx.attachments.length,1);
+ for(const data of ['tds:date:2026-10-01','tds:pick','tds:time:morning','tds:enabled:morning:1','tds:weekday:1:0'])await ctx.callback(data);
+ assert.equal(ctx.acks().length,5);assert.equal(ctx.reviews.length,0);assert.equal(ctx.changes,0);assert.equal(ctx.service.menuRouter.currentReview(ctx.db.prepare('SELECT * FROM telegram_links').get(),{date:'2026-10-03'}),null);
+ assert.equal(readSummaryPreferences(ctx.db,ctx.userId).morning.enabled,false);
+});
+test('revoked built-in pending date and time clear and their next values become captures; extension mode remains independent',async t=>{
+ for(const [callback,value]of [['tds:pick','2026-10-01'],['tds:time:morning','08:30']]){const ctx=fixture(t);await ctx.callback(callback);ctx.setAccess(false);await ctx.text(value);assert.equal(ctx.captures.length,1);assert.equal(ctx.reviews.length,0);assert.equal(ctx.changes,0);assert.equal(ctx.service.menuRouter.interactions.get(ctx.db.prepare('SELECT * FROM telegram_links').get()),null);}
+ const ctx=fixture(t,{access:false}),router=ctx.service.menuRouter,link=ctx.db.prepare('SELECT * FROM telegram_links').get();let calls=0;
+ router.registerPendingMode('search',{accept:text=>text==='find',consume:()=>{calls++;}});router.interactions.begin(link,'search');await ctx.text('find');assert.equal(calls,1);assert.equal(ctx.captures.length,0);
+ router.registerCallbackRoute(({callback})=>{if(callback.data!=='search:page')return false;calls++;return true;});await ctx.callback('search:page');assert.equal(calls,2);
+ router.registerReplyKeyboardButton('Найти');assert.deepEqual(router.replyKeyboard(link).keyboard,[['Найти']]);
+});
+test('router default denies day namespace before preflights and data reads, still ACKs callbacks',async()=>{
+ const link={user_id:'00000000-0000-0000-0000-000000000001',telegram_id:1,chat_id:1,linked_at:'stamp'};let acks=0,reads=0,preflights=0;
+ const router=createTelegramDaySummaryRouter({db:{prepare(){reads++;throw Error('must not read');}},authorize:()=>link,currentBinding:()=>true,send:()=>{throw Error('must not send');},acknowledge:()=>{acks++;return Promise.resolve();},timeZone:()=>{throw Error('must not read timezone');},review:()=>{throw Error('must not review');}});
+ router.registerPreflight(()=>{preflights++;return false;});assert.equal(await router.routeCallback({id:'a',data:'tds:enabled:morning:1'}),true);assert.equal(acks,1);assert.equal(preflights,0);assert.equal(reads,0);assert.equal(router.currentReview(link,{}),null);assert.equal(router.replyKeyboard(link),undefined);
+});
+test('access revoked during async manual review suppresses day data and navigation',async t=>{
+ let ctx;ctx=fixture(t,{dayReview:async()=>{ctx.setAccess(false);return{};}});await ctx.text('/today');assert.equal(ctx.messages().length,1);assert.equal(ctx.messages()[0].params.reply_markup.keyboard[0][0],DAY_SUMMARY_LABELS.today);assert.equal(ctx.reviews.length,1);assert.equal(ctx.changes,0);
 });

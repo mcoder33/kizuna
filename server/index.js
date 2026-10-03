@@ -30,6 +30,7 @@ import { AVATAR_IMAGE_LIMIT } from './avatars.js';
 import * as chat from './chat.js';
 import { registerNotesRoutes, afterCapture } from './notes-tree.js';
 import { createTelegramService, TELEGRAM_API } from './telegram.js';
+import { createTelegramDaySummaryAccess } from './telegram-day-access.js';
 import QRCode from 'qrcode';
 import { createSecretBox } from './secrets.js';
 import { createReminderService, ReminderWorker, validRemindHour, REMIND_MAX_MINUTES } from './reminders.js';
@@ -455,6 +456,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   // вложения, живое обновление вкладок.
   telegram = createTelegramService({
     db, now, audit,
+    canAccessDaySummary: createTelegramDaySummaryAccess(),
     onSettingsChanged: () => { stored = readSettings(db); },
     token: () => environment().PAGENT_TELEGRAM_BOT_TOKEN || null,
     apiBase: () => process.env.PAGENT_TELEGRAM_API_BASE || TELEGRAM_API,

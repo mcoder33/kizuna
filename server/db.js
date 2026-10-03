@@ -11,11 +11,12 @@ import { occurrencesOf } from './occurrences.js';
 import { migrateNotifications } from './notifications.js';
 import { migrateNotesTree } from './notes-schema.js';
 import { migrateAdministration } from './admin-schema.js';
-import { migrateDaySummaryHistory, exportDaySummaryHistory, resetDaySummaryHistory, daySummaryHistoryRowCount } from './day-summary-history.js';
+import { registerDaySummaryHistoryClock, migrateDaySummaryHistory, exportDaySummaryHistory, resetDaySummaryHistory, daySummaryHistoryRowCount } from './day-summary-history.js';
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
   const db = new Database(filename);
+  registerDaySummaryHistoryClock(db);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   migrate(db);

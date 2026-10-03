@@ -30,7 +30,7 @@ import { describeRepeat } from './repeat.js';
 import { dateInZone, shiftDate } from './reports.js';
 import { reviewDay } from './day-review.js';
 import { createTelegramDayDelivery } from './telegram-day-delivery.js';
-import { createTelegramDaySummaryRouter, DAY_SUMMARY_COMMANDS } from './telegram-day-summary.js';
+import { createTelegramDaySummaryRouter } from './telegram-day-summary.js';
 
 export const TELEGRAM_API = 'https://api.telegram.org';
 export const LINK_TTL_MS = 15 * 60 * 1000;
@@ -313,6 +313,7 @@ export function createTelegramService({
   finalDayReview = input => reviewDay(db,input),
   onSettingsChanged = () => {},
   summaryBatchSize = 40,
+  canAccessDaySummary = () => false,
   attachmentLimit = 10 * 1024 * 1024,
   requestTimeoutMs = 20000,
   maxResponseBytes = 2 * 1024 * 1024,
@@ -412,7 +413,7 @@ export function createTelegramService({
   // Команды, описание и аватарка — один раз на токен. Описание, заданное в
   // @BotFather, не трогаем: заполняем, только если его нет.
   async function setupBot() {
-    await call('setMyCommands', { commands: [...DAY_SUMMARY_COMMANDS,{ command: 'help', description: 'Как записывать в Кизуну' }] }).catch(() => {});
+    await call('setMyCommands', { commands: [{ command: 'help', description: 'Как записывать в Кизуну' }] }).catch(() => {});
     const current = await call('getMyDescription', {}).catch(() => null);
     if (current && !current.description) await call('setMyDescription', { description: 'Пишите или пересылайте сюда сообщения — Кизуна запишет их в ваш журнал и разберёт: дела, встречи, заметки, идеи.' }).catch(() => {});
     const short = await call('getMyShortDescription', {}).catch(() => null);
@@ -434,8 +435,8 @@ export function createTelegramService({
     if(!from || from.is_bot || chat?.type!=='private' || String(chat.id)!==String(from.id))return null;
     const link=linkByTelegram(from.id);return link && String(link.chat_id)===String(chat.id) && currentBinding(link)?link:null;
   }
-  const menuRouter=createTelegramDaySummaryRouter({db,now,timeZone,review:dayReview,finalReview:finalDayReview,authorize:authorizeMessage,currentBinding,send:(chatId,text,extra)=>say(chatId,text,null,extra),acknowledge:id=>call('answerCallbackQuery',{callback_query_id:id}),onSettingsChanged});
-  const dayDelivery=createTelegramDayDelivery({db,now,timeZone,currentBinding,enabled:()=>Boolean(token()),prepareReview:dayReview,currentReview:menuRouter.currentReview,send:(chatId,text,extra)=>say(chatId,text,null,extra),audit:note,batchSize:summaryBatchSize});
+  const menuRouter=createTelegramDaySummaryRouter({db,canAccess:canAccessDaySummary,now,timeZone,review:dayReview,finalReview:finalDayReview,authorize:authorizeMessage,currentBinding,send:(chatId,text,extra)=>say(chatId,text,null,extra),acknowledge:id=>call('answerCallbackQuery',{callback_query_id:id}),onSettingsChanged});
+  const dayDelivery=createTelegramDayDelivery({db,canAccess:canAccessDaySummary,now,timeZone,currentBinding,enabled:()=>Boolean(token()),prepareReview:dayReview,currentReview:menuRouter.currentReview,send:(chatId,text,extra)=>say(chatId,text,null,extra),audit:note,batchSize:summaryBatchSize});
   async function createLink(userId, appUrl = null) {
     if (!token()) return { error: 'telegram_off' };
     let me;
@@ -472,7 +473,7 @@ export function createTelegramService({
     })();
     note({ event: 'telegram_linked', result: 'succeeded' });
     try { onLink(row.user_id); } catch {}
-    await quietly(say(chatId, TELEGRAM_TEXTS.linked,null,{reply_markup:menuRouter.replyKeyboard()}));
+    await quietly(say(chatId, TELEGRAM_TEXTS.linked,null,{reply_markup:menuRouter.replyKeyboard({user_id:row.user_id})}));
   }
 
   // ── приём ──
@@ -483,14 +484,14 @@ export function createTelegramService({
     if(update.callback_query) return menuRouter.routeCallback(update.callback_query,{update});
     const message = update.message;
     if (!message || message.chat?.type !== 'private' || !message.from || message.from.is_bot) return;
-    const command = !originOf(message) && typeof message.text === 'string' ? COMMAND.exec(message.text.trim()) : null;
+    const command = !originOf(message) && typeof message.text === 'string' ? (COMMAND.exec(message.text.trim()) || /^\/(today|day|settings)(?:@\w+)?(?:\s+.*)?$/i.exec(message.text.trim())) : null;
     if (command?.[1].toLowerCase() === 'start' && command[2]) {
       if(await menuRouter.beforeLinkCommand(message,{update}))return;
       return linkWithCode(message, command[2]);
     }
     const link = linkByTelegram(message.from.id);
     if(link && authorizeMessage(message.from,message.chat) && await menuRouter.routeMessage(message,{forwarded:Boolean(originOf(message)),update}))return;
-    if (command) { await quietly(say(message.chat.id, link ? TELEGRAM_TEXTS.help : TELEGRAM_TEXTS.notLinked,null,link && currentBinding(link)?{reply_markup:menuRouter.replyKeyboard()}:{})); return; }
+    if (command) { await quietly(say(message.chat.id, link ? TELEGRAM_TEXTS.help : TELEGRAM_TEXTS.notLinked,null,link && currentBinding(link)?{reply_markup:menuRouter.replyKeyboard(link)}:{})); return; }
     if (!link || String(link.chat_id)!==String(message.chat.id) || String(message.chat.id)!==String(message.from.id)) { await quietly(say(message.chat.id, TELEGRAM_TEXTS.notLinked, message.message_id)); return; }
     if (db.prepare('SELECT 1 FROM telegram_messages WHERE chat_id=? AND message_id=?').get(message.chat.id, message.message_id)) return;
     const group = held.get(message.chat.id) || { chatId: message.chat.id, link, items: [], lastAt: 0 };

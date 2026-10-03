@@ -90,25 +90,38 @@ export function createTelegramInteractionState({now=()=>new Date(),ttlMs=INTERAC
     clear(link){pending.delete(bindingKey(link));},
   };
 }
-export function createTelegramDaySummaryRouter({db,now=()=>new Date(),timeZone,review,finalReview=input=>reviewDay(db,input),authorize,currentBinding,send,acknowledge,onSettingsChanged=()=>{}}) {
+export function createTelegramDaySummaryRouter({db,canAccess=()=>false,now=()=>new Date(),timeZone,review,finalReview=input=>reviewDay(db,input),authorize,currentBinding,send,acknowledge,onSettingsChanged=()=>{}}) {
   const interactions=createTelegramInteractionState({now}),messageRoutes=[],callbackRoutes=[],preflights=[],extraButtons=[],pendingModes=new Map(),keyboardShown=new Set();
   const fresh=link=>currentBinding(link);
-  const sendFresh=(link,text,markup)=>fresh(link)?send(link.chat_id,text,{reply_markup:markup}):Promise.resolve(null);
-  const replyKeyboard=()=>summaryReplyKeyboard(extraButtons);
+  const dayFresh=link=>fresh(link) && canAccess(link.user_id);
+  const isDayPending=state=>state?.mode==='date' || state?.mode==='time';
+  const clearRevokedDay=link=>{if(!canAccess(link.user_id) && isDayPending(interactions.get(link)))interactions.clear(link);};
+  const replyKeyboard=link=>{
+    if(link && canAccess(link.user_id))return summaryReplyKeyboard(extraButtons);
+    const keyboard=[];for(const {text,row} of extraButtons){if(!keyboard[row])keyboard[row]=[];keyboard[row].push(text);}
+    return keyboard.some(row=>row?.length)?{keyboard:keyboard.filter(row=>row?.length),resize_keyboard:true,is_persistent:true}:undefined;
+  };
+  const sendFresh=(link,text,markup)=>{
+    if(!fresh(link))return Promise.resolve(null);
+    const dayMarkup=markup?.inline_keyboard?.some(row=>row.some(button=>button.callback_data?.startsWith('tds:')));
+    if(dayMarkup && !canAccess(link.user_id))return Promise.resolve(null);
+    return send(link.chat_id,text,{reply_markup:markup?.keyboard?replyKeyboard(link):markup});
+  };
   async function processedUpdate(update,link,message=null,callback=null){for(const handler of preflights)if(await handler({update,link,message,callback,interactions,send:sendFresh}))return true;return !fresh(link);}
   const todayOf=link=>dateInZone(now(),timeZone(link.user_id));
-  async function menu(link){if(!keyboardShown.has(bindingKey(link))){await sendFresh(link,'Сегодня, другой день и настройки сводок — в меню ниже.',replyKeyboard());if(fresh(link))keyboardShown.add(bindingKey(link));}}
+  async function menu(link){if(!dayFresh(link))return;if(!keyboardShown.has(bindingKey(link))){await sendFresh(link,'Сегодня, другой день и настройки сводок — в меню ниже.',replyKeyboard(link));if(dayFresh(link))keyboardShown.add(bindingKey(link));}}
   // Re-read the complete source synchronously after any async preparation.
   // Filtering the rendered slice cannot repair hidden items or section counts.
   function currentReview(link,input){
-    if(!fresh(link))return null;
+    if(!dayFresh(link))return null;
     const overview=finalReview({...input,userId:link.user_id,timeZone:timeZone(link.user_id),now:now()});
     if(overview && typeof overview.then==='function')throw new TypeError('Final day review must be synchronous');
-    return fresh(link)?overview:null;
+    return dayFresh(link)?overview:null;
   }
-  async function showReview(link,date){const input={userId:link.user_id,date,timeZone:timeZone(link.user_id),now:now(),phase:'manual'};await review(input);const overview=currentReview(link,input);if(overview)await sendFresh(link,renderDaySummary(overview),summaryNavigation(date,todayOf(link),link.app_url));}
-  async function picker(link){await sendFresh(link,'Какой день показать?',{inline_keyboard:[[{text:'Вчера',callback_data:`tds:date:${shiftDate(todayOf(link),-1)}`},{text:'Выбрать дату',callback_data:'tds:pick'}]]});}
+  async function showReview(link,date){if(!dayFresh(link))return;const input={userId:link.user_id,date,timeZone:timeZone(link.user_id),now:now(),phase:'manual'};await review(input);const overview=currentReview(link,input);if(overview)await sendFresh(link,renderDaySummary(overview),summaryNavigation(date,todayOf(link),link.app_url));}
+  async function picker(link){if(!dayFresh(link))return;await sendFresh(link,'Какой день показать?',{inline_keyboard:[[{text:'Вчера',callback_data:`tds:date:${shiftDate(todayOf(link),-1)}`},{text:'Выбрать дату',callback_data:'tds:pick'}]]});}
   async function settings(link){
+    if(!dayFresh(link))return;
     const prefs=readSummaryPreferences(db,link.user_id),rows=[];
     const receipt=db.prepare('SELECT local_date,phase,status,error_code FROM telegram_summary_receipts WHERE user_id=? ORDER BY local_date DESC,updated_at DESC LIMIT 1').get(link.user_id);
     const receiptStatus={sent:'отправлено',reserved:'готовится',retry:'Telegram попросил подождать; повторим в пределах часа',uncertain:'доставка не подтверждена; автоматического повтора не будет',failed:receipt?.error_code==='403'?'Telegram запретил отправку; проверьте, не заблокирован ли бот':receipt?.error_code==='400'?'Telegram отклонил сообщение':'не отправлено; следующая сводка придёт по расписанию'};
@@ -117,27 +130,32 @@ export function createTelegramDaySummaryRouter({db,now=()=>new Date(),timeZone,r
     rows.push(weekdays.map((label,index)=>({text:`${prefs.weekdays.includes(index+1)?'✓ ':''}${label}`,callback_data:`tds:weekday:${index+1}:${prefs.weekdays.includes(index+1)?0:1}`})));
     await sendFresh(link,`⚙️ Настройки сводок\nУтро: ${prefs.morning.enabled?'включено':'выключено'}, ${prefs.morning.time}\nВечер: ${prefs.evening.enabled?'включено':'выключено'}, ${prefs.evening.time}\nДни: ${prefs.weekdays.length?prefs.weekdays.map(day=>weekdays[day-1]).join(', '):'не выбраны — отправок нет'}\nЧасовой пояс: ${timeZone(link.user_id)}${lastDelivery}\nНажмите время, чтобы изменить его.`,{inline_keyboard:rows});
   }
-  pendingModes.set('date',{accept:text=>/^(?:\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})$/.test(text),consume:async(link,text)=>{const date=selectedReviewDate(text);if(date)return showReview(link,date);interactions.begin(link,'date');await sendFresh(link,'Такой даты нет. Введите дату: ДД.ММ.ГГГГ или ГГГГ-ММ-ДД.',replyKeyboard());}});
-  pendingModes.set('time',{accept:text=>/^\d{2}:\d{2}$/.test(text),consume:async(link,text,data)=>{if(!fresh(link))return;if(!validSummaryTime(text)){interactions.begin(link,'time',data);await sendFresh(link,'Введите время от 00:00 до 23:59.',replyKeyboard());return;}changeSummaryPreferences(db,link.user_id,{type:'time',phase:data.phase,value:text},{now:now(),onChanged:onSettingsChanged});await settings(link);}});
+  pendingModes.set('date',{accept:text=>/^(?:\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})$/.test(text),consume:async(link,text)=>{if(!dayFresh(link))return;const date=selectedReviewDate(text);if(date)return showReview(link,date);interactions.begin(link,'date');await sendFresh(link,'Такой даты нет. Введите дату: ДД.ММ.ГГГГ или ГГГГ-ММ-ДД.',replyKeyboard(link));}});
+  pendingModes.set('time',{accept:text=>/^\d{2}:\d{2}$/.test(text),consume:async(link,text,data)=>{if(!dayFresh(link))return;if(!validSummaryTime(text)){interactions.begin(link,'time',data);await sendFresh(link,'Введите время от 00:00 до 23:59.',replyKeyboard(link));return;}changeSummaryPreferences(db,link.user_id,{type:'time',phase:data.phase,value:text},{now:now(),onChanged:onSettingsChanged});await settings(link);}});
   async function beforeLinkCommand(message,{update=null}={}){
     if(message.from?.is_bot || message.chat?.type!=='private' || String(message.from?.id)!==String(message.chat?.id))return true;
     const link=authorize(message.from,message.chat);if(!link)return false;
+    clearRevokedDay(link);
     if(await processedUpdate(update,link,message))return true;
     interactions.clear(link);return false;
   }
   async function routeMessage(message,{forwarded=false,update=null}={}) {
     const link=authorize(message.from,message.chat);if(!link)return false;
+    clearRevokedDay(link);
     if(await processedUpdate(update,link,message))return true;
     if(forwarded || typeof message.text!=='string' || message.document || message.photo || message.video || message.audio || message.voice || message.animation || message.sticker){interactions.clear(link);return false;}
     const text=message.text.trim(),command=/^\/([a-z_]+)(?:@\w+)?(?:\s+(.+))?$/i.exec(text),name=command?.[1].toLowerCase();
+    const hadPending=Boolean(interactions.get(link));
     if(command || Object.values(DAY_SUMMARY_LABELS).includes(text) || extraButtons.some(button=>button.text===text) || text==='Отмена')interactions.clear(link);
-    if(text==='Отмена'||name==='cancel'){await sendFresh(link,'Ввод отменён. Можно снова писать заметки.',replyKeyboard());return true;}
-    if(name==='today'||text===DAY_SUMMARY_LABELS.today){await menu(link);await showReview(link,todayOf(link));return true;}
-    if(name==='day'||text===DAY_SUMMARY_LABELS.day){await menu(link);const date=selectedReviewDate(command?.[2]);if(date)await showReview(link,date);else await picker(link);return true;}
-    if(name==='settings'||text===DAY_SUMMARY_LABELS.settings){await menu(link);await settings(link);return true;}
+    const allowed=canAccess(link.user_id);
+    if((text==='Отмена'||name==='cancel') && (allowed || hadPending)){await sendFresh(link,'Ввод отменён. Можно снова писать заметки.',replyKeyboard(link));return true;}
+    if(allowed && (name==='today'||text===DAY_SUMMARY_LABELS.today)){await menu(link);await showReview(link,todayOf(link));return true;}
+    if(allowed && (name==='day'||text===DAY_SUMMARY_LABELS.day)){await menu(link);const date=selectedReviewDate(command?.[2]);if(date)await showReview(link,date);else await picker(link);return true;}
+    if(allowed && (name==='settings'||text===DAY_SUMMARY_LABELS.settings)){await menu(link);await settings(link);return true;}
     for(const handler of messageRoutes)if(await handler({message,text,link,interactions,send:sendFresh}))return true;
     if(!fresh(link))return true;
-    const weekday=weekdayReviewDate(text,todayOf(link));if(weekday){interactions.clear(link);await menu(link);await showReview(link,weekday);return true;}
+    const weekday=canAccess(link.user_id)?weekdayReviewDate(text,todayOf(link)):null;if(weekday){interactions.clear(link);await menu(link);await showReview(link,weekday);return true;}
+    clearRevokedDay(link);
     const pending=interactions.get(link),mode=pending?pendingModes.get(pending.mode):null;
     if(mode?.accept(text)){interactions.clear(link);await mode.consume(link,text,pending.data,message);return true;}
     return false;
@@ -145,16 +163,19 @@ export function createTelegramDaySummaryRouter({db,now=()=>new Date(),timeZone,r
   async function routeCallback(callback,{update=null}={}){
     await acknowledge(callback.id).catch(()=>{});
     const link=authorize(callback.from,callback.message?.chat);if(!link)return false;
+    clearRevokedDay(link);
+    if(typeof callback.data==='string' && callback.data.startsWith('tds:') && !dayFresh(link))return true;
     if(await processedUpdate(update,link,null,callback))return true;
     for(const handler of callbackRoutes)if(await handler({callback,link,interactions,send:sendFresh,update}))return true;
     if(!fresh(link))return true;
     const data=callback.data;if(typeof data!=='string'||data.length>64||!/^[\x20-\x7E]+$/.test(data)||!data.startsWith('tds:'))return false;
+    if(!dayFresh(link))return true;
     interactions.clear(link);
     const date=/^tds:date:(\d{4}-\d{2}-\d{2})$/.exec(data);if(date&&validIsoDate(date[1])){await showReview(link,date[1]);return true;}
-    if(data==='tds:pick'){interactions.begin(link,'date');await sendFresh(link,'Введите дату: ДД.ММ.ГГГГ или ГГГГ-ММ-ДД.\nОтмена — вернуться к заметкам.',replyKeyboard());return true;}
-    const time=/^tds:time:(morning|evening)$/.exec(data);if(time){interactions.begin(link,'time',{phase:time[1]});await sendFresh(link,'Введите время сводки: ЧЧ:ММ, например 09:00.\nОтмена — вернуться к заметкам.',replyKeyboard());return true;}
+    if(data==='tds:pick'){interactions.begin(link,'date');await sendFresh(link,'Введите дату: ДД.ММ.ГГГГ или ГГГГ-ММ-ДД.\nОтмена — вернуться к заметкам.',replyKeyboard(link));return true;}
+    const time=/^tds:time:(morning|evening)$/.exec(data);if(time){interactions.begin(link,'time',{phase:time[1]});await sendFresh(link,'Введите время сводки: ЧЧ:ММ, например 09:00.\nОтмена — вернуться к заметкам.',replyKeyboard(link));return true;}
     const enable=/^tds:enabled:(morning|evening):([01])$/.exec(data),day=/^tds:weekday:([1-7]):([01])$/.exec(data);
-    if(enable||day){if(!fresh(link))return true;const change=enable?{type:'enabled',phase:enable[1],value:enable[2]==='1'}:{type:'weekday',day:Number(day[1]),value:day[2]==='1'};changeSummaryPreferences(db,link.user_id,change,{now:now(),onChanged:onSettingsChanged});await settings(link);return true;}
+    if(enable||day){if(!dayFresh(link))return true;const change=enable?{type:'enabled',phase:enable[1],value:enable[2]==='1'}:{type:'weekday',day:Number(day[1]),value:day[2]==='1'};changeSummaryPreferences(db,link.user_id,change,{now:now(),onChanged:onSettingsChanged});await settings(link);return true;}
     return false;
   }
   return{routeMessage,routeCallback,beforeLinkCommand,currentReview,interactions,replyKeyboard,clear:link=>interactions.clear(link),
