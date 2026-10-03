@@ -446,6 +446,10 @@
 }
 body {
   margin: 0;
+  /* Док должен оставаться внутри страницы даже при уменьшении календаря:
+     WKWebView может обрезать его слой по нижней границе body. */
+  min-height: 100vh;
+  min-height: 100dvh;
   background: var(--wash);
   color: var(--ink);
   font-family:

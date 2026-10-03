@@ -11033,7 +11033,9 @@ function fitCalendarHeight() {
   // конца страницы: подсказки и нижних полей. Считается за один раз — сетка,
   // промежуточно выросшая на поля, сбила бы свою прокрутку и закрыла плашку.
   const grid = scroll.getBoundingClientRect();
-  const below = document.body.getBoundingClientRect().bottom - grid.bottom;
+  // Считаем от конца содержимого: минимальная высота body оставляет пустоту
+  // под уменьшенной рукой сеткой, но при подгонке её нужно вернуть сетке.
+  const below = scroll.closest("main").getBoundingClientRect().bottom - grid.bottom;
   apply(window.innerHeight - (grid.top + window.scrollY) - below);
 }
 window.addEventListener("resize", () => { if (!$("#calendar")?.hidden) fitCalendarHeight(); });
