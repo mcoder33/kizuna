@@ -95,6 +95,14 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
     }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == "kizunaCaptureAppearance" {
+            guard message.frameInfo.isMainFrame, let url = message.frameInfo.request.url,
+                  DesktopOrigin.contains(url, origin: origin), let snapshot = message.body as? [String: Any],
+                  let value = CaptureAppearance.read(snapshot) else { return }
+            quickCapturePanel?.syncAppearance(snapshot)
+            window?.appearance = NSAppearance(named: value.dark ? .darkAqua : .aqua)
+            return
+        }
         if message.name == "kizunaNotifications" {
             guard message.frameInfo.isMainFrame, let url = message.frameInfo.request.url,
                   DesktopOrigin.contains(url, origin: origin), let action = message.body as? String else { return }
@@ -146,6 +154,7 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
         configuration.userContentController.add(self, name: "kizunaLocale")
+        configuration.userContentController.add(self, name: "kizunaCaptureAppearance")
         configuration.userContentController.add(self, name: "kizunaTimeZoneDetection")
         configuration.userContentController.add(self, name: "kizunaNotifications")
         let originString = String(data: try! JSONEncoder().encode(origin.absoluteString), encoding: .utf8)!
@@ -172,6 +181,11 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         """
         configuration.userContentController.addUserScript(WKUserScript(source: localeBridge, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
 
+        if let scriptURL = Bundle.main.url(forResource: "CaptureAppearance", withExtension: "js"),
+           let script = try? String(contentsOf: scriptURL, encoding: .utf8) {
+            let trustedScript = "if (window.location.origin === new URL(\(originString)).origin) { \(script) }"
+            configuration.userContentController.addUserScript(WKUserScript(source: trustedScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        }
         if let scriptURL = Bundle.main.url(forResource: "RestartGuard", withExtension: "js"),
            let script = try? String(contentsOf: scriptURL, encoding: .utf8) {
             configuration.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
