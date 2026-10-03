@@ -758,6 +758,7 @@ const todayState = {
   entries: [],
   done: [],     // строки «Закрыто» из /api/done на сегодня
   doneStale: true,
+  doneKnownDate: null,
   todo: [],
   // Общее: полоса «к вам», взятые чужие дела, круги и метки для строк.
   inbox: [],
@@ -773,6 +774,7 @@ const todayState = {
   placeholder: null,
   calendarStale: true,
   calendarLoading: false,
+  calendarKnownDate: null,
 };
 function zoneMinutes(at) {
   const parts = new Intl.DateTimeFormat(getLocale(), { timeZone: getTimeZone(), hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(at);
@@ -810,29 +812,31 @@ function removeExternalFromView(match) {
 // первой отрисовке «Сегодня».
 async function refreshTodayCalendar() {
   if (todayState.calendarLoading || !currentDayDate) return;
-  const date = currentDayDate, timeZone = getTimeZone(), generation = dayTimeZoneGeneration;
+  const date = currentDayDate, timeZone = getTimeZone(), generation = dayTimeZoneGeneration, loadToken = dayLoadToken;
   todayState.calendarLoading = true;
   try {
     const calendar = await request(`/api/calendar?from=${date}&to=${shiftDate(date, 1)}`);
-    if (generation !== dayTimeZoneGeneration || timeZone !== getTimeZone() || date !== currentDayDate) return;
+    if (generation !== dayTimeZoneGeneration || loadToken !== dayLoadToken || timeZone !== getTimeZone() || date !== currentDayDate) return;
     todayState.calendar = pruneRemovedExternal(calendar);
+    todayState.calendarKnownDate = date;
   } catch { /* список остаётся прежним */ }
-  finally { if (generation === dayTimeZoneGeneration) todayState.calendarLoading = false; }
-  if (generation !== dayTimeZoneGeneration || date !== currentDayDate) return;
+  finally { if (generation === dayTimeZoneGeneration && loadToken === dayLoadToken) todayState.calendarLoading = false; }
+  if (generation !== dayTimeZoneGeneration || loadToken !== dayLoadToken || date !== currentDayDate) return;
   todayState.calendarStale = false;
   renderToday();
 }
 async function refreshTodayDone() {
   if (todayState.doneLoading || !currentDayDate) return;
-  const date = currentDayDate, timeZone = getTimeZone(), generation = dayTimeZoneGeneration;
+  const date = currentDayDate, timeZone = getTimeZone(), generation = dayTimeZoneGeneration, loadToken = dayLoadToken;
   todayState.doneLoading = true;
   try {
     const closed = await request(`/api/done?from=${date}&to=${date}`);
-    if (generation !== dayTimeZoneGeneration || timeZone !== getTimeZone() || date !== currentDayDate) return;
+    if (generation !== dayTimeZoneGeneration || loadToken !== dayLoadToken || timeZone !== getTimeZone() || date !== currentDayDate) return;
     todayState.done = (closed?.days || []).flatMap((group) => group.items).filter((item) => !item.auto);
+    todayState.doneKnownDate = date;
   } catch { /* список остаётся прежним */ }
-  finally { if (generation === dayTimeZoneGeneration) todayState.doneLoading = false; }
-  if (generation !== dayTimeZoneGeneration || date !== currentDayDate) return;
+  finally { if (generation === dayTimeZoneGeneration && loadToken === dayLoadToken) todayState.doneLoading = false; }
+  if (generation !== dayTimeZoneGeneration || loadToken !== dayLoadToken || date !== currentDayDate) return;
   todayState.doneStale = false;
   renderToday();
 }
@@ -1032,6 +1036,9 @@ function renderToday() {
   // а не на странице целиком.
   const active = document.activeElement;
   const keep = active?.dataset?.captureId && active.closest(".drawers") ? { id: active.dataset.captureId, drawer: active.closest(".drawer")?.id } : null;
+  const navKeep = active?.matches?.(".daynav-step, .daynav-today") && active.closest(".drawer")
+    ? { drawer: active.closest(".drawer").id, selector: active.matches(".daynav-today") ? ".daynav-today" : `[data-step="${active.dataset.step}"]` }
+    : null;
   if (todayState.calendarStale && !$("#today")?.hidden) refreshTodayCalendar();
   if (todayState.doneStale && !$("#today")?.hidden) refreshTodayDone();
   const minutes = nowMinutes();
@@ -1041,15 +1048,21 @@ function renderToday() {
     minutes,
     meetings: todayMeetings(),
     tasks: todayTasks(),
-    doneCount: doneRows().length,
+    doneCount: doneRows()?.length || 0,
     tomorrow: tomorrowInfo(),
     calendar: calendarConnected(),
   });
+  // Пока календарь или закрытые дела ещё неизвестны, не утверждаем, что
+  // календарь отключён, встреч нет или за день ничего не закрыто.
+  cover.provisional = (todayState.calendarLoading && todayState.calendarKnownDate !== currentDayDate)
+    || (todayState.doneLoading && todayState.doneKnownDate !== currentDayDate);
+  if (cover.provisional) cover.brief = [t("Загружаю…")];
+  const finishingProvisional = todayState.cover?.provisional && !cover.provisional;
   todayState.cover = cover;
   // Новая фаза ставит свой ящик один раз; дальше — как решил человек.
   if (todayState.phase !== phase) {
     todayState.phase = phase;
-    if (!recallTab(phase)) {
+    if (!(finishingProvisional && todayState.manual) && !recallTab(phase)) {
       todayState.manual = false;
       if (todayState.view === 0) todayState.tab = cover.tab;
     }
@@ -1063,6 +1076,14 @@ function renderToday() {
   paintDockBadges();
   paintJournal(journalDate);
   paintDayList(viewDate);
+  if (navKeep && !active.isConnected) {
+    const nav = document.querySelector(`#${navKeep.drawer} .daynav`);
+    const target = nav?.querySelector(navKeep.selector) || nav?.querySelector(".daynav-current");
+    if (target) {
+      if (!target.matches("button")) target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+    }
+  }
   if (keep && !active.isConnected) {
     // Строку закрыли с клавиатуры — фокус встаёт на следующую, а не теряется.
     const find = (id) => id && keep.drawer && document.querySelector(`#${keep.drawer} [data-capture-id="${CSS.escape(id)}"]`);
@@ -1313,7 +1334,6 @@ function paintDockBadges() {
 const DRAWER_PANELS = { journal: "journal", day: "todo" };
 function paintTabs(date, journalDate) {
   const host = $("#today-tabs");
-  clear(host);
   const today = date === currentDayDate, journalToday = journalDate === currentDayDate;
   const doneList = doneRows(journalDate);
   const doneCount = doneList ? String(doneList.length) : "…";
@@ -1325,16 +1345,32 @@ function paintTabs(date, journalDate) {
     ["journal", journalToday ? t("Закрыто") : t("Закрыто {value1}", { value1: shortDate(journalDate) }), node("b", doneCount)],
   ];
   for (const [key, label, count] of tabs) {
-    const button = node("button", undefined, "drawer-tab");
-    button.type = "button";
-    button.id = `tab-${key}`;
+    let button = host.querySelector(`#tab-${key}`);
+    if (!button) {
+      button = node("button", undefined, "drawer-tab");
+      button.type = "button";
+      button.id = `tab-${key}`;
+      button.append(node("span", undefined, "drawer-tab-label"), key === "day" ? node("span", undefined, "drawer-count") : node("b"));
+      // Повторный щелчок по открытой вкладке закрывает ящик.
+      button.addEventListener("click", () => pickTodayTab(todayState.tab === key ? null : key));
+      host.append(button);
+    }
     button.setAttribute("role", "tab");
     button.setAttribute("aria-selected", String(todayState.tab === key));
     button.setAttribute("aria-controls", DRAWER_PANELS[key]);
-    button.append(node("span", label, "drawer-tab-label"), count);
-    // Повторный щелчок по открытой вкладке закрывает ящик.
-    button.addEventListener("click", () => pickTodayTab(todayState.tab === key ? null : key));
-    host.append(button);
+    button.querySelector(".drawer-tab-label").textContent = label;
+    const currentCount = button.lastElementChild;
+    // Узлы самой кнопки остаются на месте: поздний ответ календаря не сбивает
+    // фокус и не уничтожает цель pointerdown до pointerup.
+    const next = [...count.childNodes];
+    for (let i = 0; i < next.length; i += 1) {
+      const existing = currentCount.childNodes[i], fresh = next[i];
+      if (!existing) currentCount.append(fresh);
+      else if (existing.nodeType !== fresh.nodeType || existing.nodeName !== fresh.nodeName) existing.replaceWith(fresh);
+      else if (existing.nodeType === Node.TEXT_NODE) existing.nodeValue = fresh.nodeValue;
+      else existing.textContent = fresh.textContent;
+    }
+    while (currentCount.childNodes.length > next.length) currentCount.lastChild.remove();
   }
   for (const [key, panel] of Object.entries(DRAWER_PANELS)) $(`#${panel}`).hidden = todayState.tab !== key;
 }
@@ -1741,7 +1777,10 @@ function paintOtherDayList(container, date, data) {
 function doneRows(date = currentDayDate) {
   const minutes = nowMinutes();
   let rows;
-  if (date === currentDayDate) rows = todayState.done.map((item) => ({ done: item, at: minutesOf(item.time) ?? 0 }));
+  if (date === currentDayDate) {
+    if (todayState.doneLoading && todayState.doneKnownDate !== date) return null;
+    rows = todayState.done.map((item) => ({ done: item, at: minutesOf(item.time) ?? 0 }));
+  }
   else {
     const data = todayState.cache.get(date);
     if (!data) return null;
@@ -1805,7 +1844,11 @@ function paintJournal(date) {
   clear(container);
   container.append(dayNavNode(date, { view: todayState.journalView, onView: setJournalView }));
   const rows = doneRows(date);
-  if (!rows) { container.append(bindTranslation(node("p", t("Загружаю…"), "empty"), "Загружаю…")); ensureDayData(date); return; }
+  if (!rows) {
+    container.append(bindTranslation(node("p", t("Загружаю…"), "empty"), "Загружаю…"));
+    if (date !== currentDayDate) ensureDayData(date);
+    return;
+  }
   if (!rows.length) {
     container.append(node("p", date === currentDayDate ? t("Пока нет зафиксированной работы за сегодня.") : date < currentDayDate ? t("В этот день ничего не записано.") : t("День ещё не наступил."), "empty"));
     return;
@@ -1902,26 +1945,90 @@ async function load() {
   // каждом изменении журнала.
   const todayGuess = zoneDate(new Date());
   const onToday = !$("#today")?.hidden;
-  const [day, entries, calendar, closed] = await Promise.all([
+  // Сначала отправляем два запроса, без которых день нельзя показать.
+  const primaryRequest = Promise.all([
     request("/api/day"),
     request("/api/entries?limit=100"),
-    onToday ? request(`/api/calendar?from=${todayGuess}&to=${shiftDate(todayGuess, 1)}`).catch(() => null) : Promise.resolve(undefined),
-    // «Закрыто» рисуется прямо из /api/done: старое дело, закрытое сегодня, не
-    // попадает в последние сто записей, и добирать его карточкой не нужно. Звать
-    // только пока открыта «Сегодня»; на других страницах список ждёт возвращения.
-    onToday ? request(`/api/done?from=${todayGuess}&to=${todayGuess}`).catch(() => null) : Promise.resolve(undefined),
   ]);
-  if (loadToken !== dayLoadToken || timeZone !== getTimeZone()) return;
+  const calendarRequest = onToday
+    ? request(`/api/calendar?from=${todayGuess}&to=${shiftDate(todayGuess, 1)}`).catch(() => null)
+    : Promise.resolve(undefined);
+  // «Закрыто» может отвечать заметно дольше журнала. Оба дополнительных
+  // запроса стартуют сразу, но не задерживают первую отрисовку дня.
+  const doneRequest = onToday
+    ? request(`/api/done?from=${todayGuess}&to=${todayGuess}`).catch(() => null)
+    : Promise.resolve(undefined);
+  let day, entries;
+  try {
+    [day, entries] = await primaryRequest;
+  } catch (error) {
+    if (loadToken === dayLoadToken) {
+      todayState.calendarLoading = false;
+      todayState.doneLoading = false;
+      if (timeZone === getTimeZone() && currentDayDate && onToday && (todayState.calendarStale || todayState.doneStale)) renderToday();
+    }
+    throw error;
+  }
+  if (loadToken !== dayLoadToken || timeZone !== getTimeZone()) {
+    if (loadToken === dayLoadToken) {
+      todayState.calendarLoading = false;
+      todayState.doneLoading = false;
+    }
+    return;
+  }
   todayState.cache.clear();
-  if (closed !== undefined && todayGuess === day.date) {
-    todayState.done = (closed?.days || []).flatMap((group) => group.items).filter((item) => !item.auto);
-    todayState.doneStale = false;
-  } else todayState.doneStale = true;
-  if (calendar !== undefined && todayGuess === day.date) {
-    todayState.calendar = pruneRemovedExternal(calendar);
-    todayState.calendarStale = false;
-  } else todayState.calendarStale = true;
+  // Не показываем данные вчерашнего дня, пока новые дополнительные ответы в пути.
+  if (currentDayDate && currentDayDate !== day.date) {
+    todayState.calendar = null;
+    todayState.done = [];
+    todayState.calendarKnownDate = null;
+    todayState.doneKnownDate = null;
+  }
+  todayState.doneStale = true;
+  todayState.calendarStale = true;
+  todayState.doneLoading = onToday;
+  todayState.calendarLoading = onToday;
   render({ ...day, entries: entries.entries });
+  if (!initialDayRendered) {
+    initialDayRendered = true;
+    if (journalRefreshPending) {
+      journalRefreshPending = false;
+      reloadJournalSoon();
+    }
+  }
+  // Применяем ответы только к тому дню и поколению, для которых они запрошены.
+  // Флаги loading не дают renderToday() запустить тот же запрос второй раз.
+  if (onToday) {
+    let auxPaintPending = false;
+    const paintAux = () => {
+      if (auxPaintPending) return;
+      auxPaintPending = true;
+      requestAnimationFrame(() => {
+        auxPaintPending = false;
+        if (loadToken === dayLoadToken && timeZone === getTimeZone() && currentDayDate === day.date && !$("#today")?.hidden) renderToday();
+      });
+    };
+    calendarRequest.then(calendar => {
+      if (loadToken !== dayLoadToken || timeZone !== getTimeZone() || currentDayDate !== day.date) return;
+      todayState.calendarLoading = false;
+      if (todayGuess === day.date) {
+        todayState.calendar = pruneRemovedExternal(calendar);
+        todayState.calendarKnownDate = day.date;
+        todayState.calendarStale = false;
+      }
+      paintAux();
+    });
+    doneRequest.then(closed => {
+      if (loadToken !== dayLoadToken || timeZone !== getTimeZone() || currentDayDate !== day.date) return;
+      todayState.doneLoading = false;
+      if (todayGuess === day.date) {
+        todayState.done = (closed?.days || []).flatMap(group => group.items).filter(item => !item.auto);
+        todayState.doneKnownDate = day.date;
+        todayState.doneStale = false;
+      }
+      paintAux();
+    });
+  }
   // Доска и «Обзор» живут своими запросами: правка в карточке или доразбор
   // записи должны быть видны сразу там, откуда карточку открыли, а не после
   // ухода на другую страницу и обратно. Перечитываются только уже собранные —
@@ -6134,7 +6241,15 @@ window.addEventListener("pagent:toast", (event) => {
 // прийти голосом, разбор — закончиться в фоне, правка — из другого окна.
 let journalStream = null;
 let journalReloadTimer = 0;
+let initialDayRendered = false;
+let journalRefreshPending = false;
 function reloadJournalSoon() {
+  // Приветствие потока не должно отменять первый ответ /api/day: иначе
+  // dayLoadToken отбросит его до появления вкладок и брифа.
+  if (!initialDayRendered) {
+    journalRefreshPending = true;
+    return;
+  }
   // Событий может прийти пачка (запись, разбор, проекция): перечитываем один
   // раз, а не по разу на каждое.
   clearTimeout(journalReloadTimer);
@@ -12770,6 +12885,8 @@ window.addEventListener("pagent:timezonechange", () => {
   dayLoadToken += 1;
   todayState.done = [];
   todayState.calendar = null;
+  todayState.doneKnownDate = null;
+  todayState.calendarKnownDate = null;
   todayState.doneLoading = false;
   todayState.calendarLoading = false;
   todayState.doneStale = true;
