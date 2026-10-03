@@ -28,8 +28,9 @@ function publicUrl(value, image = false) {
 
 export function prepareRelease(manifest) {
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) fail('invalid_manifest');
-  if (Object.keys(manifest).some(key => !['id', 'title', 'changes', 'url', 'image', 'buttons', 'footer', 'seasonalImage'].includes(key))) fail('invalid_manifest');
+  if (Object.keys(manifest).some(key => !['id', 'title', 'changes', 'url', 'image', 'buttons', 'footer', 'seasonalImage', 'announce'].includes(key))) fail('invalid_manifest');
   if (typeof manifest.id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$/.test(manifest.id)) fail('invalid_release_id');
+  if (manifest.announce !== undefined && typeof manifest.announce !== 'boolean') fail('invalid_manifest');
   if (manifest.seasonalImage !== undefined && typeof manifest.seasonalImage !== 'boolean') fail('invalid_manifest');
   if (manifest.seasonalImage && manifest.image !== undefined) fail('invalid_manifest');
   const title = cleanText(manifest.title, 140);
@@ -50,7 +51,7 @@ export function prepareRelease(manifest) {
   if (buttons.length) payload.reply_markup = { inline_keyboard: [buttons] };
   // Hash the reviewed logical manifest, excluding its date-dependent image.
   const logicalPayload = manifest.seasonalImage ? { method, payload, seasonalImage: true } : { method, payload };
-  return { id: manifest.id, method, payload, text, seasonalImage: manifest.seasonalImage === true, contentHash: hash(JSON.stringify(logicalPayload)) };
+  return { id: manifest.id, announce: manifest.announce !== false, method, payload, text, seasonalImage: manifest.seasonalImage === true, contentHash: hash(JSON.stringify(logicalPayload)) };
 }
 
 export function readBroadcastSource(db, env = process.env) {
@@ -146,6 +147,10 @@ async function deliver(release, chat, token, fetchImpl, timeoutMs) {
 export async function announceRelease({ db, receiptsPath, manifest, env = process.env, send = false,
   fetchImpl = globalThis.fetch, timeoutMs = 15000, intervalMs = 100, now = () => new Date(), isProcessAlive = processAlive, releaseSha = null, releaseDate = null }) {
   const release = prepareRelease(manifest);
+  // A per-release opt-out is authoritative even for a direct --send call.
+  // Return before reading recipients, opening receipts or making any request.
+  if (!release.announce) return { releaseId: release.id, mode: send ? 'send' : 'dry-run', status: 'disabled',
+    eligible: 0, planned: 0, sent: 0, previousSent: 0, rejected: 0, uncertain: 0, unlinked: 0 };
   const selectionDate = releaseDate === null ? new Date(now()) : new Date(releaseDate);
   if (!Number.isFinite(selectionDate.getTime()) || (releaseDate !== null &&
       (typeof releaseDate !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(releaseDate) ||

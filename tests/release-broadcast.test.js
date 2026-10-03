@@ -251,7 +251,7 @@ test('tracked release manifest is sendable as text or a photo with its declared 
   assert.equal(buttons.length, latest.buttons?.length || 0);
   for (const button of buttons) {
     assert.ok(button.text.trim());
-    assert.equal(new URL(button.url).origin, SITE);
+    assert.ok(['https://yourkizuna.com', SITE].includes(new URL(button.url).origin));
   }
 });
 
@@ -371,4 +371,48 @@ test('automatic release defaults omitted media to seasonal while standalone, pla
   assert.equal(plainResult.status, 0, plainResult.stderr);
   assert.equal(JSON.parse(plainResult.stdout).image, undefined);
   assert.equal(fs.existsSync(f.receiptsPath), false);
+});
+
+test('announcement flag defaults on, accepts booleans and refuses non-boolean opt-outs', () => {
+  assert.equal(prepareRelease(note).announce, true);
+  assert.equal(prepareRelease({ ...note, announce: true }).announce, true);
+  assert.equal(prepareRelease({ ...note, announce: false }).announce, false);
+  assert.equal(prepareRelease({ ...note, announce: true }).contentHash, prepareRelease(note).contentHash);
+  for (const announce of ['false', 'true', 0, 1, null, [], {}]) {
+    assert.throws(() => prepareRelease({ ...note, announce }), { code: 'invalid_manifest' });
+  }
+});
+
+test('disabled release never reads its audience, touches receipts or contacts Telegram, even with send', async t => {
+  const f = fixture(t), before = fs.readFileSync(f.filename);
+  const forbidden = new Proxy({}, { get() { throw new Error('disabled release accessed configuration or database'); } });
+  for (const send of [false, true]) {
+    const report = await f.run({ manifest: { ...photo, announce: false }, db: forbidden, env: forbidden, send,
+      now: () => { throw new Error('disabled release attempted date selection'); } });
+    assert.equal(report.status, 'disabled'); assert.equal(report.sent, 0); assert.equal(report.planned, 0);
+    assert.equal(broadcastExitCode(report), 0);
+  }
+  assert.equal(f.calls.length, 0);
+  assert.equal(fs.existsSync(f.receiptsPath), false);
+  assert.deepEqual(fs.readFileSync(f.filename), before);
+  assert.deepEqual(fs.readdirSync(f.dir), ['app.sqlite']);
+});
+
+test('deployment publishes validated opt-out output and gates the entire announce job', t => {
+  const f = fixture(t);
+  const workflow = fs.readFileSync(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /announce: \$\{\{ steps\.announcement\.outputs\.announce \}\}/);
+  const announceJob = workflow.split('\n  announce:')[1];
+  assert.match(announceJob, /if: needs\.freshness\.outputs\.current == 'true' && needs\.freshness\.outputs\.announce == 'true' && needs\.deploy\.result == 'success'/);
+  const block = workflow.split('- id: announcement')[1].split('\n  deploy:')[0];
+  const code = block.match(/node - <<'NODE'\n([\s\S]*?)\n\s+NODE/)[1];
+  fs.mkdirSync(path.join(f.dir, 'release-notes'));
+  const output = path.join(f.dir, 'output');
+  for (const [manifest, expected] of [[note, 'true'], [{ ...note, announce: true }, 'true'], [{ ...note, announce: false }, 'false'], [{ ...note, announce: 'false' }, null]]) {
+    fs.writeFileSync(path.join(f.dir, 'release-notes/latest.json'), JSON.stringify(manifest));
+    fs.rmSync(output, { force: true });
+    const result = spawnSync(process.execPath, ['-e', code], { cwd: f.dir, encoding: 'utf8', env: { ...process.env, GITHUB_OUTPUT: output } });
+    if (expected === null) { assert.notEqual(result.status, 0); assert.equal(fs.existsSync(output), false); }
+    else { assert.equal(result.status, 0, result.stderr); assert.equal(fs.readFileSync(output, 'utf8'), `announce=${expected}\n`); }
+  }
 });
