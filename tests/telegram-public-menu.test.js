@@ -39,7 +39,7 @@ test('production app wiring opens other-user summary/calendar/settings, preserve
  await f.text('🗓 Другой день');const calendar=f.messages().at(-1);assert.match(calendar.params.text,/Октябрь 2031/);const rows=calendar.params.reply_markup.inline_keyboard;
  await f.callback(rows[0][2].callback_data,200,calendar.result.message_id);assert.equal(f.fake.sent.at(-1).method,'editMessageText');assert.match(f.fake.sent.at(-1).params.text,/Ноябрь 2031/);
  await f.text('⚙️ Настройки сводок');assert.match(f.messages().at(-1).params.text,/Утро: выключено/);assert.equal(readSummaryPreferences(f.db,f.other).morning.enabled,false);
- await f.callback('tds:pick');await f.text('2031-10-02');assert.ok(f.messages().at(-1).params.reply_markup.inline_keyboard.flat().some(b=>b.url?.includes('date=2031-10-02')));
+ await f.callback('tds:pick');await f.text('2031-10-02');assert.equal(f.messages().at(-1).params.reply_markup,undefined);assert.match(f.messages().at(-1).params.text,/2 октября 2031/);
  await f.callback('tds:time:morning');await f.text('08:30');assert.equal(readSummaryPreferences(f.db,f.other).morning.time,'08:30');
  const before=f.db.prepare('SELECT count(*) n FROM captures').get().n;
  await f.text('Найти');await f.text('/find');await f.callback('ts:page:'+ 'a'.repeat(32));

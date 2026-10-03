@@ -1,6 +1,6 @@
 import { dateInZone } from './reports.js';
 import { validIsoDate } from './repeat.js';
-import { readSummaryPreferences, validSummaryTime, renderDaySummaryMessage, summaryNavigation } from './telegram-day-summary.js';
+import { readSummaryPreferences, validSummaryTime, renderDaySummaryMessage } from './telegram-day-summary.js';
 import { reserveSummaryReceipt, claimSummaryRetry, updateSummaryReceipt, recoverSummaryReceipts } from './day-summary-history.js';
 
 export const SUMMARY_GRACE_MS = 60 * 60 * 1000;
@@ -69,12 +69,12 @@ export function createTelegramDayDelivery({db,canAccess=()=>false,now=()=>new Da
       if(!current.eligible||current.date!==selection.date||current.signature!==selection.signature){finish(link,selection,'failed','preferences_or_due_changed');return;}
       const overview=currentReview(link,{date:selection.date,phase});
       if(!overview){finish(link,selection,'failed','binding_changed');return;}
-      const {text,entities}=renderDaySummaryMessage(overview),markup=summaryNavigation(selection.date,selection.date,link.app_url);
+      const {text,entities}=renderDaySummaryMessage(overview);
       const finalSelection=eligible(link,phase),sendAt=now().getTime();
       if(!canAccess(link.user_id)){finish(link,selection,'failed','access_revoked');return;}
       if(!currentBinding(link)||!enabled()||!finalSelection.eligible||finalSelection.date!==selection.date||finalSelection.signature!==input.scheduleSignature||sendAt<Date.parse(input.dueAt)||sendAt>Date.parse(input.graceDeadline)||dateInZone(new Date(sendAt),selection.timeZone)!==selection.date){finish(link,selection,'failed','final_eligibility_changed');return;}
       sending=true;
-      const sent=await send(link.chat_id,text,{entities,reply_markup:markup});
+      const sent=await send(link.chat_id,text,{entities});
       finish(link,selection,'sent',null,{messageId:sent?.message_id||null});
     }catch(error){
       if(!sending){finish(link,selection,'failed','review_failed');return;}

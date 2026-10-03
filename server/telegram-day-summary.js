@@ -103,7 +103,14 @@ export function createTelegramDaySummaryRouter({db,canAccess=()=>false,now=()=>n
     if(overview && typeof overview.then==='function')throw new TypeError('Final day review must be synchronous');
     return dayFresh(link)?overview:null;
   }
-  async function showReview(link,date){if(!dayFresh(link))return;const input={userId:link.user_id,date,timeZone:timeZone(link.user_id),now:now(),phase:'manual'};await review(input);const overview=currentReview(link,input);if(overview){const {text,entities}=renderDaySummaryMessage(overview);await sendFresh(link,text,summaryNavigation(date,todayOf(link),link.app_url),{entities});}}
+  async function showReview(link,date){
+    if(!dayFresh(link))return;
+    const input={userId:link.user_id,date,timeZone:timeZone(link.user_id),now:now(),phase:'manual'};
+    await review(input);
+    const overview=currentReview(link,input);if(!overview)return;
+    const {text,entities}=renderDaySummaryMessage(overview);
+    if(dayFresh(link))await sendFresh(link,text,undefined,{entities});
+  }
   async function manualDate(link){if(!dayFresh(link))return;interactions.begin(link,'date');await sendFresh(link,'Введите дату: ДД.ММ.ГГГГ или ГГГГ-ММ-ДД.\nОтмена — вернуться к заметкам.',replyKeyboard(link));}
   const calendar=createTelegramDateCalendar({now,fresh:dayFresh,todayOf,timeZone,send:sendFresh,showReview,manualDate,
     edit:edit ? (link,messageId,text,markup)=>dayFresh(link)?edit(link.chat_id,messageId,text,{reply_markup:markup}):Promise.resolve(null) : null});

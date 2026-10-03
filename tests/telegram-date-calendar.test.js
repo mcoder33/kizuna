@@ -46,7 +46,7 @@ test('Other day opens personal current month; month changes edit same message an
 });
 test('day selection uses exact date with no capture, repeated and issued-on-another-message callbacks are ignored',async t=>{
  const ctx=fixture(t);await ctx.text('/day');const issued=ctx.calendar(),button=dayButtons(issued.frame).find(button=>button.callback_data.endsWith('2026-10-21'));
- await ctx.click(button,issued.messageId+1);assert.equal(ctx.reviews.length,0);await ctx.click(button,issued.messageId);assert.equal(ctx.reviews.at(-1).date,'2026-10-21');assert.match(ctx.messages().at(-1).params.text,/21 октября 2026/);assert.ok(ctx.messages().at(-1).params.reply_markup.inline_keyboard[1][0].url.endsWith('date=2026-10-21'));
+ await ctx.click(button,issued.messageId+1);assert.equal(ctx.reviews.length,0);await ctx.click(button,issued.messageId);assert.equal(ctx.reviews.at(-1).date,'2026-10-21');assert.match(ctx.messages().at(-1).params.text,/21 октября 2026/);assert.equal(ctx.messages().at(-1).params.reply_markup,undefined);
  await ctx.click(button,issued.messageId);assert.equal(ctx.reviews.length,1);assert.equal(ctx.captures.length,0);assert.equal(ctx.fake.sent.filter(item=>item.method==='answerCallbackQuery').length,3);
 });
 test('headings, blanks, forged dates/months and malformed callbacks are no-ops without changing pending search',async t=>{
