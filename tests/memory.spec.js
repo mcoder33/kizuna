@@ -12,8 +12,8 @@ test("память помощника пополняется руками и з�
   const rule = list.locator(".memory-item", { hasText: "Созвоны с подрядчиком" });
   await expect(rule).toBeVisible();
   await expect(rule.locator(".memory-meta")).toHaveText("записано руками");
-  // Прогон идёт под первым администратором: общая память ему открыта.
-  await expect(page.locator("#memory-shared-row")).toBeVisible();
+  // Общие правила управляются отдельно, в административной области.
+  await expect(page.locator("#memory-shared-row")).toHaveCount(0);
   await rule.getByRole("button", { name: "Забыть" }).click();
   await expect(list.locator(".memory-item", { hasText: "Созвоны с подрядчиком" })).toHaveCount(0);
 });

@@ -661,5 +661,17 @@ export function createTelegramService({
     return { configured: true, state: key === loopToken ? state : 'connecting', bot: known, error: key === loopToken ? lastError : null };
   }
 
-  return { start, stop, reconfigure, status, linkOf, createLink, unlink, answer, pollOnce, flush, ensureBot, catchUp };
+  async function sendAdminNotification({ userId, chatId, text, url }) {
+    const user = db.prepare('SELECT role,status FROM users WHERE id=?').get(userId);
+    const link = db.prepare('SELECT * FROM telegram_links WHERE user_id=?').get(userId);
+    if (user?.role !== 'admin' || user.status !== 'active' || link?.chat_id !== chatId)
+      throw Object.assign(new Error('Admin Telegram link is unavailable'), { status: 403 });
+    let buttonUrl = null;
+    try {
+      const base = new URL(link.app_url);
+      if (base.protocol === 'https:' && !base.username && !base.password && /^\/#admin\//.test(url)) buttonUrl = new URL(url, base.origin).href;
+    } catch {}
+    return say(chatId, text, null, buttonUrl ? { reply_markup: { inline_keyboard: [[{ text: translate(userLocale(db, userId), 'Открыть в Кизуне'), url: buttonUrl }]] } } : {});
+  }
+  return { start, stop, reconfigure, status, linkOf, createLink, unlink, answer, pollOnce, flush, ensureBot, catchUp, sendAdminNotification };
 }
