@@ -12,8 +12,17 @@ import AppKit
         precondition(palette.button == CaptureAppearance.color("#e94a69"))
         precondition(palette.surface == CaptureAppearance.color("#292725"))
         precondition(palette.placeholder == "О чём думаете?")
+        precondition(palette.windowAppearance?.name == .darkAqua, "Old snapshots retain their explicit theme")
+        for dark in [false, true] {
+            var system = raw; system["theme"] = "system"; system["dark"] = dark
+            precondition(CaptureAppearance.read(system)!.windowAppearance == nil, "Auto must inherit the system, never pin WebKit's color scheme")
+            let restored = CaptureAppearance.read(system)!.followingSystemAppearance(dark: !dark)
+            precondition(restored.dark == !dark && restored.placeholder == palette.placeholder)
+            precondition(restored.windowAppearance == nil && restored.fontSize == palette.fontSize)
+        }
+        precondition(palette.followingSystemAppearance(dark: false).dark, "An explicit dark choice must survive restart in a light system")
         for (key, bad) in [("fontSize", Double.nan as Any), ("padding", -1), ("font", "unexpected"),
-                           ("button", "rgb(999, 1, 2)"), ("ink", "javascript:alert(1)"), ("placeholder", String(repeating: "x", count: 201))] {
+                           ("button", "rgb(999, 1, 2)"), ("ink", "javascript:alert(1)"), ("theme", "invalid"), ("placeholder", String(repeating: "x", count: 201))] {
             var hostile = raw; hostile[key] = bad
             precondition(CaptureAppearance.read(hostile) == nil)
         }

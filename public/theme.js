@@ -22,14 +22,16 @@
   var root = document.documentElement;
 
   function apply(theme) {
-    root.setAttribute("data-theme", theme === "dark" ? "dark" : "light");
+    // Без атрибута таблица стилей следует prefers-color-scheme.
+    if (theme === "light" || theme === "dark") root.setAttribute("data-theme", theme);
+    else root.removeAttribute("data-theme");
   }
 
   var stored = null;
   try {
     stored = readPreference(KEY);
   } catch {
-    // Приватное окно или запрет на хранилище: по умолчанию светлая тема.
+    // Приватное окно или запрет на хранилище: следуем теме устройства.
   }
   apply(stored);
 
@@ -73,11 +75,11 @@
       apply(stored);
     },
     read: function () {
-      return stored === "dark" ? "dark" : "light";
+      return stored === "light" || stored === "dark" ? stored : "system";
     },
-    hasChoice: function () { return stored === "light" || stored === "dark"; },
+    hasChoice: function () { return ["system", "light", "dark"].includes(stored); },
     set: function (theme) {
-      stored = theme === "dark" ? "dark" : "light";
+      stored = theme === "light" || theme === "dark" ? theme : "system";
       apply(stored);
       try {
         (window.pagentPreferenceStorage || localStorage).setItem(KEY, stored);
@@ -86,12 +88,14 @@
       }
       window.dispatchEvent(new CustomEvent("pagent-theme", { detail: { theme: stored } }));
     },
-    // Кнопка переключает только светлую и тёмную тему.
+    // Авто → светлая → тёмная → авто. Авто сохраняется явно, чтобы
+    // синхронизироваться между устройствами как любой другой выбор.
     next: function () {
-      return this.read() === "dark" ? "light" : "dark";
+      var order = ["system", "light", "dark"];
+      return order[(order.indexOf(this.read()) + 1) % order.length];
     },
     label: function (theme) {
-      return { light: "светлая", dark: "тёмная" }[theme || this.read()];
+      return { system: "как в системе", light: "светлая", dark: "тёмная" }[theme || this.read()];
     },
     // Значок — инлайновый SVG, а не символ шрифта: глифы вроде «◐» и «☀»
     // в каждом шрифте сидят по-своему и в круглой кнопке стояли криво.
@@ -99,6 +103,10 @@
     icon: function (theme) {
       var head = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">';
       return {
+        system:
+          head +
+          '<circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="1.8"/>' +
+          '<path d="M12 3.6a8.4 8.4 0 0 1 0 16.8z" fill="currentColor" stroke="none"/></svg>',
         light:
           head +
           '<circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/>' +

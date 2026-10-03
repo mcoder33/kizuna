@@ -162,7 +162,7 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
             message.centerYAnchor.constraint(equalTo: submitButton.centerYAnchor)
         ])
         if let saved = UserDefaults.standard.dictionary(forKey: "KizunaCaptureAppearance"), let value = CaptureAppearance.read(saved) {
-            applyAppearance(value)
+            applyAppearance(value.followingSystemAppearance(dark: NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua))
         } else { applyAppearance(.fallback(dark: NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)) }
         message.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
     }

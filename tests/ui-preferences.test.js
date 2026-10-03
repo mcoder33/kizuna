@@ -68,7 +68,11 @@ test('theme stays consistent through the existing settings API and UI preference
   let settings = await api.put('/api/settings').send({ theme: 'system' }).expect(200);
   assert.equal(settings.body.settings.theme, 'system');
   assert.equal(app.database.prepare('SELECT value FROM app_settings WHERE key=?').get(`user:${api.user.id}:theme`).value, 'system');
-  assert.equal((await api.get('/api/ui-preferences')).body.values['pagent.theme'], null);
+  assert.equal((await api.get('/api/ui-preferences')).body.values['pagent.theme'], 'system');
+  assert.equal(JSON.parse(decodeURIComponent((await api.get('/')).text.match(/data-ui-preferences="([^"]+)"/)[1])).values['pagent.theme'], 'system');
+  await patch(api, { 'pagent.theme': 'light' }).expect(200);
+  await patch(api, { 'pagent.theme': 'system' }).expect(200);
+  assert.equal((await api.get('/api/settings')).body.settings.theme, 'system');
   settings = await api.put('/api/settings').send({ theme: null }).expect(200);
   assert.equal(settings.body.settings.theme, 'dark');
   assert.equal((await api.get('/api/ui-preferences')).body.values['pagent.theme'], 'dark');

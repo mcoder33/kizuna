@@ -7,6 +7,19 @@ struct CaptureAppearance {
     var button: NSColor, buttonHover: NSColor, buttonInk: NSColor
     var radius: CGFloat = 23, padding: CGFloat = 24, fontSize: CGFloat = 17, lineHeight: CGFloat = 24.65
     var font = "sans", placeholder = ""
+    var theme = "system"
+
+    // A forced window appearance also forces WebKit's prefers-color-scheme.
+    // In auto mode inherit the system instead, avoiding a feedback loop.
+    var windowAppearance: NSAppearance? {
+        theme == "system" ? nil : NSAppearance(named: theme == "dark" ? .darkAqua : .aqua)
+    }
+    func followingSystemAppearance(dark: Bool) -> CaptureAppearance {
+        guard theme == "system", self.dark != dark else { return self }
+        var value = Self.fallback(dark: dark)
+        value.font = font; value.fontSize = fontSize; value.lineHeight = lineHeight; value.placeholder = placeholder
+        return value
+    }
 
     static func color(_ value: Any?) -> NSColor? {
         guard let source = value as? String, source.count <= 80 else { return nil }
@@ -33,6 +46,7 @@ struct CaptureAppearance {
     }
     static func read(_ snapshot: [String: Any]) -> CaptureAppearance? {
         guard let dark = snapshot["dark"] as? Bool,
+              let theme = (snapshot["theme"] ?? (dark ? "dark" : "light")) as? String, ["system", "light", "dark"].contains(theme),
               let surface = Self.color(snapshot["surface"]), let end = Self.color(snapshot["surfaceEnd"]),
               let border = Self.color(snapshot["border"]), let focus = Self.color(snapshot["focus"]),
               let ink = Self.color(snapshot["ink"]), let caret = Self.color(snapshot["caret"]),
@@ -46,7 +60,7 @@ struct CaptureAppearance {
               let placeholder = snapshot["placeholder"] as? String, placeholder.count <= 200 else { return nil }
         return CaptureAppearance(dark: dark, surface: surface, surfaceEnd: end, border: border, focus: focus, ink: ink, caret: caret,
                   placeholderColor: placeholderColor, muted: muted, button: button, buttonHover: hover, buttonInk: buttonInk,
-                  radius: radius, padding: padding, fontSize: size, lineHeight: line, font: font, placeholder: placeholder)
+                  radius: radius, padding: padding, fontSize: size, lineHeight: line, font: font, placeholder: placeholder, theme: theme)
     }
     var editorFont: NSFont {
         switch font {

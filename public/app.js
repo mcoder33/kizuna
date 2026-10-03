@@ -5557,7 +5557,7 @@ function paintSettings(payload, { updatedFields = null, submittedValues = null }
     // Тема, сохранённая в учётной записи, сильнее пустого браузера: человек
     // выбрал её однажды и ждёт её на любом устройстве.
     const remembered = appSettings.theme;
-    if (!window.pagentTheme.hasChoice() && (remembered === "light" || remembered === "dark")) window.pagentTheme.set(remembered);
+    if (!window.pagentTheme.hasChoice() && ["system", "light", "dark"].includes(remembered)) window.pagentTheme.set(remembered);
     settingInput("theme").value = window.pagentTheme.read();
     paintThemeButton();
   }
