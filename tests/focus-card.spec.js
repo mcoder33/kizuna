@@ -17,6 +17,9 @@ async function openById(page, id) {
   await expect(page.locator("#review-dialog")).toBeVisible();
   await expect(page.locator("#review-dialog .card-title")).not.toBeEmpty();
 }
+async function expectNoHorizontalScroll(locator) {
+  await expect.poll(async () => locator.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+}
 
 test("короткая завершённая подзадача остаётся компактной, с заметкой и собранным подвалом", async ({ page, request }) => {
   await reset(request);
@@ -74,6 +77,7 @@ test("дуга вокруг кружка считает конечные шаг�
   await expect(rows).toHaveCount(2);
   await expect(rows.first().locator(".subtask-meta")).toHaveText("0 / 3");
   await expect(dialog.locator("#card-subtask-map")).toBeHidden();
+  await expectNoHorizontalScroll(dialog.locator("#card-subtasks"));
   await expect(dialog.locator(".next-step-link")).toHaveText("Открыть банку и проверить зёрна ↗");
 
   // Отметка листа в списке: «Взять с собой банку» — 1 из 4.
@@ -90,6 +94,7 @@ test("дуга вокруг кружка считает конечные шаг�
   await expect(dialog.locator("#card-subtask-list")).toBeHidden();
   const treeRows = dialog.locator("#card-subtask-map .tree-row");
   await expect(treeRows).toHaveCount(6);
+  await expectNoHorizontalScroll(dialog.locator("#card-subtasks"));
   await expect(treeRows.nth(0).locator(".branch-dial")).toHaveAttribute("aria-label", "0 из 3 шагов");
   await expect(treeRows.nth(5).locator(".tree-check")).toBeChecked();
   // Лист отмечается и в карте, ветка пересчитывается.

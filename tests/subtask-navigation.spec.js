@@ -38,7 +38,7 @@ test('expanded branches and completed leaves open their own cards without changi
   expect((await (await request.get(`/api/captures/${parent.id}`)).json()).entry.interpretation.classification.summary).toBe('Renamed branch');
 });
 
-for (const [width, height] of [[1440, 900], [375, 812]]) {
+for (const [width, height] of [[1440, 900], [960, 900], [375, 812]]) {
   test.describe(`${width}px viewport`, () => {
   test.use({ isMobile: width === 375, hasTouch: width === 375 });
   test(`note and steps resize, persist and leave text usable at ${width}px`, async ({ page, request }) => {
@@ -56,7 +56,9 @@ for (const [width, height] of [[1440, 900], [375, 812]]) {
       const steps = element.querySelector('.card-subtasks').getBoundingClientRect().height;
       return note / (note + steps);
     });
+    const horizontalOverflow = () => workspace.locator('.card-subtasks').evaluate(element => element.scrollWidth - element.clientWidth);
     expect(await fraction()).toBeCloseTo(2 / 3, 1);
+    expect(await horizontalOverflow()).toBeLessThanOrEqual(1);
     await settledScreenshot(page, { path: `/tmp/pagent-subtask-split-${width}-default.png` });
     const start = await divider.boundingBox();
     if (width === 375) {
@@ -73,6 +75,7 @@ for (const [width, height] of [[1440, 900], [375, 812]]) {
       await page.mouse.up();
     }
     await expect.poll(fraction).toBeLessThan(0.6);
+    await expect.poll(horizontalOverflow).toBeLessThanOrEqual(1);
     await expect.poll(async () => (await (await request.get('/api/ui-preferences')).json()).values['kizuna-card-note-share']).not.toBeNull();
     const saved = await divider.getAttribute('aria-valuenow');
     await page.reload();

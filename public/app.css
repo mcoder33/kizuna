@@ -10132,7 +10132,11 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0 0 96px; }
 #review-dialog .card-workspace:not(.has-steps) > .card-subtasks { flex: none; }
 #review-dialog .card-workspace.has-steps { display: grid; flex: none; min-height: 174px; min-width: 0; }
 #review-dialog .card-workspace.has-steps > .card-body,
-#review-dialog .card-workspace.has-steps > .card-subtasks { min-height: 0; overflow: auto; margin: 0; padding-top: 0; border-top: 0; overscroll-behavior: contain; }
+#review-dialog .card-workspace.has-steps > .card-subtasks { min-height: 0; margin: 0; padding-top: 0; border-top: 0; overscroll-behavior: contain; }
+#review-dialog .card-workspace.has-steps > .card-body { overflow: auto; }
+#review-dialog .card-workspace.has-steps > .card-subtasks { overflow-y: auto; overflow-x: hidden; }
+#review-dialog .card-workspace.has-steps .subtask,
+#review-dialog .card-workspace.has-steps .tree-row { box-sizing: border-box; width: 100%; margin-inline: 0; }
 #review-dialog .card-work-divider { cursor: row-resize; touch-action: none; position: relative; user-select: none; }
 #review-dialog .card-work-divider::before { content: ""; position: absolute; width: 36px; height: 3px; left: calc(50% - 18px); top: 5px; border-radius: 2px; background: var(--nt-secondary); z-index: 1; }
 #review-dialog .card-work-divider::after { content: ""; position: absolute; height: 1px; inset: 6px 0 auto; background: var(--nt-divider); }
