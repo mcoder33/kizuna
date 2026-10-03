@@ -1,7 +1,6 @@
 // History for Telegram reviews: observation time is distinct from the event's day.
 const clockSql = "day_summary_observed_at()";
 const sources = [
-  { table:'collaborative_documents', kind:'title', key:r=>`${r}.capture_id`, owner:r=>`(SELECT user_id FROM captures WHERE id=${r}.capture_id)`, subject:r=>`${r}.capture_id`, fields:r=>`json_object('title',${r}.title)` },
   { table:'interpretations', kind:'interpretation', key:r=>`${r}.id`, owner:r=>`(SELECT user_id FROM captures WHERE id=${r}.capture_id)`, subject:r=>`${r}.capture_id`, fields:r=>`json_object('capture_id',${r}.capture_id,'occurred_at',(SELECT occurred_at FROM captures WHERE id=${r}.capture_id))`, at:r=>`${r}.created_at`, updates:false },
   { table:'calendar_events', kind:'external', key:r=>`json_array(${r}.account_id,${r}.calendar_id,${r}.uid,COALESCE(${r}.instance_key,''))`, owner:r=>`(SELECT user_id FROM calendar_accounts WHERE id=${r}.account_id)`, subject:r=>`${r}.account_id`, fields:r=>`json_object('account_id',${r}.account_id,'calendar_id',${r}.calendar_id,'uid',${r}.uid,'series_uid',${r}.series_uid,'instance_key',${r}.instance_key,'title',${r}.title,'start_at',${r}.start_at,'end_at',${r}.end_at,'all_day',${r}.all_day,'busy',${r}.busy,'attendees_json',${r}.attendees_json)` },
   { table:'calendar_accounts', kind:'account', key:r=>`${r}.id`, owner:r=>`${r}.user_id`, subject:r=>`${r}.id`, fields:r=>`json_object('calendars_json',${r}.calendars_json,'mode',${r}.mode,'disabled_at',${r}.disabled_at,'synced_at',${r}.synced_at,'identity_email',lower(trim(COALESCE(${r}.username,''))))` },
@@ -13,6 +12,7 @@ const sources = [
 
 export function migrateDaySummaryHistory(db, at = new Date().toISOString(), { now = () => new Date() } = {}) {
   db.function('day_summary_observed_at', () => now().toISOString());
+  for(const operation of ['insert','update','delete','key_change'])db.exec(`DROP TRIGGER IF EXISTS day_summary_collaborative_documents_${operation}`);
   db.exec(`CREATE TABLE IF NOT EXISTS day_summary_history_meta (id INTEGER PRIMARY KEY CHECK(id=1), observed_from TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS day_summary_user_resets (user_id TEXT PRIMARY KEY, reset_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS day_summary_history (
@@ -33,11 +33,9 @@ export function migrateDaySummaryHistory(db, at = new Date().toISOString(), { no
       PRIMARY KEY(user_id,local_date,phase));`);
   const receiptColumns=new Set(db.prepare('PRAGMA table_info(telegram_summary_receipts)').all().map(column=>column.name));
   for(const column of ['binding_linked_at','due_at','grace_deadline','schedule_signature'])if(!receiptColumns.has(column))db.exec(`ALTER TABLE telegram_summary_receipts ADD COLUMN ${column} TEXT`);
-  if(!db.prepare('PRAGMA table_info(day_summary_history_meta)').all().some(column=>column.name==='title_observed_from'))db.exec('ALTER TABLE day_summary_history_meta ADD COLUMN title_observed_from TEXT');
   const first = db.prepare('INSERT OR IGNORE INTO day_summary_history_meta(id,observed_from) VALUES(1,?)').run(at).changes;
-  const firstTitle=db.prepare('UPDATE day_summary_history_meta SET title_observed_from=? WHERE id=1 AND title_observed_from IS NULL').run(at).changes;
   for (const source of sources) {
-    if (source.kind==='title'?firstTitle:first) db.prepare(`INSERT INTO day_summary_history(source,source_key,user_id,subject_id,observed_at,snapshot_json)
+    if (first) db.prepare(`INSERT INTO day_summary_history(source,source_key,user_id,subject_id,observed_at,snapshot_json)
       SELECT ?,${source.key('s')},${source.owner('s')},${source.subject('s')},?,${source.fields('s')} FROM ${source.table} s`).run(source.kind,at);
     if (source.updates !== false) db.exec(`CREATE TRIGGER IF NOT EXISTS day_summary_${source.table}_key_change AFTER UPDATE ON ${source.table}
       WHEN ${source.key('OLD')} IS NOT ${source.key('NEW')} BEGIN
@@ -78,7 +76,6 @@ export function exportDaySummaryHistory(db, userId) {
   return {
     resetAt:db.prepare('SELECT reset_at FROM day_summary_user_resets WHERE user_id IS ?').get(userId)?.reset_at || null,
     observedFrom:db.prepare('SELECT observed_from FROM day_summary_history_meta WHERE id=1').get().observed_from,
-    titleObservedFrom:db.prepare('SELECT title_observed_from FROM day_summary_history_meta WHERE id=1').get().title_observed_from,
     snapshots:db.prepare('SELECT * FROM day_summary_history WHERE user_id IS ? ORDER BY id').all(userId),
     receipts:db.prepare('SELECT * FROM telegram_summary_receipts WHERE user_id IS ? ORDER BY local_date,phase').all(userId),
   };

@@ -45,10 +45,9 @@ export function reviewDay(db, { userId, date, timeZone = 'Europe/Samara', now = 
   const start = dayStartInZone(date,timeZone).toISOString();
   const end = dayStartInZone(shiftDate(date,1),timeZone).toISOString();
   const cutoff = historical ? end : new Date(at.getTime()+1).toISOString();
-  const historyMeta = db.prepare('SELECT observed_from,title_observed_from FROM day_summary_history_meta WHERE id=1').get();
-  const observedFrom=historyMeta.observed_from,titleObservedFrom=historyMeta.title_observed_from;
+  const observedFrom = db.prepare('SELECT observed_from FROM day_summary_history_meta WHERE id=1').get().observed_from;
   const mutableCoverage = cutoff<=observedFrom ? 'unavailable' : start<observedFrom && date<=today ? 'partial' : 'observed';
-  const historyCoverage = { own:'retained', external:mutableCoverage, assignments:mutableCoverage, observedFrom, titleObservedFrom, gaps:[] };
+  const historyCoverage = { own:'retained', external:mutableCoverage, assignments:mutableCoverage, observedFrom, gaps:[] };
   if (mutableCoverage==='partial') {
     const bound=`${dateInZone(new Date(observedFrom),timeZone)} ${localTime(observedFrom,timeZone)} (${timeZone})`;
     historyCoverage.gaps.push(`История внешних календарей неполная: изменения сохраняются с ${bound}.`);
@@ -71,11 +70,16 @@ export function reviewDay(db, { userId, date, timeZone = 'Europe/Samara', now = 
     WHERE c.id=? AND c.created_at<? AND i.id=(SELECT chosen.id FROM interpretations chosen WHERE chosen.capture_id=c.id AND chosen.status<>'rejected' AND chosen.created_at<? ORDER BY chosen.created_at DESC,chosen.version DESC,chosen.rowid DESC LIMIT 1)`);
   const readProjections = db.prepare(`SELECT p.id,p.projection_type FROM projections p WHERE interpretation_id=? AND created_at<?
     AND (reverted_at IS NULL OR reverted_at>=?)`);
+  // Retirement v30 moves existing projections to a successor interpretation.
+  // The unchanged projection IDs still carry their pre-retirement completion facts.
+  const readRetiredProjections=db.prepare(`SELECT p.id,p.projection_type FROM projections p
+    JOIN interpretations migrated ON migrated.id=p.interpretation_id
+    JOIN schema_migrations retirement ON retirement.version=30 AND retirement.applied_at=migrated.created_at
+    WHERE migrated.supersedes_id=? AND migrated.created_at>=? AND p.created_at<?
+      AND (p.reverted_at IS NULL OR p.reverted_at>=?)`);
   const readCompletion = db.prepare(`SELECT * FROM ledger_events WHERE projection_id=? AND event_type IN ('completed','completion_undone') AND created_at<? ORDER BY created_at DESC,rowid DESC LIMIT 1`);
   const readDeletion = db.prepare(`SELECT event_type FROM ledger_events WHERE capture_id=? AND event_type IN ('capture_deleted','capture_restored') AND created_at<? ORDER BY created_at DESC,rowid DESC LIMIT 1`);
   const readOccurrences = db.prepare(`SELECT * FROM ledger_events WHERE capture_id=? AND event_type IN ('occurrence_completed','occurrence_undone') AND created_at<? ORDER BY created_at,rowid`);
-  const readTitle=db.prepare('SELECT title FROM collaborative_documents WHERE capture_id=?');
-  const baselineTitle=db.prepare("SELECT 1 FROM day_summary_history WHERE source='title' AND source_key=? AND observed_at=? LIMIT 1");
   function ownCapture(captureId) {
     const row = readCapture.get(captureId,cutoff,cutoff);
     if (!row || row.subtask || readDeletion.get(captureId,cutoff)?.event_type === 'capture_deleted') return;
@@ -83,7 +87,9 @@ export function reviewDay(db, { userId, date, timeZone = 'Europe/Samara', now = 
     if (row.deleted_at && row.deleted_at<cutoff && !readDeletion.get(captureId,cutoff)) return;
     const classification = parse(row.classification_json), schedule = classification.entities?.schedule || null;
     if (classification.completed !== true && classification.proposedActions?.some(action=>action.type==='task' && typeof action.title==='string')) return;
-    const projections = readProjections.all(row.interpretation_id,cutoff,cutoff).filter(projection=>['task','meeting_event'].includes(projection.projection_type));
+    let projections = readProjections.all(row.interpretation_id,cutoff,cutoff);
+    if(!projections.length)projections=readRetiredProjections.all(row.interpretation_id,cutoff,cutoff,cutoff);
+    projections=projections.filter(projection=>['task','meeting_event'].includes(projection.projection_type));
     const materialized=db.prepare("SELECT 1 FROM projections WHERE interpretation_id=? AND projection_type IN ('task','meeting_event') LIMIT 1").get(row.interpretation_id);
     const legacyFact=classification.primaryType==='task' && classification.completed===true && !materialized;
     if (!projections.length && !legacyFact) return;
@@ -99,18 +105,7 @@ export function reviewDay(db, { userId, date, timeZone = 'Europe/Samara', now = 
     }
     const explicitMeeting = classification.primaryType==='meeting_event' && projections.some(projection=>projection.projection_type==='meeting_event');
     if (classification.primaryType!=='task' && !explicitMeeting) return;
-    let title=classification.summary||row.raw;
-    if(!historical){const live=readTitle.get(captureId);if(live)title=live.title||'Без названия';}
-    else {
-      const saved=historySnapshot(db,'title',captureId,cutoff);
-      if(saved&&!saved.deleted)title=parse(saved.snapshot_json).title||'Без названия';
-      else if(!saved&&cutoff<=titleObservedFrom&&baselineTitle.get(captureId,titleObservedFrom)){
-        title='Название на этот день неизвестно';
-        const gap=`История совместно изменённых названий неполная: изменения сохраняются с ${dateInZone(new Date(titleObservedFrom),timeZone)} ${localTime(titleObservedFrom,timeZone)} (${timeZone}).`;
-        if(!historyCoverage.gaps.includes(gap))historyCoverage.gaps.push(gap);
-      }
-    }
-    const item = { id:captureId,title,kind:explicitMeeting?'meeting':'task',time:schedule?.time||null,end:schedule?.end||null,date:schedule?.date||null,borrowed:row.user_id!==userId,completed:closed,defaulted:Boolean(schedule?.defaulted) };
+    const item = { id:captureId,title:classification.summary||row.raw,kind:explicitMeeting?'meeting':'task',time:schedule?.time||null,end:schedule?.end||null,date:schedule?.date||null,borrowed:row.user_id!==userId,completed:closed,defaulted:Boolean(schedule?.defaulted) };
     const planned = schedule?.repeat ? occursOn(schedule,date) || occurrences.has(date) : schedule?.date===date;
     if (planned) add('planned',item);
     if (explicitMeeting && planned) add('meetings',{...item,allDay:!item.time});
