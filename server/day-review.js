@@ -45,9 +45,10 @@ export function reviewDay(db, { userId, date, timeZone = 'Europe/Samara', now = 
   const start = dayStartInZone(date,timeZone).toISOString();
   const end = dayStartInZone(shiftDate(date,1),timeZone).toISOString();
   const cutoff = historical ? end : new Date(at.getTime()+1).toISOString();
-  const observedFrom = db.prepare('SELECT observed_from FROM day_summary_history_meta WHERE id=1').get().observed_from;
+  const historyMeta = db.prepare('SELECT observed_from,title_observed_from FROM day_summary_history_meta WHERE id=1').get();
+  const observedFrom=historyMeta.observed_from,titleObservedFrom=historyMeta.title_observed_from;
   const mutableCoverage = cutoff<=observedFrom ? 'unavailable' : start<observedFrom && date<=today ? 'partial' : 'observed';
-  const historyCoverage = { own:'retained', external:mutableCoverage, assignments:mutableCoverage, observedFrom, gaps:[] };
+  const historyCoverage = { own:'retained', external:mutableCoverage, assignments:mutableCoverage, observedFrom, titleObservedFrom, gaps:[] };
   if (mutableCoverage==='partial') {
     const bound=`${dateInZone(new Date(observedFrom),timeZone)} ${localTime(observedFrom,timeZone)} (${timeZone})`;
     historyCoverage.gaps.push(`История внешних календарей неполная: изменения сохраняются с ${bound}.`);
@@ -73,6 +74,8 @@ export function reviewDay(db, { userId, date, timeZone = 'Europe/Samara', now = 
   const readCompletion = db.prepare(`SELECT * FROM ledger_events WHERE projection_id=? AND event_type IN ('completed','completion_undone') AND created_at<? ORDER BY created_at DESC,rowid DESC LIMIT 1`);
   const readDeletion = db.prepare(`SELECT event_type FROM ledger_events WHERE capture_id=? AND event_type IN ('capture_deleted','capture_restored') AND created_at<? ORDER BY created_at DESC,rowid DESC LIMIT 1`);
   const readOccurrences = db.prepare(`SELECT * FROM ledger_events WHERE capture_id=? AND event_type IN ('occurrence_completed','occurrence_undone') AND created_at<? ORDER BY created_at,rowid`);
+  const readTitle=db.prepare('SELECT title FROM collaborative_documents WHERE capture_id=?');
+  const baselineTitle=db.prepare("SELECT 1 FROM day_summary_history WHERE source='title' AND source_key=? AND observed_at=? LIMIT 1");
   function ownCapture(captureId) {
     const row = readCapture.get(captureId,cutoff,cutoff);
     if (!row || row.subtask || readDeletion.get(captureId,cutoff)?.event_type === 'capture_deleted') return;
@@ -96,7 +99,18 @@ export function reviewDay(db, { userId, date, timeZone = 'Europe/Samara', now = 
     }
     const explicitMeeting = classification.primaryType==='meeting_event' && projections.some(projection=>projection.projection_type==='meeting_event');
     if (classification.primaryType!=='task' && !explicitMeeting) return;
-    const item = { id:captureId,title:classification.summary||row.raw,kind:explicitMeeting?'meeting':'task',time:schedule?.time||null,end:schedule?.end||null,date:schedule?.date||null,borrowed:row.user_id!==userId,completed:closed,defaulted:Boolean(schedule?.defaulted) };
+    let title=classification.summary||row.raw;
+    if(!historical){const live=readTitle.get(captureId);if(live)title=live.title||'Без названия';}
+    else {
+      const saved=historySnapshot(db,'title',captureId,cutoff);
+      if(saved&&!saved.deleted)title=parse(saved.snapshot_json).title||'Без названия';
+      else if(!saved&&cutoff<=titleObservedFrom&&baselineTitle.get(captureId,titleObservedFrom)){
+        title='Название на этот день неизвестно';
+        const gap=`История совместно изменённых названий неполная: изменения сохраняются с ${dateInZone(new Date(titleObservedFrom),timeZone)} ${localTime(titleObservedFrom,timeZone)} (${timeZone}).`;
+        if(!historyCoverage.gaps.includes(gap))historyCoverage.gaps.push(gap);
+      }
+    }
+    const item = { id:captureId,title,kind:explicitMeeting?'meeting':'task',time:schedule?.time||null,end:schedule?.end||null,date:schedule?.date||null,borrowed:row.user_id!==userId,completed:closed,defaulted:Boolean(schedule?.defaulted) };
     const planned = schedule?.repeat ? occursOn(schedule,date) || occurrences.has(date) : schedule?.date===date;
     if (planned) add('planned',item);
     if (explicitMeeting && planned) add('meetings',{...item,allDay:!item.time});

@@ -388,8 +388,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
       try { morningDigest(user, at); } catch {}
       try { spendThresholds(user); } catch {}
     }
-    await telegram?.tick();
-    await Promise.all([...deliveries.values(), administration?.flush()]);
+    await Promise.all([...deliveries.values(), administration?.flush(), telegram?.tick()]);
   }
   app.notificationTick = notificationTick;
   app.push = push; app.reminders = reminders; app.reminderWorker = reminderWorker;

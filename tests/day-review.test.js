@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { openDatabase, createUser, undo } from '../server/db.js';
+import { openDatabase, createUser, undo, exportLedger, resetLedger } from '../server/db.js';
+import { ensureDocument, replaceDocumentText } from '../server/collaboration-storage.js';
+import { migrateDaySummaryHistory } from '../server/day-summary-history.js';
 import { reviewDay } from '../server/day-review.js';
 
 const past='2026-10-01', now=new Date('2026-10-03T12:00:00Z');
@@ -65,4 +67,18 @@ test('real projection undo before cutoff removes materialized task; undo after c
 });
 test('completion lookup uses projection index without full ledger scan or temporary ordering',t=>{
  const {db,userId}=fixture(t);entry(db,userId,'indexed');const plan=db.prepare("EXPLAIN QUERY PLAN SELECT * FROM ledger_events WHERE projection_id=? AND event_type IN ('completed','completion_undone') AND created_at<? ORDER BY created_at DESC,rowid DESC LIMIT 1").all('indexed:p1',now.toISOString());assert.ok(plan.some(x=>x.detail.includes('day_summary_projection_completion')));assert.ok(plan.every(x=>!x.detail.includes('SCAN ledger_events') && !x.detail.includes('TEMP B-TREE')));
+});
+
+
+test('collaborative title writer appears in current review and historical title versions remain separate',t=>{
+ t.mock.timers.enable({apis:['Date'],now:Date.parse('2026-09-30T00:00:00Z')});const {db,userId}=fixture(t);entry(db,userId,'shared-title',{schedule:null});ensureDocument(db,'shared-title');t.mock.timers.setTime(Date.parse('2026-10-01T10:00:00Z'));replaceDocumentText(db,'shared-title','title','Первое общее название');const count=db.prepare("SELECT count(*) n FROM day_summary_history WHERE source='title'").get().n;replaceDocumentText(db,'shared-title','body','Тело, которое не должно попадать в историю названий');assert.equal(db.prepare("SELECT count(*) n FROM day_summary_history WHERE source='title'").get().n,count);t.mock.timers.setTime(Date.parse('2026-10-03T11:00:00Z'));replaceDocumentText(db,'shared-title','title','Сегодняшнее общее название');assert.equal(review(db,userId).remaining[0].title,'Первое общее название');assert.equal(review(db,userId,'2026-10-03').remaining[0].title,'Сегодняшнее общее название');const rows=db.prepare("SELECT snapshot_json FROM day_summary_history WHERE source='title'").all();assert.ok(rows.every(row=>!row.snapshot_json.includes('Тело')&&!row.snapshot_json.includes('state')));
+});
+test('document first created after past cutoff leaves old classification title intact',t=>{
+ t.mock.timers.enable({apis:['Date'],now:Date.parse('2026-09-30T00:00:00Z')});const {db,userId}=fixture(t);entry(db,userId,'later-document',{schedule:null});t.mock.timers.setTime(Date.parse('2026-10-03T11:00:00Z'));ensureDocument(db,'later-document');replaceDocumentText(db,'later-document','title','Название из будущего');assert.equal(review(db,userId).remaining[0].title,'later-document-v1');assert.equal(review(db,userId,'2026-10-03').remaining[0].title,'Название из будущего');
+});
+test('upgrade seeds existing collaborative titles without inventing earlier title history',t=>{
+ t.mock.timers.enable({apis:['Date'],now:Date.parse('2026-09-30T00:00:00Z')});const {db,userId}=fixture(t);entry(db,userId,'baseline-title',{schedule:null});for(const operation of ['insert','update','delete'])db.exec(`DROP TRIGGER IF EXISTS day_summary_collaborative_documents_${operation}`);db.prepare('UPDATE day_summary_history_meta SET title_observed_from=NULL').run();t.mock.timers.setTime(Date.parse('2026-10-02T10:00:00Z'));ensureDocument(db,'baseline-title');replaceDocumentText(db,'baseline-title','title','Существующее общее название');t.mock.timers.setTime(Date.parse('2026-10-03T10:00:00Z'));migrateDaySummaryHistory(db,new Date().toISOString());migrateDaySummaryHistory(db,new Date().toISOString());const historical=review(db,userId);assert.equal(historical.remaining[0].title,'Название на этот день неизвестно');assert.ok(historical.historyCoverage.gaps.some(gap=>gap.includes('названий')));assert.equal(review(db,userId,'2026-10-03').remaining[0].title,'Существующее общее название');assert.equal(db.prepare("SELECT count(*) n FROM day_summary_history WHERE source='title'").get().n,1);
+});
+test('collaborative title history exports and resets by owner while retaining other user data',t=>{
+ t.mock.timers.enable({apis:['Date'],now:Date.parse('2026-09-30T00:00:00Z')});const {db,userId}=fixture(t),other=createUser(db,{email:'other-title@example.org',passwordHash:'test',status:'active'}).id;for(const [id,owner] of [['first-title',userId],['second-title',other]]){entry(db,owner,id,{schedule:null});ensureDocument(db,id);replaceDocumentText(db,id,'title',`Название ${id}`);}const exported=exportLedger(db,userId);assert.ok(exported.daySummaryHistory.snapshots.some(row=>row.source==='title'&&JSON.parse(row.snapshot_json).title==='Название first-title'));assert.ok(exported.daySummaryHistory.snapshots.every(row=>row.user_id===userId));resetLedger(db,userId);assert.equal(db.prepare('SELECT count(*) n FROM collaborative_documents WHERE capture_id=?').get('first-title').n,0);assert.equal(db.prepare("SELECT count(*) n FROM day_summary_history WHERE source='title' AND user_id=?").get(userId).n,0);assert.equal(db.prepare('SELECT title FROM collaborative_documents WHERE capture_id=?').get('second-title').title,'Название second-title');assert.ok(db.prepare("SELECT count(*) n FROM day_summary_history WHERE source='title' AND user_id=?").get(other).n>0);
 });

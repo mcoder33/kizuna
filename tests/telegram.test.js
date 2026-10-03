@@ -103,10 +103,18 @@ test('a stranger gets directions, a group gets silence, and nothing lands in the
   assert.equal(count(ctx.db, 'captures'), 0);
   // Команда не становится записью: бот отвечает подсказкой.
   ctx.fake.push({ text: '/help' });
+  await deliver(ctx.app);
+  assert.match(ctx.fake.said().at(-1).text, /Пишите сюда или пересылайте сообщения/);
   ctx.fake.push({ text: '/settings' });
   await deliver(ctx.app);
   assert.equal(count(ctx.db, 'captures'), 0);
-  assert.match(ctx.fake.said().at(-1).text, /Пишите сюда или пересылайте сообщения/);
+  const settings=ctx.fake.said().at(-1);
+  assert.match(settings.text, /Настройки сводок/);
+  assert.match(settings.text, /Утро: выключено, 09:00/);
+  assert.match(settings.text, /Вечер: выключено, 20:00/);
+  assert.equal(settings.markup.inline_keyboard[0][0].callback_data,'tds:enabled:morning:1');
+  assert.equal(settings.markup.inline_keyboard[1][0].callback_data,'tds:enabled:evening:1');
+  assert.deepEqual(ctx.fake.said().at(-2).markup.keyboard,[['☀️ Сегодня','🗓 Другой день'],['⚙️ Настройки сводок']]);
 });
 
 test('a message is recorded and parsed exactly like the main page input', async () => {
