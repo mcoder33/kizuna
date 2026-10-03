@@ -4007,16 +4007,20 @@ function cardSubtasks(entry, { halo, caption }) {
         fold.tabIndex = -1;
       }
       let status;
+      const taskCheck = check(item, "tree-check", t("Выполнить шаг"));
       if (branch) {
         status = node("span", undefined, "branch-dial");
         status.style.setProperty("--branch-progress", `${(item.leafDone / item.leafTotal) * 100}%`);
         bindTranslation(status, "{leafDone} из {leafTotal} {value3}", { leafDone: item.leafDone, leafTotal: item.leafTotal, value3: stepsWord(item.leafTotal) }, "title");
-        status.setAttribute("role", "img");
+        status.setAttribute("role", "group");
         status.setAttribute("aria-label", status.title);
-      } else status = check(item, "tree-check", t("Выполнить шаг"));
+        const toggle = node("label");
+        toggle.append(taskCheck);
+        status.append(toggle);
+      } else status = taskCheck;
       const open = openButton(item, "tree-open");
       const title = node("span", item.title, "tree-title");
-      if (item.done && !branch) title.classList.add("done");
+      if (item.done) title.classList.add("done");
       open.append(title);
       if (branch) open.append(node("small", `${item.leafDone} / ${item.leafTotal}`));
       row.append(fold, status, open);
