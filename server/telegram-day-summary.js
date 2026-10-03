@@ -74,7 +74,7 @@ export function createTelegramInteractionState({now=()=>new Date(),ttlMs=INTERAC
     clear(link){pending.delete(bindingKey(link));},
   };
 }
-export function createTelegramDaySummaryRouter({db,canAccess=()=>false,now=()=>new Date(),timeZone,review,finalReview=input=>reviewDay(db,input),authorize,currentBinding,send,edit=null,acknowledge,onSettingsChanged=()=>{}}) {
+export function createTelegramDaySummaryRouter({db,canAccess=()=>false,now=()=>new Date(),timeZone,review,finalReview=input=>reviewDay(db,input),authorize,currentBinding,send,sendReport=null,prepareReportImage=async()=>null,edit=null,acknowledge,onSettingsChanged=()=>{}}) {
   const interactions=createTelegramInteractionState({now}),messageRoutes=[],callbackRoutes=[],preflights=[],extraButtons=[],pendingModes=new Map(),keyboardShown=new Set();
   const fresh=link=>currentBinding(link);
   const dayFresh=link=>fresh(link) && canAccess(link.user_id);
@@ -107,9 +107,12 @@ export function createTelegramDaySummaryRouter({db,canAccess=()=>false,now=()=>n
     if(!dayFresh(link))return;
     const input={userId:link.user_id,date,timeZone:timeZone(link.user_id),now:now(),phase:'manual'};
     await review(input);
+    if(!dayFresh(link))return;
+    let image=null;try{image=await prepareReportImage(input);}catch{}
     const overview=currentReview(link,input);if(!overview)return;
     const {text,entities}=renderDaySummaryMessage(overview);
-    if(dayFresh(link))await sendFresh(link,text,undefined,{entities});
+    const refreshMessage=()=>{const fresh=currentReview(link,input);if(!fresh)return null;const message=renderDaySummaryMessage(fresh);return dayFresh(link)?message:null;};
+    if(dayFresh(link))await(sendReport?sendReport(link,text,{entities,image,refreshMessage,stillAllowed:()=>dayFresh(link)}):sendFresh(link,text,undefined,{entities}));
   }
   async function manualDate(link){if(!dayFresh(link))return;interactions.begin(link,'date');await sendFresh(link,'Введите дату: ДД.ММ.ГГГГ или ГГГГ-ММ-ДД.\nОтмена — вернуться к заметкам.',replyKeyboard(link));}
   const calendar=createTelegramDateCalendar({now,fresh:dayFresh,todayOf,timeZone,send:sendFresh,showReview,manualDate,

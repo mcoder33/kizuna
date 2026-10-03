@@ -73,6 +73,17 @@ export function createFakeTelegram({ token = FAKE_BOT_TOKEN, username = 'kizuna_
         sent.push({ method: name, params, result });
         return ok(result);
       }
+      case 'sendPhoto': {
+        const part = String(params.photo || '').match(/^attach:\/\/(.+)$/)?.[1];
+        if (!part || !uploads[part]) return fail(400, 'Bad Request: photo must be uploaded');
+        if ((params.caption || '').length > 1024) return fail(400, 'Bad Request: caption is too long');
+        let entities = params.caption_entities;
+        try { if (typeof entities === 'string') entities = JSON.parse(entities); } catch { return fail(400, 'Bad Request: invalid caption entities'); }
+        const result = { message_id: sentId++, chat: { id: params.chat_id, type: 'private' }, caption: params.caption,
+          photo: [{ file_id: `uploaded-${sentId}`, file_size: uploads[part].length }] };
+        sent.push({ method: name, params: { ...params, caption_entities: entities }, uploads, result });
+        return ok(result);
+      }
       case 'editMessageText':
         sent.push({ method: name, params });
         return ok({ message_id: params.message_id, chat: { id: params.chat_id, type: 'private' }, text: params.text });
@@ -128,6 +139,6 @@ export function createFakeTelegram({ token = FAKE_BOT_TOKEN, username = 'kizuna_
     return new Response(JSON.stringify(result.body), { status: result.status, headers: { 'Content-Type': 'application/json' } });
   }
   // Что бот сказал: отправленное и исправленное — по порядку.
-  const said = () => sent.map(entry => ({ method: entry.method, text: entry.params.text, chatId: entry.params.chat_id, replyTo: entry.params.reply_parameters?.message_id ?? null, messageId: entry.result?.message_id ?? entry.params.message_id, markup: entry.params.reply_markup ?? null }));
+  const said = () => sent.map(entry => ({ method: entry.method, text: entry.params.text ?? entry.params.caption, chatId: entry.params.chat_id, replyTo: entry.params.reply_parameters?.message_id ?? null, messageId: entry.result?.message_id ?? entry.params.message_id, markup: entry.params.reply_markup ?? null }));
   return { token, username, user, bot, push, pushCallback, addFile, pending, sent, said, handle, fetch };
 }

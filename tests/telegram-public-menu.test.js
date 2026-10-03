@@ -21,7 +21,7 @@ function fixture(t) {
   delete process.env.PAGENT_TELEGRAM_TASK_SEARCH_USER_IDS;
   process.env.PAGENT_TELEGRAM_DAY_SUMMARY_USER_IDS=owner;
   t.after(async()=>{await app.telegram.stop();db.close();envNames.forEach((name,i)=>{if(previous[i]===undefined)delete process.env[name];else process.env[name]=previous[i];});});
-  const messages=()=>fake.sent.filter(item=>item.method==='sendMessage');
+  const messages=()=>fake.sent.filter(item=>['sendMessage','sendPhoto'].includes(item.method)).map(item=>({...item,params:{...item.params,text:item.params.text??item.params.caption}}));
   return {app,db,fake,owner,other,messages, async text(text,id=200){fake.push({text,from:{id,is_bot:false}});await app.telegram.pollOnce();await app.telegram.flush({force:true});},
     async callback(data,id=200,messageId=5000){fake.pushCallback(data,{from:{id,is_bot:false},message:{message_id:messageId,chat:{id,type:'private'}}});await app.telegram.pollOnce();}};
 }

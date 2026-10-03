@@ -30,6 +30,7 @@ import { AVATAR_IMAGE_LIMIT } from './avatars.js';
 import * as chat from './chat.js';
 import { registerNotesRoutes, afterCapture } from './notes-tree.js';
 import { createTelegramService, TELEGRAM_API } from './telegram.js';
+import { createReportImageService } from './report-images.js';
 import { createTelegramDaySummaryAccess, createTelegramTaskSearchAccess } from './telegram-day-access.js';
 import { createTaskSearchService } from './task-search.js';
 import { installTelegramTaskSearch, TASK_SEARCH_COMMANDS } from './telegram-search.js';
@@ -458,9 +459,13 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   // вложения, живое обновление вкладок.
   const taskSearch = createTaskSearchService(db);
   const canAccessTaskSearch = createTelegramTaskSearchAccess();
+  const reportImages = createReportImageService({directory:path.join(path.dirname(databasePath),'report-images'),env:environment,audit,
+    allowGenerate:userId=>{const user=findUserById(db,userId);return user?.status==='active'&&spendState(user).allowed;},
+    onUsage:(result,userId)=>noteUsage(db,result,'report_image',userId)});
   telegram = createTelegramService({
     db, now, audit,
     canAccessDaySummary: createTelegramDaySummaryAccess(),
+    prepareReportImage: input => reportImages.prepare(input),
     onSettingsChanged: () => { stored = readSettings(db); },
     token: () => environment().PAGENT_TELEGRAM_BOT_TOKEN || null,
     apiBase: () => process.env.PAGENT_TELEGRAM_API_BASE || TELEGRAM_API,

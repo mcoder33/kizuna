@@ -34,7 +34,7 @@ export function summaryEligibility({preferences,phase,timeZone,now}){
   return{eligible:true,...schedule,due,timeZone,phase};
 }
 
-export function createTelegramDayDelivery({db,canAccess=()=>false,now=()=>new Date(),timeZone,currentBinding,enabled=()=>true,prepareReview,currentReview,send,audit=()=>{},batchSize=40}){
+export function createTelegramDayDelivery({db,canAccess=()=>false,now=()=>new Date(),timeZone,currentBinding,enabled=()=>true,prepareReview,currentReview,prepareReportImage=async()=>null,send,audit=()=>{},batchSize=40}){
   const size=Math.max(1,Math.min(100,Math.floor(Number(batchSize)||40)));
   let cursor='',inFlight=null,recovered=false;
   const report=event=>audit(event);
@@ -65,16 +65,21 @@ export function createTelegramDayDelivery({db,canAccess=()=>false,now=()=>new Da
       if(!canAccess(link.user_id)){finish(link,selection,'failed','access_revoked');return;}
       if(!currentBinding(link)){finish(link,selection,'failed','binding_changed');return;}
       if(!enabled()){finish(link,selection,'failed','telegram_disabled');return;}
+      let image=null;try{image=await prepareReportImage({userId:link.user_id,date:selection.date,timeZone:selection.timeZone,now:now(),phase});}catch{}
       const current=eligible(link,phase);
       if(!current.eligible||current.date!==selection.date||current.signature!==selection.signature){finish(link,selection,'failed','preferences_or_due_changed');return;}
       const overview=currentReview(link,{date:selection.date,phase});
       if(!overview){finish(link,selection,'failed','binding_changed');return;}
       const {text,entities}=renderDaySummaryMessage(overview);
-      const finalSelection=eligible(link,phase),sendAt=now().getTime();
+      const stillAllowed=()=>{
+        const finalSelection=eligible(link,phase),sendAt=now().getTime();
+        return canAccess(link.user_id)&&currentBinding(link)&&enabled()&&finalSelection.eligible&&finalSelection.date===selection.date&&finalSelection.signature===input.scheduleSignature&&sendAt>=Date.parse(input.dueAt)&&sendAt<=Date.parse(input.graceDeadline)&&dateInZone(new Date(sendAt),selection.timeZone)===selection.date;
+      };
       if(!canAccess(link.user_id)){finish(link,selection,'failed','access_revoked');return;}
-      if(!currentBinding(link)||!enabled()||!finalSelection.eligible||finalSelection.date!==selection.date||finalSelection.signature!==input.scheduleSignature||sendAt<Date.parse(input.dueAt)||sendAt>Date.parse(input.graceDeadline)||dateInZone(new Date(sendAt),selection.timeZone)!==selection.date){finish(link,selection,'failed','final_eligibility_changed');return;}
+      if(!stillAllowed()){finish(link,selection,'failed','final_eligibility_changed');return;}
+      const refreshMessage=()=>{if(!stillAllowed())return null;const fresh=currentReview(link,{date:selection.date,phase});if(!fresh)return null;const message=renderDaySummaryMessage(fresh);return stillAllowed()?message:null;};
       sending=true;
-      const sent=await send(link.chat_id,text,{entities});
+      const sent=await send(link.chat_id,text,{entities,image,stillAllowed,refreshMessage},link);
       finish(link,selection,'sent',null,{messageId:sent?.message_id||null});
     }catch(error){
       if(!sending){finish(link,selection,'failed','review_failed');return;}

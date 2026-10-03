@@ -31,6 +31,7 @@ import { dateInZone, shiftDate } from './reports.js';
 import { reviewDay } from './day-review.js';
 import { createTelegramDayDelivery } from './telegram-day-delivery.js';
 import { createTelegramDaySummaryRouter, DAY_SUMMARY_COMMANDS } from './telegram-day-summary.js';
+import { sendTelegramReport } from './telegram-report-message.js';
 
 export const TELEGRAM_API = 'https://api.telegram.org';
 export const LINK_TTL_MS = 15 * 60 * 1000;
@@ -313,6 +314,7 @@ export function createTelegramService({
   finalDayReview = input => reviewDay(db,input),
   onSettingsChanged = () => {},
   summaryBatchSize = 40,
+  prepareReportImage = async () => null,
   canAccessDaySummary = () => false,
   onCaptureSaved = () => {},
   additionalCommands = () => [],
@@ -441,7 +443,11 @@ export function createTelegramService({
     if(!from || from.is_bot || chat?.type!=='private' || String(chat.id)!==String(from.id))return null;
     const link=linkByTelegram(from.id);return link && String(link.chat_id)===String(chat.id) && currentBinding(link)?link:null;
   }
-  const menuRouter=createTelegramDaySummaryRouter({db,canAccess:canAccessDaySummary,now,timeZone,review:dayReview,finalReview:finalDayReview,authorize:authorizeMessage,currentBinding,send:(chatId,text,extra)=>say(chatId,text,null,extra),edit:(chatId,messageId,text,extra)=>call('editMessageText',{chat_id:chatId,message_id:messageId,text,...extra}),acknowledge:id=>call('answerCallbackQuery',{callback_query_id:id}),onSettingsChanged});
+  const sendReport=(link,text,{entities,image,refreshMessage,stillAllowed})=>sendTelegramReport({chatId:link.chat_id,text,entities,image,refreshMessage,
+    sendText:(chatId,body,extra)=>say(chatId,body,null,extra),
+    sendPhoto:(chatId,file,extra)=>call('sendPhoto',{chat_id:chatId,photo:'attach://report',...extra},{files:{report:file}}),
+    stillAllowed:()=>Boolean(token()&&currentBinding(link)&&canAccessDaySummary(link.user_id)&&(!stillAllowed||stillAllowed())),audit:note});
+  const menuRouter=createTelegramDaySummaryRouter({db,canAccess:canAccessDaySummary,now,timeZone,review:dayReview,finalReview:finalDayReview,authorize:authorizeMessage,currentBinding,prepareReportImage,sendReport,send:(chatId,text,extra)=>say(chatId,text,null,extra),edit:(chatId,messageId,text,extra)=>call('editMessageText',{chat_id:chatId,message_id:messageId,text,...extra}),acknowledge:id=>call('answerCallbackQuery',{callback_query_id:id}),onSettingsChanged});
   async function setupPrivateCommands(link) {
     if (!link || !currentBinding(link) || String(link.chat_id) !== String(link.telegram_id)) return;
     const scope = { type: 'chat', chat_id: link.chat_id };
@@ -452,7 +458,7 @@ export function createTelegramService({
     }
     await call('setMyCommands', { scope, commands }).catch(() => {});
   }
-  const dayDelivery=createTelegramDayDelivery({db,canAccess:canAccessDaySummary,now,timeZone,currentBinding,enabled:()=>Boolean(token()),prepareReview:dayReview,currentReview:menuRouter.currentReview,send:(chatId,text,extra)=>say(chatId,text,null,extra),audit:note,batchSize:summaryBatchSize});
+  const dayDelivery=createTelegramDayDelivery({db,canAccess:canAccessDaySummary,now,timeZone,currentBinding,enabled:()=>Boolean(token()),prepareReview:dayReview,currentReview:menuRouter.currentReview,prepareReportImage,send:(chatId,text,extra,link)=>sendReport(link,text,extra),audit:note,batchSize:summaryBatchSize});
   async function createLink(userId, appUrl = null) {
     if (!token()) return { error: 'telegram_off' };
     let me;

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openDatabase, createUser, writeSettings } from '../server/db.js';
+import { openDatabase, createUser, createLedger, writeSettings } from '../server/db.js';
 import { createTelegramService } from '../server/telegram.js';
 import { reviewDay } from '../server/day-review.js';
 import { createTelegramDayDelivery, summaryDueInstant, summaryEligibility } from '../server/telegram-day-delivery.js';
@@ -11,16 +11,17 @@ import { summaryPreferences, summarySettingsKey, readSummaryPreferences, changeS
 import { reserveSummaryReceipt, claimSummaryRetry, updateSummaryReceipt, migrateDaySummaryHistory } from '../server/day-summary-history.js';
 import { createFakeTelegram } from './helpers/fake-telegram.js';
 
-function fixture(t,{path=':memory:',zone='UTC',hook=null,finalHook=null,sendError=null,batchSize=40}={}) {
+function fixture(t,{path=':memory:',zone='UTC',hook=null,finalHook=null,sendError=null,prepareImage=async()=>null,photoError=null,batchSize=40}={}) {
  const db=openDatabase(path);t.after(()=>{if(db.open)db.close();});const fake=createFakeTelegram(),events=[];
  let allowed=true;
  let clock=new Date('2026-10-03T09:15:00Z'),attempts=0,configured=true;
  const userId=createUser(db,{email:`delivery-${Math.random()}@example.org`,passwordHash:'test',status:'active'}).id;
  const addLink=(id,telegramId=fake.user.id)=>db.prepare('INSERT INTO telegram_links(user_id,telegram_id,chat_id,app_url,linked_at) VALUES(?,?,?,?,?)').run(id,telegramId,telegramId,'https://kizuna.example','2026-09-30T10:00:00Z');addLink(userId);
  const service=createTelegramService({db,canAccessDaySummary:()=>allowed,token:()=>configured?fake.token:null,now:()=>clock,clock:()=>clock.getTime(),timeZone:()=>zone,summaryBatchSize:batchSize,userActive:id=>db.prepare('SELECT status FROM users WHERE id=?').get(id)?.status==='active',audit:event=>events.push(event),requestTimeoutMs:20,
+  prepareReportImage:prepareImage,
   dayReview:async input=>{const initial=reviewDay(db,input);await hook?.(input,initial);return initial;},
   finalDayReview:input=>{const overview=reviewDay(db,input);finalHook?.(input,overview);return overview;},
-  fetch:async(url,init)=>{if(new URL(url).pathname.endsWith('/sendMessage')){attempts++;const error=await sendError?.(attempts,init);if(error instanceof Error)throw error;if(error)return new Response(JSON.stringify({ok:false,error_code:error.status,description:'private credentials never show',parameters:{retry_after:error.retryAfter}}),{status:error.status});}return fake.fetch(url,init);}});
+  fetch:async(url,init)=>{if(new URL(url).pathname.endsWith('/sendMessage')){attempts++;const error=await sendError?.(attempts,init);if(error instanceof Error)throw error;if(error)return new Response(JSON.stringify({ok:false,error_code:error.status,description:'private credentials never show',parameters:{retry_after:error.retryAfter}}),{status:error.status});}if(new URL(url).pathname.endsWith('/sendPhoto')){const error=await photoError?.(init);if(error instanceof Error)throw error;if(error)return new Response(JSON.stringify({ok:false,error_code:error.status,description:'photo failed',parameters:{retry_after:error.retryAfter}}),{status:error.status});}return fake.fetch(url,init);}});
  const prefs=(id=userId,patch={})=>writeSettings(db,{[summarySettingsKey(id)]:JSON.stringify({...summaryPreferences(),morning:{enabled:true,time:'09:00',activatedAt:'2026-10-02T00:00:00Z'},...patch})});
  return{db,userId,fake,service,events,setAccess:value=>{allowed=value;},addLink,prefs,setNow:value=>{clock=new Date(value);},setEnabled:value=>{configured=value;},setZone:value=>{zone=value;},get attempts(){return attempts;},receipt:(phase='morning',date='2026-10-03')=>db.prepare('SELECT * FROM telegram_summary_receipts WHERE user_id=? AND local_date=? AND phase=?').get(userId,date,phase),messages:()=>fake.sent.filter(entry=>entry.method==='sendMessage')};
 }
@@ -115,4 +116,43 @@ test('non-owner with stored enabled settings is never reserved or built, owner r
 });
 test('revocation after reservation and during final render is terminal with no retry or send',async t=>{
  for(const point of ['prepare','render']){let ctx;ctx=fixture(t,{hook:async()=>{if(point==='prepare'){await Promise.resolve();ctx.setAccess(false);}},finalHook:(_,overview)=>{if(point==='render')Object.defineProperty(overview,'timeZone',{get(){ctx.setAccess(false);return 'UTC';}});}});ctx.prefs();await ctx.service.tick();assert.equal(ctx.attempts,0);assert.equal(ctx.receipt().status,'failed');assert.equal(ctx.receipt().error_code,'access_revoked');ctx.setAccess(true);await ctx.service.tick();assert.equal(ctx.attempts,0);}
+});
+
+const reportPhoto={bytes:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aFOsAAAAASUVORK5CYII=','base64'),type:'image/png',filename:'report.png'};
+
+test('scheduled image report sends one multipart photo with bold exact task title and durable receipt',async t=>{
+ t.mock.timers.enable({apis:['Date'],now:Date.parse('2026-10-03T08:00:00Z')});
+ let preparations=0;const ctx=fixture(t,{prepareImage:async()=>{preparations++;return reportPhoto;}});ctx.prefs();
+ createLedger(ctx.db,{userId:ctx.userId,raw:'Моя <буквальная> задача 🐈',classification:{primaryType:'task',summary:'Моя <буквальная> задача 🐈',entities:{schedule:{date:'2026-10-03'}}},provider:'manual',occurredAt:'2026-10-03T08:00:00Z'});
+ await ctx.service.tick();await ctx.service.tick();
+ const photos=ctx.fake.sent.filter(entry=>entry.method==='sendPhoto');assert.equal(photos.length,1);assert.equal(preparations,1);assert.equal(ctx.messages().length,0);
+ const photo=photos[0];assert.deepEqual(photo.uploads.report,reportPhoto.bytes);assert.equal(photo.params.reply_markup,undefined);assert.ok(photo.params.caption.includes('⬜ Моя <буквальная> задача 🐈'));
+ assert.ok(photo.params.caption_entities.some(entity=>photo.params.caption.slice(entity.offset,entity.offset+entity.length)==='Моя <буквальная> задача 🐈'));
+ assert.equal(ctx.receipt().status,'sent');assert.equal(ctx.receipt().message_id,String(photo.result.message_id));
+});
+
+test('image preparation optout, revoked binding/access and crossed due deadline prevent photo and text delivery',async t=>{
+ for(const change of ['off','binding','access','deadline','token']){let ctx;ctx=fixture(t,{prepareImage:async()=>{await Promise.resolve();if(change==='off')changeSummaryPreferences(ctx.db,ctx.userId,{type:'enabled',phase:'morning',value:false});if(change==='binding')ctx.db.prepare("UPDATE telegram_links SET linked_at='changed' WHERE user_id=?").run(ctx.userId);if(change==='access')ctx.setAccess(false);if(change==='deadline')ctx.setNow('2026-10-03T10:00:01Z');if(change==='token')ctx.setEnabled(false);return reportPhoto;}});ctx.prefs();await ctx.service.tick();assert.equal(ctx.fake.sent.length,0,change);assert.equal(ctx.receipt().status,'failed',change);}
+});
+
+test('image preparation failure falls back to the normal report without technical caveats',async t=>{
+ const ctx=fixture(t,{prepareImage:async()=>{throw Error('private model error');}});ctx.prefs();await ctx.service.tick();assert.equal(ctx.messages().length,1);assert.equal(ctx.receipt().status,'sent');assert.equal(ctx.messages()[0].params.text.includes('private model error'),false);
+});
+
+test('a definitive photo rejection rereads revoked source data before delivering text',async t=>{
+ t.mock.timers.enable({apis:['Date'],now:Date.parse('2026-10-03T08:00:00Z')});
+ let ctx,captureId;ctx=fixture(t,{prepareImage:async()=>reportPhoto,photoError:async init=>{assert.ok(init.body.get('caption').includes('Now private task'));ctx.db.prepare('UPDATE captures SET deleted_at=? WHERE id=?').run('2026-10-03T09:15:00Z',captureId);ctx.setNow('2026-10-03T09:15:01Z');return{status:400};}});ctx.prefs();
+ captureId=createLedger(ctx.db,{userId:ctx.userId,raw:'Now private task',classification:{primaryType:'task',summary:'Now private task',entities:{schedule:{date:'2026-10-03'}}},provider:'manual',occurredAt:'2026-10-03T08:00:00Z'}).captureId;
+ await ctx.service.tick();assert.equal(ctx.messages().length,1);assert.equal(ctx.messages()[0].params.text.includes('Now private task'),false);assert.equal(ctx.receipt().status,'sent');
+});
+
+test('photo 429 obeys scheduled retry receipts; ambiguous photo timeout never sends text or repeats',async t=>{
+ let photoAttempts=0;const ctx=fixture(t,{prepareImage:async()=>reportPhoto,photoError:async()=>{photoAttempts++;return photoAttempts===1?{status:429,retryAfter:60}:null;}});ctx.prefs();await ctx.service.tick();assert.equal(ctx.receipt().status,'retry');assert.equal(ctx.messages().length,0);await ctx.service.tick();assert.equal(photoAttempts,1);ctx.setNow('2026-10-03T09:16:00Z');await ctx.service.tick();assert.equal(photoAttempts,2);assert.equal(ctx.receipt().status,'sent');
+ let timeouts=0;const timed=fixture(t,{prepareImage:async()=>reportPhoto,photoError:()=>{timeouts++;return new Promise(()=>{});}});timed.prefs();await timed.service.tick();await timed.service.tick();assert.equal(timeouts,1);assert.equal(timed.messages().length,0);assert.equal(timed.receipt().status,'uncertain');
+});
+
+test('long illustrated report delivers complete text once even when the supplementary photo fails',async t=>{
+ const ctx=fixture(t,{prepareImage:async()=>reportPhoto,photoError:async()=>({status:403}),finalHook:(_,review)=>{
+   for(const section of ['remaining','done','overdue','meetings','added']){review[section]=Array.from({length:4},(_,i)=>({title:`${section}-${i} ${'длинное название '.repeat(20)}`}));review.counts[section]=4;}
+ }});ctx.prefs();await ctx.service.tick();assert.equal(ctx.messages().length,1);assert.ok(ctx.messages()[0].params.text.length>1024);assert.ok(ctx.messages()[0].params.text.includes('remaining-0'));assert.equal(ctx.messages()[0].params.reply_markup,undefined);assert.equal(ctx.receipt().status,'sent');await ctx.service.tick();assert.equal(ctx.messages().length,1);
 });

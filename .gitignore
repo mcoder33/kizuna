@@ -5,6 +5,7 @@ desktop/macos/vendor/
 data/*.sqlite
 data/*.sqlite-*
 data/attachments/
+data/report-images/
 test-results/
 playwright-report/
 tmp/

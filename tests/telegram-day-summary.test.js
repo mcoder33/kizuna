@@ -6,12 +6,12 @@ import { createTelegramService } from '../server/telegram.js';
 import { createFakeTelegram } from './helpers/fake-telegram.js';
 import { createTelegramDaySummaryRouter, DAY_SUMMARY_LABELS, summaryReplyKeyboard, readSummaryPreferences, renderDaySummary, safeSummaryLink, summaryPreferences, weekdayReviewDate } from '../server/telegram-day-summary.js';
 
-function fixture(t,{dayReview=null,access=true}={}) {
+function fixture(t,{dayReview=null,access=true,prepareImage=async()=>null,photoError=null}={}) {
   const db=openDatabase(':memory:');t.after(()=>db.close());const userId=createUser(db,{email:'telegram-day@example.org',passwordHash:'test',status:'active'}).id;
   const fake=createFakeTelegram();let now=new Date('2026-10-03T12:00:00Z'),cache=readSettings(db),changes=0;const captures=[],reviews=[],attachments=[];
   db.prepare('INSERT INTO telegram_links(user_id,telegram_id,chat_id,app_url,linked_at) VALUES(?,?,?,?,?)').run(userId,fake.user.id,fake.user.id,'https://kizuna.example','2026-09-30T10:00:00Z');
   let allowed=access;
-  const service=createTelegramService({db,canAccessDaySummary:id=>allowed && id===userId,token:()=>fake.token,fetch:fake.fetch,now:()=>now,clock:()=>now.getTime(),timeZone:()=> 'Europe/Samara',userActive:id=>db.prepare("SELECT status FROM users WHERE id=?").get(id)?.status==='active',onSettingsChanged:stored=>{cache=stored;changes++;},
+  const service=createTelegramService({db,canAccessDaySummary:id=>allowed && id===userId,token:()=>fake.token,fetch:async(url,init)=>{if(new URL(url).pathname.endsWith('/sendPhoto')){const error=await photoError?.(init);if(error)return new Response(JSON.stringify({ok:false,error_code:error.status,description:'photo failed'}),{status:error.status});}return fake.fetch(url,init);},prepareReportImage:prepareImage,now:()=>now,clock:()=>now.getTime(),timeZone:()=> 'Europe/Samara',userActive:id=>db.prepare("SELECT status FROM users WHERE id=?").get(id)?.status==='active',onSettingsChanged:stored=>{cache=stored;changes++;},
     dayReview:async input=>{reviews.push(input);return dayReview?dayReview(input):{...input,planned:[],done:[],remaining:[{id:'todo',title:'Написать отчёт'}],overdue:[],added:[],meetings:[{title:'Созвон',time:'16:00',end:'17:00'}],counts:{remaining:1,meetings:1},historyCoverage:{gaps:[]}};},
     queueCapture:async input=>{captures.push(input);const saved=createLedger(db,{raw:input.raw,userId:input.userId,classification:{primaryType:'task',summary:input.raw,entities:{schedule:null}},provider:'manual'});return{captureId:saved.captureId,jobId:`job-${captures.length}`};},attach:input=>{attachments.push(input);return true;},describe:()=>null,avatar:()=>Buffer.alloc(0),groupWindowMs:0});
   return{db,userId,fake,service,setAccess:value=>{allowed=value;},captures,reviews,attachments,setNow:value=>{now=new Date(value);},get cache(){return cache;},get changes(){return changes;},messages:()=>fake.sent.filter(x=>x.method==='sendMessage'),acks:()=>fake.sent.filter(x=>x.method==='answerCallbackQuery'),async text(text,fields={}){fake.push({text,...fields});await service.pollOnce();await service.flush({force:true});},async callback(data,fields={}){fake.pushCallback(data,fields);await service.pollOnce();}};
@@ -20,6 +20,20 @@ function fixture(t,{dayReview=null,access=true}={}) {
 test('persistent menu and slash day/date selection send plain reports without creating tasks',async t=>{
  const ctx=fixture(t);await ctx.text('/today');assert.deepEqual(ctx.messages()[0].params.reply_markup,summaryReplyKeyboard());assert.deepEqual(summaryReplyKeyboard().keyboard,[[DAY_SUMMARY_LABELS.today,DAY_SUMMARY_LABELS.day],[DAY_SUMMARY_LABELS.settings]]);assert.equal(ctx.reviews[0].date,'2026-10-03');assert.equal(ctx.messages().at(-1).params.reply_markup,undefined);assert.ok(ctx.messages().at(-1).params.entities.some(entity=>entity.type==='bold'));assert.equal(ctx.captures.length,0);
  await ctx.text('/day 01.10.2026');assert.equal(ctx.reviews.at(-1).date,'2026-10-01');await ctx.callback('tds:date:2026-10-02');assert.equal(ctx.reviews.at(-1).date,'2026-10-02');assert.equal(ctx.acks().length,1);assert.equal(ctx.db.prepare('SELECT count(*) n FROM captures').get().n,0);
+});
+test('manual photo report rereads tasks after image preparation and loses access safely',async t=>{
+ t.mock.timers.enable({apis:['Date'],now:Date.parse('2026-10-03T08:00:00Z')});
+ const photo={bytes:Buffer.from('image'),type:'image/png',filename:'report.png'};
+ let ctx,captureId;ctx=fixture(t,{prepareImage:async()=>{assert.ok(reviewDay(ctx.db,{userId:ctx.userId,date:'2026-10-03',timeZone:'Europe/Samara',now:new Date('2026-10-03T12:00:00Z')}).remaining.some(item=>item.title==='removed private title'));await Promise.resolve();ctx.db.prepare('UPDATE captures SET deleted_at=? WHERE id=?').run('2026-10-03T12:00:00Z',captureId);ctx.setNow('2026-10-03T12:00:01Z');return photo;}});
+ captureId=createLedger(ctx.db,{userId:ctx.userId,raw:'removed private title',classification:{primaryType:'task',summary:'removed private title',entities:{schedule:{date:'2026-10-03'}}},provider:'manual',occurredAt:'2026-10-03T08:00:00Z'}).captureId;
+ await ctx.text('/today');const sent=ctx.fake.sent.find(entry=>entry.method==='sendPhoto');assert.ok(sent);assert.equal(sent.params.reply_markup,undefined);assert.equal(sent.params.caption.includes('removed private title'),false);
+ let denied;denied=fixture(t,{prepareImage:async()=>{denied.setAccess(false);return photo;}});await denied.callback('tds:date:2026-10-03');assert.equal(denied.fake.sent.filter(entry=>['sendPhoto','sendMessage'].includes(entry.method)).length,0);
+});
+test('manual photo 400 fallback rereads changed source data',async t=>{
+ t.mock.timers.enable({apis:['Date'],now:Date.parse('2026-10-03T08:00:00Z')});
+ let ctx,captureId;ctx=fixture(t,{prepareImage:async()=>({bytes:Buffer.from('image'),type:'image/png',filename:'report.png'}),photoError:async init=>{assert.ok(init.body.get('caption').includes('private before fallback'));ctx.db.prepare('UPDATE captures SET deleted_at=? WHERE id=?').run('2026-10-03T12:00:00Z',captureId);ctx.setNow('2026-10-03T12:00:01Z');return{status:400};}});
+ captureId=createLedger(ctx.db,{userId:ctx.userId,raw:'private before fallback',classification:{primaryType:'task',summary:'private before fallback',entities:{schedule:{date:'2026-10-03'}}},provider:'manual',occurredAt:'2026-10-03T08:00:00Z'}).captureId;
+ await ctx.text('/today');assert.equal(ctx.messages().at(-1).params.text.includes('private before fallback'),false);
 });
 test('settings default off, independent desired callbacks idempotent, activation/cache and weekday empty means none',async t=>{
  const ctx=fixture(t);await ctx.text('/settings');let prefs=readSummaryPreferences(ctx.db,ctx.userId);assert.equal(prefs.morning.enabled,false);assert.equal(prefs.evening.enabled,false);assert.equal(prefs.morning.time,'09:00');assert.equal(prefs.evening.time,'20:00');
