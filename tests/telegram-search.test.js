@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { openDatabase, createUser, enqueueCaptureJob, resetLedger } from '../server/db.js';
+import { openDatabase, createUser, enqueueCaptureJob, resetLedger, saveNote } from '../server/db.js';
 import { createTaskSearchService } from '../server/task-search.js';
 import { createTelegramService } from '../server/telegram.js';
 import { installTelegramTaskSearch, renderTaskSearchResult, taskSearchTaskUrl, TASK_SEARCH_COMMANDS } from '../server/telegram-search.js';
@@ -190,10 +190,11 @@ test('expired/invalid callbacks never disclose pages; other actions invalidate p
 });
 
 test('same-binding previous criteria support follow-up periods; cancel clears context', async t => {
-  const f = fixture(t); f.add('Отчет Пети', { people: ['Петя'] });
+  const f = fixture(t);const id=f.add('Отчет Пети', { people: ['Петя'] });f.add('Отчет Саши',{people:['Саша']});
+  f.db.prepare('UPDATE captures SET created_at=? WHERE id=?').run('2026-09-24T12:00:00Z',id);
   await f.router.routeMessage(f.message('/find')); await f.router.routeMessage(f.message('дела с Петей'));
   await f.router.routeMessage(f.message('/find')); await f.router.routeMessage(f.message('за прошлую неделю'));
-  assert.match(f.sent.at(-1).text, /Человек: Петей/); assert.match(f.sent.at(-1).text, /предыдущего поиска/);
+  assert.match(f.sent.at(-1).text,/Отчет Пети/);assert.doesNotMatch(f.sent.at(-1).text,/Отчет Саши/);assert.match(f.sent.at(-1).text,/предыдущего поиска/);
   await f.router.routeMessage(f.message('Отмена')); await f.router.routeMessage(f.message('/find')); await f.router.routeMessage(f.message('Что я ему обещал?'));
   assert.match(f.sent.at(-1).text, /Назовите человека/);
 });
@@ -223,15 +224,90 @@ test('fresh binding and active status prevent results after an asynchronous rebi
   await plugin.router.routeMessage(f.message('Найти')); assert.equal(f.sent.length, before);
 });
 
-test('renderer bounds titles/text, reports evidence and occurrence facts, validates links', () => {
+test('renderer bounds titles/text, retains occurrence facts without match rationale and validates generic links', () => {
   const id = crypto.randomUUID();
-  const result = { matchedCount: 100, criteria: {}, limitations: ['😀'.repeat(2000)], items: Array.from({ length: 9 }, () => ({ captureId: id, title: '😀'.repeat(3000), status: 'open', completionKind: 'occurrence', matchedOccurrences: [{ date: '2026-10-02' }], evidence: [{ role: 'mention', name: 'Петя', confidence: 'text-only' }], sourceUrl: 'https://evil.example/private' })) };
+  const result = { matchedCount: 100, criteria: {}, limitations: ['НЕ ВЫВОДИТЬ ОБЪЯСНЕНИЕ'.repeat(100)], items: Array.from({ length: 9 }, () => ({ captureId: id, title: '😀'.repeat(3000), status: 'open', completionKind: 'occurrence', matchedOccurrences: [{ date: '2026-10-02' }], evidence: [{ role: 'mention', name: 'Петя', confidence: 'text-only' }], sourceUrl: 'https://evil.example/private' })) };
   const rendered = renderTaskSearchResult(result, { appUrl: 'https://kizuna.example/', nextCallback: 'ts:page:123' });
   assert.ok(rendered.text.length <= 3800); assert.equal(rendered.text.isWellFormed(), true);
-  assert.match(rendered.text, /Выполнен повтор 2026-10-02; серия открыта/); assert.match(rendered.text, /личность не подтверждена/);
+  assert.match(rendered.text, /Выполнен повтор 2026-10-02; серия открыта/); assert.doesNotMatch(rendered.text,/личность|Упоминание|Текст:|НЕ ВЫВОДИТЬ/u);
   assert.equal(rendered.markup.inline_keyboard.length, 7);
   assert.ok(rendered.markup.inline_keyboard.flat().filter(item => item.url).every(item => item.url.startsWith('https://kizuna.example/')));
   assert.equal(taskSearchTaskUrl('http://kizuna.example/', id), null); assert.equal(taskSearchTaskUrl('https://localhost/', id), null);
+});
+
+test('renderer labels actual record types without fake status and offers explicit parent/record links',()=>{
+  const id=crypto.randomUUID(),parent=crypto.randomUUID();
+  const result={matchedCount:3,criteria:{person:'ВойсОпс',role:'related'},limitations:['АЛГОРИТМИЧЕСКОЕ ОБЪЯСНЕНИЕ'],items:[
+    {captureId:id,title:'Текущая заметка',type:'note',status:null,relations:[{captureId:parent,relation:'parent'}],evidence:[{role:'mention',name:'Саша',excerpt:'НЕ ПОКАЗЫВАТЬ ПРИЧИНУ'}]},
+    {captureId:id,title:'Итог',type:'outcome_decision',status:null},
+    {captureId:id,title:'Шаг',type:'task',subtask:true,status:'done'},
+  ]};
+  const rendered=renderTaskSearchResult(result,{appUrl:'https://kizuna.example/',nextCallback:'ts:page:123'});
+  assert.match(rendered.text,/Текущая заметка\nЗаметка/);assert.match(rendered.text,/Итог\nРезультат/);assert.match(rendered.text,/Шаг\nПодзадача · Выполнено/);
+  assert.doesNotMatch(rendered.text,/Открыто|Человек:|НЕ ПОКАЗЫВАТЬ|АЛГОРИТМИЧЕСКОЕ|Упоминание/);
+  const buttons=rendered.markup.inline_keyboard.flat();
+  assert.ok(buttons.some(button=>button.text.includes('Родитель') && button.url===taskSearchTaskUrl('https://kizuna.example/',parent)));
+  assert.equal(buttons.filter(button=>button.text.includes('Открыть запись')).length,3);
+  assert.ok(buttons.some(button=>button.text==='Ещё записи'));
+  assert.ok(buttons.filter(button=>button.url).every(button=>new URL(button.url).hash.startsWith('#today?open=')));
+});
+
+test('asynchronous query and page re-match current accessible relation endpoints before rendering',async t=>{
+  for(const mode of ['query','page']) for(const edge of ['parent','link']) {
+    const f=fixture(t),parent=f.add('Секретныймаркер'),child=f.add('Дочерняя запись');
+    f.db.prepare('UPDATE captures SET user_id=? WHERE id=?').run(f.otherId,parent);
+    f.db.prepare('INSERT INTO capture_people(capture_id,user_id,added_by,added_at) VALUES(?,?,?,?)').run(parent,f.userId,f.otherId,f.now().toISOString());
+    if(edge==='parent') f.db.prepare('UPDATE captures SET parent_capture_id=? WHERE id=?').run(parent,child);
+    else f.db.prepare('INSERT INTO note_links(from_id,label,to_id,context) VALUES(?,?,?,?)').run(child,'Секретныймаркер',parent,'fixture');
+    let resolveSearch,invocations=0;
+    const delayed={...f.search,search:input=>{
+      const result=f.search.search(input);invocations++;
+      if(mode==='page' && invocations===1) {
+        result.hasMore=true;result.nextOffset=0;
+        return result;
+      }
+      return new Promise(resolve=>{resolveSearch=()=>resolve(result);});
+    }};
+    const {router,plugin}=f.install({search:delayed});
+    await router.routeMessage(f.message('Найти'));
+    let pending;
+    if(mode==='query') pending=router.routeMessage(f.message('секретныймаркер'));
+    else {
+      await router.routeMessage(f.message('секретныймаркер'));
+      const token=f.sent.at(-1).markup.inline_keyboard.at(-1)[0].callback_data;
+      pending=router.routeCallback(f.callback(token));
+    }
+    for(let attempt=0;attempt<20&&!resolveSearch;attempt++) await Promise.resolve();
+    assert.equal(typeof resolveSearch,'function');
+    f.db.prepare('UPDATE capture_people SET removed_at=? WHERE capture_id=? AND user_id=?').run(f.now().toISOString(),parent,f.userId);
+    assert.ok(f.search.byId({userId:f.userId,captureId:child}));
+    resolveSearch();await pending;
+    const response=f.sent.at(-1);
+    assert.match(response.text,/Найдено: 0 \(часть истории\)/);
+    assert.match(response.text,/Данные изменились/);assert.doesNotMatch(response.text,/Дочерняя запись|Секретныймаркер/);
+    assert.equal(plugin.pageCount(),0);assert.doesNotMatch(JSON.stringify(response.markup),/ts:page/);
+  }
+});
+
+test('editing current note during asynchronous preparation drops obsolete hits and refreshes surviving titles',async t=>{
+  for(const stillMatches of [false,true]) {
+    const f=fixture(t),id=f.add('Устаревшийпротокол');
+    f.db.prepare('DELETE FROM projections WHERE capture_id=?').run(id);
+    f.db.prepare('DELETE FROM interpretations WHERE capture_id=?').run(id);
+    let resolveSearch;
+    const delayed={...f.search,search:input=>{
+      const result=f.search.search(input);
+      return new Promise(resolve=>{resolveSearch=()=>resolve(result);});
+    }};
+    const {router}=f.install({search:delayed});
+    await router.routeMessage(f.message('Найти'));const pending=router.routeMessage(f.message('устаревшийпротокол'));
+    for(let attempt=0;attempt<20&&!resolveSearch;attempt++) await Promise.resolve();
+    assert.equal(typeof resolveSearch,'function');
+    saveNote(f.db,id,stillMatches ? 'Новый заголовок: устаревшийпротокол актуализирован' : 'Текущий другой текст');
+    resolveSearch();await pending;
+    if(stillMatches) assert.match(f.sent.at(-1).text,/Новый заголовок/);
+    else {assert.doesNotMatch(f.sent.at(-1).text,/Устаревшийпротокол/);assert.match(f.sent.at(-1).text,/Найдено: 0/);}
+  }
 });
 
 test('actual Telegram polling/capture batching records message origins through saved hook with fake fetch only', async t => {
@@ -332,8 +408,9 @@ test('failed search cancellation notification never prevents forwarding or file 
 test('a late query answer cannot overwrite new Find/cancel intent or replace newer criteria', async t => {
   for (const control of ['Найти', 'Отмена']) {
     const f = fixture(t); f.add('Отчет Пети', { people: ['Петя'] }); f.add('Отчет Саши', { people: ['Саша'] });
-    let resolveOld, calls = 0;
+    let resolveOld, calls = 0, latestInput;
     const delayed = { ...f.search, search: input => {
+      latestInput=input;
       const result = f.search.search(input);
       if (++calls === 1) return new Promise(resolve => { resolveOld = () => resolve(result); });
       return result;
@@ -350,7 +427,7 @@ test('a late query answer cannot overwrite new Find/cancel intent or replace new
     assert.equal(plugin.pending(f.link), false);
     await router.routeMessage(f.message('Найти'));
     await router.routeMessage(f.message(control === 'Найти' ? 'за прошлую неделю' : 'Что я ему обещал?'));
-    if (control === 'Найти') { assert.match(f.sent.at(-1).text, /Человек: Сашей/); assert.doesNotMatch(f.sent.at(-1).text, /Петей/); }
+    if (control === 'Найти') { assert.equal(latestInput.previousCriteria.person,'Сашей');assert.match(f.sent.at(-1).text,/С учётом предыдущего поиска/); }
     else assert.match(f.sent.at(-1).text, /Назовите человека/);
     assert.equal(f.captures.length, 0);
   }

@@ -4,7 +4,7 @@ import { createTaskSearchService } from './task-search.js';
 import { createTelegramTaskSearchAccess } from './telegram-day-access.js';
 
 export const TASK_SEARCH_LABEL = 'Найти';
-export const TASK_SEARCH_COMMANDS = [{ command: 'find', description: 'Найти задачи по человеку, теме или периоду' }];
+export const TASK_SEARCH_COMMANDS = [{ command: 'find', description: 'Найти записи по теме, словам или периоду' }];
 const TTL = 10 * 60 * 1000;
 const LIMIT = 256;
 const bindingKey = link => JSON.stringify([link.user_id, String(link.telegram_id), String(link.chat_id), link.linked_at]);
@@ -34,37 +34,39 @@ export function taskSearchTaskUrl(appUrl, captureId) {
 export function renderTaskSearchResult(result, { appUrl, nextCallback = null } = {}) {
   if (result.clarification) return { text: clip(result.clarification, 3800), markup: null };
   const criteria = result.criteria || {};
-  const filters = [criteria.person ? `Человек: ${lineText(criteria.person)}` : '', criteria.status === 'open' ? 'Открытые' : criteria.status === 'done' ? 'Выполненные' : '', criteria.period ? `${criteria.period.from} — ${criteria.period.to}` : '', criteria.period ? `Период: ${{ created: 'добавлено', completed: 'выполнено', deadline: 'срок', scheduled: 'запланировано', createdOrCompleted: 'добавлено или выполнено' }[criteria.basis] || 'добавлено или выполнено'}` : '', criteria.inherited ? 'С учётом предыдущего поиска' : ''].filter(Boolean);
+  const typeLabels = { task:'Дело', subtask:'Подзадача', note:'Заметка', meeting_event:'Встреча', outcome_decision:'Результат', idea_question:'Идея / вопрос', unknown:'Запись' };
+  const filters = [criteria.exclusivePerson && criteria.person ? `Человек: ${lineText(criteria.person)}` : '', criteria.type ? typeLabels[criteria.type] : '', criteria.status === 'open' ? 'Открытые' : criteria.status === 'done' ? 'Выполненные' : '', criteria.period ? `${criteria.period.from} — ${criteria.period.to}` : '', criteria.period ? `Период: ${{ created: 'добавлено', completed: 'выполнено', deadline: 'срок', scheduled: 'запланировано', createdOrCompleted: 'добавлено или выполнено' }[criteria.basis] || 'добавлено или выполнено'}` : '', criteria.inherited ? 'С учётом предыдущего поиска' : ''].filter(Boolean);
   const lines = [`Найдено: ${Number(result.matchedCount) || 0}${result.partialCoverage ? ' (часть истории)' : ''}`, clip(filters.join(' · '), 300)];
   const rows = [];
-  const labels = { requester: 'Просьба в исходном сообщении', 'forward-author': 'Автор пересылки', mention: 'Упоминание', participant: 'Участник обсуждения', 'own-promise': 'Ваше явное обещание' };
   const items = (result.items || []).slice(0, 6);
-  if (!items.length) lines.push(result.partialCoverage ? 'В просмотренной части истории совпадений нет. Уточните период или тему.' : 'Подходящих задач по доступным данным нет. Попробуйте другое имя, тему или период.');
+  if (!items.length) lines.push(result.partialCoverage ? 'В просмотренной части истории совпадений нет. Уточните период или тему.' : 'Подходящих записей по доступным данным нет. Попробуйте другие слова или период.');
   items.forEach((item, index) => {
     const number = index + 1;
-    const status = item.completionKind === 'occurrence' ? `Выполнен повтор ${item.matchedOccurrences?.map(part => part.date).slice(0, 3).join(', ') || ''}; серия открыта` : item.status === 'done' ? 'Выполнено' : 'Открыто';
+    const status = item.completionKind === 'occurrence' ? `Выполнен повтор ${item.matchedOccurrences?.map(part => part.date).slice(0, 3).join(', ') || ''}; серия открыта` : item.status === 'done' ? 'Выполнено' : item.status === 'open' ? 'Открыто' : '';
+    const type = item.container ? 'Запись с действиями' : typeLabels[item.subtask ? 'subtask' : item.type] || 'Запись';
     const dates = [];
     if (item.createdAt && Number.isFinite(Date.parse(item.createdAt))) dates.push(`Добавлено: ${dateInZone(new Date(item.createdAt), item.timeZone || 'Europe/Samara')}`);
     if (item.completedAt && Number.isFinite(Date.parse(item.completedAt))) dates.push(`Выполнено: ${dateInZone(new Date(item.completedAt), item.timeZone || 'Europe/Samara')}`);
     if (item.deadline) dates.push(`Срок: ${item.deadline}`);
     else if (item.scheduledDate) dates.push(`План: ${item.scheduledDate}`);
-    const itemLines = [`${number}. ${clip(lineText(item.title) || 'Без названия', 140)}\n${clip(status, 170)}`, clip(dates.join(' · '), 180)];
-    const evidence = (item.evidence || []).find(value => labels[value.role]);
-    if (evidence) {
-      const label = evidence.role === 'requester' && evidence.confidence === 'explicit-text' ? 'Просьба в вашем сообщении' : labels[evidence.role];
-      itemLines.push(clip(`${label}${evidence.name ? `: ${lineText(evidence.name)}` : ''}${['text-only', 'unverified-name', 'classification'].includes(evidence.confidence) ? ' (личность не подтверждена)' : ''}`, 160));
-      if (evidence.excerpt) itemLines.push(`Текст: ${clip(lineText(evidence.excerpt), 90)}`);
-    }
+    const itemLines = [`${number}. ${clip(lineText(item.title) || 'Без названия', 140)}\n${clip([type,status].filter(Boolean).join(' · '),170)}`,clip(dates.join(' · '),180)];
     lines.push(`\n${clip(itemLines.filter(Boolean).join('\n'), 380)}`);
     const buttons = [];
     const url = taskSearchTaskUrl(appUrl, item.captureId);
-    if (url) buttons.push({ text: `${number}. Открыть задачу`, url });
+    if (url) buttons.push({ text: `${number}. Открыть запись`, url });
     if (/^https:\/\/t\.me\/[A-Za-z][A-Za-z0-9_]{3,31}\/[1-9]\d*$/.test(item.sourceUrl || '')) buttons.push({ text: `${number}. Исходное сообщение`, url: item.sourceUrl });
     if (buttons.length) rows.push(buttons);
+    const relatedButtons = [];
+    for (const [index,relation] of (item.relations || []).slice(0,3).entries()) {
+      const relatedUrl=taskSearchTaskUrl(appUrl,relation.captureId);
+      if (relatedUrl) relatedButtons.push({text:`${number}. ${['parent','place'].includes(relation.relation) ? 'Родитель' : 'Связанная запись'} ${index+1}`,url:relatedUrl});
+    }
+    if (relatedButtons.length) rows.push(relatedButtons);
   });
-  for (const limitation of (result.limitations || []).slice(0, 3)) lines.push(`\n${clip(lineText(limitation), 230)}`);
+  if (result.changedDuringSearch) lines.push('\nДанные изменились во время поиска. Повторите запрос.');
+  else if (result.partialCoverage && items.length) lines.push('\nРезультат неполный. Уточните период или запрос.');
   lines.push('\nПоиск окончен. Обычный текст снова сохраняется. Для нового поиска нажмите «Найти».');
-  if (nextCallback) rows.push([{ text: 'Ещё задачи', callback_data: nextCallback }]);
+  if (nextCallback && !result.partialCoverage) rows.push([{ text: 'Ещё записи', callback_data: nextCallback }]);
   return { text: clip(lines.filter(Boolean).join('\n'), 3800), markup: rows.length ? { inline_keyboard: rows } : null };
 }
 
@@ -141,6 +143,12 @@ export function installTelegramTaskSearch({ menuRouter, db, search = createTaskS
     if (pages.size > LIMIT) pages.delete(pages.keys().next().value);
     return `ts:page:${token}`;
   }
+  function refreshResult(link,result) {
+    const previous=result.items || [];
+    const visible=previous.map(item=>search.byId ? search.byId({userId:link.user_id,captureId:item.captureId,timeZone:timeZone(link.user_id),criteria:result.criteria}) : item).filter(Boolean);
+    if (visible.length!==previous.length) { result.partialCoverage=true;result.hasMore=false;result.matchedCount=visible.length;result.changedDuringSearch=true; }
+    result.items=visible;
+  }
   async function executeQuery(link, text, message, interactions, send, supplied = null) {
     if (!fresh(link) || !claim(link, message, 'query')) return true;
     const state = session(link), expectedScope = state.scope;
@@ -150,10 +158,7 @@ export function installTelegramTaskSearch({ menuRouter, db, search = createTaskS
     try {
       const result = await search.search({ userId: link.user_id, query: text, now: now(), timeZone: timeZone(link.user_id), previousCriteria, ...(supplied || {}) });
       if (!currentInteraction(link, state, expectedRevision)) { discardRevokedContext(link, interactions); return true; }
-      // A page never relies on a saved title/ID to establish current ownership.
-      const visible = (result.items || []).filter(item => !search.byId || search.byId({ userId: link.user_id, captureId: item.captureId, timeZone: timeZone(link.user_id) }));
-      if (visible.length !== (result.items || []).length) { result.partialCoverage = true; result.hasMore = false; result.matchedCount = visible.length; result.limitations = [...(result.limitations || []), 'Данные изменились во время поиска. Повторите запрос.']; }
-      result.items = visible;
+      refreshResult(link,result);
       if (result.criteria && !result.clarification) { state.lastCriteria = structuredClone(result.criteria); state.contextUntil = now().getTime() + TTL; }
       const rendered = renderTaskSearchResult(result, { appUrl: link.app_url, nextCallback: nextPage(link, result) });
       if (result.clarification) rendered.text = clip(`${rendered.text}\nДля уточнения снова нажмите «Найти». Обычный текст сохраняется.`, 3800);
@@ -230,7 +235,7 @@ export function installTelegramTaskSearch({ menuRouter, db, search = createTaskS
       const state = session(link); clear(link, interactions, { keepCriteria: true });
       beginIntent(link, state);
       interactions.begin(link, 'task-search', { send });
-      await safeSend(send, link, 'Что найти?\nНапишите человека, тему или период. Например: «Какие просьбы Саши я ещё не сделал?»\nСледующий текст будет поиском. Пересылка или файл отменят поиск и сохранятся как обычно. «Отмена» — вернуться к сохранению.', { ...menuRouter.replyKeyboard(link), keyboard: [...menuRouter.replyKeyboard(link).keyboard, ['Отмена']] });
+      await safeSend(send, link, 'Что найти?\nНапишите запрос. Например: «что у нас с Саньком», «войсопс» или «заметки за прошлую неделю».\nСледующий текст будет поиском. Пересылка или файл отменят поиск и сохранятся как обычно. «Отмена» — вернуться к сохранению.', { ...menuRouter.replyKeyboard(link), keyboard: [...menuRouter.replyKeyboard(link).keyboard, ['Отмена']] });
       return true;
     }
     const state = session(link);
@@ -251,9 +256,7 @@ export function installTelegramTaskSearch({ menuRouter, db, search = createTaskS
     try {
       const result = await search.search({ userId: link.user_id, criteria: page.criteria, offset: page.offset, now: now(), timeZone: timeZone(link.user_id) });
       if (!currentInteraction(link, state, expectedRevision)) { discardRevokedContext(link, interactions); return true; }
-      const visible = (result.items || []).filter(item => !search.byId || search.byId({ userId: link.user_id, captureId: item.captureId }));
-      if (visible.length !== (result.items || []).length) { result.partialCoverage = true; result.hasMore = false; result.matchedCount = visible.length; result.limitations = [...(result.limitations || []), 'Данные изменились во время поиска. Повторите запрос.']; }
-      result.items = visible;
+      refreshResult(link,result);
       const rendered = renderTaskSearchResult(result, { appUrl: link.app_url, nextCallback: nextPage(link, result) });
       await safeSend(send, link, rendered.text, rendered.markup || menuRouter.replyKeyboard(link), expectedScope, state, expectedRevision);
     } catch { discardRevokedContext(link, interactions); await safeSend(send, link, 'Не удалось открыть страницу. Нажмите «Найти» и повторите запрос.', menuRouter.replyKeyboard(link), expectedScope, state, expectedRevision); }
