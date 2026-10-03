@@ -5,6 +5,7 @@ import { createUser, createLedger } from '../server/db.js';
 import { fakeModelService } from './helpers/fake-model.js';
 import { createFakeTelegram } from './helpers/fake-telegram.js';
 import { createTelegramDaySummaryAccess, createTelegramTaskSearchAccess } from '../server/telegram-day-access.js';
+import { installTelegramTaskSearch } from '../server/telegram-search.js';
 import { readSummaryPreferences } from '../server/telegram-day-summary.js';
 
 function fixture(t) {
@@ -56,4 +57,11 @@ test('startup updates private commands for existing bindings; help and capture r
 test('public access still denies inactive, unlinked and mismatched Telegram identities',async t=>{
  const f=fixture(t);f.db.prepare("UPDATE users SET status='blocked' WHERE id=?").run(f.other);await f.text('/today');await f.callback('tds:date:2031-10-03');assert.equal(f.messages().some(x=>x.params.text.includes('Обзор за')),false);
  f.db.prepare("UPDATE users SET status='active' WHERE id=?").run(f.other);f.db.prepare('UPDATE telegram_links SET chat_id=999 WHERE user_id=?').run(f.other);await f.text('🗓 Другой день');assert.equal(f.messages().some(x=>x.params.reply_markup?.inline_keyboard?.flat().some(b=>b.callback_data?.startsWith('tds:cal:'))),false);
+});
+
+test('search plugin default denies other users even when the shared menu is public',async t=>{
+ const f=fixture(t);const link=f.db.prepare('SELECT * FROM telegram_links WHERE user_id=?').get(f.other);
+ const router=(await import('../server/telegram-day-summary.js')).createTelegramDaySummaryRouter({db:f.db,canAccess:createTelegramDaySummaryAccess(),authorize:()=>link,currentBinding:()=>true,now:()=>new Date(),timeZone:()=> 'UTC',review:()=>{},send:async()=>{},acknowledge:async()=>{}});
+ installTelegramTaskSearch({menuRouter:router,db:f.db});assert.equal(router.replyKeyboard(link).keyboard.flat().includes('Найти'),false);
+ assert.equal(createTelegramTaskSearchAccess({userIds:null})(f.other),false);
 });

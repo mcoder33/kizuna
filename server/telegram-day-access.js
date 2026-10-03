@@ -20,5 +20,6 @@ export function createTelegramDaySummaryAccess({ userIds = null } = {}) {
 
 // Keep the previous owner allowlist as a fallback when splitting the rollout.
 export function createTelegramTaskSearchAccess({ userIds = () => process.env.PAGENT_TELEGRAM_TASK_SEARCH_USER_IDS ?? process.env.PAGENT_TELEGRAM_DAY_SUMMARY_USER_IDS } = {}) {
+  if (typeof userIds !== 'function') return () => false;
   return createTelegramDaySummaryAccess({ userIds });
 }

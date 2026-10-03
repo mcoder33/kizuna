@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { dateInZone } from './reports.js';
 import { createTaskSearchService } from './task-search.js';
+import { createTelegramTaskSearchAccess } from './telegram-day-access.js';
 
 export const TASK_SEARCH_LABEL = 'Найти';
 export const TASK_SEARCH_COMMANDS = [{ command: 'find', description: 'Найти задачи по человеку, теме или периоду' }];
@@ -68,7 +69,7 @@ export function renderTaskSearchResult(result, { appUrl, nextCallback = null } =
 }
 
 // A plugin for the shared summary router. It never dispatches Telegram updates itself.
-export function installTelegramTaskSearch({ menuRouter, db, search = createTaskSearchService(db), currentBinding = null, canAccess = null, now = () => new Date(), timeZone = () => 'Europe/Samara' } = {}) {
+export function installTelegramTaskSearch({ menuRouter, db, search = createTaskSearchService(db), currentBinding = null, canAccess = createTelegramTaskSearchAccess(), now = () => new Date(), timeZone = () => 'Europe/Samara' } = {}) {
   const required = ['registerPreflight', 'registerMessageRoute', 'registerPendingMode', 'registerCallbackRoute', 'registerReplyKeyboardButton', 'replyKeyboard', 'canAccessMenu'];
   if (!menuRouter || required.some(name => typeof menuRouter[name] !== 'function')) return { installed: false, reason: 'shared_menu_router_required' };
   const sessions = new Map(), pages = new Map(), claimedMessages = new WeakSet(), claimedCallbacks = new WeakSet();
@@ -83,7 +84,7 @@ export function installTelegramTaskSearch({ menuRouter, db, search = createTaskS
     return actual && bindingKey(actual) === bindingKey(link) ? actual : null;
   };
   const bindingFresh = link => dbBinding(link) && (!currentBinding || currentBinding(link));
-  const searchAllowed = link => Boolean(link && (canAccess ? canAccess(link.user_id) : menuRouter.canAccessMenu(link)));
+  const searchAllowed = link => Boolean(link && (typeof canAccess === 'function' && canAccess(link.user_id)));
   const fresh = link => bindingFresh(link) && searchAllowed(link);
   const generation = link => search.generation?.(link.user_id) || 0;
   const scope = link => `${bindingKey(link)}:${generation(link)}`;

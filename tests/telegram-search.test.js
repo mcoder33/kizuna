@@ -77,7 +77,7 @@ function fixture(t, options = {}) {
   const search = createTaskSearchService(db);
   const install = (override = {}) => {
     const router = fakeSharedRouter({ db, now, sent, captures, acknowledgements });
-    const plugin = installTelegramTaskSearch({ menuRouter: router, db, search, now, ...options, ...override });
+    const plugin = installTelegramTaskSearch({ menuRouter: router, db, search, canAccess: id => router.canAccessMenu({user_id:id}), now, ...options, ...override });
     return { router, plugin };
   };
   const installed = install();
@@ -250,7 +250,7 @@ test('actual Telegram polling/capture batching records message origins through s
   assert.equal(origins.length, 1); assert.equal(origins[0].messages[0].forward_origin.sender_user.id, 500);
   assert.equal(f.db.prepare('SELECT COUNT(*) n FROM task_search_origins').get().n, 1);
   assert.ok(calls.some(call => call.method === 'sendMessage'));
-  assert.equal(installTelegramTaskSearch({ menuRouter: service.menuRouter, db: f.db, search: f.search, now: f.now }).installed, true);
+  assert.equal(installTelegramTaskSearch({ menuRouter: service.menuRouter, db: f.db, search: f.search, canAccess: id => id === f.userId, now: f.now }).installed, true);
   assert.ok(service.menuRouter.replyKeyboard(f.link).keyboard.flat().includes('Найти'));
   updates.push({ update_id: 2, message: forwardedMessage });
   await service.pollOnce(); await service.flush({ force: true }); assert.equal(origins.length, 1);

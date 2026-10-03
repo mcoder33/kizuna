@@ -52,7 +52,7 @@ function fixture(t) {
       if (!handled) captures.push(message);
       return handled;
     };
-    const plugin = installTelegramTaskSearch({ menuRouter: router, db, search, now });
+    const plugin = installTelegramTaskSearch({ menuRouter: router, db, search, canAccess: access, now });
     return { router, plugin };
   };
   const message = (text, extra = {}) => ({ message_id: counter++, from: { id: 100 }, chat: { id: 100, type: 'private' }, text, ...extra });
@@ -104,7 +104,7 @@ test('actual shared polling service: start code preflight clears pending; replay
   migrateDaySummaryHistory(f.db, f.now().toISOString(), { now: f.now });
   const service = createSharedTelegramService({ db: f.db, canAccessDaySummary: f.access, token: () => 'fixture-token', fetch, now: f.now, userActive: id => id === f.userId, groupWindowMs: 0,
     queueCapture: async input => enqueueCaptureJob(f.db, { ...input, selectedProvider: 'fallback' }) });
-  const plugin = installTelegramTaskSearch({ menuRouter: service.menuRouter, db: f.db, search: f.search, now: f.now });
+  const plugin = installTelegramTaskSearch({ menuRouter: service.menuRouter, db: f.db, search: f.search, canAccess: f.access, now: f.now });
   let update = 1;
   const deliver = async message => { updates.push({ update_id: update++, message }); await service.pollOnce(); };
   await deliver(f.message('/find')); assert.equal(plugin.pending(f.link), true);
@@ -131,7 +131,7 @@ function serviceFixture(t, { searchFactory = search => search } = {}) {
     userActive: id => f.db.prepare("SELECT status FROM users WHERE id=?").get(id)?.status === 'active', additionalCommands: () => TASK_SEARCH_COMMANDS,
     queueCapture: async input => enqueueCaptureJob(f.db, { ...input, selectedProvider: 'fallback' }), attach: () => true,
     onCaptureSaved: input => f.search.recordOrigins(input) });
-  const plugin = installTelegramTaskSearch({ menuRouter: service.menuRouter, db: f.db, search: observedSearch, now: f.now });
+  const plugin = installTelegramTaskSearch({ menuRouter: service.menuRouter, db: f.db, search: observedSearch, canAccess: f.access, now: f.now });
   let update = 1;
   const deliver = async message => { updates.push({ update_id: update++, message }); await service.pollOnce(); await service.flush({ force: true }); };
   const deliverCallback = async callback => { updates.push({ update_id: update++, callback_query: callback }); await service.pollOnce(); };
