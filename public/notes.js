@@ -1,3 +1,4 @@
+import { uiStorage } from "./ui-preferences.js";
 import { getTimeZone } from "./browser-time-zone.js";
 import { t, getLocale, bindTranslation, localizedBuiltins } from "./browser-i18n.js";
 // Раздел «Заметки»: страницы деревом, базы и ссылки — как в Notion, но каждая
@@ -94,10 +95,10 @@ function button(text, className, onClick, { title } = {}) {
   return node;
 }
 function readSet(key) {
-  try { return new Set(JSON.parse(localStorage.getItem(key) || "[]")); } catch { return new Set(); }
+  try { return new Set(JSON.parse(uiStorage.getItem(key) || "[]")); } catch { return new Set(); }
 }
 function saveExpanded() {
-  try { localStorage.setItem(EXPANDED_KEY, JSON.stringify([...state.expanded].slice(-200))); } catch {}
+  try { uiStorage.setItem(EXPANDED_KEY, JSON.stringify([...state.expanded].slice(-200))); } catch {}
 }
 // Сворачиваемый блок: заголовок — кнопка со стрелкой, содержимое прячет CSS
 // по классу is-collapsed. Перерисовка блоку не нужна.
@@ -105,7 +106,7 @@ function foldToggle(key, text, count) {
   const toggle = button("", "notes-fold", (event) => {
     const block = event.currentTarget.closest("[data-fold]");
     if (state.collapsed.has(key)) state.collapsed.delete(key); else state.collapsed.add(key);
-    try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...state.collapsed])); } catch {}
+    try { uiStorage.setItem(COLLAPSED_KEY, JSON.stringify([...state.collapsed])); } catch {}
     const collapsed = state.collapsed.has(key);
     block?.classList.toggle("is-collapsed", collapsed);
     event.currentTarget.setAttribute("aria-expanded", String(!collapsed));
@@ -669,7 +670,7 @@ function showBacklinks() {
   const block = document.querySelector(".notes-main .notes-backlinks");
   if (!block) return;
   if (state.collapsed.delete("backlinks")) {
-    try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...state.collapsed])); } catch {}
+    try { uiStorage.setItem(COLLAPSED_KEY, JSON.stringify([...state.collapsed])); } catch {}
     block.classList.remove("is-collapsed");
     block.querySelector(".notes-fold")?.setAttribute("aria-expanded", "true");
   }
@@ -1491,3 +1492,15 @@ window.addEventListener("pagent:localechange", () => {
 });
 
 window.addEventListener("pagent:timezonechange", () => { if (state.overview && !document.getElementById("notes")?.hidden) renderMain({ quiet: true }); });
+
+window.addEventListener("kizuna-ui-preferences", event => {
+  if (event.detail.keys.includes(EXPANDED_KEY)) { state.expanded = readSet(EXPANDED_KEY); renderSide(); }
+  if (event.detail.keys.includes(COLLAPSED_KEY)) {
+    state.collapsed = readSet(COLLAPSED_KEY);
+    for (const block of document.querySelectorAll("#notes [data-fold]")) {
+      const collapsed = state.collapsed.has(block.dataset.fold);
+      block.classList.toggle("is-collapsed", collapsed);
+      block.querySelector(".notes-fold")?.setAttribute("aria-expanded", String(!collapsed));
+    }
+  }
+});
