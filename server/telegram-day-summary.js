@@ -2,6 +2,7 @@ import { writeSettings } from './db.js';
 import { dateInZone, shiftDate } from './reports.js';
 import { validIsoDate } from './repeat.js';
 import { reviewDay } from './day-review.js';
+import { createTelegramDateCalendar } from './telegram-date-calendar.js';
 
 export const DAY_SUMMARY_LABELS = { today:'☀️ Сегодня', day:'🗓 Другой день', settings:'⚙️ Настройки сводок' };
 export const DAY_SUMMARY_COMMANDS = [
@@ -90,7 +91,7 @@ export function createTelegramInteractionState({now=()=>new Date(),ttlMs=INTERAC
     clear(link){pending.delete(bindingKey(link));},
   };
 }
-export function createTelegramDaySummaryRouter({db,canAccess=()=>false,now=()=>new Date(),timeZone,review,finalReview=input=>reviewDay(db,input),authorize,currentBinding,send,acknowledge,onSettingsChanged=()=>{}}) {
+export function createTelegramDaySummaryRouter({db,canAccess=()=>false,now=()=>new Date(),timeZone,review,finalReview=input=>reviewDay(db,input),authorize,currentBinding,send,edit=null,acknowledge,onSettingsChanged=()=>{}}) {
   const interactions=createTelegramInteractionState({now}),messageRoutes=[],callbackRoutes=[],preflights=[],extraButtons=[],pendingModes=new Map(),keyboardShown=new Set();
   const fresh=link=>currentBinding(link);
   const dayFresh=link=>fresh(link) && canAccess(link.user_id);
@@ -120,7 +121,10 @@ export function createTelegramDaySummaryRouter({db,canAccess=()=>false,now=()=>n
     return dayFresh(link)?overview:null;
   }
   async function showReview(link,date){if(!dayFresh(link))return;const input={userId:link.user_id,date,timeZone:timeZone(link.user_id),now:now(),phase:'manual'};await review(input);const overview=currentReview(link,input);if(overview)await sendFresh(link,renderDaySummary(overview),summaryNavigation(date,todayOf(link),link.app_url));}
-  async function picker(link){if(!dayFresh(link))return;await sendFresh(link,'Какой день показать?',{inline_keyboard:[[{text:'Вчера',callback_data:`tds:date:${shiftDate(todayOf(link),-1)}`},{text:'Выбрать дату',callback_data:'tds:pick'}]]});}
+  async function manualDate(link){if(!dayFresh(link))return;interactions.begin(link,'date');await sendFresh(link,'Введите дату: ДД.ММ.ГГГГ или ГГГГ-ММ-ДД.\nОтмена — вернуться к заметкам.',replyKeyboard(link));}
+  const calendar=createTelegramDateCalendar({now,fresh:dayFresh,todayOf,timeZone,send:sendFresh,showReview,manualDate,
+    edit:edit ? (link,messageId,text,markup)=>dayFresh(link)?edit(link.chat_id,messageId,text,{reply_markup:markup}):Promise.resolve(null) : null});
+  const picker=link=>calendar.open(link);
   async function settings(link){
     if(!dayFresh(link))return;
     const prefs=readSummaryPreferences(db,link.user_id),rows=[];
@@ -167,13 +171,14 @@ export function createTelegramDaySummaryRouter({db,canAccess=()=>false,now=()=>n
     clearRevokedDay(link);
     if(typeof callback.data==='string' && callback.data.startsWith('tds:') && !dayFresh(link))return true;
     if(await processedUpdate(update,link,null,callback))return true;
+    if(await calendar.route(link,callback))return true;
     for(const handler of callbackRoutes)if(await handler({callback,link,interactions,send:sendFresh,update}))return true;
     if(!fresh(link))return true;
     const data=callback.data;if(typeof data!=='string'||data.length>64||!/^[\x20-\x7E]+$/.test(data)||!data.startsWith('tds:'))return false;
     if(!dayFresh(link))return true;
     interactions.clear(link);
     const date=/^tds:date:(\d{4}-\d{2}-\d{2})$/.exec(data);if(date&&validIsoDate(date[1])){await showReview(link,date[1]);return true;}
-    if(data==='tds:pick'){interactions.begin(link,'date');await sendFresh(link,'Введите дату: ДД.ММ.ГГГГ или ГГГГ-ММ-ДД.\nОтмена — вернуться к заметкам.',replyKeyboard(link));return true;}
+    if(data==='tds:pick'){await manualDate(link);return true;}
     const time=/^tds:time:(morning|evening)$/.exec(data);if(time){interactions.begin(link,'time',{phase:time[1]});await sendFresh(link,'Введите время сводки: ЧЧ:ММ, например 09:00.\nОтмена — вернуться к заметкам.',replyKeyboard(link));return true;}
     const enable=/^tds:enabled:(morning|evening):([01])$/.exec(data),day=/^tds:weekday:([1-7]):([01])$/.exec(data);
     if(enable||day){if(!dayFresh(link))return true;const change=enable?{type:'enabled',phase:enable[1],value:enable[2]==='1'}:{type:'weekday',day:Number(day[1]),value:day[2]==='1'};changeSummaryPreferences(db,link.user_id,change,{now:now(),onChanged:onSettingsChanged});await settings(link);return true;}
