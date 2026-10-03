@@ -990,6 +990,11 @@ function recallTab(phase) {
   return false;
 }
 function render(data) {
+  if (currentDayDate && currentDayDate !== data.date) {
+    if (calState.anchor === currentDayDate) calState.anchor = data.date;
+    todayState.phase = null;
+    todayState.manual = false;
+  }
   currentDayDate = data.date;
   // Взятое чужое дело живёт в дне как своё: оно и есть своё — человек его взял.
   todayState.inbox = data.inbox || [];
@@ -1837,9 +1842,29 @@ async function ensureDayData(date) {
   if (!currentDayDate) return;
   if ([todayState.view, todayState.journalView].some((offset) => shiftDate(currentDayDate, offset) === date)) renderToday();
 }
-// Раз в минуту обложка и строка «сейчас» пересчитываются — но не под руками:
-// с текстом в поле страница ждёт.
+// День меняется даже с черновиком и на другой странице. Перечитываем данные,
+// не перезагружая документ: поля ввода и открытая карточка остаются на месте.
+let dayRefresh = null;
+function refreshChangedDay() {
+  if (!currentDayDate || currentDayDate === zoneDate(new Date())) return false;
+  if (!dayRefresh) {
+    // Ответы календаря/закрытых дел за старый день больше не применяются.
+    dayTimeZoneGeneration += 1;
+    todayState.doneLoading = false;
+    todayState.calendarLoading = false;
+    dayRefresh = load().then(() => {
+      paintBell();
+      paintUpcomingReminders();
+      if (!$("#done")?.hidden) return loadDone({ fresh: true });
+    }).catch(() => {}).finally(() => { dayRefresh = null; });
+  }
+  return true;
+}
+for (const event of ["focus", "pageshow", "pagent:resume"]) window.addEventListener(event, refreshChangedDay);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshChangedDay(); });
+// Обычная минутная перерисовка обложки ждёт, если человек набирает текст.
 setInterval(() => {
+  if (refreshChangedDay()) return;
   if ($("#today")?.hidden || !currentDayDate) return;
   if (typeof captureField !== "undefined" && String(captureField.getValue()).trim()) return;
   renderToday();
@@ -1866,7 +1891,7 @@ async function load() {
   // перечитывается так же быстро, как раньше, а календарь добирается при
   // возвращении. Другие дни грузятся, когда их открывают, и забываются при
   // каждом изменении журнала.
-  const todayGuess = currentDayDate || zoneDate(new Date());
+  const todayGuess = zoneDate(new Date());
   const onToday = !$("#today")?.hidden;
   const [day, entries, calendar, closed] = await Promise.all([
     request("/api/day"),
@@ -11663,6 +11688,7 @@ function remindDefaultLabel() { return remindMinutesLabel(appSettings.remindDefa
 function remindHourValue() { const value = appSettings.remindHour; return value && value !== "off" ? value : "09:00"; }
 function remindHourLabel() { return appSettings.remindHour === "off" ? t("не напоминать") : t("в {value1}", { value1: remindHourValue() }); }
 const IOS_DEVICE = /iPhone|iPad|iPod/.test(navigator.userAgent);
+function nativeNotifications() { return window.webkit?.messageHandlers?.kizunaNotifications; }
 function pushSupported() { return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window; }
 function urlBase64ToUint8Array(base64) {
   const padding = "=".repeat((4 - (base64.length % 4)) % 4);
@@ -11677,6 +11703,18 @@ async function paintPush() {
   const state = $("#push-state");
   if (!state) return;
   const enable = $("#push-enable"), disable = $("#push-disable"), test = $("#push-test");
+  if (nativeNotifications()) {
+    state.removeAttribute("data-i18n");
+    const status = window.KizunaNotificationState;
+    if (!status) nativeNotifications().postMessage("status");
+    const enabled = status?.authorized && status?.enabled;
+    state.textContent = status?.denied
+      ? t("Уведомления запрещены в macOS. Разрешите их в Системных настройках → Уведомления → Кизуна.")
+      : `${enabled ? t("Уведомления включены на этом устройстве") : t("Уведомления выключены на этом устройстве")}. ${t("Уведомления работают, пока Кизуна запущена, в том числе с закрытым окном.")}`;
+    enable.hidden = Boolean(enabled);
+    disable.hidden = test.hidden = !enabled;
+    return;
+  }
   if (!pushSupported()) {
     state.textContent = IOS_DEVICE
       ? t("На iPhone уведомления работают, если добавить Кизуну на экран «Домой» (Поделиться → На экран «Домой») и открывать оттуда.")
@@ -11696,6 +11734,7 @@ async function paintPush() {
   test.hidden = !subscription && !others;
 }
 async function enablePush() {
+  if (nativeNotifications()) { nativeNotifications().postMessage("enable"); return; }
   const permission = await Notification.requestPermission();
   if (permission !== "granted") { toast(t("Без разрешения браузера уведомления не придут")); paintPush(); return; }
   const registration = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
@@ -11707,6 +11746,7 @@ async function enablePush() {
   paintPush();
 }
 async function disablePush() {
+  if (nativeNotifications()) { nativeNotifications().postMessage("disable"); return; }
   const subscription = await currentPushSubscription();
   if (subscription) {
     await request("/api/push/subscriptions", { method: "DELETE", body: JSON.stringify({ endpoint: subscription.endpoint }) });
@@ -11716,6 +11756,7 @@ async function disablePush() {
   paintPush();
 }
 async function testPush() {
+  if (nativeNotifications()) { nativeNotifications().postMessage("test"); return; }
   try {
     const summary = await request("/api/push/test", { method: "POST", body: "{}" });
     toast(summary.sent ? t("Пробное уведомление отправлено") : t("Устройство не приняло уведомление — включите заново"));
@@ -11747,6 +11788,7 @@ async function openCaptureById(id, { subtasks = false } = {}) {
 $("#push-enable")?.addEventListener("click", () => enablePush().catch((error) => { toast(error.message || t("Не удалось включить уведомления")); paintPush(); }));
 $("#push-disable")?.addEventListener("click", () => disablePush().catch((error) => toast(error.message)));
 $("#push-test")?.addEventListener("click", testPush);
+window.addEventListener("pagent:notificationschange", paintPush);
 
 // ── уведомления ──────────────────────────────────────────────────────────────
 // Колокольчик в шапке хранит историю: что случилось, пока вас не было. Число на

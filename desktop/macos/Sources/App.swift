@@ -32,6 +32,7 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
     private var updates: DesktopUpdates!
     private var restartPrepared = false
     private var timeZoneObserver: NSObjectProtocol?
+    private var wakeObserver: NSObjectProtocol?
     private var displayedLocale = DesktopLocale.current
     private var statusItem: NSStatusItem!
     private var hotKey: EventHotKeyRef?
@@ -49,6 +50,7 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         makeMenus()
         makeWindow()
         timeZoneObserver = NotificationCenter.default.addObserver(forName: .NSSystemTimeZoneDidChange, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.refreshSystemTimeZone() } }
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.refreshAfterResume() } }
         quickCapturePanel = DesktopQuickCapture(webView: webView, origin: origin)
         quickCapturePanel.onLogin = { [weak self] in
             guard let self else { return }
@@ -83,7 +85,28 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         webView.evaluateJavaScript(DesktopTimeZone.script(), completionHandler: nil)
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) { refreshAfterResume() }
+
+    private func refreshAfterResume() {
+        notifications?.refresh()
+        guard let webView, let url = webView.url, DesktopOrigin.contains(url, origin: origin) else { return }
+        refreshSystemTimeZone()
+        webView.evaluateJavaScript("window.dispatchEvent(new Event('pagent:resume'));", completionHandler: nil)
+    }
+
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == "kizunaNotifications" {
+            guard message.frameInfo.isMainFrame, let url = message.frameInfo.request.url,
+                  DesktopOrigin.contains(url, origin: origin), let action = message.body as? String else { return }
+            switch action {
+            case "enable": notifications?.requestAuthorization()
+            case "disable": notifications?.disable()
+            case "test": notifications?.sendTest()
+            case "status": notifications?.publishAuthorization()
+            default: break
+            }
+            return
+        }
         if message.name == "kizunaTimeZoneDetection" {
             guard message.frameInfo.isMainFrame, let url = message.frameInfo.request.url, DesktopOrigin.contains(url, origin: origin) else { return }
             refreshSystemTimeZone()
@@ -124,6 +147,7 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         configuration.websiteDataStore = .default()
         configuration.userContentController.add(self, name: "kizunaLocale")
         configuration.userContentController.add(self, name: "kizunaTimeZoneDetection")
+        configuration.userContentController.add(self, name: "kizunaNotifications")
         let originString = String(data: try! JSONEncoder().encode(origin.absoluteString), encoding: .utf8)!
         let detectionScript = "if (window.location.origin === new URL(\(originString)).origin) { \(DesktopTimeZone.script()) window.webkit.messageHandlers.kizunaTimeZoneDetection.postMessage({}); }"
         configuration.userContentController.addUserScript(WKUserScript(source:detectionScript,injectionTime:.atDocumentStart,forMainFrameOnly:true))
@@ -160,6 +184,7 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         navigation.onLoad = { [weak self] in
             guard let self else { return }
             self.errorView.isHidden = true
+            self.notifications?.refresh()
             if self.webView.url?.path == "/" { self.quickCapturePanel?.resumeAfterLogin() }
             if self.capturePending || self.pendingDestination != nil { self.beginCaptureFocus() }
         }
