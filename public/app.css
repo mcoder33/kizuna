@@ -889,6 +889,24 @@ body.capture-large-open::before {
   color: var(--n-76);
   pointer-events: none;
 }
+.md-field.capture-prompt-active[data-empty="true"]::before {
+  content: none;
+}
+.capture-prompt {
+  display: none;
+  position: absolute;
+  top: 21px;
+  left: 21px;
+  right: 21px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--n-76);
+  font-size: 17px;
+  pointer-events: none;
+}
+.capture-prompt.is-visible { display: block; }
+.capture.capture-large .capture-prompt { font-size: 16px; }
 .md-field[data-disabled="true"] {
   opacity: 0.6;
 }

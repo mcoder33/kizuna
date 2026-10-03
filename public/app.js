@@ -7,6 +7,7 @@ import { getTimeZone, getDetectedTimeZone, initTimeZone, setTimeZone, announceTi
 import { t, getLocale, localizedBuiltins, bindTranslation, initLocale, setLocale, getDetectedLocale, announceLocaleSaved, getLocalePreferences } from "./browser-i18n.js";
 import { renderMarkdown, renderInlineMarkdown } from "./markdown.js";
 import { createMarkdownField } from "./markdown-live.js";
+import { createCapturePrompt } from "./capture-prompt.js";
 import { attachSlashMenu } from "./slash-menu.js";
 import { attachLinkMenu } from "./link-menu.js";
 import { attachMentionMenu, forgetMentionPeople } from "./mention-menu.js";
@@ -4950,14 +4951,17 @@ async function retryCapture(job, record, button) {
 // сервер сам делает из текста дело на сегодня (или на названную дату), а
 // поправить можно в карточке. Markdown оформляется прямо в поле, по мере набора;
 // Enter отправляет, Shift+Enter переносит строку. Поле растёт вместе с текстом.
+let capturePrompt;
 const captureField = createMarkdownField({
   id: "capture-input",
   get ariaLabel() { return t("Новая запись"); },
   get placeholder() { return t("Что нужно сделать?"); },
   submitOnEnter: false,
   onSubmit: () => $("#capture-form").requestSubmit(),
+  onInput: () => capturePrompt?.sync(),
 });
 $("#capture-form").prepend(captureField.element);
+capturePrompt = createCapturePrompt(captureField);
 attachLinkMenu(captureField);
 // «@» прямо в записи: люди из ваших кругов, позванный увидит запись.
 attachMentionMenu(captureField);
@@ -5152,6 +5156,7 @@ function idempotencyKey() {
 function setCaptureBusy(isBusy) {
   $("#capture-submit").disabled = isBusy;
   captureField.setDisabled(isBusy);
+  capturePrompt.sync();
 }
 $("#capture-form").addEventListener("submit", async (event) => {
   event.preventDefault();
