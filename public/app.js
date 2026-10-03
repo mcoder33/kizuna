@@ -14,6 +14,8 @@ import { attachMentionMenu, forgetMentionPeople } from "./mention-menu.js";
 import { attachFormatToolbar } from "./format-toolbar.js";
 import { openNotes, refreshNotes } from "./notes.js";
 import { mountGuide } from "./guide.js";
+import { mountAdministration } from "./administration.js";
+import { mountFeedback } from "./feedback.js";
 import { phaseOf, coverFor, plural, hm, duration, minutesOf, longDate, shortDate, isWeekend, MEETINGS, DEALS, PHASE_NAMES } from "./today-cover.js";
 import { FILTER_FIELDS, FILTER_STATUSES, FILTER_NONE, DONE_LANE, defaultFilter, readFilter, mergeConditions, activeConditions, toggleValue, sameFilter, matchesFilter, statusAllowsDone, readOrder, orderKeys, moveKey, placeLast, readShown } from "./board-model.js";
 
@@ -71,6 +73,7 @@ function correctionOperationKey(body) {
   return `correction-${(hash >>> 0).toString(36)}`;
 }
 async function requestResponse(url, options = {}) {
+  if (url.startsWith('/api/notifications')) url += `${url.includes('?') ? '&' : '?'}scope=personal`;
   const headers = {
       "Content-Type": "application/json",
       "Accept-Language": getLocale(),
@@ -189,6 +192,8 @@ function showProvenance(provenance) {
 // «День» — первая вкладка и вкладка по умолчанию: обзор открывают спросить
 // «что было вчера», а сводные «Записи» нужны реже и стоят в конце.
 const reportsState = { tab: "day", period: "week", dayDate: null };
+const adminArea = mountAdministration({ request, toast, accountKnown: async () => { await accountKnown; return currentUser; }, loadUsers: loadAdmin, loadSettings });
+const feedbackArea = mountFeedback({ request, accountKnown: async () => { await accountKnown; return currentUser; } });
 function updatePageFromHash() {
   // Внутренние ссылки Obsidian ведут в память с запросом: «#memory?query=Hub».
   // Хэш поэтому разбирается на страницу и параметры — иначе такой страницы не
@@ -198,7 +203,8 @@ function updatePageFromHash() {
   // разовое действие, поэтому разбирается до страниц.
   if (hash.startsWith("join/")) { openInvite(hash.slice(5)); return; }
   const separator = hash.indexOf("?");
-  const pageId = (separator >= 0 ? hash.slice(0, separator) : hash) || "today";
+  const routeId = (separator >= 0 ? hash.slice(0, separator) : hash) || "today";
+  const pageId = routeId.startsWith('admin/') ? 'admin' : routeId;
   const params = new URLSearchParams(separator >= 0 ? hash.slice(separator + 1) : "");
   const page = document.getElementById(pageId);
   const activePage = page?.classList.contains("app-page") ? pageId : "today";
@@ -210,6 +216,7 @@ function updatePageFromHash() {
   if (roomId) { params.delete("room"); history.replaceState(null, "", `#${activePage}${params.size ? `?${params}` : ""}`); openRoomFromInbox(roomId); }
   for (const section of document.querySelectorAll(".app-page"))
     section.hidden = section.id !== activePage;
+  document.body.classList.toggle('admin-mode', activePage === 'admin');
   for (const link of document.querySelectorAll("nav a")) {
     const on = link.getAttribute("href") === `#${activePage}`;
     // Док: подпрыгивание один раз, когда раздел только что выбрали.
@@ -248,7 +255,8 @@ function updatePageFromHash() {
       history.replaceState(null, "", "#settings");
     }
   }
-  if (activePage === "admin") loadAdmin();
+  if (activePage === "admin") queueMicrotask(() => adminArea.show());
+  if (activePage === "feedback") queueMicrotask(() => feedbackArea.show());
   if (activePage === "circles") loadCircles();
   if (activePage === "board") loadBoard();
   if (activePage === "done") loadDone({ fresh: true });
@@ -5438,6 +5446,7 @@ async function loadMemory() {
   }
 }
 function paintMemory({ memories = [], canShare = false } = {}) {
+  memories = memories.filter(memory => memory.scope === 'user');
   const wrap = $("#memory-list");
   clear(wrap);
   const sharedRow = $("#memory-shared-row");
@@ -5469,7 +5478,7 @@ async function rememberRule() {
   const input = $("#memory-new");
   const text = input.value.trim();
   if (!text) return;
-  const shared = Boolean($("#memory-shared")?.checked);
+  const shared = false;
   try {
     paintMemory(await request("/api/agent/memory", { method: "POST", body: JSON.stringify({ text, scope: shared ? "shared" : "user" }) }));
     input.value = "";
@@ -5575,7 +5584,7 @@ async function loadSettings() {
   }
 }
 async function saveSettings(patch, { announce = t("Настройки сохранены") } = {}) {
-  const status = $("#settings-status");
+  const status = document.body.classList.contains('admin-mode') ? $("#admin-settings-status") : $("#settings-status");
   bindTranslation(status, "Сохраняем…");
   const updatedFields = Object.keys(patch);
   const submittedValues = Object.fromEntries(updatedFields.map(name => [name, settingInput(name)?.value]));
@@ -5612,7 +5621,7 @@ function autosaveSetting(name, input) {
   saveSettings({ [name]: value }, { announce: null });
 }
 for (const name of SETTING_FIELDS) {
-  if (name === "theme" || name === "locale" || name === "requestedTimeZone" || name === "timeZone") continue;
+  if (name === "theme" || name === "locale" || name === "requestedTimeZone") continue;
   const input = settingInput(name);
   if (!input) continue;
   input.addEventListener("change", () => {
@@ -6085,6 +6094,7 @@ function listenToJournal() {
   journalStream.addEventListener("journal", reloadJournalSoon);
   // В Telegram нажали «Запустить» по ссылке из настроек — привязка готова.
   journalStream.addEventListener("telegram", () => loadTelegram({ announce: true }));
+  journalStream.addEventListener('administration', () => adminArea.refresh());
   // Уведомление в открытую вкладку: строка за колокольчиком и, если повод из
   // тех, что идут на телефон, всплывашка в углу. Push сюда не дублируется —
   // сервер шлёт его, только когда вкладок нет.
@@ -6180,6 +6190,7 @@ async function loadAccount() {
   $("#account-email").textContent = currentUser.email;
   $("#account-role").textContent = roleNames[currentUser.role] || currentUser.role;
   $("#account-admin-link").hidden = currentUser.role !== "admin";
+  if (currentUser.role === 'admin') adminArea.refreshBadge().catch(() => {});
   paintAccountSummary();
   const nameInput = $("#setting-name");
   if (nameInput && document.activeElement !== nameInput) nameInput.value = currentUser.name || "";
@@ -6495,7 +6506,8 @@ async function adminAction(userId, action, body) {
       method: "POST",
       body: JSON.stringify(body || {}),
     });
-    await loadAdmin();
+    if (userId === currentUser?.id && action === 'role') await loadAccount();
+    await adminArea.show();
   } catch (error) {
     toast(error.message);
   }
@@ -6565,6 +6577,7 @@ function activityTag(user) {
 }
 function userRow(user, { lastAdmin = false, days = null } = {}) {
   const row = node("div", null, "admin-user");
+  row.dataset.userId = user.id;
   const head = node("div", null, "admin-user-head");
   head.append(
     node("span", user.email, "admin-user-email"),
@@ -6616,6 +6629,17 @@ function userRow(user, { lastAdmin = false, days = null } = {}) {
     );
   if (user.twoFactorEnabled)
     actions.append(adminButton(t("Сбросить 2FA"), "secondary", () => adminAction(user.id, "reset-2fa")));
+  if (user.status !== 'pending') {
+    actions.append(adminButton(t('Сбросить сессии'), 'secondary', () => {
+      if (confirm(t('Закрыть все сессии этого пользователя?'))) adminAction(user.id, 'sessions-reset');
+    }));
+    actions.append(adminButton(t('Снять блокировку входа'), 'secondary', () => adminAction(user.id, 'unlock')));
+    if (!user.captureCount && user.id !== currentUser?.id && !lastAdmin) actions.append(adminButton(t('Удалить учётную запись'), 'danger', async () => {
+      if (!confirm(t('Удалить пустую учётную запись?'))) return;
+      try { await request(`/api/admin/users/${user.id}`, { method: 'DELETE' }); await adminArea.show(); }
+      catch (error) { toast(error.message); }
+    }));
+  }
   row.append(actions);
 
   // Пределы правятся полями, а не вопросом в модальном окне: их два, они
@@ -6643,7 +6667,12 @@ function userRow(user, { lastAdmin = false, days = null } = {}) {
       }),
     ),
   );
-  row.append(limits);
+  if (user.status === 'pending') row.append(limits);
+  else {
+    const details = node('details', undefined, 'admin-user-management');
+    details.append(node('summary', t('Управление учётной записью')), actions, limits);
+    row.append(details);
+  }
   return row;
 }
 async function loadAdmin() {
@@ -6667,14 +6696,14 @@ async function loadAdmin() {
   const events = $("#admin-events");
   clear(events);
   try {
-    const log = await request("/api/admin/auth-events?limit=25");
+    const log = await request("/api/admin/auth-events?limit=250");
     if (!log.events.length) events.append(bindTranslation(node("p", t("Пока пусто."), "empty"), "Пока пусто."));
     for (const event of log.events) {
       const line = node("div", null, "admin-event");
       line.append(
         node("span", new Date(event.createdAt).toLocaleString(getLocale(), { timeZone: getTimeZone() }), "admin-event-when"),
         node("span", event.email || "—", "admin-event-who"),
-        node("span", `${event.event} · ${event.result}`, "admin-event-what"),
+        node("span", `${event.event} · ${event.result}${event.detail ? ` · ${event.detail}` : ''}`, "admin-event-what"),
       );
       events.append(line);
     }
@@ -11510,7 +11539,10 @@ function paintTelegram(view) {
   const state = $("#telegram-state");
   clear(state);
   state.classList.toggle("is-error", bot.state === "error");
-  if (!bot.configured) state.append(t("Бот ещё не заведён: создайте его у "), telegramAnchor("BotFather"), t(" командой /newbot и вставьте токен в «Ключах» выше."));
+  if (!bot.configured) {
+    state.append(t("Бот ещё не заведён: создайте его у "), telegramAnchor("BotFather"), t(" командой /newbot."), ' ');
+    const setup = bindTranslation(node('a', t('Настроить бота')), 'Настроить бота'); setup.href = '#admin/service/integrations'; state.append(setup);
+  }
   else if (bot.state === "error") state.append(t("Бот не на связи: {value1}", { value1: bot.error || t("Telegram не отвечает.") }));
   else if (link) {
     const who = `${link.name || "Telegram"}${link.username ? ` (@${link.username})` : ""}`;
@@ -11700,7 +11732,11 @@ async function patchCalendarAccount(id, patch) {
       } catch (error) { state.textContent = error.message; }
       finally { submit.disabled = false; }
     });
-    $("#calendar-google")?.addEventListener("click", (event) => { if (!calendarAccountsState.googleReady) { event.preventDefault(); toast(t("Сначала укажите ID и секрет клиента Google в «Ключах»")); } });
+    $("#calendar-google")?.addEventListener("click", (event) => { if (!calendarAccountsState.googleReady) {
+      event.preventDefault();
+      if (currentUser?.role === 'admin') location.hash = '#admin/service/integrations';
+      else toast(t('Подключение Google настраивает администратор.'));
+    } });
   }
 }
 
@@ -11894,6 +11930,10 @@ const NOTIFY_KIND_PRESENTATION = localizedBuiltins({
   "reply": {
     "label": "Отвечают на ваше сообщение",
     "hint": "ответ цитатой в разговоре или обсуждении"
+  },
+  "feedback_reply": {
+    "label": "Ответ на ваше пожелание",
+    "hint": ""
   },
   "answer": {
     "label": "Ответили на вашу просьбу",
@@ -12407,6 +12447,12 @@ function openNotification(item) {
   if (item.roomId) return openRoomFromInbox(item.roomId);
   if (item.kind === "circle" && item.circleId) return openCircleFromInbox(item.circleId);
   if (["invite", "event_added", "event_changed"].includes(item.kind)) return openCalendarAt(item.data?.date || null, { uid: item.eventUid || null });
+  if (typeof item.data?.url === 'string' && item.data.url.startsWith('/#')) {
+    const target = item.data.url.slice(1);
+    if (location.hash === target && item.kind === 'feedback_reply') feedbackArea.show();
+    else location.hash = target;
+    return;
+  }
   const hash = { signup: "#admin", spend: "#settings", calendar_error: "#settings", digest: "#today" }[item.kind];
   if (hash) location.hash = hash;
 }
@@ -12661,6 +12707,8 @@ window.addEventListener("pagent:localechange", () => {
   if (page === "done") loadDone({ fresh: true });
   if (page === "calendar") loadCalendar();
   if (page === "guide") updatePageFromHash();
+  if (page.startsWith('admin')) adminArea.show();
+  if (page === 'feedback') feedbackArea.show();
 });
 
 window.addEventListener("pagent:timezonechange", () => {

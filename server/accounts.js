@@ -46,7 +46,7 @@ export function publicUser(row) {
 
 const fail = (res, status, code, message, extra = {}) => res.status(status).json({ error: { code, message, ...extra } });
 
-export function createAccounts({ db, now = () => new Date(), secureCookies = false, audit = () => {}, sessionTtlMs = SESSION_TTL_MS, timeZone = () => 'UTC', onPreferencesChanged = () => {}, admissionOptions = {} } = {}) {
+export function createAccounts({ db, now = () => new Date(), secureCookies = false, audit = () => {}, sessionTtlMs = SESSION_TTL_MS, timeZone = () => 'UTC', onPreferencesChanged = () => {}, onSignupResolved = () => {}, onAdminChange = () => {}, admissionOptions = {} } = {}) {
   const at = () => now().toISOString();
   const requestContext = new AsyncLocalStorage();
   const admission = createAdmission({ now: () => now().getTime(), ...admissionOptions });
@@ -421,6 +421,7 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
         }
         logEvent(db, { userId: target.id, email: target.email, event: `admin_${action}`, result: 'succeeded', detail: `от ${req.user.email}` });
         note({ event: 'admin_user_action', action, result: 'succeeded' });
+        onAdminChange();
         res.json({ user: publicUser(listUsers(db).find(user => user.id === target.id)) });
       } catch (error) { next(error); }
     });
@@ -430,6 +431,8 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
         const target = findUserById(db, req.params.id);
         if (!target) return fail(res, 404, 'not_found', 'Пользователь не найден.');
         if (target.id === req.user.id) return fail(res, 409, 'self_delete', 'Себя удалить нельзя.');
+        if (target.role === 'admin' && target.status === 'active' && listUsers(db).filter(user => user.role === 'admin' && user.status === 'active').length <= 1)
+          return fail(res, 409, 'last_admin', 'Это последний администратор — снимать роль некому.');
         // Удаляется только тот, кто ничего не записал: у остальных есть журнал,
         // и молча стереть его вместе с человеком — не то, чего от кнопки ждут.
         const withData = listUsers(db).find(user => user.id === target.id)?.capture_count;
@@ -444,6 +447,8 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
         db.prepare('DELETE FROM telegram_links WHERE user_id=?').run(target.id);
         db.prepare('DELETE FROM telegram_codes WHERE user_id=?').run(target.id);
         db.prepare('DELETE FROM users WHERE id=?').run(target.id);
+        onSignupResolved(target.id);
+        onAdminChange();
         logEvent(db, { email: target.email, event: 'admin_delete', result: 'succeeded', detail: `от ${req.user.email}` });
         res.json({ ok: true });
       } catch (error) { next(error); }

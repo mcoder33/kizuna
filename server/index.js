@@ -23,13 +23,14 @@ import { CaptureJobWorker } from './capture-job-worker.js';
 import { scheduleFromModel, currentDate, normalizeClassification, gateClassification, shouldMaterializeProjections, parseCaptureOverrides, applyUserOverrides } from './classifier.js';
 import { validateRemoteModel } from './cli-config.js';
 import { createAccounts, publicUser } from './accounts.js';
+import { createAdministration } from './administration.js';
 import { periodReport, dayReport, shiftDate as reportShiftDate } from './reports.js';
 import { doneView } from './done.js';
 import { boardView, createColumn, renameColumn, colorColumn, moveColumn, deleteColumn, moveCard } from './board.js';
 import { createCalendarService, CalendarSyncWorker } from './calendar.js';
 import * as circles from './circles.js';
 import { subtaskTree, ancestorsOf, todayIn, validDay, withSubtaskCounts, SUBTASK_TITLE_LIMIT } from './subtasks.js';
-import { createSubtask } from './db.js';
+import { createSubtask, logAuthEvent } from './db.js';
 import { AVATAR_IMAGE_LIMIT } from './avatars.js';
 import * as chat from './chat.js';
 import { registerNotesRoutes, afterCapture } from './notes-tree.js';
@@ -185,7 +186,9 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   const security = createHttpSecurity({ ...securityOptions, ...(secureCookies === undefined ? {} : { secureCookies }) });
   const db = openDatabase(databasePath);
   const requestText = (req, source, params = {}) => translate(userLocale(db, req.user?.id, requestLanguages(req.get('accept-language'))), source, params);
-  const accounts = createAccounts({ db, now, secureCookies: security.secureCookies, admissionOptions: authAdmissionOptions, audit, timeZone: () => configuredTimeZone, onPreferencesChanged: () => { stored = readSettings(db); } });
+  let administration;
+  const accounts = createAccounts({ db, now, secureCookies: security.secureCookies, admissionOptions: authAdmissionOptions, audit, timeZone: () => configuredTimeZone, onPreferencesChanged: () => { stored = readSettings(db); },
+    onSignupResolved: id => administration.resolve('signup', id), onAdminChange: () => administration.changed() });
   // Настройки читаются из базы поверх окружения: то, что человек поменял в
   // приложении, сильнее того, что лежит в .env, и применяется без перезапуска.
   let stored = readSettings(db);
@@ -291,15 +294,19 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     return { kind: view.kind, title: view.data.pushTitle || [who, view.text].filter(Boolean).join(' '), body: view.data.pushBody || view.meta.join(' · '), tag: `${view.kind}:${view.id}`, url: notificationUrl(view) };
   };
   setNotificationSink(db, (row, { merged }) => {
+    if (NOTIFICATION_KINDS[row.kind]?.admin) {
+      notifyUser(row.user_id, 'administration', { at: now().toISOString() });
+      return;
+    }
     const prefs = notificationPrefs(db, row.user_id)[row.kind];
     const view = notificationView(row);
-    notifyUser(row.user_id, 'notification', { notification: view, counts: notificationCounts(db, row.user_id), toast: prefs.phone && !merged });
+    notifyUser(row.user_id, 'notification', { notification: view, counts: notificationCounts(db, row.user_id, { scope: 'personal' }), toast: prefs.phone && !merged });
     const listening = [...journalListeners].some(listener => listener.userId === row.user_id);
     if (!prefs.phone || merged || listening || isQuiet(quietHoursOf(db, row.user_id), now(), timeZoneFor(row.user_id))) return;
     const sending = push.send(row.user_id, pushOf(view)).catch(() => {}).finally(() => deliveries.delete(row.id));
     deliveries.set(row.id, sending);
   });
-  app.notificationsDelivered = () => Promise.all([...deliveries.values()]);
+  app.notificationsDelivered = () => Promise.all([...deliveries.values(), administration?.flush()]);
   const capitalized = value => (value ? value[0].toUpperCase() + value.slice(1) : value);
   function reminderNotification(userId, reminder) {
     const raw = db.prepare('SELECT raw FROM captures WHERE id=?').get(reminder.captureId)?.raw || '';
@@ -384,7 +391,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
       try { morningDigest(user, at); } catch {}
       try { spendThresholds(user); } catch {}
     }
-    await Promise.all([...deliveries.values()]);
+    await Promise.all([...deliveries.values(), administration?.flush()]);
   }
   app.notificationTick = notificationTick;
   app.push = push; app.reminders = reminders; app.reminderWorker = reminderWorker;
@@ -503,6 +510,13 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     ...telegramOptions,
   });
   app.telegram = telegram;
+  administration = createAdministration({ db, now, audit,
+    botConfigured: () => Boolean(environment().PAGENT_TELEGRAM_BOT_TOKEN),
+    sendTelegram: message => telegram.sendAdminNotification(message),
+    onChange: userIds => { for (const userId of userIds) notifyUser(userId, 'administration', { at: now().toISOString() }); },
+  });
+  app.administration = administration;
+  administration.registerRoutes(app, accounts.requireAdmin);
   const telegramErrors = {
     telegram_off: [409, 'Бот Telegram не подключён: администратор добавляет его токен в «Ключах».'],
     telegram_unavailable: [503, 'Бот Telegram сейчас не на связи — попробуйте чуть позже.'],
@@ -562,12 +576,14 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     if (row.kind === 'invite') return calendar.inviteStatus?.({ accountId: row.account_id, uid: row.event_uid }) === 'needs-action';
     return true;
   };
-  const countsChanged = userId => notifyUser(userId, 'notifications', { counts: notificationCounts(db, userId) });
+  const countsChanged = userId => notifyUser(userId, 'notifications', { counts: notificationCounts(db, userId, { scope: 'personal' }) });
+  const notificationScope = req => req.user.role === 'admin' && req.query.scope !== 'personal' ? 'all' : 'personal';
   app.get('/api/notifications',(req,res,next)=>{try{
     const before = typeof req.query.before === 'string' && req.query.before ? req.query.before : null;
-    const page = listNotifications(db, req.user.id, { before, stillWaits });
-    res.json({ notifications: page.notifications.map(row => notificationView(row, userLocale(db, req.user.id, requestLanguages(req.get('accept-language'))))), nextCursor: page.nextCursor, counts: notificationCounts(db, req.user.id),
-      kinds: Object.entries(NOTIFICATION_KINDS).filter(([, rule]) => !rule.admin || req.user.role === 'admin').map(([key, rule]) => ({ key, group: rule.group, label: rule.label, hint: rule.hint, default: rule.phone ? 'phone' : rule.bell ? 'bell' : 'off' })) });
+    const scope = notificationScope(req);
+    const page = listNotifications(db, req.user.id, { before, stillWaits, scope });
+    res.json({ notifications: page.notifications.map(row => notificationView(row, userLocale(db, req.user.id, requestLanguages(req.get('accept-language'))))), nextCursor: page.nextCursor, counts: notificationCounts(db, req.user.id, { scope }),
+      kinds: Object.entries(NOTIFICATION_KINDS).filter(([, rule]) => !rule.admin || scope === 'all').map(([key, rule]) => ({ key, group: rule.group, label: rule.label, hint: rule.hint, default: rule.phone ? 'phone' : rule.bell ? 'bell' : 'off' })) });
   }catch(error){next(error);}});
   // Прочитано: списком, всё сразу или всё, что касается записи или комнаты, —
   // открыл карточку или разговор, значит прочитал.
@@ -575,9 +591,9 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     const body = req.body || {};
     const options = Array.isArray(body.ids) ? { ids: body.ids } : typeof body.captureId === 'string' ? { captureId: body.captureId } : typeof body.roomId === 'string' ? { roomId: body.roomId } : body.all === true ? {} : null;
     if (!options) return res.status(400).json({ error: { code: 'invalid_read', message: 'Что отметить прочитанным: ids, captureId, roomId или all.' } });
-    const changed = readNotifications(db, req.user.id, options);
+    const changed = readNotifications(db, req.user.id, { ...options, scope: notificationScope(req) });
     if (changed) countsChanged(req.user.id);
-    res.json({ changed, counts: notificationCounts(db, req.user.id) });
+    res.json({ changed, counts: notificationCounts(db, req.user.id, { scope: notificationScope(req) }) });
   }catch(error){next(error);}});
   // Убрать из ленты: открытое, ненужное или всё разом («Очистить»). Ждущее
   // ответа не уходит. «Вернуть» кладёт убранное обратно.
@@ -585,15 +601,15 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     const body = req.body || {};
     const options = Array.isArray(body.ids) ? { ids: body.ids } : body.all === true ? { all: true } : null;
     if (!options) return res.status(400).json({ error: { code: 'invalid_dismiss', message: 'Что убрать: ids или all.' } });
-    const dismissed = dismissNotifications(db, req.user.id, options).map(row => row.id);
+    const dismissed = dismissNotifications(db, req.user.id, { ...options, scope: notificationScope(req) }).map(row => row.id);
     if (dismissed.length) countsChanged(req.user.id);
-    res.json({ dismissed, counts: notificationCounts(db, req.user.id) });
+    res.json({ dismissed, counts: notificationCounts(db, req.user.id, { scope: notificationScope(req) }) });
   }catch(error){next(error);}});
   app.post('/api/notifications/restore',(req,res,next)=>{try{
     if (!Array.isArray(req.body?.ids)) return res.status(400).json({ error: { code: 'invalid_restore', message: 'Что вернуть: ids.' } });
     const restored = restoreNotifications(db, req.user.id, req.body.ids);
     if (restored) countsChanged(req.user.id);
-    res.json({ restored, counts: notificationCounts(db, req.user.id) });
+    res.json({ restored, counts: notificationCounts(db, req.user.id, { scope: notificationScope(req) }) });
   }catch(error){next(error);}});
   app.post('/api/notifications/:id/snooze',(req,res,next)=>{try{
     // Без minutes срок выбирает сервер: полчаса, потом вдвое дольше.
@@ -602,7 +618,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     if (result.error === 'not_found') return res.status(404).json({ error: { code: 'not_found', message: 'Уведомление не найдено.' } });
     if (result.error) return res.status(400).json({ error: { code: result.error, message: 'Отложить можно на срок от минуты до суток.' } });
     countsChanged(req.user.id);
-    res.json({ ...result, counts: notificationCounts(db, req.user.id) });
+    res.json({ ...result, counts: notificationCounts(db, req.user.id, { scope: notificationScope(req) }) });
   }catch(error){next(error);}});
   // Ответ на приглашение прямо из строки. Событие в кэше календаря
   // переписывается при каждой синхронизации, поэтому оно ищется заново — по
@@ -618,7 +634,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     if (result.error) return calendarError(res, result);
     resolveNotifications(db, { userId: req.user.id, kind: 'invite', accountId: row.account_id, eventUid: row.event_uid });
     countsChanged(req.user.id);
-    res.json({ counts: notificationCounts(db, req.user.id) });
+    res.json({ counts: notificationCounts(db, req.user.id, { scope: notificationScope(req) }) });
   }catch(error){next(error);}});
   app.get('/api/push/key',(req,res)=>{ res.json({ publicKey: push.publicKey(), subscriptions: push.list(req.user.id) }); });
   app.post('/api/push/subscriptions',(req,res)=>{
@@ -692,6 +708,8 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
         notifyUser(req.user.id, 'ui-preferences', preferences);
       }
       rebuildServices();
+      const globalKeys = Object.keys(body).filter(name => SETTINGS[name] && !SETTINGS[name].personal);
+      if (globalKeys.length) logAuthEvent(db, { userId: req.user.id, email: req.user.email, event: 'admin_settings', result: 'succeeded', detail: globalKeys.join(', ') });
       reportAudit(audit,{event:'settings_changed',result:'succeeded',keys:Object.keys(next)});
       res.json({ settings: publicSettings(stored, process.env, req.user), editable: editableSettings(req.user), timeZone: requestTimeZone(req), spend: spendState(req.user) });
     } catch(error){ next(error); }
