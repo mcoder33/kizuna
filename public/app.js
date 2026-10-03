@@ -1998,6 +1998,8 @@ let cardParamsOpen = false;
 // на месте.
 const cardDrafts = new Map();
 // Вид раздела «Подзадачи» и свёрнутые ветки карты — на всё время сеанса.
+let cardWorkspace = null;
+const CARD_NOTE_SHARE_KEY = "kizuna-card-note-share";
 let cardStepView = "list";
 const cardCollapsed = new Set();
 function resetCardFocus() {
@@ -3327,6 +3329,8 @@ function cardSnack(text, actions = []) {
   cardSnackTimer = setTimeout(() => snack.remove(), actions.length ? 6000 : 3000);
 }
 function dropCardFlow() {
+  cardWorkspace?.dispose();
+  cardWorkspace = null;
   clearTimeout(cardAdvance);
   cardAdvance = null;
   clearTimeout(cardSnackTimer);
@@ -3637,6 +3641,101 @@ function scrollCardTo(element, { smooth = false } = {}) {
 // прямые дети, «Карта» — всё дерево с раскрывающимися ветками; оба живут на
 // одних данных. Дуга вокруг кружка и подпись под названием считают только
 // конечные шаги: ветка с детьми — не единица, итоги и заметки — не шаги.
+function cardWorkArea(body, steps) {
+  const workspace = node("div", undefined, "card-workspace");
+  const divider = node("div", undefined, "card-work-divider");
+  divider.tabIndex = 0;
+  divider.setAttribute("role", "separator");
+  divider.setAttribute("aria-orientation", "horizontal");
+  divider.setAttribute("aria-controls", "card-body-editor card-subtasks");
+  bindTranslation(divider, "Размер заметки и подзадач", "aria-label");
+  workspace.append(body, divider, steps);
+  let dragging = false;
+  let ratio = 100 * 2 / 3;
+  let height = 0;
+  const preference = () => {
+    const saved = Number(uiStorage.getItem(CARD_NOTE_SHARE_KEY));
+    return Number.isFinite(saved) && saved >= 10 && saved <= 90 ? saved : 100 * 2 / 3;
+  };
+  const apply = () => {
+    const available = Math.max(160, height - 14);
+    const noteHeight = clampNumber(available * ratio / 100, 80, available - 80);
+    workspace.style.gridTemplateRows = `${Math.round(noteHeight)}px 14px minmax(0, 1fr)`;
+    divider.setAttribute("aria-valuemin", "10");
+    divider.setAttribute("aria-valuemax", "90");
+    divider.setAttribute("aria-valuenow", String(Math.round(ratio)));
+  };
+  const paint = () => {
+    if (!workspace.isConnected) return;
+    const split = steps.dataset.hasChildren === "true";
+    workspace.classList.toggle("has-steps", split);
+    divider.hidden = !split;
+    if (!split) { workspace.style.height = ""; workspace.style.gridTemplateRows = ""; return; }
+    if (!dragging) ratio = preference();
+    const area = $("#review"), dialog = $("#review-dialog");
+    const style = getComputedStyle(area);
+    const occupied = [...area.children].filter(child => child !== workspace).reduce((total, child) => {
+      const css = getComputedStyle(child);
+      return total + child.getBoundingClientRect().height + (parseFloat(css.marginBottom) || 0) + (child.classList.contains("card-footer") ? 0 : parseFloat(css.marginTop) || 0);
+    }, 0);
+    const frame = CARD_PHONE.matches || dialog.dataset.mode !== "center" ? 0 : 80;
+    const customHeight = !CARD_PHONE.matches && dialog.dataset.mode === "center" ? parseFloat(dialog.style.getPropertyValue("--card-h")) : 0;
+    const budget = Math.min(window.innerHeight - frame, customHeight || Infinity);
+    const dock = dialog.querySelector(".talk-dock");
+    const talk = dock && getComputedStyle(dock).display !== "none" ? (dialog.classList.contains("talk-open") ? dock.getBoundingClientRect().height : parseFloat(getComputedStyle(dialog).getPropertyValue("--talk-base")) || 60) : 0;
+    height = Math.max(174, Math.floor(budget - $("#review-top").getBoundingClientRect().height - occupied - (parseFloat(style.paddingTop) || 0) - (parseFloat(style.paddingBottom) || 0) - talk - 2));
+    workspace.style.height = `${height}px`;
+    apply();
+  };
+  const persist = () => uiStorage.setItem(CARD_NOTE_SHARE_KEY, String(Math.round(ratio)));
+  divider.addEventListener("keydown", event => {
+    const changes = { ArrowUp: -5, ArrowDown: 5 };
+    if (!(event.key in changes) && event.key !== "Home" && event.key !== "End") return;
+    event.preventDefault();
+    ratio = event.key === "Home" ? 10 : event.key === "End" ? 90 : clampNumber(ratio + changes[event.key], 10, 90);
+    apply(); persist();
+  });
+  divider.addEventListener("pointerdown", event => {
+    if (event.button !== 0 || !event.isPrimary) return;
+    event.preventDefault();
+    divider.setPointerCapture(event.pointerId);
+    dragging = true;
+    const startY = event.clientY, startRatio = ratio;
+    let moved = false;
+    const move = e => {
+      if (!moved && Math.abs(e.clientY - startY) < 3) return;
+      moved = true;
+      ratio = clampNumber(startRatio + (e.clientY - startY) / Math.max(160, height - 14) * 100, 10, 90);
+      apply();
+    };
+    const stop = () => {
+      divider.removeEventListener("pointermove", move);
+      divider.removeEventListener("pointerup", stop);
+      divider.removeEventListener("pointercancel", stop);
+      dragging = false;
+      if (moved) persist();
+      paint();
+    };
+    divider.addEventListener("pointermove", move);
+    divider.addEventListener("pointerup", stop);
+    divider.addEventListener("pointercancel", stop);
+  });
+  const resize = new ResizeObserver(paint);
+  const visibility = new MutationObserver(paint);
+  visibility.observe(steps, { attributes: true, attributeFilter: ["hidden", "data-has-children"] });
+  const onResize = () => paint();
+  window.addEventListener("resize", onResize);
+  const owner = { paint, dispose: () => { resize.disconnect(); visibility.disconnect(); window.removeEventListener("resize", onResize); } };
+  cardWorkspace = owner;
+  requestAnimationFrame(() => {
+    if (!workspace.isConnected || cardWorkspace !== owner) return;
+    resize.observe($("#review-dialog"));
+    for (const child of $("#review").children) if (child !== workspace) resize.observe(child);
+    paint();
+  });
+  return workspace;
+}
+
 function cardSubtasks(entry, { halo, caption }) {
   const own = entry.mine !== false;
   const section = node("section", undefined, "card-subtasks");
@@ -3744,6 +3843,9 @@ function cardSubtasks(entry, { halo, caption }) {
     const button = node("button", undefined, className);
     button.type = "button";
     bindTranslation(button, "Открыть подзадачу «{title}»", { title: item.title }, "aria-label");
+    // Keep an edited heading/body focused until click starts the save barrier.
+    // A blur can change the row's position between pointer press and release.
+    button.addEventListener("pointerdown", event => { if (event.button === 0 && event.isPrimary) event.preventDefault(); });
     button.addEventListener("click", () => openSubtaskCard(item.id, item.occurrence || null));
     return button;
   };
@@ -3816,6 +3918,7 @@ function cardSubtasks(entry, { halo, caption }) {
   };
   const paint = () => {
     const hasChildren = Boolean(tree?.children.length);
+    section.dataset.hasChildren = String(hasChildren);
     section.hidden = !tree || (!own && !hasChildren);
     halo.classList.toggle("has-progress", hasChildren);
     const fill = halo.querySelector(".halo-fill");
@@ -3914,6 +4017,8 @@ function showReview(entry, review, undoGroupId, provenance) {
     return;
   }
   if (fromPage) leaveCardForPage();
+  cardWorkspace?.dispose();
+  cardWorkspace = null;
   clear(area);
   if (review.level === "high") {
     closeCard();
@@ -3951,9 +4056,8 @@ function showReview(entry, review, undoGroupId, provenance) {
       if (inflight) return inflight;
       if (settled) return Promise.resolve();
       settled = true;
-      flushCardTitle = null;
       const value = editor.value.trim();
-      if (!value || value === c.summary) { editor.replaceWith(cardTitle); return Promise.resolve(); }
+      if (!value || value === c.summary) { flushCardTitle = null; editor.replaceWith(cardTitle); return Promise.resolve(); }
       editor.disabled = true;
       // Ответ может прийти, когда в карточке уже другая запись или карточка
       // закрыта: тогда он ничего не перерисовывает — заголовок сохранён, и
@@ -3970,19 +4074,25 @@ function showReview(entry, review, undoGroupId, provenance) {
           toast(t("Заголовок обновлён"));
           load();
           if (token !== cardNavToken || cardEntryId !== entry.id || !$("#review-dialog").open || !editor.isConnected) return;
-          const review = reviewFromEntry(result.entry);
-          showCardInner(result.entry, review.level === "high" ? undefined : review);
+          // Keep the pressed tree button, keyboard focus and divider intact.
+          // A blur save must not replace the whole card before its click fires.
+          Object.assign(c, result.entry.interpretation.classification);
+          const savedTitle = markdownNode("h2", c.summary, "card-title", { inline: true, firstLine: true });
+          cardTitle.replaceChildren(...savedTitle.childNodes);
+          editor.replaceWith(cardTitle);
         } catch (error) {
           toast(error.message);
           if (editor.isConnected) editor.replaceWith(cardTitle);
         } finally {
+          if (flushCardTitle === flushTitle) flushCardTitle = null;
           inflight = null;
         }
       })();
       return inflight;
     };
     // Переход к подзадаче и закрытие карточки дожидаются этого сохранения.
-    flushCardTitle = () => save();
+    const flushTitle = () => save();
+    flushCardTitle = flushTitle;
     editor.addEventListener("keydown", (event) => {
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancel(); return; }
       if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); save(); }
@@ -4326,8 +4436,9 @@ function showReview(entry, review, undoGroupId, provenance) {
   flushCardProps = saveProps;
   // Enter в поле свойства раньше отправлял форму; отправлять больше нечего.
   form.addEventListener("submit", (event) => event.preventDefault());
-  area.append(cardBody(entry));
-  if (wantsSubtasks) area.append(cardSubtasks(entry, { halo, caption }));
+  const body = cardBody(entry);
+  if (wantsSubtasks) area.append(cardWorkArea(body, cardSubtasks(entry, { halo, caption })));
+  else area.append(body);
   cardDiscussion(entry);
   // Футер прижат к низу листа и собран в строку: вложения, «когда записано»,
   // источник и удаление — служебный подвал, а не столбик в теле карточки.
@@ -12682,6 +12793,7 @@ function applySyncedViewPreferences() {
   paintDrawersWidth();
   paintCardSize();
   paintTalkHeight();
+  cardWorkspace?.paint();
   if (keys.has(CARD_MODE_KEY)) {
     const dialog = $("#review-dialog");
     paintCardMode();

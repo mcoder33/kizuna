@@ -16,6 +16,7 @@ const rules = {
   "kizuna-card-mode": choice("center", "side", "full"),
   "kizuna-card-size": json(value => object(value) && Object.entries(value).every(([key, size]) => ["w", "h", "sw"].includes(key) && (size === null || (Number.isInteger(size) && size >= { w: 560, h: 360, sw: 420 }[key] && size <= 4096)))),
   "kizuna-card-talk-height": dimension(44, 360),
+  "kizuna-card-note-share": dimension(10, 90),
   "kizuna-board-view": choice("board", "list", "table"),
   "kizuna-board-groups": json(value => Array.isArray(value) && value.length <= fields.length && value.every(field => fields.includes(field))),
   "kizuna-board-filter": json(value => Array.isArray(value) && value.length <= 12 && value.every(item => object(item) && fields.includes(item.field) && ["=", "!="].includes(item.op) && strings(Array.isArray(item.values) ? item.values : [item.value]))),

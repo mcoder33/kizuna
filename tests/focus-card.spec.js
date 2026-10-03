@@ -201,7 +201,7 @@ test("«Параметры» выезжают из той же карточки:
   // Поля панели живые: дата ставится, чип под названием меняется сразу.
   const later = inDays(10);
   await dialog.locator("#review-date").fill(later);
-  await expect(dialog.locator(".card-chips .chip").first()).toContainText(`${later.slice(8, 10)}.${later.slice(5, 7)}`);
+  await expect(dialog.locator(".card-chips .chip").first()).toContainText(new Intl.DateTimeFormat("ru-RU", { timeZone: "UTC", day: "numeric", month: "short" }).format(new Date(`${later}T12:00:00Z`)));
   // Esc закрывает панель, карточка остаётся; второй Esc закрывает карточку.
   await page.keyboard.press("Escape");
   await expect(toggle).toHaveAttribute("aria-expanded", "false");

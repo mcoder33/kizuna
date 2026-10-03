@@ -13,14 +13,14 @@ test('UI preferences merge per key, persist resets, bootstrap and isolate accoun
   const alice = authed(app);
   const bob = authed(app, { email: 'bob@test.local', role: 'user' });
   await request(app).get('/api/ui-preferences').expect(401);
-  await patch(alice, { 'kizuna-capture-width': '900', 'kizuna-card-mode': 'side' }).expect(200);
+  await patch(alice, { 'kizuna-capture-width': '900', 'kizuna-card-mode': 'side', 'kizuna-card-note-share': '67' }).expect(200);
   await Promise.all([
     patch(alice, { 'kizuna-board-view': 'list' }).expect(200),
     patch(alice, { 'kizuna-calendar-mode': 'month' }).expect(200),
   ]);
   const mine = (await alice.get('/api/ui-preferences').expect(200)).body;
   assert.equal(mine.revision, 3);
-  assert.deepEqual(mine.values, { 'kizuna-capture-width': '900', 'kizuna-card-mode': 'side', 'kizuna-board-view': 'list', 'kizuna-calendar-mode': 'month' });
+  assert.deepEqual(mine.values, { 'kizuna-capture-width': '900', 'kizuna-card-mode': 'side', 'kizuna-card-note-share': '67', 'kizuna-board-view': 'list', 'kizuna-calendar-mode': 'month' });
   assert.deepEqual((await bob.get('/api/ui-preferences').expect(200)).body.values, {});
   const html = (await alice.get('/').expect(200)).text;
   assert.deepEqual(JSON.parse(decodeURIComponent(html.match(/data-ui-preferences="([^"]+)"/)[1])), mine);
@@ -44,6 +44,7 @@ test('UI preference whitelist validates the entire patch before writing', async 
     { 'kizuna-board-filter': '{broken' }, { 'kizuna-notes-expanded': '{}' },
     { 'kizuna-capture-width': '900', 'kizuna-calendar-height': 'Infinity' },
     { 'kizuna-card-size': '{"w":99999999}' },
+    { 'kizuna-card-note-share': '9' }, { 'kizuna-card-note-share': '91' }, { 'kizuna-card-note-share': '67.5' },
   ]) await patch(api, changes).expect(400);
   assert.deepEqual((await api.get('/api/ui-preferences')).body.values, {});
   app.database.close();
