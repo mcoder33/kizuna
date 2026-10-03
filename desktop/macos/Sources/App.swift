@@ -100,7 +100,7 @@ final class KizunaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
                   DesktopOrigin.contains(url, origin: origin), let snapshot = message.body as? [String: Any],
                   let value = CaptureAppearance.read(snapshot) else { return }
             quickCapturePanel?.syncAppearance(snapshot)
-            window?.appearance = NSAppearance(named: value.dark ? .darkAqua : .aqua)
+            window?.appearance = value.windowAppearance
             return
         }
         if message.name == "kizunaNotifications" {

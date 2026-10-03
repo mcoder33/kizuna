@@ -707,7 +707,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
       }
       writeSettings(db, next);
       if (Object.hasOwn(body, 'theme')) {
-        const preferences = writeUiPreferences(db, req.user.id, { 'pagent.theme': ['light', 'dark'].includes(body.theme) ? body.theme : null }, { mirrorTheme: false });
+        const preferences = writeUiPreferences(db, req.user.id, { 'pagent.theme': ['system', 'light', 'dark'].includes(body.theme) ? body.theme : null }, { mirrorTheme: false });
         notifyUser(req.user.id, 'ui-preferences', preferences);
       }
       rebuildServices();

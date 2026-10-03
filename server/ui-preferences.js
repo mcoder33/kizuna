@@ -8,7 +8,7 @@ export function readUiPreferences(db, userId) {
   const record = row ? JSON.parse(row.value) : { revision: 0, values: {} };
   const setting = db.prepare('SELECT value FROM app_settings WHERE key=?');
   const theme = setting.get(themeKeyFor(userId)) ?? setting.get('theme');
-  if (theme || Object.hasOwn(record.values, 'pagent.theme')) record.values['pagent.theme'] = ['light', 'dark'].includes(theme?.value) ? theme.value : null;
+  if (theme || Object.hasOwn(record.values, 'pagent.theme')) record.values['pagent.theme'] = ['system', 'light', 'dark'].includes(theme?.value) ? theme.value : null;
   return { userId, ...record };
 }
 

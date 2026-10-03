@@ -1,18 +1,29 @@
-<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+<?xml version="1.0" standalone="yes"?>
+<!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+-->
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
     <channel>
         <title>Kizuna</title>
+        <item>
+            <title>1.0.8</title>
+            <pubDate>Sun, 04 Oct 2026 00:35:59 +0400</pubDate>
+            <sparkle:version>9</sparkle:version>
+            <sparkle:shortVersionString>1.0.8</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://yourkizuna.com/public/downloads/mac/Kizuna-9.zip" length="2056468" type="application/octet-stream" sparkle:edSignature="yDpvczOr9SF5rqpQ/+LXDltPCdxiQ7Vjr820AExAmv9EkoRBwqUxnh2g9AjCdy/nNBD5aVZNqsdnW/6ErYXpBg=="/>
+        </item>
         <item>
             <title>1.0.7</title>
             <pubDate>Sat, 03 Oct 2026 23:56:38 +0400</pubDate>
             <sparkle:version>8</sparkle:version>
             <sparkle:shortVersionString>1.0.7</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://yourkizuna.com/public/downloads/mac/Kizuna-8.zip" length="2053485" type="application/octet-stream" sparkle:edSignature="/7+Roj8g7lAnf5YaGz3nmiS9FV011p3Eo25YmIJSf0DgHg4eeIrLOI42pHz/mFX3ITY41ZZjBMqM243p94RYCQ=="></enclosure>
+            <enclosure url="https://yourkizuna.com/public/downloads/mac/Kizuna-8.zip" length="2053485" type="application/octet-stream" sparkle:edSignature="/7+Roj8g7lAnf5YaGz3nmiS9FV011p3Eo25YmIJSf0DgHg4eeIrLOI42pHz/mFX3ITY41ZZjBMqM243p94RYCQ=="/>
         </item>
     </channel>
-</rss><!-- sparkle-signatures:
-edSignature: Lo6fOHus4uXG54cn7JVGMnWdj4rsfeAlxMa9RvE3hWP2KrJ18QCaFJPX40rODHraNFgWH3O9abStDylEvx4YBQ==
-length: 1015
+</rss>
+<!-- sparkle-signatures:
+edSignature: +SMJg+VyjpnicswMVzOM4dH+lEBIDR38delt2dO+XES/NCKdL2QIsgg7zL5dUiMt6yS+OcD0ImNs8IjD+5TVBQ==
+length: 1584
 -->

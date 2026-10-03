@@ -8,7 +8,7 @@ const json = check => value => { try { return check(JSON.parse(value)); } catch 
 const fields = ["col", "day", "who", "proj", "src", "status"];
 const columns = json(value => object(value) && Object.entries(value).every(([key, items]) => fields.includes(key) && strings(items)));
 const rules = {
-  "pagent.theme": choice("light", "dark"),
+  "pagent.theme": choice("system", "light", "dark"),
   "pagent.text": json(value => object(value) && ["default", "serif", "mono"].includes(value.font) && ["normal", "small"].includes(value.size)),
   "kizuna-capture-width": dimension(480, 4096),
   "kizuna-capture-height": dimension(96, 480),

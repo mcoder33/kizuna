@@ -11,6 +11,7 @@
     const variable = (name, fallback) => style.getPropertyValue(name).trim() || fallback;
     const colors = style.backgroundImage.match(/rgba?\([^)]*\)|#[\da-f]{3,8}/gi) || [style.backgroundColor];
     const snapshot = {
+      theme: ['light', 'dark'].includes(document.documentElement.dataset.theme) ? document.documentElement.dataset.theme : 'system',
       dark: document.documentElement.dataset.theme === 'dark' ||
         (document.documentElement.dataset.theme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches),
       surface: colors[0], surfaceEnd: colors[1] || colors[0],

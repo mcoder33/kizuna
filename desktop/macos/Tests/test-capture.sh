@@ -11,4 +11,7 @@ swiftc -parse-as-library -framework AppKit -framework WebKit \
   "$MAC_DIR/Sources/Navigation.swift" "$MAC_DIR/Sources/Localization.swift" \
   "$MAC_DIR/Tests/capture-panel.test.swift" -o "$TEST_TMP/panel"
 "$TEST_TMP/panel"
+swiftc -parse-as-library -framework AppKit -framework WebKit \
+  "$MAC_DIR/Sources/CaptureAppearance.swift" "$MAC_DIR/Tests/theme-window.test.swift" -o "$TEST_TMP/theme"
+"$TEST_TMP/theme" "$MAC_DIR/Resources/CaptureAppearance.js" "$MAC_DIR/../../public/theme.js"
 node --test "$MAC_DIR/Tests/capture-bridge.test.cjs"
