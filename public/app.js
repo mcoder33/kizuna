@@ -175,6 +175,21 @@ function showProvenance(provenance) {
 const reportsState = { tab: "day", period: "week", dayDate: null };
 const adminArea = mountAdministration({ request, toast, accountKnown: async () => { await accountKnown; return currentUser; }, loadUsers: loadAdmin, loadSettings, loadAi: status, loadUsage });
 const feedbackArea = mountFeedback({ request, accountKnown: async () => { await accountKnown; return currentUser; } });
+let requestedTodayDate = null;
+function dateFromTodayLink(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const parsed = new Date(`${value}T12:00:00Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value ? value : null;
+}
+function applyRequestedTodayDate() {
+  if (!requestedTodayDate || !currentDayDate) return;
+  const offset = calDayDiff(currentDayDate, requestedTodayDate);
+  todayState.view = offset;
+  todayState.journalView = offset;
+  todayState.tab = "day";
+  todayState.manual = true;
+  requestedTodayDate = null;
+}
 function updatePageFromHash() {
   // Внутренние ссылки Obsidian ведут в память с запросом: «#memory?query=Hub».
   // Хэш поэтому разбирается на страницу и параметры — иначе такой страницы не
@@ -189,6 +204,7 @@ function updatePageFromHash() {
   const params = new URLSearchParams(separator >= 0 ? hash.slice(separator + 1) : "");
   const page = document.getElementById(pageId);
   const activePage = page?.classList.contains("app-page") ? pageId : "today";
+  requestedTodayDate = activePage === "today" ? dateFromTodayLink(params.get("date")) : null;
   // Ссылка из уведомления: открыть карточку записи и убрать параметр из адреса.
   const openId = params.get("open");
   if (openId) { params.delete("open"); history.replaceState(null, "", `#${activePage}${params.size ? `?${params}` : ""}`); openCaptureById(openId); }
@@ -1037,6 +1053,7 @@ function renderToday() {
       if (todayState.view === 0) todayState.tab = cover.tab;
     }
   }
+  applyRequestedTodayDate();
   applyCoverComposer(cover);
   paintCover(cover, currentDayDate);
   const viewDate = shiftDate(currentDayDate, todayState.view);

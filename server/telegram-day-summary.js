@@ -1,4 +1,4 @@
-import { readSettings, writeSettings } from './db.js';
+import { writeSettings } from './db.js';
 import { dateInZone, shiftDate } from './reports.js';
 import { validIsoDate } from './repeat.js';
 import { reviewDay } from './day-review.js';
@@ -24,7 +24,7 @@ export function summaryPreferences(value) {
     weekdays:Array.isArray(raw?.weekdays)?[...new Set(raw.weekdays.filter(day=>Number.isInteger(day)&&day>=1&&day<=7))].sort((a,b)=>a-b):[1,2,3,4,5,6,7],
   };
 }
-export function readSummaryPreferences(db,userId) {return summaryPreferences(readSettings(db)[summarySettingsKey(userId)]);}
+export function readSummaryPreferences(db,userId) {return summaryPreferences(db.prepare('SELECT value FROM app_settings WHERE key=?').get(summarySettingsKey(userId))?.value);}
 export function changeSummaryPreferences(db,userId,change,{now=new Date(),onChanged=()=>{}}={}) {
   const before=readSummaryPreferences(db,userId),next=structuredClone(before);
   if (change.type==='enabled' && phases.includes(change.phase) && typeof change.value==='boolean') next[change.phase].enabled=change.value;
@@ -110,12 +110,21 @@ export function createTelegramDaySummaryRouter({db,now=()=>new Date(),timeZone,r
   async function picker(link){await sendFresh(link,'Какой день показать?',{inline_keyboard:[[{text:'Вчера',callback_data:`tds:date:${shiftDate(todayOf(link),-1)}`},{text:'Выбрать дату',callback_data:'tds:pick'}]]});}
   async function settings(link){
     const prefs=readSummaryPreferences(db,link.user_id),rows=[];
+    const receipt=db.prepare('SELECT local_date,phase,status,error_code FROM telegram_summary_receipts WHERE user_id=? ORDER BY local_date DESC,updated_at DESC LIMIT 1').get(link.user_id);
+    const receiptStatus={sent:'отправлено',reserved:'готовится',retry:'Telegram попросил подождать; повторим в пределах часа',uncertain:'доставка не подтверждена; автоматического повтора не будет',failed:receipt?.error_code==='403'?'Telegram запретил отправку; проверьте, не заблокирован ли бот':receipt?.error_code==='400'?'Telegram отклонил сообщение':'не отправлено; следующая сводка придёт по расписанию'};
+    const lastDelivery=receipt?`\nПоследняя сводка (${receipt.local_date}, ${receipt.phase==='morning'?'утро':'вечер'}): ${receiptStatus[receipt.status]||'статус недоступен'}.`:'';
     for(const phase of phases){const name=phase==='morning'?'Утро':'Вечер';rows.push([{text:`${prefs[phase].enabled?'✅':'☐'} ${name}: ${prefs[phase].enabled?'включено':'выключено'}`,callback_data:`tds:enabled:${phase}:${prefs[phase].enabled?0:1}`},{text:prefs[phase].time,callback_data:`tds:time:${phase}`}]);}
     rows.push(weekdays.map((label,index)=>({text:`${prefs.weekdays.includes(index+1)?'✓ ':''}${label}`,callback_data:`tds:weekday:${index+1}:${prefs.weekdays.includes(index+1)?0:1}`})));
-    await sendFresh(link,`⚙️ Настройки сводок\nУтро: ${prefs.morning.enabled?'включено':'выключено'}, ${prefs.morning.time}\nВечер: ${prefs.evening.enabled?'включено':'выключено'}, ${prefs.evening.time}\nДни: ${prefs.weekdays.length?prefs.weekdays.map(day=>weekdays[day-1]).join(', '):'не выбраны — отправок нет'}\nЧасовой пояс: ${timeZone(link.user_id)}\nНажмите время, чтобы изменить его.`,{inline_keyboard:rows});
+    await sendFresh(link,`⚙️ Настройки сводок\nУтро: ${prefs.morning.enabled?'включено':'выключено'}, ${prefs.morning.time}\nВечер: ${prefs.evening.enabled?'включено':'выключено'}, ${prefs.evening.time}\nДни: ${prefs.weekdays.length?prefs.weekdays.map(day=>weekdays[day-1]).join(', '):'не выбраны — отправок нет'}\nЧасовой пояс: ${timeZone(link.user_id)}${lastDelivery}\nНажмите время, чтобы изменить его.`,{inline_keyboard:rows});
   }
   pendingModes.set('date',{accept:text=>/^(?:\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})$/.test(text),consume:async(link,text)=>{const date=selectedReviewDate(text);if(date)return showReview(link,date);interactions.begin(link,'date');await sendFresh(link,'Такой даты нет. Введите дату: ДД.ММ.ГГГГ или ГГГГ-ММ-ДД.',replyKeyboard());}});
   pendingModes.set('time',{accept:text=>/^\d{2}:\d{2}$/.test(text),consume:async(link,text,data)=>{if(!fresh(link))return;if(!validSummaryTime(text)){interactions.begin(link,'time',data);await sendFresh(link,'Введите время от 00:00 до 23:59.',replyKeyboard());return;}changeSummaryPreferences(db,link.user_id,{type:'time',phase:data.phase,value:text},{now:now(),onChanged:onSettingsChanged});await settings(link);}});
+  async function beforeLinkCommand(message,{update=null}={}){
+    if(message.from?.is_bot || message.chat?.type!=='private' || String(message.from?.id)!==String(message.chat?.id))return true;
+    const link=authorize(message.from,message.chat);if(!link)return false;
+    if(await processedUpdate(update,link,message))return true;
+    interactions.clear(link);return false;
+  }
   async function routeMessage(message,{forwarded=false,update=null}={}) {
     const link=authorize(message.from,message.chat);if(!link)return false;
     if(await processedUpdate(update,link,message))return true;
@@ -148,7 +157,7 @@ export function createTelegramDaySummaryRouter({db,now=()=>new Date(),timeZone,r
     if(enable||day){if(!fresh(link))return true;const change=enable?{type:'enabled',phase:enable[1],value:enable[2]==='1'}:{type:'weekday',day:Number(day[1]),value:day[2]==='1'};changeSummaryPreferences(db,link.user_id,change,{now:now(),onChanged:onSettingsChanged});await settings(link);return true;}
     return false;
   }
-  return{routeMessage,routeCallback,currentReview,interactions,replyKeyboard,clear:link=>interactions.clear(link),
+  return{routeMessage,routeCallback,beforeLinkCommand,currentReview,interactions,replyKeyboard,clear:link=>interactions.clear(link),
     registerMessageRoute:handler=>messageRoutes.push(handler),registerPendingMode:(name,mode)=>pendingModes.set(name,mode),
     registerCallbackRoute:handler=>callbackRoutes.push(handler),registerPreflight:handler=>preflights.push(handler),
     registerReplyKeyboardButton(text,{row=0}={}){if(typeof text!=='string'||!text.trim()||text.length>64||!Number.isInteger(row)||row<0||row>2)throw new RangeError('Invalid keyboard button');if(!extraButtons.some(button=>button.text===text&&button.row===row))extraButtons.push({text,row});keyboardShown.clear();},

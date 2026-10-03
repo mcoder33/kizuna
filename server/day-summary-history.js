@@ -30,6 +30,8 @@ export function migrateDaySummaryHistory(db, at = new Date().toISOString(), { no
       telegram_user_id TEXT NOT NULL, chat_id TEXT NOT NULL, reserved_at TEXT NOT NULL,
       updated_at TEXT NOT NULL, retry_at TEXT, message_id TEXT, error_code TEXT,
       PRIMARY KEY(user_id,local_date,phase));`);
+  const receiptColumns=new Set(db.prepare('PRAGMA table_info(telegram_summary_receipts)').all().map(column=>column.name));
+  for(const column of ['binding_linked_at','due_at','grace_deadline','schedule_signature'])if(!receiptColumns.has(column))db.exec(`ALTER TABLE telegram_summary_receipts ADD COLUMN ${column} TEXT`);
   const first = db.prepare('INSERT OR IGNORE INTO day_summary_history_meta VALUES(1,?)').run(at).changes;
   for (const source of sources) {
     if (first) db.prepare(`INSERT INTO day_summary_history(source,source_key,user_id,subject_id,observed_at,snapshot_json)
@@ -51,10 +53,13 @@ export function historySnapshot(db, source, key, cutoff) {
   return db.prepare('SELECT * FROM day_summary_history WHERE source=? AND source_key=? AND observed_at<? ORDER BY observed_at DESC,id DESC LIMIT 1').get(source,key,cutoff) || null;
 }
 
-export function reserveSummaryReceipt(db, { userId, date, phase, telegramUserId, chatId, now }) {
+export function reserveSummaryReceipt(db, { userId, date, phase, telegramUserId, chatId, linkedAt = null, dueAt = null, graceDeadline = null, scheduleSignature = null, now }) {
   return Boolean(db.prepare(`INSERT OR IGNORE INTO telegram_summary_receipts
-    (user_id,local_date,phase,status,telegram_user_id,chat_id,reserved_at,updated_at)
-    VALUES(?,?,?,'reserved',?,?,?,?)`).run(userId,date,phase,String(telegramUserId),String(chatId),now,now).changes);
+    (user_id,local_date,phase,status,telegram_user_id,chat_id,reserved_at,updated_at,binding_linked_at,due_at,grace_deadline,schedule_signature)
+    VALUES(?,?,?,'reserved',?,?,?,?,?,?,?,?)`).run(userId,date,phase,String(telegramUserId),String(chatId),now,now,linkedAt,dueAt,graceDeadline,scheduleSignature).changes);
+}
+export function claimSummaryRetry(db,{userId,date,phase,telegramUserId,chatId,linkedAt,dueAt,graceDeadline,scheduleSignature,now}) {
+  return Boolean(db.prepare("UPDATE telegram_summary_receipts SET status='reserved',reserved_at=?,updated_at=?,retry_at=NULL,error_code=NULL WHERE user_id=? AND local_date=? AND phase=? AND status='retry' AND retry_at<=? AND telegram_user_id=? AND chat_id=? AND binding_linked_at=? AND due_at=? AND grace_deadline=? AND schedule_signature=? AND due_at<=? AND grace_deadline>=?").run(now,now,userId,date,phase,now,String(telegramUserId),String(chatId),linkedAt,dueAt??null,graceDeadline??null,scheduleSignature??null,now,now).changes);
 }
 export function updateSummaryReceipt(db, { userId, date, phase, status, now, retryAt = null, messageId = null, errorCode = null }) {
   return db.prepare(`UPDATE telegram_summary_receipts SET status=?,updated_at=?,retry_at=?,message_id=?,error_code=?

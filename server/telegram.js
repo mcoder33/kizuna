@@ -29,6 +29,7 @@ import { readSettings, writeSettings } from './db.js';
 import { describeRepeat } from './repeat.js';
 import { dateInZone, shiftDate } from './reports.js';
 import { reviewDay } from './day-review.js';
+import { createTelegramDayDelivery } from './telegram-day-delivery.js';
 import { createTelegramDaySummaryRouter, DAY_SUMMARY_COMMANDS } from './telegram-day-summary.js';
 
 export const TELEGRAM_API = 'https://api.telegram.org';
@@ -311,6 +312,7 @@ export function createTelegramService({
   dayReview = input => reviewDay(db,input),
   finalDayReview = input => reviewDay(db,input),
   onSettingsChanged = () => {},
+  summaryBatchSize = 40,
   attachmentLimit = 10 * 1024 * 1024,
   requestTimeoutMs = 20000,
   maxResponseBytes = 2 * 1024 * 1024,
@@ -433,6 +435,7 @@ export function createTelegramService({
     const link=linkByTelegram(from.id);return link && String(link.chat_id)===String(chat.id) && currentBinding(link)?link:null;
   }
   const menuRouter=createTelegramDaySummaryRouter({db,now,timeZone,review:dayReview,finalReview:finalDayReview,authorize:authorizeMessage,currentBinding,send:(chatId,text,extra)=>say(chatId,text,null,extra),acknowledge:id=>call('answerCallbackQuery',{callback_query_id:id}),onSettingsChanged});
+  const dayDelivery=createTelegramDayDelivery({db,now,timeZone,currentBinding,enabled:()=>Boolean(token()),prepareReview:dayReview,currentReview:menuRouter.currentReview,send:(chatId,text,extra)=>say(chatId,text,null,extra),audit:note,batchSize:summaryBatchSize});
   async function createLink(userId, appUrl = null) {
     if (!token()) return { error: 'telegram_off' };
     let me;
@@ -481,7 +484,10 @@ export function createTelegramService({
     const message = update.message;
     if (!message || message.chat?.type !== 'private' || !message.from || message.from.is_bot) return;
     const command = !originOf(message) && typeof message.text === 'string' ? COMMAND.exec(message.text.trim()) : null;
-    if (command?.[1].toLowerCase() === 'start' && command[2]) return linkWithCode(message, command[2]);
+    if (command?.[1].toLowerCase() === 'start' && command[2]) {
+      if(await menuRouter.beforeLinkCommand(message,{update}))return;
+      return linkWithCode(message, command[2]);
+    }
     const link = linkByTelegram(message.from.id);
     if(link && authorizeMessage(message.from,message.chat) && await menuRouter.routeMessage(message,{forwarded:Boolean(originOf(message)),update}))return;
     if (command) { await quietly(say(message.chat.id, link ? TELEGRAM_TEXTS.help : TELEGRAM_TEXTS.notLinked,null,link && currentBinding(link)?{reply_markup:menuRouter.replyKeyboard()}:{})); return; }
@@ -689,5 +695,5 @@ export function createTelegramService({
     } catch {}
     return say(chatId, text, null, buttonUrl ? { reply_markup: { inline_keyboard: [[{ text: translate(userLocale(db, userId), 'Открыть в Кизуне'), url: buttonUrl }]] } } : {});
   }
-  return { start, stop, reconfigure, status, linkOf, createLink, unlink, answer, pollOnce, flush, ensureBot, catchUp, sendAdminNotification, menuRouter };
+  return { start, stop, reconfigure, status, linkOf, createLink, unlink, answer, pollOnce, flush, ensureBot, catchUp, sendAdminNotification, menuRouter, tick:dayDelivery.tick };
 }
