@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/ui-preferences.js";
 
 test("закрытые дела сохраняют вложенную группировку, длинная подзадача помещается в колонку", async ({ page, request }) => {
   await reset(request);
@@ -59,9 +59,9 @@ const settled = (page, quiet = 400) =>
 // на доске сами не появляются, тесты, которым они нужны, заводят их так же, как человек.
 const arrange = async (page, view, groups, shown = null) => {
   await page.evaluate(([v, g, s]) => {
-    localStorage.setItem("kizuna-board-view", v);
-    localStorage.setItem("kizuna-board-groups", JSON.stringify(g));
-    if (s) localStorage.setItem("kizuna-board-shown", JSON.stringify(s));
+    window.pagentPreferenceStorage.setItem("kizuna-board-view", v);
+    window.pagentPreferenceStorage.setItem("kizuna-board-groups", JSON.stringify(g));
+    if (s) window.pagentPreferenceStorage.setItem("kizuna-board-shown", JSON.stringify(s));
   }, [view, groups, shown]);
   await page.reload();
   await page.locator("#board-columns > :not(.empty), #board-flat > :not(.empty)").first().waitFor({ state: "attached" });
@@ -89,7 +89,7 @@ const addGroupColumn = async (page, label) => {
 // Фильтр и порядок колонок помнятся в браузере. Прогон стартует с пустого фильтра
 // (tests/fixtures/e2e-auth.setup.js): в первый заход доска показывала бы только
 // «сегодня». Проверки умолчания сами убирают ключ.
-const stored = (page, key) => page.evaluate((name) => localStorage.getItem(name), key);
+const stored = (page, key) => page.evaluate((name) => window.pagentPreferenceStorage.getItem(name), key);
 const filterToggle = (page) => page.locator("#board-filter-toggle");
 const openFilter = async (page) => { if ((await filterToggle(page).getAttribute("aria-expanded")) !== "true") await filterToggle(page).click(); };
 const condition = (page, index) => page.locator("#board-filter .board-cond").nth(index);
@@ -380,7 +380,7 @@ test("вид и группировка помнятся после переза�
   await expect(page.locator("#board-columns")).toBeHidden();
   await page.locator("#board-grp select").nth(1).selectOption("src");
   await expect(page.locator("#board-grp select").nth(1)).toBeFocused();
-  expect(await page.evaluate(() => [localStorage.getItem("kizuna-board-view"), localStorage.getItem("kizuna-board-groups")])).toEqual(["list", '["col","src","who"]']);
+  expect(await page.evaluate(() => [window.pagentPreferenceStorage.getItem("kizuna-board-view"), window.pagentPreferenceStorage.getItem("kizuna-board-groups")])).toEqual(["list", '["col","src","who"]']);
 
   await page.reload();
   await expect(page.locator("#board-view button[aria-pressed=true]")).toHaveText("Список");
@@ -413,14 +413,14 @@ test("вид и группировка помнятся после переза�
   expect(await groupsOf(page)).toEqual(["col", "day", "who", "proj", "src"]);
 
   // Вида «Таблица» больше нет: сохранённый прежде в браузере читается как «Список».
-  await page.evaluate(() => localStorage.setItem("kizuna-board-view", "table"));
+  await page.evaluate(() => window.pagentPreferenceStorage.setItem("kizuna-board-view", "table"));
   await page.reload();
   await expect(page.locator("#board-view button[aria-pressed=true]")).toHaveText("Список");
   await expect(page.locator("#board-flat .g-list")).toBeVisible();
   await expect(page.locator("#board-columns")).toBeHidden();
 
-  // Испорченное значение в браузере не ломает доску: вид и группировка по умолчанию.
-  await page.evaluate(() => { localStorage.setItem("kizuna-board-view", "cards"); localStorage.setItem("kizuna-board-groups", "{oops"); });
+  // Сброс сохранённого выбора возвращает вид и группировку по умолчанию.
+  await page.evaluate(() => { window.pagentPreferenceStorage.removeItem("kizuna-board-view"); window.pagentPreferenceStorage.removeItem("kizuna-board-groups"); });
   await page.reload();
   await expect(page.locator("#board-view button[aria-pressed=true]")).toHaveText("Доска");
   expect(await groupsOf(page)).toEqual(["col"]);
@@ -738,11 +738,11 @@ test("«Закрыто» — такая же колонка: её тянут н�
   await expect(done.locator(".board-card.closed")).toHaveCount(2);
 
   // Порядок из браузера знает не все группы: новый человек встаёт после известных, в естественном порядке.
-  await page.evaluate(() => localStorage.setItem("kizuna-board-order", JSON.stringify({ who: ["Борис", "__done"] })));
+  await page.evaluate(() => window.pagentPreferenceStorage.setItem("kizuna-board-order", JSON.stringify({ who: ["Борис", "__done"] })));
   await arrange(page, "board", ["who"]);
   await expect.poll(names).toEqual(["Борис", "Закрыто", "Аня", "Без человека"]);
-  // Испорченный порядок не ломает доску: естественный, «Закрыто» первая.
-  await page.evaluate(() => localStorage.setItem("kizuna-board-order", "{oops"));
+  // Сброс порядка возвращает естественный, «Закрыто» первая.
+  await page.evaluate(() => window.pagentPreferenceStorage.removeItem("kizuna-board-order"));
   await page.reload();
   await expect.poll(names).toEqual(["Закрыто", "Аня", "Борис", "Без человека"]);
   await reset(request);
@@ -959,7 +959,7 @@ test("первый заход: фильтр «сегодня» — одна пл
   await deed(request, "Дело на потом для фильтра", { due: day(20) });
   await page.goto("/#board");
   // Ключа нет — это первый заход: прогон по умолчанию стартует с пустым фильтром, здесь его убираем.
-  await page.evaluate(() => localStorage.removeItem("kizuna-board-filter"));
+  await page.evaluate(() => window.pagentPreferenceStorage.removeItem("kizuna-board-filter"));
   await page.reload();
   await expect(page.locator("#board-columns .board-card").first()).toBeVisible();
   await settled(page);
@@ -1229,7 +1229,7 @@ test("фильтр из прежних версий читается: два «�
   await deed(request, "Дело на завтра прежнего фильтра", { due: day(1) });
   await page.goto("/#board");
   // Так фильтр лежал в браузере раньше: по условию на значение.
-  await page.evaluate(() => localStorage.setItem("kizuna-board-filter", JSON.stringify([
+  await page.evaluate(() => window.pagentPreferenceStorage.setItem("kizuna-board-filter", JSON.stringify([
     { field: "day", op: "=", value: "today" },
     { field: "day", op: "=", value: "late" },
   ])));
@@ -1242,7 +1242,7 @@ test("фильтр из прежних версий читается: два «�
   await expect.poll(() => openTitles(page)).toHaveLength(3);
   expect(JSON.parse(await stored(page, "kizuna-board-filter"))).toEqual([{ field: "day", op: "=", values: ["today", "late", "tomorrow"] }]);
 
-  await page.evaluate(() => localStorage.setItem("kizuna-board-filter", JSON.stringify([
+  await page.evaluate(() => window.pagentPreferenceStorage.setItem("kizuna-board-filter", JSON.stringify([
     { field: "day", op: "!=", value: "late" },
     { field: "day", op: "!=", value: "tomorrow" },
   ])));
@@ -1279,18 +1279,18 @@ test("пустые группы на доске не появляются сам
   await reset(request);
 });
 
-test("плашка условия: значение, которого больше нет, остаётся видно; испорченный фильтр в браузере — умолчание", async ({ page, request }) => {
+test("плашка условия: значение, которого больше нет, остаётся видно; сброс фильтра — умолчание", async ({ page, request }) => {
   await reset(request);
   await deed(request, "Дело для испорченного фильтра");
   await page.goto("/#board");
   // Человека, которого нет среди дел, условие не подменяет молча: плашка на месте, дел под неё нет.
-  await page.evaluate(() => localStorage.setItem("kizuna-board-filter", JSON.stringify([{ field: "who", op: "=", values: ["Ушедший", "Тоже ушёл"] }, { field: "nope", op: "=", values: ["x"] }])));
+  await page.evaluate(() => window.pagentPreferenceStorage.setItem("kizuna-board-filter", JSON.stringify([{ field: "who", op: "=", values: ["Ушедший", "Тоже ушёл"] }])));
   await page.reload();
   await expect(filterToggle(page)).toHaveText("Фильтр · 1");
   expect(await conditionsOf(page)).toEqual(["Человек = Ушедший или Тоже ушёл"]);
   await expect.poll(() => openTitles(page)).toEqual([]);
-  // Испорченное значение не ломает доску: как в первый заход, «сегодня».
-  await page.evaluate(() => localStorage.setItem("kizuna-board-filter", "{oops"));
+  // Сброс фильтра возвращает выбор как в первый заход: «сегодня».
+  await page.evaluate(() => window.pagentPreferenceStorage.removeItem("kizuna-board-filter"));
   await page.reload();
   await expect(filterToggle(page)).toHaveText("Фильтр · 1");
   expect(await conditionsOf(page)).toEqual(["День = сегодня или просрочено"]);
@@ -1713,7 +1713,7 @@ test("«Скрывать» убирает подзадачи с доски и и
   await expect(today.locator(".sub-badge")).toHaveText("1/2");
   await expect(page.locator("#todo .entry").filter({ hasText: "Свести таблицы в один файл" })).toHaveCount(0);
   await expect(page.locator("#todo .sub-map, #todo .sub-bar, #todo .btag.parent")).toHaveCount(0);
-  await page.evaluate(() => localStorage.removeItem("kizuna-board-subtasks"));
+  await page.evaluate(() => window.pagentPreferenceStorage.removeItem("kizuna-board-subtasks"));
   await reset(request);
 });
 

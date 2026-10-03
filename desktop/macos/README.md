@@ -48,6 +48,9 @@ bash desktop/macos/build.sh --universal
 desktop/macos/dist/Kizuna.app/Contents/MacOS/Kizuna --self-test
 python3 desktop/macos/Tests/test-updates.py
 bash desktop/macos/Tests/test-reminders.sh
+bash desktop/macos/Tests/test-notifications.sh
+# Supervised; macOS may ask permission for a separate local test app:
+python3 desktop/macos/test-notifications-integration.py
 # With npm dependencies and Playwright Chromium installed:
 node --test desktop/macos/Tests/restart-guard.test.cjs
 ```
@@ -55,6 +58,8 @@ node --test desktop/macos/Tests/restart-guard.test.cjs
 The integration test creates disposable app bundles with unique identifiers, an ephemeral signing key and a loopback HTTP server. Its ten scenarios test a real signed update from build 1 to build 2 including relaunch, deferred restart for a draft, deferral, cancellation, a corrupted archive, a modified feed, an unavailable server, no new version, the new reminder controls with background suppression and manual bypass, and a manual check requested during Sparkle’s asynchronous installer probe. The reminder scenario uses an injected clock and scheduler without waiting an hour. The Foundation checks cover persistence, version scope, local midnight through daylight-saving changes, due checks, busy retries and stale callbacks. Neither test opens the user's installed Kizuna or contacts production. `dist/update-banner.png` is a render of the native banner from this fixture.
 
 Developer ID signing/notarization and Gatekeeper behavior on another Mac still need validation before public distribution. The local integration test deliberately uses ad-hoc signed fixture applications; it does not establish notarization readiness.
+
+The native notification smoke uses a separate `~/Applications/Kizuna Notification Test.app` with its own bundle identifier and permission. It compiles the production polling code, uses a nonpersistent WKWebView and loopback HTTP only, then verifies real macOS delivery with a closed window, silent historical items, session-cookie transport, and deduplication. It removes its harmless test notification afterward. It does not access the installed Kizuna or its account. The first run may need permission for the test app; a timeout fails explicitly and stops only its own process.
 
 ## Try the update interactively
 
@@ -72,6 +77,7 @@ Close the demo window or press **Ctrl+C** in the Terminal to stop it and remove 
 
 - Press **Command-Shift-Space** to open a small new-entry window from any app while Kizuna is running. Closing the main window leaves the app available from the menu bar.
 - The menu bar draws the Kizuna torii mark as a transparent monochrome template, so macOS adapts it to light and dark appearances.
-- Notifications require explicit opt-in from the app menu. While the app is open, it checks for notifications about once a minute and handles up to the 60 most recent items, once per notification ID.
+- Notifications require explicit opt-in from the app menu or the notification controls in Settings. The same controls show native permission status, disable delivery on this Mac, and send a local test banner. A macOS denial explains where to restore permission. While the app runs (including with its window closed), it checks about once a minute and immediately after wake, activation, and login. It handles up to the 60 most recent items, once per successfully delivered notification ID; failed OS submissions are retried. Quiet hours and per-kind account preferences still apply. Historical items at first login are not replayed. Delivery while the app is quit or the Mac is asleep is not provided.
+- The current day refreshes across midnight and immediately after wake/activation without reloading the web page or discarding drafts.
 - Sign in to an existing Kizuna account through the app's browser view. The app connects to the existing Kizuna server.
 - There is no offline sync. The update banner updates the native app; **Вид → Обновить** (⌘R) reloads only the web page.

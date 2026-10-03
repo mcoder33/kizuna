@@ -33,6 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       current: ${{ steps.current.outputs.current }}
+      announce: ${{ steps.announcement.outputs.announce }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,6 +49,17 @@ jobs:
             echo 'current=false' >> "$GITHUB_OUTPUT"
             echo "Пропуск: $GITHUB_SHA уже устарел относительно origin/main ($(git rev-parse origin/main))."
           fi
+      - id: announcement
+        name: Проверить разрешение на рассылку
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const manifest = JSON.parse(fs.readFileSync('release-notes/latest.json', 'utf8'));
+          if (manifest.announce !== undefined && typeof manifest.announce !== 'boolean') {
+            throw new Error('Некорректный announce: требуется boolean');
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `announce=${manifest.announce !== false}\n`);
+          NODE
 
   deploy:
     name: Выкладка на сервер
@@ -79,7 +91,7 @@ jobs:
   announce:
     name: Объявление релиза в Telegram
     needs: [tests, freshness, deploy]
-    if: needs.freshness.outputs.current == 'true' && needs.deploy.result == 'success'
+    if: needs.freshness.outputs.current == 'true' && needs.freshness.outputs.announce == 'true' && needs.deploy.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

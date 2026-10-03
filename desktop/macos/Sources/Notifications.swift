@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import WebKit
 import UserNotifications
 
@@ -73,8 +74,7 @@ final class DesktopNotifications: NSObject, UNUserNotificationCenterDelegate {
     private var active = false
     private var generation = 0
     private var accountID: String?
-    private var baselined = false
-    private var seen = Set<String>()
+    private var delivery = DesktopNotificationDelivery()
     var onOpen: ((URL) -> Void)?
 
     init(webView: WKWebView, origin: URL) {
@@ -85,12 +85,14 @@ final class DesktopNotifications: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func start() {
-        guard !active else { return }
+        guard !active, UserDefaults.standard.object(forKey: "desktopNotificationsEnabled") as? Bool != false else { return }
         active = true
         poll()
-        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.poll() }
         }
+        self.timer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     func stop() {
@@ -103,14 +105,72 @@ final class DesktopNotifications: NSObject, UNUserNotificationCenterDelegate {
     }
 
     // Called only from the user's explicit menu action, never at startup.
-    nonisolated func requestAuthorization() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    func requestAuthorization() {
+        Task {
+            do {
+                let granted = try await center.requestAuthorization(options: [.alert, .sound])
+                if granted {
+                    UserDefaults.standard.set(true, forKey: "desktopNotificationsEnabled")
+                    start()
+                    refresh()
+                } else {
+                    showMessage(L("Уведомления запрещены в macOS. Разрешите их в Системных настройках → Уведомления → Кизуна."))
+                }
+            } catch { showMessage(error.localizedDescription) }
+            publishAuthorization()
+        }
+    }
+
+    func disable() {
+        UserDefaults.standard.set(false, forKey: "desktopNotificationsEnabled")
+        stop()
+        publishAuthorization()
+    }
+
+    func refresh() {
+        publishAuthorization()
+        poll()
+    }
+
+    func publishAuthorization() {
+        Task {
+            let settings = await center.notificationSettings()
+            let authorized = settings.authorizationStatus == .authorized
+            let enabled = UserDefaults.standard.object(forKey: "desktopNotificationsEnabled") as? Bool != false
+            let state = ["authorized": authorized, "enabled": enabled,
+                         "denied": settings.authorizationStatus == .denied]
+            guard let webView, let url = webView.url,
+                  DesktopNotificationPolicy.sameOrigin(url, origin),
+                  let data = try? JSONSerialization.data(withJSONObject: state),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            _ = try? await webView.evaluateJavaScript("window.KizunaNotificationState = \(json); window.dispatchEvent(new Event('pagent:notificationschange'));")
+        }
+    }
+
+    func sendTest() {
+        Task {
+            let settings = await center.notificationSettings()
+            guard settings.authorizationStatus == .authorized else { requestAuthorization(); return }
+            let content = UNMutableNotificationContent()
+            content.title = L("Кизуна")
+            content.body = L("Уведомления включены на этом устройстве")
+            content.sound = .default
+            content.userInfo = ["url": origin.absoluteString + "#today"]
+            do { try await center.add(UNNotificationRequest(identifier: "kizuna-test", content: content, trigger: nil)) }
+            catch { showMessage(error.localizedDescription) }
+        }
+    }
+
+    private func showMessage(_ text: String) {
+        let alert = NSAlert()
+        alert.messageText = L("Кизуна")
+        alert.informativeText = text
+        alert.runModal()
     }
 
     private func resetAccount() {
         accountID = nil
-        baselined = false
-        seen.removeAll()
+        delivery = DesktopNotificationDelivery()
     }
 
     private func poll() {
@@ -147,11 +207,7 @@ final class DesktopNotifications: NSObject, UNUserNotificationCenterDelegate {
                       let kinds = page["kinds"] as? [[String: Any]] else { return }
                 guard self.active, self.generation == currentGeneration, !Task.isCancelled else { return }
                 let ids = Set(items.compactMap { $0["id"] as? String })
-                if !self.baselined {
-                    self.seen.formUnion(ids)
-                    self.baselined = true
-                    return
-                }
+                if self.delivery.baseline(ids) { return }
                 let defaults = Dictionary(kinds.compactMap { kind -> (String, String)? in
                     guard let key = kind["key"] as? String, let mode = kind["default"] as? String else { return nil }
                     return (key, mode)
@@ -166,17 +222,18 @@ final class DesktopNotifications: NSObject, UNUserNotificationCenterDelegate {
                 }) else { self.resetAccount(); return }
                 guard self.active, self.generation == currentGeneration, !Task.isCancelled else { return }
                 for item in items.reversed() {
-                    guard let id = item["id"] as? String, self.seen.insert(id).inserted else { continue }
-                    guard authorization.authorizationStatus == .authorized,
-                          DesktopNotificationPolicy.shouldDeliver(item: item, preferences: preferences, defaults: defaults, quiet: quiet),
-                          let url = self.destination(item) else { continue }
+                    guard let id = item["id"] as? String else { continue }
+                    guard DesktopNotificationPolicy.shouldDeliver(item: item, preferences: preferences, defaults: defaults, quiet: quiet),
+                          let url = self.destination(item) else { self.delivery.ignore(id); continue }
+                    guard authorization.authorizationStatus == .authorized else { continue }
+                    guard self.active, self.generation == currentGeneration, !Task.isCancelled else { return }
                     let content = UNMutableNotificationContent()
                     content.title = (item["data"] as? [String: Any])?["pushTitle"] as? String ?? L("Кизуна")
                     content.body = [item["lead"] as? String, item["text"] as? String].compactMap { $0 }.joined(separator: " ")
                     content.sound = .default
                     content.userInfo = ["url": url.absoluteString]
                     let request = UNNotificationRequest(identifier: "kizuna-\(id)", content: content, trigger: nil)
-                    try? await self.center.add(request)
+                    try? await self.delivery.deliver(id) { try await self.center.add(request) }
                 }
             } catch {
                 if (error as? PollError) == .unauthorized { self.resetAccount() }
@@ -190,8 +247,8 @@ final class DesktopNotifications: NSObject, UNUserNotificationCenterDelegate {
         guard let url = URL(string: path, relativeTo: origin)?.absoluteURL,
               DesktopNotificationPolicy.sameOrigin(url, origin) else { throw PollError.invalidResponse }
         var request = URLRequest(url: url)
-        request.setValue(DesktopLocale.current, forHTTPHeaderField: "Accept-Language")
         request.allHTTPHeaderFields = headers
+        request.setValue(DesktopLocale.current, forHTTPHeaderField: "Accept-Language")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse, let finalURL = response.url,

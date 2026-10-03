@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { createCollaboration } from './collaboration.js';
 import { createPublicShare, registerPublicShareRoutes } from './public-shares.js';
 import { ensureDocument, documentRow, collaborationError } from './collaboration-storage.js';
+import { mountUiPreferences, readUiPreferences, writeUiPreferences } from './ui-preferences.js';
 import { createAiAdmission } from './ai-admission.js';
 import { createHttpSecurity, loopbackProxy, validOccurredAt } from './security.js';
 import { normalizeTimeZone, userTimeZone, captureTimeContext } from './time-zone.js';
@@ -664,6 +665,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   app.post('/api/circles/:id/members/:userId/restore',(req,res,next)=>{try{const result=circles.restoreCircleMember(db,req.params.id,req.user.id,req.params.userId);if(result.error)throw collaborationError(result.error,403);notifyJournal('membership');res.json(result);}catch(error){next(error);}});
   app.post('/api/captures/:id/commands',(req,res,next)=>{try{const result=runCollaborationCommand(db,req.params.id,req.user.id,req.body||{},requestTimeZone(req),({captureId,completed,changed})=>{if(completed)dismissReminders(captureId);else if(changed)reopenIntoToday(captureId,req.user.id);});collaboration.publish(req.params.id);notifyJournal('structure');res.json(result);}catch(error){next(error);}});
   app.get('/api/captures/:id/collaboration',(req,res,next)=>{try{if(!seesCapture(req,res,req.params.id))return;const canEdit=circles.canEditCapture(db,req.params.id,req.user.id),enabled=Boolean(documentRow(db,req.params.id)||circles.circlesForCapture(db,req.params.id).length),row=enabled?ensureDocument(db,req.params.id):null;res.json({enabled,canEdit,generation:row?.generation,revision:row?.revision,structureRevision:db.prepare('SELECT revision FROM collaborative_structure WHERE capture_id=?').get(req.params.id)?.revision||0});}catch(error){next(error);}});
+  mountUiPreferences(app, { db, notifyUser, onChanged: () => { stored = readSettings(db); } });
   // ── настройки ──
   app.get('/api/settings',(req,res)=>{
     res.json({ settings: publicSettings(stored, process.env, req.user), editable: editableSettings(req.user), timeZone: requestTimeZone(req), spend: spendState(req.user) });
@@ -685,6 +687,10 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
         next[key] = ['requestedTimeZone','detectedTimeZone'].includes(name) && value !== 'system' ? normalizeTimeZone(value) : String(value).trim();
       }
       writeSettings(db, next);
+      if (Object.hasOwn(body, 'theme')) {
+        const preferences = writeUiPreferences(db, req.user.id, { 'pagent.theme': ['light', 'dark'].includes(body.theme) ? body.theme : null }, { mirrorTheme: false });
+        notifyUser(req.user.id, 'ui-preferences', preferences);
+      }
       rebuildServices();
       reportAudit(audit,{event:'settings_changed',result:'succeeded',keys:Object.keys(next)});
       res.json({ settings: publicSettings(stored, process.env, req.user), editable: editableSettings(req.user), timeZone: requestTimeZone(req), spend: spendState(req.user) });
@@ -1104,7 +1110,8 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     const locale = validLocaleSetting(preferences.locale) ? preferences.locale : 'system';
     const detectedLocale = validDetectedLocale(preferences.detectedLocale) ? preferences.detectedLocale : null;
     const resolvedLocale = userLocale(db, req.user.id, requestLanguages(req.get('accept-language')));
-    const attributes = `lang="${resolvedLocale}" data-account-locale="${locale}"${detectedLocale ? ` data-account-detected-locale="${detectedLocale}"` : ''}`;
+    const uiPreferences = encodeURIComponent(JSON.stringify(readUiPreferences(db, req.user.id)));
+    const attributes = `data-account-id="${req.user.id}" data-ui-preferences="${uiPreferences}" lang="${resolvedLocale}" data-account-locale="${locale}"${detectedLocale ? ` data-account-detected-locale="${detectedLocale}"` : ''}`;
     const html = fs.readFileSync(path.join(__dirname,'..','public','app.html'),'utf8').replace('<html lang="ru">', `<html ${attributes}>`);
     res.set('Cache-Control','no-store').vary('Cookie').vary('Accept-Language').type('html').send(html);
   });
