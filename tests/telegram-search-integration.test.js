@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { openDatabase, createUser, enqueueCaptureJob } from '../server/db.js';
+import { openDatabase, createUser, enqueueCaptureJob, claimCaptureJob } from '../server/db.js';
 import { createTaskSearchService } from '../server/task-search.js';
 import { installTelegramTaskSearch, TASK_SEARCH_COMMANDS } from '../server/telegram-search.js';
 
@@ -185,6 +185,36 @@ test('actual shared allowlist controls global help-only and owner chat command p
   assert.equal(own.length, 1); assert.deepEqual(own[0].params.commands.map(command => command.command), ['today', 'day', 'settings', 'help', 'find']);
   assert.equal(commandCount().filter(call => call.params.scope?.chat_id === 200).length, 0);
   assert.ok(f.calls.some(call => call.method === 'deleteMyCommands' && call.params.scope?.chat_id === 200));
+});
+
+test('startup command publication leaves SQLite available for the capture worker while awaiting Telegram', integrationOptions, async t => {
+  const f = fixture(t);
+  const queued = enqueueCaptureJob(f.db, { userId: f.userId, raw: 'Startup worker task', selectedProvider: 'fallback' });
+  let scopedRequestStarted = false, releaseCommands;
+  const commandsPaused = new Promise(resolve => { releaseCommands = resolve; });
+  const fetch = async (url, options) => {
+    const method = url.split('/').at(-1), params = JSON.parse(options.body || '{}');
+    if (method === 'setMyCommands' && params.scope?.chat_id === 100) {
+      scopedRequestStarted = true;
+      await commandsPaused;
+    }
+    if (method === 'getUpdates') await new Promise(resolve => setImmediate(resolve));
+    const result = method === 'getUpdates' ? [] : { id: 1, username: 'fixture_bot' };
+    return new Response(JSON.stringify({ ok: true, result }), { status: 200 });
+  };
+  const service = createSharedTelegramService({ db: f.db, canAccessDaySummary: f.access, token: () => 'fixture-token', fetch, now: f.now,
+    userActive: id => id === f.userId, additionalCommands: () => TASK_SEARCH_COMMANDS, avatar: () => null });
+  service.start();
+  try {
+    for (let attempt = 0; attempt < 100 && !scopedRequestStarted; attempt++) await new Promise(resolve => setImmediate(resolve));
+    assert.equal(scopedRequestStarted, true);
+    const claim = claimCaptureJob(f.db, { owner: 'fixture-worker', leaseToken: 'fixture-lease', leaseMs: 60000, currentTime: f.now().toISOString() });
+    assert.equal(claim.id, queued.jobId);
+    assert.equal(claim.state, 'running');
+  } finally {
+    releaseCommands();
+    await service.stop();
+  }
 });
 
 test('actual shared revocation across asynchronous query/page removes stale result, criteria and controls', integrationOptions, async t => {

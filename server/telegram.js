@@ -416,7 +416,8 @@ export function createTelegramService({
   // @BotFather, не трогаем: заполняем, только если его нет.
   async function setupBot() {
     await call('setMyCommands', { commands: [{ command: 'help', description: 'Как записывать в Кизуну' }] }).catch(() => {});
-    for (const link of db.prepare("SELECT l.* FROM telegram_links l JOIN users u ON u.id=l.user_id WHERE u.status='active'").iterate()) {
+    const links = db.prepare("SELECT l.* FROM telegram_links l JOIN users u ON u.id=l.user_id WHERE u.status='active'").all();
+    for (const link of links) {
       await setupPrivateCommands(link);
     }
     const current = await call('getMyDescription', {}).catch(() => null);
