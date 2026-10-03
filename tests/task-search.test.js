@@ -117,7 +117,7 @@ test('malformed date-like tokens clarify instead of removing or truncating the p
   const f = fixture(t);
   const onDate = f.add({ raw: 'Документы', createdAt: '2026-10-03T12:00:00Z' });
   f.add({ raw: 'Документы', createdAt: '2026-09-01T12:00:00Z' });
-  for (const query of ['документы за 2026-2-30', 'документы за 2026-10-030', 'документы за 2026-10-03x']) {
+  for (const query of ['документы за 2026-2-30', 'документы за 2026-10-030', 'документы за 2026-10-03x', 'документы за 2026--10-03', 'документы за 2026-10-', 'документы за 2026-10-03-4', 'документы за 2026-10-03-04', 'документы за 2026-10']) {
     const response = f.search(query);
     assert.match(response.clarification || '', /существующую дату.*YYYY-MM-DD/, query);
     assert.deepEqual(response.items, [], query);
@@ -125,7 +125,13 @@ test('malformed date-like tokens clarify instead of removing or truncating the p
     assert.equal(response.criteria, undefined, query);
   }
   assert.deepEqual(f.search('документы за (2026-10-03)').items.map(item => item.captureId), [onDate.id]);
-  assert.deepEqual(f.search('документы за 2026-10-01 — 2026-10-03').items.map(item => item.captureId), [onDate.id]);
+  for (const query of ['документы за 2026-10-01 — 2026-10-03', 'документы за 2026-10-01—2026-10-03', 'документы за 2026-10-01 - 2026-10-03', 'документы за 2026-10-01-2026-10-03', 'документы 2026-10-01 и 2026-10-03']) {
+    const response = f.search(query);
+    assert.equal(response.clarification, undefined, query);
+    assert.deepEqual(response.criteria.period, { from: '2026-10-01', to: '2026-10-03' }, query);
+    assert.deepEqual(response.items.map(item => item.captureId), [onDate.id], query);
+  }
+  for (const query of ['документы версии v2-final', 'документы версии v2-10']) assert.equal(parseTaskSearchQuery(query).clarification, undefined, query);
 });
 
 test('history beyond 500 and concept morphology are searched without cross-user or archive leakage', t => {
