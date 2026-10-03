@@ -345,7 +345,7 @@ test('the running bot collects a burst by the pause and fills in its commands on
   ctx.app.telegram.start();
   try {
     await eventually(async () => assert.equal((await ctx.api.get('/api/telegram').expect(200)).body.bot.state, 'ok'));
-    assert.deepEqual(ctx.fake.bot.commands.map(command => command.command), ['help']);
+    assert.deepEqual(ctx.fake.bot.commands.map(command => command.command), ['today','day','settings','help']);
     assert.match(ctx.fake.bot.description, /Кизуна запишет их в ваш журнал/);
     ctx.fake.push({ text: 'Глянуть до пятницы', date: unix(NOW) });
     await new Promise(resolve => setTimeout(resolve, 30));

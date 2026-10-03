@@ -455,6 +455,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   // вложения, живое обновление вкладок.
   telegram = createTelegramService({
     db, now, audit,
+    onSettingsChanged: () => { stored = readSettings(db); },
     token: () => environment().PAGENT_TELEGRAM_BOT_TOKEN || null,
     apiBase: () => process.env.PAGENT_TELEGRAM_API_BASE || TELEGRAM_API,
     fetch: telegramFetch,
