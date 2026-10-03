@@ -31,6 +31,8 @@ import * as chat from './chat.js';
 import { registerNotesRoutes, afterCapture } from './notes-tree.js';
 import { createTelegramService, TELEGRAM_API } from './telegram.js';
 import { createTelegramDaySummaryAccess } from './telegram-day-access.js';
+import { createTaskSearchService } from './task-search.js';
+import { installTelegramTaskSearch, TASK_SEARCH_COMMANDS } from './telegram-search.js';
 import QRCode from 'qrcode';
 import { createSecretBox } from './secrets.js';
 import { createReminderService, ReminderWorker, validRemindHour, REMIND_MAX_MINUTES } from './reminders.js';
@@ -454,6 +456,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   // журнала, служба делает через эти крючки — теми же шагами, что запись с
   // главной: очередь разбора под потолком расходов, место и ссылки заметки,
   // вложения, живое обновление вкладок.
+  const taskSearch = createTaskSearchService(db);
   telegram = createTelegramService({
     db, now, audit,
     canAccessDaySummary: createTelegramDaySummaryAccess(),
@@ -496,9 +499,15 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
       return { state: job.state, classification: row ? JSON.parse(row.classification_json) : null, parts: job.state === 'succeeded' ? splitPartsOf(db, captureId) : [] };
     },
     onLink: userId => notifyUser(userId, 'telegram', { at: now().toISOString() }),
+    onCaptureSaved: ({ captureId, userId, messages, link }) => {
+      const current = db.prepare('SELECT * FROM telegram_links WHERE telegram_id=?').get(link.telegram_id);
+      if (findUserById(db, userId)?.status === 'active' && current?.user_id === userId && String(current.chat_id) === String(link.chat_id) && current.linked_at === link.linked_at) taskSearch.recordOrigins({ captureId, userId, messages });
+    },
+    additionalCommands: () => app.telegramTaskSearch?.installed ? TASK_SEARCH_COMMANDS : [],
     ...telegramOptions,
   });
   app.telegram = telegram;
+  app.telegramTaskSearch = installTelegramTaskSearch({ menuRouter: telegram.menuRouter, db, search: taskSearch, now, timeZone: timeZoneFor });
   administration = createAdministration({ db, now, audit,
     botConfigured: () => Boolean(environment().PAGENT_TELEGRAM_BOT_TOKEN),
     sendTelegram: message => telegram.sendAdminNotification(message),

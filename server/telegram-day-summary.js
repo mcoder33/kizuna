@@ -97,8 +97,9 @@ export function createTelegramDaySummaryRouter({db,canAccess=()=>false,now=()=>n
   const isDayPending=state=>state?.mode==='date' || state?.mode==='time';
   const clearRevokedDay=link=>{if(!canAccess(link.user_id) && isDayPending(interactions.get(link)))interactions.clear(link);};
   const replyKeyboard=link=>{
-    if(link && canAccess(link.user_id))return summaryReplyKeyboard(extraButtons);
-    const keyboard=[];for(const {text,row} of extraButtons){if(!keyboard[row])keyboard[row]=[];keyboard[row].push(text);}
+    const visibleButtons=extraButtons.filter(button=>!button.visible || button.visible(link));
+    if(link && canAccess(link.user_id))return summaryReplyKeyboard(visibleButtons);
+    const keyboard=[];for(const {text,row} of visibleButtons){if(!keyboard[row])keyboard[row]=[];keyboard[row].push(text);}
     return keyboard.some(row=>row?.length)?{keyboard:keyboard.filter(row=>row?.length),resize_keyboard:true,is_persistent:true}:undefined;
   };
   const sendFresh=(link,text,markup)=>{
@@ -178,9 +179,9 @@ export function createTelegramDaySummaryRouter({db,canAccess=()=>false,now=()=>n
     if(enable||day){if(!dayFresh(link))return true;const change=enable?{type:'enabled',phase:enable[1],value:enable[2]==='1'}:{type:'weekday',day:Number(day[1]),value:day[2]==='1'};changeSummaryPreferences(db,link.user_id,change,{now:now(),onChanged:onSettingsChanged});await settings(link);return true;}
     return false;
   }
-  return{routeMessage,routeCallback,beforeLinkCommand,currentReview,interactions,replyKeyboard,clear:link=>interactions.clear(link),
+  return{routeMessage,routeCallback,beforeLinkCommand,currentReview,interactions,replyKeyboard,canAccessMenu:link=>Boolean(link && dayFresh(link)),clear:link=>interactions.clear(link),
     registerMessageRoute:handler=>messageRoutes.push(handler),registerPendingMode:(name,mode)=>pendingModes.set(name,mode),
     registerCallbackRoute:handler=>callbackRoutes.push(handler),registerPreflight:handler=>preflights.push(handler),
-    registerReplyKeyboardButton(text,{row=0}={}){if(typeof text!=='string'||!text.trim()||text.length>64||!Number.isInteger(row)||row<0||row>2)throw new RangeError('Invalid keyboard button');if(!extraButtons.some(button=>button.text===text&&button.row===row))extraButtons.push({text,row});keyboardShown.clear();},
+    registerReplyKeyboardButton(text,{row=0,visible=null}={}){if(typeof text!=='string'||!text.trim()||text.length>64||!Number.isInteger(row)||row<0||row>2||(visible!==null && typeof visible!=='function'))throw new RangeError('Invalid keyboard button');if(!extraButtons.some(button=>button.text===text&&button.row===row))extraButtons.push({text,row,visible});keyboardShown.clear();},
   };
 }
