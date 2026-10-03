@@ -73,7 +73,8 @@ export function parseTaskSearchQuery(query, { now = new Date(), timeZone = 'Euro
   if (!person && pronoun) person = previousCriteria?.person || null;
   const today = dateInZone(now, timeZone);
   let period = null;
-  const dates = lower.match(/\d{4}-\d{2}-\d{2}/g) || [];
+  // Validate complete date-like tokens before extracting a period; never truncate a malformed field.
+  const dates = lower.match(/[\p{L}\p{N}_]*\d+-\d+-\d+[\p{L}\p{N}_]*/gu) || [];
   if (dates.some(date => !validIsoDate(date)) || dates.length > 2) return { clarification: 'Укажите существующую дату или диапазон в формате YYYY-MM-DD.' };
   if (dates.length) {
     if (dates.length === 2 && dates[0] > dates[1]) return { clarification: 'Начало периода должно быть раньше его конца.' };

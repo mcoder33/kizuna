@@ -113,6 +113,21 @@ test('period means added or completed, with explicit dates and no implicit deadl
   assert.equal(f.service.byId({ userId: f.userId, captureId: added.id }).createdAt, '2026-09-27T22:00:00Z');
 });
 
+test('malformed date-like tokens clarify instead of removing or truncating the period', t => {
+  const f = fixture(t);
+  const onDate = f.add({ raw: 'Документы', createdAt: '2026-10-03T12:00:00Z' });
+  f.add({ raw: 'Документы', createdAt: '2026-09-01T12:00:00Z' });
+  for (const query of ['документы за 2026-2-30', 'документы за 2026-10-030', 'документы за 2026-10-03x']) {
+    const response = f.search(query);
+    assert.match(response.clarification || '', /существующую дату.*YYYY-MM-DD/, query);
+    assert.deepEqual(response.items, [], query);
+    assert.equal(response.matchedCount, 0, query);
+    assert.equal(response.criteria, undefined, query);
+  }
+  assert.deepEqual(f.search('документы за (2026-10-03)').items.map(item => item.captureId), [onDate.id]);
+  assert.deepEqual(f.search('документы за 2026-10-01 — 2026-10-03').items.map(item => item.captureId), [onDate.id]);
+});
+
 test('history beyond 500 and concept morphology are searched without cross-user or archive leakage', t => {
   const f = fixture(t);
   const old = f.add({ raw: 'Отправить бумаги', createdAt: '2020-01-01T00:00:00Z' });
