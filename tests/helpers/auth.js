@@ -1,4 +1,4 @@
-import request from 'supertest';
+import request from './http.js';
 import { createUser, findUserByEmail, updateUser } from '../../server/db.js';
 import { hashPassword } from '../../server/auth.js';
 

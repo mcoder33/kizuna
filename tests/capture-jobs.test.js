@@ -125,7 +125,8 @@ test('worker honors its bounded concurrency while it renews an active lease',asy
 });
 
 test('expired running lease is reclaimed by a bounded worker and migrations include durable tables',async()=>{
-  const { app, api, databasePath }=fixture({status:async()=>({selectedProvider:'fallback'}),classify:async raw=>classification(raw),answer:async()=>({})},{leaseMs:5,maxConcurrent:1,pollMs:5});
+  // Only the previous claim must expire; the recovery worker needs a valid lease under suite CPU load.
+  const { app, api, databasePath }=fixture({status:async()=>({selectedProvider:'fallback'}),classify:async raw=>classification(raw),answer:async()=>({})},{leaseMs:1000,maxConcurrent:1,pollMs:5});
   const queued=(await api.post('/api/captures').set('Prefer','respond-async').send({raw:'Вернуть после перезапуска'})).body;
   const db=openDatabase(databasePath); const claim=claimCaptureJob(db,{owner:'previous-worker',leaseToken:'previous-token',leaseMs:1}); assert.equal(claim.id,queued.jobId); await new Promise(resolve=>setTimeout(resolve,10));
   app.captureJobWorker.start(); await eventually(async()=>assert.equal((await api.get(queued.statusUrl)).body.state,'succeeded'));
