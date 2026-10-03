@@ -33,6 +33,7 @@ import { createTelegramService, TELEGRAM_API } from './telegram.js';
 import { createReportImageService } from './report-images.js';
 import { createTelegramDaySummaryAccess, createTelegramTaskSearchAccess } from './telegram-day-access.js';
 import { createTaskSearchService } from './task-search.js';
+import { createAiTaskSearchService } from './ai-task-search.js';
 import { installTelegramTaskSearch, TASK_SEARCH_COMMANDS } from './telegram-search.js';
 import QRCode from 'qrcode';
 import { createSecretBox } from './secrets.js';
@@ -178,8 +179,9 @@ function reportAudit(audit, event) { try { audit(event); } catch {} }
 // учёта не должен ронять разбор записи.
 function noteUsage(db, result, kind, userId = null) {
   try {
-    if (!result?.usage || !result.usedProvider || result.usedProvider === 'fallback') return;
-    recordUsage(db, { provider:result.usedProvider, model:result.model || null, kind, inputTokens:result.usage.inputTokens, outputTokens:result.usage.outputTokens, costUsd:result.usage.costUsd, userId });
+    const provider = kind === 'planSearch' && providerIds.has(result?.usageProvider) ? result.usageProvider : result?.usedProvider;
+    if (!result?.usage || !provider || provider === 'fallback') return;
+    recordUsage(db, { provider, model:result.model || null, kind, inputTokens:result.usage.inputTokens, outputTokens:result.usage.outputTokens, costUsd:result.usage.costUsd, userId });
   } catch {}
 }
 // Уточнение из карточки. Правила — в server/corrections.js.
@@ -457,8 +459,13 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   // журнала, служба делает через эти крючки — теми же шагами, что запись с
   // главной: очередь разбора под потолком расходов, место и ссылки заметки,
   // вложения, живое обновление вкладок.
-  const taskSearch = createTaskSearchService(db);
   const canAccessTaskSearch = createTelegramTaskSearchAccess();
+  const taskSearch = createAiTaskSearchService({ core:createTaskSearchService(db),
+    canAccess:userId=>findUserById(db,userId)?.status==='active' && canAccessTaskSearch(userId),
+    planSearch:(query,context,{userId,signal,isCurrent})=>typeof ai.planSearch!=='function' ? {plan:null} : executeAi(userId,'planSearch',[
+      query,context,providerIds.has(environment().PAGENT_AI_PROVIDER) ? environment().PAGENT_AI_PROVIDER : 'fallback',signal,undefined,userLocale(db,userId),
+    ],{canRun:isCurrent}),
+  });
   const reportImages = createReportImageService({directory:path.join(path.dirname(databasePath),'report-images'),env:environment,audit,
     allowGenerate:userId=>{const user=findUserById(db,userId);return user?.status==='active'&&spendState(user).allowed;},
     onUsage:(result,userId)=>noteUsage(db,result,'report_image',userId)});
@@ -1001,11 +1008,12 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     if (!release) return { provider: 'fallback', reason: 'rate_limited', requestedProvider: provider, release: () => {} };
     return { provider, release };
   }
-  async function executeAi(userId, kind, args) {
+  async function executeAi(userId, kind, args, { canRun = null } = {}) {
     const providerIndex = kind === 'classify' ? 1 : 2;
     const gate = await paidExecutionGate(userId, args[providerIndex]);
     const input = [...args]; input[providerIndex] = gate.provider;
     try {
+      if (kind==='planSearch' && (input[3]?.aborted || (canRun && !canRun()))) return {plan:null};
       const result = await ai[kind](...input);
       if (gate.reason) { result.requestedProvider = gate.requestedProvider; result.fallbackReason = gate.reason; }
       noteUsage(db, result, kind, userId);

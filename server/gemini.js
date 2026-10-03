@@ -29,6 +29,9 @@ export function geminiSchema(node) {
   const out = {};
   for (const [key, value] of Object.entries(node)) {
     if (key === 'additionalProperties') continue;
+    if (key === 'enum' && Array.isArray(value) && Array.isArray(node.type) && node.type.includes('null')) {
+      out.enum = value.filter(item => item !== null); continue;
+    }
     if (key === 'type' && Array.isArray(value)) {
       const real = value.filter(item => item !== 'null');
       out.type = real[0] || 'string';
@@ -78,6 +81,7 @@ export function createGeminiProvider({ config, fetch: fetchImplementation = glob
   let catalogue = null;
 
   async function request(path, { method = 'GET', body = null, signal, maxBytes = maximumResponseBytes } = {}) {
+    if (signal?.aborted) throw new CliRunnerError('aborted');
     if (!settings.apiKey) throw configError('not_configured');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), requestTimeout);
@@ -150,7 +154,7 @@ export function createGeminiProvider({ config, fetch: fetchImplementation = glob
     };
   }
 
-  async function invoke({ schema, schemaName, system, user, model, signal }) {
+  async function invoke({ schema, schemaName, system, user, model, signal, maximumContentBytes = Infinity }) {
     let requested = null;
     try { requested = validateRemoteModel(model); } catch { throw configError('invalid_provider'); }
     const selected = requested || (await defaultModel());
@@ -172,12 +176,16 @@ export function createGeminiProvider({ config, fetch: fetchImplementation = glob
     });
     // Отказ по правилам безопасности — это не «пустой ответ»: причина есть, и
     // она должна дойти до человека отдельной строкой, а не общей ошибкой.
-    if (payload?.promptFeedback?.blockReason) throw new CliRunnerError('schema_invalid');
-    const text = payload?.candidates?.[0]?.content?.parts?.map(part => part?.text || '').join('') || '';
-    if (!text.trim()) throw new CliRunnerError('absent_output');
-    const candidate = parseJson(text);
-    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) throw new CliRunnerError('malformed_output');
-    return { candidate, model: selected, usage: usageOf(payload) };
+    const usage = usageOf(payload);
+    try {
+      if (payload?.promptFeedback?.blockReason) throw new CliRunnerError('schema_invalid');
+      const text = payload?.candidates?.[0]?.content?.parts?.map(part => part?.text || '').join('') || '';
+      if (Buffer.byteLength(text) > maximumContentBytes) throw new CliRunnerError('oversize_output');
+      if (!text.trim()) throw new CliRunnerError('absent_output');
+      const candidate = parseJson(text);
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) throw new CliRunnerError('malformed_output');
+      return { candidate, model: selected, usage };
+    } catch (error) { if (usage) error.usage = usage; throw error; }
   }
 
   return { invoke, models, defaultModel, configured: () => Boolean(settings.apiKey) };

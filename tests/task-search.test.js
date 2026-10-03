@@ -137,7 +137,7 @@ test('malformed date-like tokens clarify instead of removing or truncating the p
 });
 
 test('history beyond 500 and concept morphology are searched without cross-user or archive leakage', t => {
-  const f = fixture(t);
+  const f = fixture(t, { clock: () => 0 });
   const old = f.add({ raw: 'Отправить бумаги', createdAt: '2020-01-01T00:00:00Z' });
   f.db.transaction(() => { for (let i = 0; i < 550; i++) f.add({ raw: 'Купить молоко' }); })();
   f.add({ raw: 'Отправить бумаги', owner: f.otherId });

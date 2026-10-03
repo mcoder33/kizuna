@@ -27,21 +27,34 @@ export function lexicalMatch(needle, value, stem) {
   const token = normalizeSearchText(needle), tokens = searchWords(value);
   if (!token) return null;
   if (normalizeSearchText(value).trim() === token || tokens.includes(token)) return { code:'exact', weight:100 };
+  const numbers=token.match(/\d+/gu)||[],valueNumbers=new Set(normalizeSearchText(value).match(/\d+/gu)||[]);
+  if(numbers.some(number=>!valueNumbers.has(number)))return null;
+  const sameNumbers=candidate=>{
+    if(!numbers.length)return true;
+    const candidateNumbers=String(candidate).match(/\d+/gu)||[];
+    return candidateNumbers.length===numbers.length && candidateNumbers.every((number,index)=>number===numbers[index]);
+  };
   if (token.startsWith('@')) return null;
   const root = stem(token);
-  if (tokens.some(word => stem(word) === root)) return { code:'form', weight:80 };
+  if (tokens.some(word => sameNumbers(word) && stem(word) === root)) return { code:'form', weight:80 };
   const sound = phonetic(token);
   // Compounds may be written with spaces or punctuation in either alphabet.
   const compact = tokens.slice(0, 64).map(phonetic).join('');
-  if (sound.length >= 4 && (tokens.some(word => phonetic(word) === sound) || compact === sound)) return { code:'translit', weight:60 };
-  if (sound.length >= 6 && sound.length <= 64 && (oneEdit(sound,compact) || tokens.slice(0,200).some(word => oneEdit(sound,phonetic(word))))) return { code:'phonetic', weight:45 };
+  if (sound.length >= 4 && (tokens.some(word => sameNumbers(word) && phonetic(word) === sound) || sameNumbers(value) && compact === sound)) return { code:'translit', weight:60 };
+  if (sound.length >= 6 && sound.length <= 64 && (sameNumbers(value) && oneEdit(sound,compact) || tokens.slice(0,200).some(word => sameNumbers(word) && oneEdit(sound,phonetic(word))))) return { code:'phonetic', weight:45 };
   const parts = searchWords(token);
+  const inflectedSound = parts.map(part => phonetic(stem(part))).join('');
+  const inflectedEnding = parts.map((part,index) => phonetic(index===parts.length-1 ? stem(part) : part)).join('');
+  const compactForms = tokens.slice(0,64).map(word => phonetic(stem(word))).join('');
+  if (parts.length > 1 && inflectedEnding.length >= 4 && (sameNumbers(value) && inflectedEnding === compact || tokens.some(word => sameNumbers(word) && phonetic(word) === inflectedEnding))) return { code:'form',weight:70 };
+  if ((parts.length > 1 || tokens.length > 1) && inflectedSound.length >= 4 && (sameNumbers(value) && inflectedSound === compactForms || tokens.some(word => sameNumbers(word) && phonetic(stem(word)) === inflectedSound))) return { code:'form',weight:70 };
+  if (parts.length > 1 && inflectedSound.length >= 6 && inflectedSound.length <= 64 && sameNumbers(value) && oneEdit(inflectedSound,compactForms)) return { code:'phonetic',weight:45 };
   if (parts.length > 1) {
     const matches = parts.slice(0,12).map(part => lexicalMatch(part,value,stem));
     if (matches.every(Boolean)) return matches.reduce((weakest,hit)=>hit.weight<weakest.weight ? hit : weakest);
   }
   const name = family(root);
-  if (name >= 0 && tokens.some(word => family(stem(word)) === name)) return { code:'name-family', weight:30 };
-  if (token.length >= 5 && token.length <= 64 && !token.startsWith('@') && tokens.slice(0, 200).some(word => word.length >= 5 && word.length <= 64 && oneEdit(token, word))) return { code:'typo', weight:40 };
+  if (name >= 0 && tokens.some(word => sameNumbers(word) && family(stem(word)) === name)) return { code:'name-family', weight:30 };
+  if (token.length >= 5 && token.length <= 64 && !token.startsWith('@') && tokens.slice(0, 200).some(word => sameNumbers(word) && word.length >= 5 && word.length <= 64 && oneEdit(token, word))) return { code:'typo', weight:40 };
   return null;
 }
