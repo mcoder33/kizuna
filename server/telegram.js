@@ -440,7 +440,7 @@ export function createTelegramService({
     if(!from || from.is_bot || chat?.type!=='private' || String(chat.id)!==String(from.id))return null;
     const link=linkByTelegram(from.id);return link && String(link.chat_id)===String(chat.id) && currentBinding(link)?link:null;
   }
-  const menuRouter=createTelegramDaySummaryRouter({db,canAccess:canAccessDaySummary,now,timeZone,review:dayReview,finalReview:finalDayReview,authorize:authorizeMessage,currentBinding,send:(chatId,text,extra)=>say(chatId,text,null,extra),acknowledge:id=>call('answerCallbackQuery',{callback_query_id:id}),onSettingsChanged});
+  const menuRouter=createTelegramDaySummaryRouter({db,canAccess:canAccessDaySummary,now,timeZone,review:dayReview,finalReview:finalDayReview,authorize:authorizeMessage,currentBinding,send:(chatId,text,extra)=>say(chatId,text,null,extra),edit:(chatId,messageId,text,extra)=>call('editMessageText',{chat_id:chatId,message_id:messageId,text,...extra}),acknowledge:id=>call('answerCallbackQuery',{callback_query_id:id}),onSettingsChanged});
   async function setupPrivateCommands(link) {
     if (!link || !currentBinding(link) || String(link.chat_id) !== String(link.telegram_id)) return;
     const scope = { type: 'chat', chat_id: link.chat_id };
