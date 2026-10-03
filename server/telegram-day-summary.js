@@ -3,6 +3,8 @@ import { dateInZone, shiftDate } from './reports.js';
 import { validIsoDate } from './repeat.js';
 import { reviewDay } from './day-review.js';
 import { createTelegramDateCalendar } from './telegram-date-calendar.js';
+import { renderDaySummaryMessage, truncateTelegramText } from './telegram-day-summary-renderer.js';
+export { renderDaySummary, renderDaySummaryMessage, truncateTelegramText } from './telegram-day-summary-renderer.js';
 
 export const DAY_SUMMARY_LABELS = { today:'☀️ Сегодня', day:'🗓 Другой день', settings:'⚙️ Настройки сводок' };
 export const DAY_SUMMARY_COMMANDS = [
@@ -53,25 +55,6 @@ export function summaryNavigation(date,today,appUrl) {
   const rows=[[{text:'← День',callback_data:`tds:date:${shiftDate(date,-1)}`},{text:'Сегодня',callback_data:`tds:date:${today}`},{text:'День →',callback_data:`tds:date:${shiftDate(date,1)}`}]];
   const url=safeSummaryLink(appUrl,date);if(url)rows.push([{text:'Открыть в Кизуне',url}]);return{inline_keyboard:rows};
 }
-export function truncateTelegramText(value,max) {
-  const text=String(value||'');if(text.length<=max)return text;
-  let end=Math.max(0,max-1);if(end>0 && /[\uD800-\uDBFF]/.test(text[end-1]) && /[\uDC00-\uDFFF]/.test(text[end]))end--;
-  return text.slice(0,end)+'…';
-}
-export function renderDaySummary(review) {
-  const heading=review.phase==='morning'?'☀️ План на':review.phase==='evening'?'🌙 Итоги за':'📅 Обзор за';
-  const formatted=new Intl.DateTimeFormat('ru-RU',{timeZone:'UTC',day:'numeric',month:'long',year:'numeric'}).format(new Date(`${review.date}T12:00:00Z`));
-  const lines=[`${heading} ${formatted}`,`Часовой пояс: ${truncateTelegramText(review.timeZone,80)}`];
-  const selected=[['meetings','🗓 Встречи'],['done','✅ Сделано'],['remaining','📌 Осталось'],['overdue','⏰ Просрочено']];
-  if(review.phase==='evening')selected.push(['added','➕ Добавлено за день']);
-  for(const [key,label]of selected){
-    const items=review[key]||[],count=review.counts?.[key]??items.length;let shown=0,body='';
-    for(const item of items){const when=key==='meetings'?`${item.allDay?'весь день':item.time||'без времени'}${item.end&&!item.allDay?`–${item.end}`:''} · `:'';const line=`• ${when}${truncateTelegramText(String(item.title||'Без названия').replace(/\s+/g,' '),140)}\n`;if(body.length+line.length>400||shown>=4)break;body+=line;shown++;}
-    const rest=count-shown;lines.push(`\n${label}: ${count}`,body.trimEnd()||(review.historyCoverage?.gaps?.length?'По доступным данным — нет.':'Нет.'));if(rest>0)lines.push(`…ещё ${rest}`);
-  }
-  const gaps=review.historyCoverage?.gaps||[];if(gaps.length)lines.push(`\n⚠️ ${truncateTelegramText(gaps.join('\n'),850)}`);
-  return truncateTelegramText(lines.join('\n'),3800);
-}
 export function selectedReviewDate(value) {
   if(validIsoDate(value))return value;
   const dotted=/^(\d{2})\.(\d{2})\.(\d{4})$/.exec(value||'');const date=dotted?`${dotted[3]}-${dotted[2]}-${dotted[1]}`:null;return validIsoDate(date)?date:null;
@@ -103,11 +86,11 @@ export function createTelegramDaySummaryRouter({db,canAccess=()=>false,now=()=>n
     const keyboard=[];for(const {text,row} of visibleButtons){if(!keyboard[row])keyboard[row]=[];keyboard[row].push(text);}
     return keyboard.some(row=>row?.length)?{keyboard:keyboard.filter(row=>row?.length),resize_keyboard:true,is_persistent:true}:undefined;
   };
-  const sendFresh=(link,text,markup)=>{
+  const sendFresh=(link,text,markup,extra={})=>{
     if(!fresh(link))return Promise.resolve(null);
     const dayMarkup=markup?.inline_keyboard?.some(row=>row.some(button=>button.callback_data?.startsWith('tds:')));
     if(dayMarkup && !canAccess(link.user_id))return Promise.resolve(null);
-    return send(link.chat_id,text,{reply_markup:markup?.keyboard?replyKeyboard(link):markup});
+    return send(link.chat_id,text,{...extra,reply_markup:markup?.keyboard?replyKeyboard(link):markup});
   };
   async function processedUpdate(update,link,message=null,callback=null){for(const handler of preflights)if(await handler({update,link,message,callback,interactions,send:sendFresh}))return true;return !fresh(link);}
   const todayOf=link=>dateInZone(now(),timeZone(link.user_id));
@@ -120,7 +103,7 @@ export function createTelegramDaySummaryRouter({db,canAccess=()=>false,now=()=>n
     if(overview && typeof overview.then==='function')throw new TypeError('Final day review must be synchronous');
     return dayFresh(link)?overview:null;
   }
-  async function showReview(link,date){if(!dayFresh(link))return;const input={userId:link.user_id,date,timeZone:timeZone(link.user_id),now:now(),phase:'manual'};await review(input);const overview=currentReview(link,input);if(overview)await sendFresh(link,renderDaySummary(overview),summaryNavigation(date,todayOf(link),link.app_url));}
+  async function showReview(link,date){if(!dayFresh(link))return;const input={userId:link.user_id,date,timeZone:timeZone(link.user_id),now:now(),phase:'manual'};await review(input);const overview=currentReview(link,input);if(overview){const {text,entities}=renderDaySummaryMessage(overview);await sendFresh(link,text,summaryNavigation(date,todayOf(link),link.app_url),{entities});}}
   async function manualDate(link){if(!dayFresh(link))return;interactions.begin(link,'date');await sendFresh(link,'Введите дату: ДД.ММ.ГГГГ или ГГГГ-ММ-ДД.\nОтмена — вернуться к заметкам.',replyKeyboard(link));}
   const calendar=createTelegramDateCalendar({now,fresh:dayFresh,todayOf,timeZone,send:sendFresh,showReview,manualDate,
     edit:edit ? (link,messageId,text,markup)=>dayFresh(link)?edit(link.chat_id,messageId,text,{reply_markup:markup}):Promise.resolve(null) : null});

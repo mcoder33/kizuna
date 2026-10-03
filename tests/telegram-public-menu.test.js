@@ -55,7 +55,7 @@ test('startup updates private commands for existing bindings; help and capture r
 });
 
 test('public access still denies inactive, unlinked and mismatched Telegram identities',async t=>{
- const f=fixture(t);f.db.prepare("UPDATE users SET status='blocked' WHERE id=?").run(f.other);await f.text('/today');await f.callback('tds:date:2031-10-03');assert.equal(f.messages().some(x=>x.params.text.includes('Обзор за')),false);
+ const f=fixture(t);f.db.prepare("UPDATE users SET status='blocked' WHERE id=?").run(f.other);await f.text('/today');await f.callback('tds:date:2031-10-03');assert.equal(f.messages().some(x=>/^📅 Обзор/.test(x.params.text)),false);
  f.db.prepare("UPDATE users SET status='active' WHERE id=?").run(f.other);f.db.prepare('UPDATE telegram_links SET chat_id=999 WHERE user_id=?').run(f.other);await f.text('🗓 Другой день');assert.equal(f.messages().some(x=>x.params.reply_markup?.inline_keyboard?.flat().some(b=>b.callback_data?.startsWith('tds:cal:'))),false);
 });
 

@@ -451,7 +451,7 @@ test('server search allowlist revokes live while public day/settings remain avai
  const ctx=fixture();t.after(()=>ctx.db.close());t.after(()=>{delete process.env.PAGENT_TELEGRAM_DAY_SUMMARY_USER_IDS;});
  process.env.PAGENT_TELEGRAM_DAY_SUMMARY_USER_IDS=ctx.api.user.id;
  await connect(ctx);assert.deepEqual(ctx.fake.said().at(-1).markup.keyboard,[['☀️ Сегодня','🗓 Другой день','Найти'],['⚙️ Настройки сводок']]);
- ctx.fake.push({text:'/today'});await deliver(ctx.app);assert.match(ctx.fake.said().at(-1).text,/Обзор за/);
+ ctx.fake.push({text:'/today'});await deliver(ctx.app);assert.match(ctx.fake.said().at(-1).text,/^📅 Обзор/);
  ctx.fake.push({text:'/settings'});await deliver(ctx.app);assert.match(ctx.fake.said().at(-1).text,/Утро: выключено, 09:00/);
  assert.equal((await ctx.api.put('/api/settings').send({telegramDaySummary:'x'}).expect(400)).body.error.code,'unknown_setting');
  process.env.PAGENT_TELEGRAM_DAY_SUMMARY_USER_IDS=ctx.api.user.id+',*';
