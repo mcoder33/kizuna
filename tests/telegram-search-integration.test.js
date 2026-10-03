@@ -311,3 +311,25 @@ test('revoked late query preserves a newer pending intent until reset notice, th
   await f.deliver(f.message('Обычная задача после уведомления'));
   assert.equal(f.db.prepare('SELECT COUNT(*) n FROM captures').get().n, 2);
 });
+
+test('actual owner search renders all project record types and explicit task/subtask filters with generic links',integrationOptions,async t=>{
+  const f=serviceFixture(t);
+  for(const [index,type] of ['task','task','task','task','task','task','note','outcome_decision','outcome_decision'].entries()) {
+    const title=`Синтетическая запись ${index}`;f.add(title);
+    const capture=f.db.prepare('SELECT id FROM captures WHERE raw=? AND user_id=?').get(title,f.userId);
+    f.db.prepare('UPDATE interpretations SET classification_json=? WHERE capture_id=?').run(JSON.stringify({primaryType:type,summary:title,entities:{projects:['ВойсОпс']}}),capture.id);
+    if(index>=2&&index<6) f.db.prepare('UPDATE captures SET subtask=1 WHERE id=?').run(capture.id);
+  }
+  const response=()=>f.calls.filter(call=>call.method==='sendMessage').at(-1).params;
+  await f.deliver(f.message('Найти'));await f.deliver(f.message('что у нас с voice ops'));
+  assert.match(response().text,/Найдено: 9/);
+  assert.equal(response().reply_markup.inline_keyboard.flat().filter(button=>button.text.includes('Открыть запись')).length,6);
+  assert.ok(response().reply_markup.inline_keyboard.flat().filter(button=>button.url).every(button=>new URL(button.url).hash.startsWith('#today?open=')));
+  await f.deliver(f.message('/find'));await f.deliver(f.message('заметки войсопс'));
+  assert.match(response().text,/Найдено: 1/);assert.match(response().text,/Заметка/);assert.doesNotMatch(response().text,/Открыто|Упоминание|Текст:|Поиск по словам/);
+  await f.deliver(f.message('/find'));await f.deliver(f.message('результаты войсопс'));
+  assert.match(response().text,/Найдено: 2/);assert.match(response().text,/Результат/);assert.doesNotMatch(response().text,/Открыто/);
+  await f.deliver(f.message('/find'));await f.deliver(f.message('задачи войсопс'));assert.match(response().text,/Найдено: 6/);
+  await f.deliver(f.message('/find'));await f.deliver(f.message('подзадачи войсопс'));assert.match(response().text,/Найдено: 4/);assert.match(response().text,/Подзадача/);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM captures').get().n,9);
+});

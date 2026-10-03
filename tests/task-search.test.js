@@ -57,12 +57,14 @@ test('requester requires source request evidence; mention and passive forward ar
   assert.equal(f.search('дела с Александром').matchedCount, 0);
 });
 
-test('same-name identities clarify; full name and username resolve without alias invention', t => {
+test('same-name related search combines identities; explicit person filter clarifies without alias invention', t => {
   const f = fixture(t);
   for (const [name, id, username] of [['Саша Иванов', 10, 'sasha_one'], ['Саша Петров', 11, 'sasha_two']]) {
     const row = f.add(); f.service.recordOrigins({ captureId: row.id, userId: f.userId, messages: [f.forward(name, id, undefined, username)] });
   }
-  assert.ok(f.search('дела с Сашей').clarification);
+  assert.equal(f.search('дела с Сашей').matchedCount,2);
+  assert.equal(f.search('дела с Сашей').clarification,undefined);
+  assert.ok(f.search('человек Саша').clarification);
   assert.equal(f.search('дела с Сашей Иванов').matchedCount, 1);
   assert.equal(f.search('дела с @sasha_two').matchedCount, 1);
 });
@@ -143,7 +145,9 @@ test('history beyond 500 and concept morphology are searched without cross-user 
   f.add({ raw: 'Отправить бумаги', type: 'note' });
   f.add({ raw: 'Отправить бумаги', proposedActions: [{ type: 'task', title: 'Отправить бумаги' }], projection: false });
   const result = f.search('отправить документы');
-  assert.equal(result.partialCoverage, false); assert.deepEqual(result.items.map(item => item.captureId), [old.id]);
+  assert.equal(result.partialCoverage, false); assert.equal(result.matchedCount, 4);
+  assert.ok(result.items.some(item => item.captureId === old.id));
+  assert.equal(f.search('задачи отправить документы').matchedCount, 2);
   assert.equal(f.service.byId({ userId: f.otherId, captureId: old.id }), null);
   assert.equal(f.search('неизвестная тема').matchedCount, 0);
 });
@@ -214,7 +218,7 @@ test('quoted or reported speech does not establish owner promise or source-autho
   assert.equal(related.evidence[0].role, 'forward-author');
 });
 
-test('participants use display names and identity evidence; duplicate known people clarify', t => {
+test('participants use display names and preserve separate identities in combined related search', t => {
   const f = fixture(t);
   f.db.prepare('UPDATE users SET display_name=? WHERE id=?').run('Петя', f.otherId);
   const first = f.add();
@@ -227,7 +231,8 @@ test('participants use display names and identity evidence; duplicate known peop
   f.db.prepare('UPDATE users SET display_name=? WHERE id=?').run('Петя', third);
   const second = f.add();
   f.db.prepare('INSERT INTO capture_people(capture_id,user_id,added_at) VALUES(?,?,?)').run(second.id, third, fixedNow.toISOString());
-  assert.ok(f.search('дела с Петей').clarification);
+  assert.equal(f.search('дела с Петей').matchedCount,2);
+  assert.ok(f.search('человек Петя').clarification);
   assert.deepEqual(f.search('дела с guest@test.example').items.map(item => item.captureId), [second.id]);
   f.db.prepare('UPDATE capture_people SET removed_at=? WHERE capture_id=? AND user_id=?').run(fixedNow.toISOString(), second.id, third);
   assert.equal(f.search('дела с Петей').matchedCount, 1);
@@ -240,11 +245,11 @@ test('identity checking is inside the scan budget and stops with explicit incomp
   })();
   let ticks = 0;
   const service = createTaskSearchService(f.db, { maxScanMs: 1, clock: () => ++ticks });
-  const result = service.search({ userId: f.userId, query: 'дела с Сашей' });
+  const result = service.search({ userId: f.userId, query: 'человек Саша' });
   assert.equal(result.partialCoverage, true);
   assert.ok(result.clarification); assert.deepEqual(result.items, []);
   assert.ok(ticks <= 4, `budget stopped after ${ticks} checks`);
-  const ambiguous = f.search('дела с Сашей');
+  const ambiguous = f.search('человек Саша');
   assert.ok(ambiguous.clarification); assert.equal(ambiguous.people.length, 2);
 });
 

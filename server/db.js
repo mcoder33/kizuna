@@ -12,7 +12,7 @@ import { migrateNotifications } from './notifications.js';
 import { migrateNotesTree } from './notes-schema.js';
 import { migrateAdministration } from './admin-schema.js';
 import { registerDaySummaryHistoryClock, migrateDaySummaryHistory, exportDaySummaryHistory, resetDaySummaryHistory, daySummaryHistoryRowCount } from './day-summary-history.js';
-import { initializeTaskSearchSchema } from './task-search.js';
+import { initializeTaskSearchSchema, exportEntrySearchTraces, resetEntrySearchTraces } from './task-search.js';
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -1474,13 +1474,15 @@ function stemMatch(token, rawTokens) {
 }
 export function search(db, query, userId=null) { const normalizedQuery=normalizeMemoryText(query),tokens=meaningfulTokens(normalizedQuery); const rows=db.prepare('SELECT id,raw,created_at FROM captures WHERE deleted_at IS NULL AND user_id IS ? ORDER BY created_at DESC LIMIT ?').all(userId,500); const results=[]; for(const row of rows){const normalizedRaw=normalizeMemoryText(row.raw),rawTokens=new Set(normalizedRaw.split(' '));const matched=tokens.filter(token=>rawTokens.has(token));const stemmed=tokens.filter(token=>!rawTokens.has(token)&&stemMatch(token,rawTokens));const exact=Boolean(normalizedQuery&&normalizedRaw.includes(normalizedQuery));if(!matched.length&&!stemmed.length&&!exact)continue;const score=(exact?10000:0)+matched.length*100+stemmed.length*40+(tokens.length?(matched.length+stemmed.length*0.5)/tokens.length:0)*10;results.push({captureId:row.id,snippet:row.raw.slice(0,500),createdAt:row.created_at,score})}return results.sort((left,right)=>right.score-left.score||right.createdAt.localeCompare(left.createdAt)).slice(0,12).map(({score,...result})=>result); }
 const EXPORT_ROW_LIMIT = 10_000;
-const exportTables = ['captures','interpretations','corrections','projections','capture_jobs','capture_job_events','ledger_events','daily_briefs','daily_brief_sources','comments','assignments','task_search_origins'];
+const exportTables = ['captures','interpretations','corrections','projections','capture_jobs','capture_job_events','ledger_events','daily_briefs','daily_brief_sources','comments','assignments','task_search_origins','entry_search_traces','entry_search_trace_matches'];
 // Экспорт и очистка — только про свой журнал: чужие записи не выгружаются и
 // не стираются, даже если очистку запускает администратор.
 const MINE = 'capture_id IN (SELECT id FROM captures WHERE user_id IS ?)';
 const ownedRows = {
   captures: ['user_id IS ?', 1],
   task_search_origins: [MINE, 1],
+  entry_search_traces: ['requester_id IS ?',1],
+  entry_search_trace_matches: ['trace_id IN (SELECT id FROM entry_search_traces WHERE requester_id IS ?)',1],
   interpretations: [MINE, 1], corrections: [MINE, 1], projections: [MINE, 1],
   capture_notes: [MINE, 1], capture_attachments: [MINE, 1], capture_jobs: [MINE, 1],
   ledger_events: [MINE, 1],
@@ -1526,6 +1528,7 @@ const ownedRows = {
 const mineWhere = table => 'WHERE ' + ownedRows[table][0];
 function exportRowCount(db, userId) { return exportTables.reduce((total, table) => total + db.prepare(`SELECT COUNT(*) AS count FROM ${table} ${mineWhere(table)}`).get(userId).count, 0); }
 export function exportLedger(db, userId = null) {
+  const entrySearchTraces = exportEntrySearchTraces(db,userId);
   const rowCount = exportRowCount(db, userId) + daySummaryHistoryRowCount(db,userId);
   if (rowCount > EXPORT_ROW_LIMIT) return { limitExceeded:true, rowCount, rowLimit:EXPORT_ROW_LIMIT };
   const mine = (table, columns, order) => db.prepare(`SELECT ${columns} FROM ${table} ${mineWhere(table)} ORDER BY ${order}`).all(userId);
@@ -1537,6 +1540,7 @@ export function exportLedger(db, userId = null) {
     rowLimit:EXPORT_ROW_LIMIT,
     captures:mine('captures','*','created_at,id'),
     taskSearchOrigins:mine('task_search_origins','*','created_at,id'),
+    entrySearchTraces,
     interpretations:mine('interpretations','id,capture_id,version,status,provider,created_at,supersedes_id','created_at,id'),
     corrections:mine('corrections','id,capture_id,interpretation_id,correction_json,note,created_at','created_at,id'),
     projections:mine('projections','id,capture_id,interpretation_id,projection_type,status,undo_group_id,created_at,reverted_at','created_at,id'),
@@ -1558,6 +1562,7 @@ export function resetLedger(db, userId = null) {
     db.prepare('INSERT INTO task_search_generations(user_key,generation) VALUES(?,1) ON CONFLICT(user_key) DO UPDATE SET generation=generation+1').run(userId ?? '__orphan__');
     db.prepare('UPDATE task_search_intents SET expires_at=? WHERE user_id IS ?').run(now(), userId);
     db.prepare(`DELETE FROM task_search_origins ${mineWhere('task_search_origins')}`).run(userId);
+    resetEntrySearchTraces(db,userId);
     db.exec('DROP TRIGGER IF EXISTS ledger_events_no_update; DROP TRIGGER IF EXISTS ledger_events_no_delete;');
     try {
       // Порядок важен: сначала то, что ссылается, потом то, на что ссылаются.
