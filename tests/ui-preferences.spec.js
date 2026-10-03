@@ -31,8 +31,9 @@ test('existing anonymous sizes migrate once and never leak into a later account'
   const registration = await account.post('/api/auth/register', { data: { email: firstEmail, password } });
   expect(registration.status()).toBe(201);
   const { user } = await registration.json();
-  expect((await request.post(`/api/admin/users/${user.id}/approve`, { data: {} })).ok()).toBe(true);
-  expect((await account.post('/api/auth/login', { data: { email: firstEmail, password } })).ok()).toBe(true);
+  expect(user.status).toBe('active');
+  const firstSession = await (await account.get('/api/auth/state')).json();
+  expect(firstSession.authenticated).toBe(true); expect(firstSession.user.id).toBe(user.id);
   expect((await account.patch('/api/ui-preferences', { data: { userId: user.id, changes: { 'kizuna-board-filter': '[]' } } })).ok()).toBe(true);
   const savedState = await account.storageState();
   // Reuse only the account's cookies so this browser has no legacy owner.
@@ -57,8 +58,11 @@ test('existing anonymous sizes migrate once and never leak into a later account'
     expect(await cssValue(page, '#today', '--capture-width')).toBe('960px');
     await expect(page.locator('#review-dialog')).toHaveAttribute('data-mode', 'side');
     const email = `view-sync-${Date.now()}@kizuna.test`;
-    const registered = await (await request.post('/api/auth/register', { data: { email, password } })).json();
-    expect((await request.post(`/api/admin/users/${registered.user.id}/approve`, { data: {} })).ok()).toBe(true);
+    const response = await account.post('/api/auth/register', { data: { email, password } });
+    expect(response.status()).toBe(201); const registered = await response.json();
+    expect(registered.user.status).toBe('active');
+    const secondSession = await (await account.get('/api/auth/state')).json();
+    expect(secondSession.authenticated).toBe(true); expect(secondSession.user.id).toBe(registered.user.id);
     expect((await context.request.post('/api/auth/login', { data: { email, password } })).ok()).toBe(true);
     // The old document must not upload its queue under the new session cookie.
     await legacy.evaluate(async () => {

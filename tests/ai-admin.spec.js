@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { E2E_PORT } from './fixtures/e2e-env.js';
 
-test('ИИ и расходы находятся только в администрировании, выбор модели действует для обычного пользователя', async ({ page, browser, playwright, request }) => {
+test('ИИ и расходы находятся только в администрировании, выбор модели действует для обычного пользователя', async ({ page, browser, playwright, request }, testInfo) => {
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto('/#settings');
   await expect(page.locator('#setting-name')).toBeVisible();
@@ -17,15 +17,17 @@ test('ИИ и расходы находятся только в админист
   await expect.poll(async () => (await (await request.get('/api/settings')).json()).settings.openrouterModel).toBe('fake/deep');
   await page.reload();
   await expect(page.locator('#ai-model')).toHaveValue('fake/deep');
-  await page.screenshot({ path: 'tmp/ai-admin-preview/ai-desktop.png', fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('ai-desktop.png'), fullPage: true });
   const api = await playwright.request.newContext({ baseURL: `http://127.0.0.1:${E2E_PORT}` });
   let context;
   try {
     const email = `ai-user-${Date.now()}@kizuna.test`, password = 'ai-admin-e2e-password';
     const registered = await api.post('/api/auth/register', { data: { email, password, locale: 'ru' } });
+    expect(registered.status()).toBe(201);
     const { user } = await registered.json();
-    expect((await request.post(`/api/admin/users/${user.id}/approve`, { data: {} })).status()).toBe(200);
-    expect((await api.post('/api/auth/login', { data: { email, password } })).status()).toBe(200);
+    expect(user.status).toBe('active');
+    const state = await (await api.get('/api/auth/state')).json();
+    expect(state.authenticated).toBe(true); expect(state.user.id).toBe(user.id);
     const created = await api.post('/api/captures', { data: { raw: 'Проверить настройку общей модели' } });
     expect(created.status()).toBe(201);
     expect((await created.json()).provenance.model).toBe('fake/deep');
@@ -39,7 +41,7 @@ test('ИИ и расходы находятся только в админист
     await expect(personal.locator('#usage-table')).toBeHidden();
     await expect(personal.locator('#memory-new')).toBeVisible();
     await expect(personal.locator('#account-admin-link')).toBeHidden();
-    await personal.screenshot({ path: 'tmp/ai-admin-preview/personal-mobile.png', fullPage: true });
+    await personal.screenshot({ path: testInfo.outputPath('personal-mobile.png'), fullPage: true });
     expect(calls.filter(url => ['/api/status', '/api/usage', '/api/admin/usage', '/api/admin/ai/status'].includes(url))).toEqual([]);
     await page.goto('/#admin/service/usage');
     await expect(page.locator('#usage-table')).toContainText('Всего');
@@ -47,7 +49,7 @@ test('ИИ и расходы находятся только в админист
     await page.locator('#admin-usage-period').selectOption('all');
     await page.setViewportSize({ width: 390, height: 844 });
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await page.screenshot({ path: 'tmp/ai-admin-preview/usage-mobile.png', fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath('usage-mobile.png'), fullPage: true });
     expect(errors).toEqual([]);
   } finally {
     await request.put('/api/settings', { data: { openrouterModel: 'fake/fast' } });
