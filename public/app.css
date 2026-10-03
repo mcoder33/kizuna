@@ -2287,6 +2287,94 @@ dialog form > div {
   font-size: 20px;
   line-height: 1;
 }
+/* Тёплый графит для поля записи. Светлая тема сохраняет свою палитру,
+   а размеры поля и развёрнутого листа по-прежнему выбирает человек. */
+:root[data-theme='dark'] .today-page {
+  --capture-surface: linear-gradient(145deg, #292725, #242322 76%);
+  --capture-line: #49403b;
+  --capture-radius: 23px;
+  --capture-padding: 24px;
+  --capture-mobile-padding: 18px;
+  --capture-shadow: 0 16px 45px -25px #000, 0 1px 0 #ffffff07 inset;
+  --capture-focus-line: #ab7873;
+  --capture-focus-shadow: 0 0 0 3px #d7907910, 0 22px 60px -35px #000;
+  --capture-ink: #ede6df;
+  --capture-placeholder: #b2a69e;
+  --capture-caret: #f2a99c;
+  --capture-expand-ink: #a49991;
+  --capture-button: #e94a69;
+  --capture-button-hover: #f05b77;
+  --capture-button-ink: #20201e;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .today-page {
+    --capture-surface: linear-gradient(145deg, #292725, #242322 76%);
+    --capture-line: #49403b;
+    --capture-radius: 23px;
+    --capture-padding: 24px;
+    --capture-mobile-padding: 18px;
+    --capture-shadow: 0 16px 45px -25px #000, 0 1px 0 #ffffff07 inset;
+    --capture-focus-line: #ab7873;
+    --capture-focus-shadow: 0 0 0 3px #d7907910, 0 22px 60px -35px #000;
+    --capture-ink: #ede6df;
+    --capture-placeholder: #b2a69e;
+    --capture-caret: #f2a99c;
+    --capture-expand-ink: #a49991;
+    --capture-button: #e94a69;
+    --capture-button-hover: #f05b77;
+    --capture-button-ink: #20201e;
+  }
+}
+.today-page .capture {
+  background: var(--capture-surface, var(--n-100));
+  border-color: var(--capture-line, var(--n-92));
+  border-radius: var(--capture-radius, 18px);
+  padding: var(--capture-padding, 16px);
+}
+.today-page .capture:not(.capture-large) {
+  box-shadow: var(--capture-shadow, 0 18px 42px var(--n-25-a8));
+}
+.today-page .capture:focus-within {
+  border-color: var(--capture-focus-line, var(--n-85));
+  box-shadow: var(--capture-focus-shadow, 0 18px 42px var(--n-25-a8), 0 0 0 3px var(--blue-54-a16));
+}
+.today-page .capture .md-field {
+  color: var(--capture-ink, var(--ink));
+  caret-color: var(--capture-caret, auto);
+}
+.today-page .capture .md-field[data-empty='true']::before,
+.today-page .capture-prompt {
+  color: var(--capture-placeholder, var(--n-76));
+}
+.today-page .capture-prompt {
+  top: calc(var(--capture-padding, 16px) + 5px);
+  left: calc(var(--capture-padding, 16px) + 5px);
+  right: calc(var(--capture-padding, 16px) + 5px);
+}
+.today-page .capture-expand {
+  color: var(--capture-expand-ink, var(--n-82));
+}
+.today-page .capture-expand:hover,
+.today-page .capture-large .capture-expand {
+  color: var(--capture-placeholder, var(--muted));
+}
+.today-page .capture #capture-submit {
+  background: var(--capture-button, var(--coral));
+  color: var(--capture-button-ink, var(--n-100));
+}
+.today-page .capture #capture-submit:not(:disabled):hover {
+  background: var(--capture-button-hover, var(--coral));
+}
+@media (max-width: 760px) {
+  .today-page .capture {
+    padding: var(--capture-mobile-padding, 16px);
+  }
+  .today-page .capture-prompt {
+    top: calc(var(--capture-mobile-padding, 16px) + 5px);
+    left: calc(var(--capture-mobile-padding, 16px) + 5px);
+    right: calc(var(--capture-mobile-padding, 16px) + 5px);
+  }
+}
 .today-page .dashboard {
   margin-top: 0;
 }
