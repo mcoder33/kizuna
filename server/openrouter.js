@@ -53,6 +53,7 @@ export function createOpenRouterProvider({ config, fetch: fetchImplementation = 
   let catalogue = null;
 
   async function request(path, { method = 'GET', body = null, signal, authenticated = true, maxBytes = maximumResponseBytes } = {}) {
+    if (signal?.aborted) throw new CliRunnerError('aborted');
     if (authenticated && !settings.apiKey) throw configError('not_configured');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), requestTimeout);
@@ -151,7 +152,7 @@ export function createOpenRouterProvider({ config, fetch: fetchImplementation = 
     return available[0]?.id || null;
   }
 
-  async function invoke({ schema, schemaName, system, user, model, signal }) {
+  async function invoke({ schema, schemaName, system, user, model, signal, maximumContentBytes = Infinity, cachedPricesOnly = false }) {
     let requested = null;
     try { requested = validateRemoteModel(model); } catch { throw configError('invalid_provider'); }
     const selected = requested || (await defaultModel());
@@ -174,13 +175,18 @@ export function createOpenRouterProvider({ config, fetch: fetchImplementation = 
         response_format: { type: 'json_schema', json_schema: { name: schemaName, strict: true, schema: JSON.parse(schema) } },
       },
     });
-    const content = payload?.choices?.[0]?.message?.content;
-    if (typeof content !== 'string' || !content.trim()) throw new CliRunnerError('absent_output');
-    const candidate = parseJson(content);
-    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) throw new CliRunnerError('malformed_output');
     const usedModel = typeof payload?.model === 'string' ? payload.model.slice(0, 120) : selected;
-    const price = (await prices())?.get(usedModel) || (await prices())?.get(selected) || null;
-    return { candidate, model: usedModel, usage: usageOf(payload, usedModel, price) };
+    const knownUsage = usageOf(payload, usedModel, priceList?.get(usedModel) || priceList?.get(selected) || null);
+    try {
+      const content = payload?.choices?.[0]?.message?.content;
+      if (typeof content === 'string' && Buffer.byteLength(content) > maximumContentBytes) throw new CliRunnerError('oversize_output');
+      if (typeof content !== 'string' || !content.trim()) throw new CliRunnerError('absent_output');
+      const candidate = parseJson(content);
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) throw new CliRunnerError('malformed_output');
+      const availablePrices = cachedPricesOnly ? priceList : await prices();
+      const price = availablePrices?.get(usedModel) || availablePrices?.get(selected) || null;
+      return { candidate, model: usedModel, usage: usageOf(payload, usedModel, price) };
+    } catch (error) { if (knownUsage) error.usage = knownUsage; throw error; }
   }
 
   return { invoke, models, defaultModel, configured: () => Boolean(settings.apiKey) };

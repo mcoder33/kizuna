@@ -6,6 +6,7 @@ import { createCliRunner, CliRunnerError } from './cli-runner.js';
 import { createCliProviders, answerSchemaJson, classificationSchemaJson, classifyGuidance } from './cli-providers.js';
 import { createGeminiProvider } from './gemini.js';
 import { createOpenRouterProvider } from './openrouter.js';
+import { searchPlanJsonSchema, searchPlanSchemaJson, searchPlanPrompt, sanitizeSearchPlanContext, validateSearchPlan, SEARCH_PLAN_MAX_BYTES } from './search-plan.js';
 
 export { answerSchemaJson, classificationSchemaJson };
 
@@ -75,7 +76,7 @@ function validatedAnswer(candidate, sources) {
   } catch (error) { throw Object.assign(new Error('answer invalid'), { code:error.message === 'citation failure' ? 'citation_failure' : 'schema_invalid' }); }
 }
 
-export function createAiService({ apiKey, model, client, fetch: fetchImplementation, timeoutMs = 8000, maxCalls = 100, timeZone = 'Europe/Samara', now = () => new Date(), env = process.env, cliConfig, cliRunner, cliProviders, openRouter, gemini: geminiProvider, log = (event) => console.warn(JSON.stringify(event)), retryDelayMs = 1500 } = {}) {
+export function createAiService({ apiKey, model, client, fetch: fetchImplementation, timeoutMs = 8000, searchPlanTimeoutMs = 10000, maxCalls = 100, timeZone = 'Europe/Samara', now = () => new Date(), env = process.env, cliConfig, cliRunner, cliProviders, openRouter, gemini: geminiProvider, log = (event) => console.warn(JSON.stringify(event)), retryDelayMs = 1500 } = {}) {
   apiKey ??= env.OPENAI_API_KEY;
   model ||= env.PAGENT_AI_MODEL || 'gpt-5.6-luna';
   const openai = client || (apiKey ? new OpenAI({ apiKey, fetch:fetchImplementation, timeout: timeoutMs, maxRetries: 0 }) : null);
@@ -101,7 +102,7 @@ export function createAiService({ apiKey, model, client, fetch: fetchImplementat
   // Последний расход OpenAI: их SDK отдаёт его вместе с ответом, а наружу он
   // уходит рядом с провенансом.
   let lastOpenAiUsage = null;
-  async function callOpenAi(name, schema, instructions, input, signal, selectedModel) {
+  async function callOpenAi(name, schema, instructions, input, signal, selectedModel, { maximumBytes = Infinity, withUsage = false } = {}) {
     if (!openaiEnabled || calls >= maxCalls) throw Object.assign(new Error('not configured'), { code:openaiEnabled ? 'rate_limited' : 'not_configured' });
     if (signal?.aborted) throw new CliRunnerError('aborted');
     calls += 1; const timeoutController = new AbortController(); const callSignal = signal ? AbortSignal.any([signal, timeoutController.signal]) : timeoutController.signal; let rejectTimeout;
@@ -111,12 +112,14 @@ export function createAiService({ apiKey, model, client, fetch: fetchImplementat
     try {
       const chosen = selectedModel || model;
       const response = await Promise.race([openai.responses.create({ model:chosen, store:false, tools:[], instructions, input, text:{ format:{ type:'json_schema', name, schema, strict:true } } }, { signal:callSignal }), timeoutError, ...(abortError ? [abortError] : [])]);
-      if (!response.output_text) throw Object.assign(new Error('empty'), { code:'malformed_output' });
       // Токены считает сам провайдер — берём его цифры, а не свои догадки.
-      lastOpenAiUsage = response.usage
+      const usage = response.usage
         ? { inputTokens: Number(response.usage.input_tokens) || 0, outputTokens: Number(response.usage.output_tokens) || 0, costUsd: null }
         : null;
-      try { return JSON.parse(response.output_text); } catch { throw Object.assign(new Error('bad json'), { code:'malformed_output' }); }
+      lastOpenAiUsage = usage;
+      if (!response.output_text) throw Object.assign(new Error('empty'), { code:'malformed_output', ...(withUsage ? { usage } : {}) });
+      if (Buffer.byteLength(response.output_text) > maximumBytes) throw Object.assign(new Error('oversize output'), { code: 'oversize_output', ...(withUsage ? { usage } : {}) });
+      try { const candidate = JSON.parse(response.output_text); return withUsage ? { candidate, usage } : candidate; } catch { throw Object.assign(new Error('bad json'), { code:'malformed_output', ...(withUsage ? { usage } : {}) }); }
     } finally { clearTimeout(timer); if (onAbort) signal.removeEventListener('abort', onAbort); }
   }
   let openaiCatalogue = null;
@@ -162,6 +165,36 @@ export function createAiService({ apiKey, model, client, fetch: fetchImplementat
   }
   return {
     status,
+    async planSearch(query, context = {}, selectedProvider, signal, selectedModel, locale = 'ru') {
+      const request = requestedProvider(selectedProvider); const requested = request.id;
+      const fallback = (reason, usage = null) => ({ plan: null, ...provenance(requested, 'fallback', reason, null), usage, usageProvider: usage ? requested : null });
+      if (request.reason || requested === 'fallback') return fallback(request.reason || 'not_configured');
+      if (signal?.aborted) return fallback('aborted');
+      let usage = null; let timer; let onAbort;
+      const controller = new AbortController();
+      const callSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+      try {
+        const sanitizedContext = sanitizeSearchPlanContext(context, { now: now(), timeZone });
+        const prompt = searchPlanPrompt(query, sanitizedContext, { locale });
+        const selected = requestedModel(selectedModel);
+        const timeout = new Promise((_, reject) => { timer = setTimeout(() => {
+          reject(Object.assign(new Error('Search planning timeout'), { code: 'timeout' })); controller.abort();
+        }, Math.max(1, Math.min(10000, searchPlanTimeoutMs))); });
+        const aborted = signal ? new Promise((_, reject) => {
+          onAbort = () => reject(new CliRunnerError('aborted')); signal.addEventListener('abort', onAbort, { once: true });
+        }) : null;
+        const invoke = async () => {
+          if (requested === 'openai') return callOpenAi('pagent_search_plan', searchPlanJsonSchema, prompt.system, prompt.user, callSignal, selected || model, { maximumBytes: SEARCH_PLAN_MAX_BYTES, withUsage: true }).then(output => ({ ...output, model: selected || model }));
+          if (requested === 'openrouter' || requested === 'gemini') return (requested === 'openrouter' ? remote : google).invoke({ schema: searchPlanSchemaJson(), schemaName: 'pagent_search_plan', system: prompt.system, user: prompt.user, model: selected, signal: callSignal, maximumContentBytes: SEARCH_PLAN_MAX_BYTES, cachedPricesOnly: true });
+          return localCli.invoke(requested, 'planSearch', query, undefined, callSignal, '', locale, sanitizedContext);
+        };
+        const output = await Promise.race([invoke(), timeout, ...(aborted ? [aborted] : [])]);
+        usage = output.usage || null;
+        const plan = validateSearchPlan(output.candidate);
+        return { plan, ...provenance(requested, requested, null, output.model || null), usage, usageProvider: usage ? requested : null };
+      } catch (error) { return fallback(signal?.aborted ? 'aborted' : fallbackReason(error), usage || error?.usage || null); }
+      finally { clearTimeout(timer); if (onAbort) signal.removeEventListener('abort', onAbort); }
+    },
     // memory — что помощник уже знает про этого человека: словарь его проектов
     // и правила, которые он однажды поправил. Подсказка приходит снаружи, а не
     // собирается здесь: у разбора нет ни базы, ни хозяина записи.

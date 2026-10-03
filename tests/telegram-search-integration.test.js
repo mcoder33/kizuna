@@ -8,6 +8,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { openDatabase, createUser, enqueueCaptureJob, claimCaptureJob } from '../server/db.js';
 import { createTaskSearchService } from '../server/task-search.js';
 import { installTelegramTaskSearch, TASK_SEARCH_COMMANDS } from '../server/telegram-search.js';
+import { createApp } from '../server/index.js';
+const basePlanForIntegration = topicGroups => ({version:1,type:null,status:null,period:null,basis:'createdOrCompleted',person:null,role:'related',exclusivePerson:false,topicGroups,clarification:null});
 
 const dependencyRoot = process.env.PAGENT_SUMMARY_WORKTREE ? path.resolve(process.env.PAGENT_SUMMARY_WORKTREE) : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dependencyFiles = ['telegram-day-summary.js', 'telegram.js', 'day-summary-history.js', 'telegram-day-access.js'].map(name => path.join(dependencyRoot, 'server', name));
@@ -76,6 +78,71 @@ test('actual shared router: query exits to capture; forwarding, weekday query an
   await f.router.routeMessage(f.message('Найти')); await f.router.routeMessage(f.message('покажи пятницу'));
   assert.equal(f.captures.length, 2); assert.equal(f.plugin.pending(f.link), false);
   await f.router.routeMessage(f.message('Найти')); await f.router.routeMessage(f.message('Отмена')); assert.equal(f.plugin.pending(f.link), false);
+});
+
+function aiAppFixture(t,{planner,limit=null,aiAdmissionOptions={}}={}) {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'kizuna-ai-search-app-'));
+  const keys=['PAGENT_AI_PROVIDER','PAGENT_TELEGRAM_TASK_SEARCH_USER_IDS','PAGENT_TELEGRAM_BOT_TOKEN'];
+  const old=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
+  process.env.PAGENT_AI_PROVIDER='gemini';process.env.PAGENT_TELEGRAM_BOT_TOKEN='fixture-token';
+  const updates=[],sent=[],calls=[];let messageId=1,updateId=1;
+  const app=createApp({databasePath:path.join(directory,'db.sqlite'),now:()=>new Date('2026-10-03T12:00:00Z'),aiAdmissionOptions,
+    aiService:{status:async()=>assert.fail('search must not enumerate provider catalogues'),planSearch:async(...args)=>{calls.push(args);return planner ? planner(...args) : {plan:basePlanForIntegration([['войс опс','Voice Ops']]),usedProvider:'gemini',provider:'gemini',usageProvider:'gemini',usage:{inputTokens:9,outputTokens:5,costUsd:null}};}},
+    telegramOptions:{groupWindowMs:0},telegramFetch:async(url,request)=>{const method=url.split('/').at(-1),params=JSON.parse(request.body||'{}');if(method==='sendMessage')sent.push(params);return new Response(JSON.stringify({ok:true,result:method==='getUpdates'?updates.splice(0):{message_id:999}}),{status:200});},
+  });
+  const db=app.database,owner=createUser(db,{email:'owner@ai-fixture.test',passwordHash:'test',monthlyLimitUsd:limit}).id,other=createUser(db,{email:'other@ai-fixture.test',passwordHash:'test'}).id;
+  process.env.PAGENT_TELEGRAM_TASK_SEARCH_USER_IDS=owner;
+  for(const [id,telegram] of [[owner,100],[other,200]])db.prepare('INSERT INTO telegram_links(user_id,telegram_id,chat_id,linked_at,app_url) VALUES(?,?,?,?,?)').run(id,telegram,telegram,'2026-10-03T00:00:00Z','https://fixture.invalid/');
+  const message=(text,telegram=100,extra={})=>({message_id:messageId++,from:{id:telegram},chat:{id:telegram,type:'private'},text,...extra});
+  const deliver=async message=>{updates.push({update_id:updateId++,message});await app.telegram.pollOnce();};
+  const add=()=>{const id=crypto.randomUUID(),interpretation=crypto.randomUUID();db.prepare('INSERT INTO captures(id,raw,created_at,occurred_at,user_id) VALUES(?,?,?,?,?)').run(id,'Нейтральная запись','2026-10-02T12:00:00Z','2026-10-02T12:00:00Z',owner);db.prepare('INSERT INTO interpretations VALUES(?,?,?,?,?,?,?,?,?,NULL)').run(interpretation,id,1,'active','manual',null,JSON.stringify({primaryType:'task',summary:'Нейтральная запись',entities:{projects:['ВойсОпс']}}),'{}','2026-10-02T12:00:00Z');return id;};
+  t.after(async()=>{await Promise.allSettled([app.telegram.stop(),app.captureJobWorker.stop(),app.calendarSyncWorker.stop(),app.reminderWorker.stop()]);app.closeEventStreams();db.close();fs.rmSync(directory,{recursive:true,force:true});for(const key of keys){if(old[key]===undefined)delete process.env[key];else process.env[key]=old[key];}});
+  return {app,db,owner,other,message,deliver,updates,sent,calls,add};
+}
+
+test('actual app search invokes configured AI once, charges usage, keeps pages/replay model-free and denies other users',async t=>{
+  const f=aiAppFixture(t);for(let index=0;index<9;index++)f.add();
+  await f.deliver(f.message('/find'));const query=f.message('Можешь собрать мне всё касающееся войс опса?');await f.deliver(query);
+  assert.equal(f.calls.length,1);assert.equal(f.calls[0][2],'gemini');assert.match(f.sent.at(-1).text,/Найдено: 9/);
+  assert.equal(JSON.stringify(f.calls[0][1]).includes('Нейтральная'),false);assert.equal(JSON.stringify(f.calls[0][1]).includes(f.owner),false);
+  const page=f.sent.at(-1).reply_markup.inline_keyboard.at(-1)[0].callback_data;
+  f.updates.push({update_id:999,callback_query:{id:'page-ai',from:{id:100},message:{chat:{id:100,type:'private'}},data:page}});await f.app.telegram.pollOnce();assert.equal(f.calls.length,1);
+  await f.deliver(query);assert.equal(f.calls.length,1);
+  await f.deliver(f.message('/find',200));assert.equal(f.calls.length,1);
+  const usage=f.db.prepare("SELECT * FROM usage_events WHERE kind='planSearch'").all();assert.equal(usage.length,1);assert.equal(usage[0].provider,'gemini');assert.equal(usage[0].input_tokens,9);assert.equal(usage[0].output_tokens,5);assert.equal(usage[0].user_id,f.owner);
+});
+
+test('actual app accounts for paid planner failure and monthly budget prevents another paid operation',async t=>{
+  const f=aiAppFixture(t,{planner:async(query,context,provider)=>provider==='fallback'?{plan:null,usedProvider:'fallback',usage:null}:{plan:null,usedProvider:'fallback',provider:'fallback',requestedProvider:'gemini',usageProvider:'gemini',fallbackReason:'malformed_output',usage:{inputTokens:9,outputTokens:5,costUsd:0.25}}});f.add();
+  await f.deliver(f.message('/find'));await f.deliver(f.message('покажи все что связанно с войс опсом'));
+  assert.match(f.sent.at(-1).text,/Найдено: 1/);assert.equal(f.db.prepare("SELECT COUNT(*) n FROM usage_events WHERE kind='planSearch' AND provider='gemini' AND cost_usd=0.25").get().n,1);
+  f.db.prepare('UPDATE users SET monthly_limit_usd=0 WHERE id=?').run(f.owner);
+  await f.deliver(f.message('/find'));await f.deliver(f.message('войсопс'));
+  assert.equal(f.calls.at(-1)[2],'fallback','budget downgrades before paid operation');assert.match(f.sent.at(-1).text,/Найдено: 1/);
+  assert.equal(f.db.prepare("SELECT COUNT(*) n FROM usage_events WHERE kind='planSearch'").get().n,1,'fallback makes no paid call and adds no fabricated usage');
+});
+
+test('actual app admission rejects a second paid search and cancellation aborts the old interaction',async t=>{
+  let resolve;
+  const f=aiAppFixture(t,{aiAdmissionOptions:{maxConcurrent:1},planner:async(query,context,provider)=>provider==='fallback'?{plan:null,usage:null}:new Promise(done=>{resolve=done;})});f.add();
+  await f.deliver(f.message('/find'));
+  const first=f.message('войсопс'),pending=f.app.telegram.menuRouter.routeMessage(first,{update:{message:first}});
+  await new Promise(done=>setImmediate(done));assert.equal(f.calls.length,1);
+  await f.app.telegram.menuRouter.routeMessage(f.message('/find'));
+  await f.app.telegram.menuRouter.routeMessage(f.message('войсопс'));
+  assert.equal(f.calls.length,2);assert.equal(f.calls[1][2],'fallback');assert.equal(f.calls[0][3].aborted,true);assert.match(f.sent.at(-1).text,/Найдено: 1/);
+  const before=f.sent.length;resolve({plan:basePlanForIntegration([['войсопс']]),usedProvider:'gemini',usageProvider:'gemini',usage:{inputTokens:9,outputTokens:5,costUsd:null}});await pending;await new Promise(done=>setImmediate(done));assert.equal(f.sent.length,before);
+  assert.equal(f.db.prepare("SELECT COUNT(*) n FROM usage_events WHERE kind='planSearch'").get().n,1);
+});
+
+test('actual app discards a late AI result after owner restriction is revoked',async t=>{
+  let resolve;
+  const f=aiAppFixture(t,{planner:async()=>new Promise(done=>{resolve=done;})});f.add();
+  await f.deliver(f.message('/find'));const before=f.sent.length;
+  const query=f.message('войсопс'),pending=f.app.telegram.menuRouter.routeMessage(query,{update:{message:query}});
+  await new Promise(done=>setImmediate(done));process.env.PAGENT_TELEGRAM_TASK_SEARCH_USER_IDS='';
+  resolve({plan:basePlanForIntegration([['войсопс']]),usedProvider:'gemini'});await pending;
+  assert.equal(f.sent.length,before);assert.equal(f.db.prepare('SELECT COUNT(*) n FROM entry_search_traces').get().n,0);
 });
 
 test('actual shared router: replay precedes mode clearing; page ACK, summary picker, expiry and restart', integrationOptions, async t => {

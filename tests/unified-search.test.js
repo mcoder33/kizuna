@@ -47,6 +47,31 @@ test('metadata-only nine-entry project searches every type, includes subtasks an
   assert.equal(new Set([...first.items,...second.items].map(item=>item.captureId)).size,9);
 });
 
+test('fallback understands original screenshot scaffolding and generic inflected compound projects',t=>{
+  const f=fixture(t);
+  const voice=f.add({projects:['ВойсОпс']}),signal=f.add({projects:['SignalHub']}),deploy=f.add({projects:['DeployBot']});
+  for(const query of ['покажи все что связанно с войс опсом','покажи все что связанно с войс опс','покажи все что связано с войс опс','войсопс']) {
+    assert.deepEqual(f.search(query).items.map(item=>item.captureId),[voice.id],query);
+  }
+  const signalResult=f.search('покажи все что связанно с сигнал хабом');
+  assert.deepEqual(signalResult.items.map(item=>item.captureId),[signal.id],JSON.stringify(signalResult));
+  assert.deepEqual(f.search('покажи все что связанно с деплой ботом').items.map(item=>item.captureId),[deploy.id]);
+  assert.equal(f.search('связанный кабель').matchedCount,0,'meaningful adjective must not become scaffolding');
+  assert.equal(f.search('сигнал').matchedCount,0,'a component alone does not identify a compound project');
+});
+
+test('topic matching respects the shared scan deadline even when the candidate is discarded',t=>{
+  let ticks=0;
+  const f=fixture(t,{maxScanMs:5,clock:()=>++ticks});
+  f.add();
+  const result=f.search('alpha beta gamma delta epsilon',f.owner,{criteria:{person:null,role:'related',exclusivePerson:false,status:'all',type:null,period:null,basis:'createdOrCompleted',terms:[],lexicalTerms:[],topicGroups:[['alpha beta gamma delta epsilon']]}});
+  assert.equal(result.items.length,0);
+  assert.equal(result.partialCoverage,true);
+  assert.equal(result.hasMore,false);
+  assert.ok(ticks<30,`matching stopped within the shared budget: ${ticks}`);
+  assert.doesNotMatch(JSON.stringify(result),/matchTruncated/);
+});
+
 test('compound transliteration is generic across unrelated projects and spelling affinity stays below exact metadata',t=>{
   const f=fixture(t);
   const signal=f.add({projects:['Signal Hub']}),deploy=f.add({projects:['Deploy Bot']});

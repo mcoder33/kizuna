@@ -101,6 +101,7 @@ export function installTelegramTaskSearch({ menuRouter, db, search = createTaskS
     const key = baseKey(link), expected = scope(link), previous = sessions.get(key);
     if (previous?.scope === expected) return previous;
     const savedIntent = readIntent.get(key);
+    previous?.searchController?.abort();
     const next = { scope: expected, revision: ++revision, pendingUntil: null, expiredPending: Boolean(previous?.pendingUntil || previous?.expiredPending || savedIntent), lastCriteria: null, contextUntil: 0 };
     sessions.set(key, next); clearPages(link);
     if (sessions.size > LIMIT) sessions.delete(sessions.keys().next().value);
@@ -108,6 +109,7 @@ export function installTelegramTaskSearch({ menuRouter, db, search = createTaskS
   }
   function clear(link, interactions, { keepCriteria = false, preserveSharedMode = false } = {}) {
     const state = session(link);
+    state.searchController?.abort();state.searchController=null;
     state.revision = ++revision;
     state.pendingUntil = null; state.expiredPending = false;
     if (!keepCriteria) { state.lastCriteria = null; state.contextUntil = 0; }
@@ -155,8 +157,9 @@ export function installTelegramTaskSearch({ menuRouter, db, search = createTaskS
     const previousCriteria = state.contextUntil > now().getTime() ? state.lastCriteria : null;
     clear(link, interactions, { keepCriteria: true });
     const expectedRevision = state.revision;
+    const controller = new AbortController();state.searchController=controller;
     try {
-      const result = await search.search({ userId: link.user_id, query: text, now: now(), timeZone: timeZone(link.user_id), previousCriteria, ...(supplied || {}) });
+      const result = await search.search({ userId: link.user_id, query: text, now: now(), timeZone: timeZone(link.user_id), previousCriteria, ...(supplied || {}),signal:controller.signal,isCurrent:()=>currentInteraction(link,state,expectedRevision) });
       if (!currentInteraction(link, state, expectedRevision)) { discardRevokedContext(link, interactions); return true; }
       refreshResult(link,result);
       if (result.criteria && !result.clarification) { state.lastCriteria = structuredClone(result.criteria); state.contextUntil = now().getTime() + TTL; }
@@ -166,7 +169,7 @@ export function installTelegramTaskSearch({ menuRouter, db, search = createTaskS
     } catch {
       discardRevokedContext(link, interactions);
       await safeSend(send, link, 'Поиск не выполнен. Нажмите «Найти» и попробуйте снова. Обычный текст сохраняется.', menuRouter.replyKeyboard(link), expectedScope, state, expectedRevision);
-    }
+    } finally { if(state.searchController===controller)state.searchController=null; }
     return true;
   }
 

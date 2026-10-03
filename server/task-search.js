@@ -47,6 +47,8 @@ const nameForms = new Map([
   ['петя', 'петя'], ['пети', 'петя'], ['пете', 'петя'], ['петю', 'петя'], ['петей', 'петя'],
   ['маша', 'маша'], ['маши', 'маша'], ['маше', 'маша'], ['машу', 'маша'], ['машей', 'маша'],
   ['аня', 'аня'], ['ани', 'аня'], ['ане', 'аня'], ['аню', 'аня'], ['аней', 'аня'],
+  ['саня', 'саня'], ['сани', 'саня'], ['сане', 'саня'], ['саню', 'саня'], ['саней', 'саня'],
+  ['миша', 'миша'], ['миши', 'миша'], ['мише', 'миша'], ['мишу', 'миша'], ['мишей', 'миша'],
 ]);
 function stem(value) {
   const word = normalize(value);
@@ -54,14 +56,15 @@ function stem(value) {
   return word.length > 4 ? word.replace(/(?:иями|ами|ями|ого|ему|ому|ий|ый|ой|ая|яя|ое|ее|ые|ие|ов|ев|ам|ям|ах|ях|ом|ем|ть|ти|а|я|ы|и|у|ю|е)$/u, '') : word;
 }
 const conceptGroups = [
-  ['документ', 'бумага'], ['отчет', 'сводка'], ['оплата', 'платеж', 'заплатить', 'оплатить'],
-  ['проверить', 'проверка'], ['отправить', 'прислать', 'выслать', 'отослать'], ['звонок', 'позвонить', 'созвон'],
+  ['документ', 'бумага', 'document', 'documents', 'paper', 'papers'], ['отчет', 'сводка', 'report', 'reports', 'summary'], ['оплата', 'платеж', 'заплатить', 'оплатить', 'payment', 'pay'],
+  ['проверить', 'проверка'], ['отправить', 'прислать', 'выслать', 'отослать', 'send'], ['звонок', 'позвонить', 'созвон', 'call', 'calls'],
 ];
 const concepts = new Map();
 for (const group of conceptGroups) for (const word of group) concepts.set(stem(word), group.map(stem));
 const stopWords = new Set(words('какие какой какая что мне мои моих меня я у нас вообще дела дело задачи задача найти найди покажи поиск были было есть еще не сделал сделала выполнил выполнила сделано выполнено выполненные завершенные открытые незавершенные осталось осталось связанные связано связаны с со и или по за в на к от про все просьбы просьба попросил попросила обещал обещала обещаю ему ей им сегодня вчера неделю прошлую прошлой прошлые добавленные созданные выполнены срок сроки запланированные запланировано до').map(stem));
-for (const word of words('дай все всё связанное связанного проект проекта проекту проекты подзадачи подзадача заметка заметки заметку результаты результат решения решение встреча встречи встречу идеи идея вопросы вопрос человек участник')) stopWords.add(stem(word));
-const typeWords = { task:['задача','задачи','задачу','задач'], subtask:['подзадача','подзадачи','подзадачу','подзадач'], note:['заметка','заметки','заметку','заметок'], outcome_decision:['результат','результаты','результатов','решение','решения'], meeting_event:['встреча','встречи','встречу','встреч'], idea_question:['идея','идеи','идей','вопрос','вопросы'] };
+for (const word of words('дай все всё связанно связанное связанного где надо записи запись закрытые закрыто закрыты сделано делал человек участник проект проекта проекту проекты подзадачи подзадача заметка заметки заметку результаты результат решения решение встреча встречи встречу идеи идея вопросы вопрос')) stopWords.add(stem(word));
+const typeWords = { task:['задача','задачи','задачу','задач','туду','тудушки','task','tasks','todo','todos'], subtask:['подзадача','подзадачи','подзадачу','подзадач','subtask','subtasks'], note:['заметка','заметки','заметку','заметок','note','notes'], outcome_decision:['результат','результаты','результатов','решение','решения','result','results'], meeting_event:['встреча','встречи','встречу','встреч','meeting','meetings','event','events'], idea_question:['идея','идеи','идей','вопрос','вопросы','idea','ideas','question','questions'] };
+for(const word of Object.values(typeWords).flat())stopWords.add(stem(word));
 
 function extractPerson(query, role) {
   const lower = normalize(query);
@@ -78,7 +81,33 @@ function extractPerson(query, role) {
   return query.slice(start, end) + (surname && !stopWords.has(stem(surname)) ? ` ${surname}` : '');
 }
 
-export function parseTaskSearchQuery(query, { now = new Date(), timeZone = 'Europe/Samara', previousCriteria = null } = {}) {
+export function validateLiteralSearchDates(query) {
+  const fragments = normalize(query).match(/[\p{L}\p{N}_-]+/gu) || [];
+  const dates = fragments.filter(fragment => /^\d{4,}-/.test(fragment) || /\d+(?:-+\d*){2}/.test(fragment)).flatMap(fragment => {
+    const range = /^(\d{4}-\d{2}-\d{2})-+(\d{4}-\d{2}-\d{2})$/.exec(fragment);
+    return range ? range.slice(1) : [fragment];
+  });
+  if (dates.some(date => !validIsoDate(date)) || dates.length > 2) return { dates, clarification: 'Укажите существующую дату или диапазон в формате YYYY-MM-DD.' };
+  if (dates.length === 2 && dates[0] > dates[1]) return { dates, clarification: 'Начало периода должно быть раньше его конца.' };
+  return { dates };
+}
+
+export function searchTopicsEquivalent(needle, value) {
+  if (lexicalMatch(needle, value, stem)) return true;
+  return words(needle).every(word => lexicalMatch(word, value, stem) || (concepts.get(stem(word)) || []).some(alternative => lexicalMatch(alternative, value, stem)));
+}
+
+export function searchMeaningfulActionTopics(query) {
+  return words(query).filter(word=>concepts.has(stem(word)));
+}
+
+const intentWords = new Set(words('ну пожалуйста привет здравствуйте можешь можете можно хочу хотел хотела хочется увидеть посмотреть собрать показать найти получить выдать отобразить расскажи расскажите скажи подскажи подскажите перечисли перечислите помоги помогите интересует интересуют нужно нужны надо требуется касающееся касающиеся касается относящееся относящиеся относится связанные связанное связанного связанно происходит происходило происходят происходили творится такое такие эта эти этот это там тут наши наш наши моё мое свой свои любые весь вся всё всёшки вообще сейчас су мне пожалуйста незаконченные незаконченных незакончено законченные законченных закончено обязательства обязательство поручения поручение перед').map(stem));
+export function searchQueryTopicAnchors(criteria) {
+  return (criteria.lexicalTerms || criteria.terms || []).filter(word=>!intentWords.has(stem(word))
+    && !/^(?:не)?(?:закончен|законч|заверш|выполн|закрыт|открыт|сделан|готов|заплан|добавлен|создан|записк|туду|тудуш|недел|месяц|год(?:а|ов|у|ы)?$|прошл|следующ|ближайш|понедельник|вторник|сред[ау]|четверг|пятниц|суббот|воскресен|январ|феврал|март|апрел|ма[йя]|июн|июл|август|сентябр|октябр|ноябр|декабр)/u.test(word));
+}
+
+export function parseTaskSearchQuery(query, { now = new Date(), timeZone = 'Europe/Samara', previousCriteria = null, allowNaturalPeriod = false } = {}) {
   const original = String(query || '').trim().slice(0, 1000);
   const lower = normalize(original);
   const tokens = new Set(words(lower));
@@ -92,12 +121,8 @@ export function parseTaskSearchQuery(query, { now = new Date(), timeZone = 'Euro
   let period = null;
   // Keep each whole hyphenated fragment, including empty or extra fields.
   // A year prefix or three numeric fields identifies a date candidate; ISO validation stays strict.
-  const fragments = lower.match(/[\p{L}\p{N}_-]+/gu) || [];
-  const dates = fragments.filter(fragment => /^\d{4,}-/.test(fragment) || /\d+(?:-+\d*){2}/.test(fragment)).flatMap(fragment => {
-    const range = /^(\d{4}-\d{2}-\d{2})-+(\d{4}-\d{2}-\d{2})$/.exec(fragment);
-    return range ? range.slice(1) : [fragment];
-  });
-  if (dates.some(date => !validIsoDate(date)) || dates.length > 2) return { clarification: 'Укажите существующую дату или диапазон в формате YYYY-MM-DD.' };
+  const { dates, clarification: invalidDate } = validateLiteralSearchDates(original);
+  if (invalidDate) return { clarification: invalidDate };
   if (dates.length) {
     if (dates.length === 2 && dates[0] > dates[1]) return { clarification: 'Начало периода должно быть раньше его конца.' };
     period = { from: dates[0], to: dates.at(-1) };
@@ -106,14 +131,14 @@ export function parseTaskSearchQuery(query, { now = new Date(), timeZone = 'Euro
     period = { from: shiftDate(today, -weekday - 6), to: shiftDate(today, -weekday) };
   } else if (tokens.has('вчера')) period = { from: shiftDate(today, -1), to: shiftDate(today, -1) };
   else if (tokens.has('сегодня')) period = { from: today, to: today };
-  else if ([...tokens].some(token => /^(?:недел[\p{L}]*|месяц[\p{L}]*|год(?:а|ов|у|ы)?)$/u.test(token)) || /\d{1,2}[./]\d{1,2}/u.test(lower)) return { clarification: 'Уточните период: «за прошлую неделю» или YYYY-MM-DD — YYYY-MM-DD.' };
-  const status = /не\s+(?:сделал|выполнил)|не[\s-]?заверш|открыт|остал/u.test(lower) ? 'open'
-    : /сделан|выполнен|завершен/u.test(lower) ? 'done' : 'all';
+  else if (!allowNaturalPeriod && ([...tokens].some(token => /^(?:недел[\p{L}]*|месяц[\p{L}]*|год(?:а|ов|у|ы)?)$/u.test(token)) || /\d{1,2}[./]\d{1,2}/u.test(lower))) return { clarification: 'Уточните период: «за прошлую неделю» или YYYY-MM-DD — YYYY-MM-DD.' };
+  const status = /не\s+(?:сделал|сделан|выполнил|выполнен|готов)|не[\s-]?заверш|открыт|остал|недоделан|в\s+процессе/u.test(lower) || tokens.has('open') || tokens.has('incomplete') ? 'open'
+    : /сделан|сделал|выполнен|завершен|закрыт|готов[оы]/u.test(lower) || ['done','closed','completed','finished'].some(token=>tokens.has(token)) ? 'done' : 'all';
   const basis = /срок|дедлайн/u.test(lower) ? 'deadline' : /заплан/u.test(lower) ? 'scheduled'
-    : /добавлен|создан/u.test(lower) ? 'created' : /выполнен|завершен/u.test(lower) ? 'completed' : 'createdOrCompleted';
+    : /добавлен|создан/u.test(lower) ? 'created' : status === 'done' ? 'completed' : 'createdOrCompleted';
   const excluded = new Set([...words(person).map(stem), ...dates.flatMap(words).map(stem)]);
-  const terms = [...new Set(words(original).map(stem).filter(word => !stopWords.has(word) && !excluded.has(word) && !/^\d+$/.test(word)))].slice(0, 12);
-  const lexicalTerms = [...new Set(words(original).filter(word => !stopWords.has(stem(word)) && !excluded.has(stem(word)) && !/^\d+$/.test(word)))].slice(0, 12);
+  const terms = [...new Set(words(original).map(stem).filter(word => !stopWords.has(word) && !excluded.has(word)))].slice(0, 12);
+  const lexicalTerms = [...new Set(words(original).filter(word => !stopWords.has(stem(word)) && !excluded.has(stem(word))))].slice(0, 12);
   let inherited = false;
   if (previousCriteria && (pronoun || (period && !person && !terms.length))) {
     person ||= previousCriteria.person;
@@ -260,7 +285,7 @@ export function createTaskSearchService(db, { maxScanMs = 2000, clock = () => pe
       evidence:[],sourceUrl:origins.length===1 ? publicSourceUrl(origins[0].source_url) : null,timeZone };
   }
 
-  function match(entry, criteria) {
+  function match(entry, criteria, started = clock()) {
     if (criteria.type === 'subtask' ? !entry.subtask : criteria.type && entry.type !== criteria.type) return null;
     if (criteria.type === 'task' && entry.container) return null;
     const completedOccurrences = entry.occurrences.filter(item => !criteria.period || (dateInZone(new Date(item.completedAt), entry.timeZone) >= criteria.period.from && dateInZone(new Date(item.completedAt), entry.timeZone) <= criteria.period.to));
@@ -270,7 +295,7 @@ export function createTaskSearchService(db, { maxScanMs = 2000, clock = () => pe
     if (criteria.type) reasonCodes.add('type-filter');
     if (criteria.status !== 'all') reasonCodes.add('status-filter');
     const terms = criteria.lexicalTerms || criteria.terms || [];
-    const relatedCompound = criteria.role==='related' && !criteria.exclusivePerson && criteria.person && terms.length
+    const relatedCompound = !criteria.topicGroups && criteria.role==='related' && !criteria.exclusivePerson && criteria.person && terms.length
       ? bestLexical(`${criteria.person} ${terms.join(' ')}`,entry) : null;
     let score = relatedCompound?.weight || 0;
     if (relatedCompound) reasonCodes.add(relatedCompound.code);
@@ -310,8 +335,13 @@ export function createTaskSearchService(db, { maxScanMs = 2000, clock = () => pe
     }
     if (evidence.some(item => item.role === 'requester' || item.role === 'own-promise')) { score += 100; reasonCodes.add('proven-role'); }
     else if (criteria.person && !score) { score += 90; reasonCodes.add('person-form'); }
-    const compound = !relatedCompound && terms.length > 1 ? bestLexical(terms.join(' '), entry) : null;
+    const compound = !criteria.topicGroups && !relatedCompound && terms.length > 1 ? bestLexical(terms.join(' '), entry) : null;
     if (compound) { score += compound.weight; reasonCodes.add(compound.code); }
+    else if (criteria.topicGroups || (!relatedCompound && terms.length>1)) {
+      const topics=matchTopicGroups(criteria.topicGroups || terms.map(term=>[term]),entry,started);
+      if (!topics) return null;
+      score+=topics.weight;for(const code of topics.codes)reasonCodes.add(code);
+    }
     else for (const term of relatedCompound ? [] : terms) {
       let hit = bestLexical(term, entry);
       if (!hit) {
@@ -351,14 +381,64 @@ export function createTaskSearchService(db, { maxScanMs = 2000, clock = () => pe
     return best;
   }
 
+  function matchTopicGroups(groups,entry,started) {
+    if (!Array.isArray(groups) || groups.length>12 || groups.some(group=>!Array.isArray(group)||!group.length||group.length>4)) return null;
+    const cache=new Map(), functionWords=new Set(['с','со','по','для','о','об','от','к','в','на','про','и']);
+    let calls=0;
+    function chunkHit(text) {
+      if(cache.has(text))return cache.get(text);
+      if(clock()-started>maxScanMs || ++calls>256){entry.matchTruncated=true;return null;}
+      let hit=bestLexical(text,entry);
+      for(const concept of concepts.get(stem(text)) || []) {
+        const other=bestLexical(concept,entry);
+        if(other && (!hit || Math.min(50,other.weight)>hit.weight))hit={code:'concept',weight:Math.min(50,other.weight)};
+      }
+      cache.set(text,hit);return hit;
+    }
+    function phraseHit(text) {
+      const tokens=words(text).filter(token=>!functionWords.has(token));
+      if(!tokens.length || tokens.length>12)return null;
+      const positions=new Map();
+      function at(index) {
+        if(index===tokens.length)return {weight:100,codes:[]};
+        if(positions.has(index))return positions.get(index);
+        for(let end=tokens.length;end>index;end--) {
+          const head=chunkHit(tokens.slice(index,end).join(' '));
+          if(!head)continue;
+          const tail=at(end);
+          if(tail){const hit={weight:Math.min(head.weight,tail.weight),codes:[head.code,...tail.codes]};positions.set(index,hit);return hit;}
+        }
+        positions.set(index,null);return null;
+      }
+      return at(0);
+    }
+    const positions=new Map();
+    function at(index) {
+      if(index===groups.length)return {weight:0,codes:[]};
+      if(positions.has(index))return positions.get(index);
+      for(let end=index+1;end<=Math.min(groups.length,index+3);end++) {
+        let phrases=[''];
+        for(const group of groups.slice(index,end))phrases=phrases.flatMap(prefix=>group.map(value=>`${prefix} ${value}`.trim()));
+        for(const phrase of phrases) {
+          const head=phraseHit(phrase);if(!head)continue;
+          const tail=at(end);
+          if(tail){const hit={weight:head.weight+tail.weight,codes:[...head.codes,...tail.codes]};positions.set(index,hit);return hit;}
+        }
+      }
+      positions.set(index,null);return null;
+    }
+    return at(0);
+  }
+
   function publicItem(entry) {
     if (!entry) return null;
-    const {raw,classification,origins,people,participants,associatedPeople,projects,score,reasonCodes,owned,textTruncated,...item} = entry;
+    const {raw,classification,origins,people,participants,associatedPeople,projects,score,reasonCodes,owned,textTruncated,matchTruncated,...item} = entry;
     return {...item,relations:item.relations.map(({text,projects,textTruncated,...edge})=>edge)};
   }
 
-  function searchCore({ userId, query, now = new Date(), timeZone = 'Europe/Samara', previousCriteria = null, offset = 0, criteria: suppliedCriteria = null }) {
+  function searchCore({ userId, query, now = new Date(), timeZone = 'Europe/Samara', previousCriteria = null, offset = 0, criteria: suppliedCriteria = null, clarification: suppliedClarification = null }) {
     if (typeof userId !== 'string' || !userId) return { items: [], matchedCount: 0, clarification: 'Подключите личный Telegram к Кизуне.' };
+    if (suppliedClarification) return {items:[],matchedCount:0,clarification:suppliedClarification,limitations:[]};
     const parsed = suppliedCriteria ? { criteria: suppliedCriteria } : parseTaskSearchQuery(query, { now, timeZone, previousCriteria });
     if (parsed.clarification) return { ...parsed, items: [], matchedCount: 0, limitations: [] };
     const criteria = parsed.criteria;
@@ -404,7 +484,8 @@ export function createTaskSearchService(db, { maxScanMs = 2000, clock = () => pe
         scanned += 1;
         const entry = entryOf(row, userId, timeZone);
         if (entry?.textTruncated) partialCoverage = true;
-        const matched = entry && match(entry, criteria);
+        const matched = entry && match(entry, criteria,started);
+        if (entry?.matchTruncated) partialCoverage=true;
         if (matched) {
           matchedCount += 1;
           kept.push(matched);
