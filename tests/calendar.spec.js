@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/ui-preferences.js";
 import { E2E_EMAIL } from "./fixtures/e2e-account.js";
 import { E2E_DB } from "./fixtures/e2e-env.js";
 
@@ -19,7 +19,7 @@ test("календарь: неделя, день, месяц, перенос м�
   await request.post("/api/captures", { data: { raw: "Написать Антону Гришину по внедрению", primaryType: "todo", due: { date: shift(monday, -1) } } });
 
   await page.goto("/#calendar");
-  await page.evaluate(() => { localStorage.setItem("kizuna-calendar-mode", "week"); });
+  await page.evaluate(() => { window.pagentPreferenceStorage.setItem("kizuna-calendar-mode", "week"); });
   await page.reload();
   const calendar = page.locator("#calendar-view");
   await expect(calendar).toBeVisible();
@@ -165,7 +165,7 @@ test("плашка чужого события: участники с ответ
       JSON.stringify({ email: "stas@itfinance.tech", name: "Станислав Косухин" }));
   db.close();
   await page.goto("/#calendar");
-  await page.evaluate(() => { localStorage.setItem("kizuna-calendar-mode", "day"); });
+  await page.evaluate(() => { window.pagentPreferenceStorage.setItem("kizuna-calendar-mode", "day"); });
   await page.reload();
   await page.locator(".cal-ev.external", { hasText: "Монетизация" }).first().click();
   const pop = page.locator(".cal-pop.rich");
@@ -249,7 +249,7 @@ test("чужое событие уходит с сетки сразу, а уда
   db.close();
 
   await page.goto("/#calendar");
-  await page.evaluate(() => { localStorage.setItem("kizuna-calendar-mode", "week"); });
+  await page.evaluate(() => { window.pagentPreferenceStorage.setItem("kizuna-calendar-mode", "week"); });
   await page.reload();
   const grid = page.locator("#calendar-view");
   const single = grid.locator(".cal-ev.external", { hasText: "Разбор поставок" });
@@ -308,7 +308,7 @@ test("своя серия: повторы в сетке, «только этот
   const monday = shift(today, -((new Date(`${today}T12:00:00Z`).getUTCDay() + 6) % 7));
   const created = await (await request.post("/api/captures", { data: { raw: "Стендап с командой", primaryType: "todo", due: { date: monday, time: "09:30", repeat: { freq: "daily" } } } })).json();
   await page.goto("/#calendar");
-  await page.evaluate(() => { localStorage.setItem("kizuna-calendar-mode", "week"); });
+  await page.evaluate(() => { window.pagentPreferenceStorage.setItem("kizuna-calendar-mode", "week"); });
   await page.reload();
   const calendar = page.locator("#calendar-view");
   const blocks = calendar.locator(".cal-ev.task", { hasText: "Стендап" });
@@ -426,7 +426,7 @@ test("сетка календаря встаёт по высоте окна и �
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/#calendar");
-  await page.evaluate(() => { localStorage.setItem("kizuna-calendar-mode", "week"); });
+  await page.evaluate(() => { window.pagentPreferenceStorage.setItem("kizuna-calendar-mode", "week"); });
   await page.reload();
   const scroll = page.locator("#calendar-view .cal-scroll");
   await expect(scroll).toBeVisible();
@@ -460,7 +460,7 @@ test("сетка календаря встаёт по высоте окна и �
   const again = await scroll.boundingBox();
   await page.mouse.dblclick(again.x + again.width / 2, again.y + again.height - 1);
   await expect.poll(off(fitted)).toBeLessThanOrEqual(1);
-  expect(await page.evaluate(() => localStorage.getItem("kizuna-calendar-height"))).toBeNull();
+  expect(await page.evaluate(() => window.pagentPreferenceStorage.getItem("kizuna-calendar-height"))).toBeNull();
 });
 
 // Дело со временем закрывается кружком прямо в блоке сетки — как дело «без
@@ -470,7 +470,7 @@ test("дело со временем закрывается кружком в с
   const today = (await (await request.get("/api/day")).json()).date;
   const created = await (await request.post("/api/captures", { data: { raw: "Проверить доступ голосового агента", primaryType: "todo", due: { date: today, time: "11:00" } } })).json();
   await page.goto("/#calendar");
-  await page.evaluate(() => { localStorage.setItem("kizuna-calendar-mode", "week"); });
+  await page.evaluate(() => { window.pagentPreferenceStorage.setItem("kizuna-calendar-mode", "week"); });
   await page.reload();
   const block = page.locator("#calendar-view .cal-ev.task", { hasText: "голосового агента" });
   await expect(block).toBeVisible();

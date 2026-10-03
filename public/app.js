@@ -1,3 +1,4 @@
+import { uiStorage, receiveUiPreferences, refreshUiPreferences, startUiPreferenceSync } from "./ui-preferences.js";
 import { safeExternalUrl } from "./safe-url.js";
 import { mountLanguageControls, syncLanguageControls } from "./language-control.js";
 import { normalizeTimeZone } from "./time-zone.js";
@@ -4877,7 +4878,7 @@ const CAPTURE_HEIGHT = { min: 96, max: 480, key: "kizuna-capture-height" };
 const CAPTURE_WIDTH = { min: 480, key: "kizuna-capture-width" };
 function readCaptureSize(spec) {
   try {
-    const value = Number(localStorage.getItem(spec.key));
+    const value = Number(uiStorage.getItem(spec.key));
     return Number.isFinite(value) && value >= spec.min ? (spec.max ? Math.min(value, spec.max) : value) : null;
   } catch {
     return null;
@@ -4890,7 +4891,7 @@ function paintCaptureSize() {
   const page = $("#today");
   if (height) form.style.setProperty("--capture-height", `${height}px`);
   else form.style.removeProperty("--capture-height");
-  if (width) page.style.setProperty("--capture-width", `${width}px`);
+  if (width) page.style.setProperty("--capture-width", `${Math.min(width, Math.max(0, window.innerWidth - 48))}px`);
   else page.style.removeProperty("--capture-width");
 }
 paintCaptureSize();
@@ -4898,8 +4899,8 @@ for (const grip of document.querySelectorAll("#capture-form .capture-resize")) {
   const dir = grip.dataset.dir;
   grip.addEventListener("dblclick", () => {
     try {
-      if (/[ew]/.test(dir)) localStorage.removeItem(CAPTURE_WIDTH.key);
-      if (dir.includes("s")) localStorage.removeItem(CAPTURE_HEIGHT.key);
+      if (/[ew]/.test(dir)) uiStorage.removeItem(CAPTURE_WIDTH.key);
+      if (dir.includes("s")) uiStorage.removeItem(CAPTURE_HEIGHT.key);
     } catch {}
     paintCaptureSize();
   });
@@ -4932,8 +4933,8 @@ for (const grip of document.querySelectorAll("#capture-form .capture-resize")) {
       grip.removeEventListener("pointercancel", stop);
       form.classList.remove("resizing");
       try {
-        if (sx) localStorage.setItem(CAPTURE_WIDTH.key, String(Math.round(width)));
-        if (sy) localStorage.setItem(CAPTURE_HEIGHT.key, String(Math.round(height)));
+        if (sx) uiStorage.setItem(CAPTURE_WIDTH.key, String(Math.round(width)));
+        if (sy) uiStorage.setItem(CAPTURE_HEIGHT.key, String(Math.round(height)));
       } catch {}
       paintCaptureSize();
     };
@@ -4952,7 +4953,7 @@ const DRAWERS_WIDTH = { min: 560, max: 1120 - 48, key: "kizuna-drawers-width" };
 const drawersLimit = () => Math.max(DRAWERS_WIDTH.min, Math.min(1120, window.innerWidth) - 48);
 function readDrawersWidth() {
   try {
-    const value = Number(localStorage.getItem(DRAWERS_WIDTH.key));
+    const value = Number(uiStorage.getItem(DRAWERS_WIDTH.key));
     return Number.isFinite(value) && value >= DRAWERS_WIDTH.min ? Math.min(value, DRAWERS_WIDTH.max) : null;
   } catch {
     return null;
@@ -4961,13 +4962,13 @@ function readDrawersWidth() {
 function paintDrawersWidth() {
   const width = readDrawersWidth();
   const page = $("#today");
-  if (width) page.style.setProperty("--drawers-width", `${width}px`);
+  if (width) page.style.setProperty("--drawers-width", `${Math.min(width, Math.max(0, window.innerWidth - 48))}px`);
   else page.style.removeProperty("--drawers-width");
 }
 paintDrawersWidth();
 for (const grip of document.querySelectorAll(".drawers .drawers-resize")) {
   grip.addEventListener("dblclick", () => {
-    try { localStorage.removeItem(DRAWERS_WIDTH.key); } catch {}
+    try { uiStorage.removeItem(DRAWERS_WIDTH.key); } catch {}
     paintDrawersWidth();
   });
   grip.addEventListener("pointerdown", (event) => {
@@ -4992,7 +4993,7 @@ for (const grip of document.querySelectorAll(".drawers .drawers-resize")) {
       grip.removeEventListener("pointerup", stop);
       grip.removeEventListener("pointercancel", stop);
       if (!moved) return;
-      try { localStorage.setItem(DRAWERS_WIDTH.key, String(Math.round(width))); } catch {}
+      try { uiStorage.setItem(DRAWERS_WIDTH.key, String(Math.round(width))); } catch {}
       paintDrawersWidth();
     };
     grip.addEventListener("pointermove", move);
@@ -5716,7 +5717,7 @@ const CARD_MODES = {
 };
 function readCardMode() {
   try {
-    const value = localStorage.getItem(CARD_MODE_KEY);
+    const value = uiStorage.getItem(CARD_MODE_KEY);
     return Object.hasOwn(CARD_MODES, value) ? value : "center";
   } catch {
     return "center";
@@ -5771,7 +5772,7 @@ function jumpCardSize(change) {
 function setCardMode(next) {
   if (!Object.hasOwn(CARD_MODES, next)) return;
   const dialog = $("#review-dialog"), prev = readCardMode();
-  try { localStorage.setItem(CARD_MODE_KEY, next); } catch {}
+  try { uiStorage.setItem(CARD_MODE_KEY, next); } catch {}
   jumpCardSize(() => {
     paintCardMode();
     if (dialog.open && dialog.matches(":modal") !== cardNeedsModal(next)) reopenCardDialog(dialog);
@@ -5834,7 +5835,7 @@ const clampNumber = (value, min, max) => Math.min(Math.max(value, min), Math.max
 function readCardSize() {
   const pick = (value, min) => (Number.isFinite(value) && value >= min ? Math.round(value) : null);
   try {
-    const stored = JSON.parse(localStorage.getItem(CARD_SIZE_KEY));
+    const stored = JSON.parse(uiStorage.getItem(CARD_SIZE_KEY));
     if (stored && typeof stored === "object") return { w: pick(stored.w, CARD_SIZE_MIN.w), h: pick(stored.h, CARD_SIZE_MIN.h), sw: pick(stored.sw, CARD_SIZE_MIN.sw) };
   } catch {}
   return { w: null, h: null, sw: null };
@@ -5842,8 +5843,8 @@ function readCardSize() {
 function writeCardSize(patch) {
   const next = { ...readCardSize(), ...patch };
   try {
-    if (next.w === null && next.h === null && next.sw === null) localStorage.removeItem(CARD_SIZE_KEY);
-    else localStorage.setItem(CARD_SIZE_KEY, JSON.stringify(next));
+    if (next.w === null && next.h === null && next.sw === null) uiStorage.removeItem(CARD_SIZE_KEY);
+    else uiStorage.setItem(CARD_SIZE_KEY, JSON.stringify(next));
   } catch {}
 }
 function paintCardSize() {
@@ -5919,7 +5920,7 @@ for (const grip of document.querySelectorAll("#review-dialog .card-resize")) {
 const CARD_TALK_HEIGHT = { min: 44, max: 360, key: "kizuna-card-talk-height" };
 function readTalkHeight() {
   try {
-    const value = Number(localStorage.getItem(CARD_TALK_HEIGHT.key));
+    const value = Number(uiStorage.getItem(CARD_TALK_HEIGHT.key));
     return Number.isFinite(value) && value > CARD_TALK_HEIGHT.min ? Math.min(Math.round(value), CARD_TALK_HEIGHT.max) : null;
   } catch {
     return null;
@@ -5933,7 +5934,7 @@ function paintTalkHeight() {
 paintTalkHeight();
 function attachTalkResize(grip, composer) {
   grip.addEventListener("dblclick", () => {
-    try { localStorage.removeItem(CARD_TALK_HEIGHT.key); } catch {}
+    try { uiStorage.removeItem(CARD_TALK_HEIGHT.key); } catch {}
     paintTalkHeight();
   });
   grip.addEventListener("pointerdown", (event) => {
@@ -5957,7 +5958,7 @@ function attachTalkResize(grip, composer) {
       grip.removeEventListener("pointerup", stop);
       grip.removeEventListener("pointercancel", stop);
       if (!moved) return;
-      try { localStorage.setItem(CARD_TALK_HEIGHT.key, String(Math.round(height))); } catch {}
+      try { uiStorage.setItem(CARD_TALK_HEIGHT.key, String(Math.round(height))); } catch {}
       paintTalkHeight();
     };
     grip.addEventListener("pointermove", move);
@@ -5994,6 +5995,10 @@ function listenToJournal() {
     journalStream = null;
     return;
   }
+  journalStream.addEventListener("ui-preferences", event => {
+    try { receiveUiPreferences(JSON.parse(event.data)); } catch {}
+  });
+  journalStream.addEventListener("ready", refreshUiPreferences);
   journalStream.addEventListener("journal", reloadJournalSoon);
   // В Telegram нажали «Запустить» по ссылке из настроек — привязка готова.
   journalStream.addEventListener("telegram", () => loadTelegram({ announce: true }));
@@ -7056,27 +7061,27 @@ const BOARD_SOURCES = localizedBuiltins([["telegram", "Telegram"], ["notes", "З
 const BOARD_DAY_DROP = { today: 0, tomorrow: 1, week: 2, later: 14 };
 // Вида «Таблица» больше нет: выбранный когда-то в браузере читается как «Список».
 function boardStoredView() {
-  try { const view = localStorage.getItem(BOARD_VIEW_KEY); return view === "table" ? "list" : BOARD_VIEWS.includes(view) ? view : "board"; } catch { return "board"; }
+  try { const view = uiStorage.getItem(BOARD_VIEW_KEY); return view === "table" ? "list" : BOARD_VIEWS.includes(view) ? view : "board"; } catch { return "board"; }
 }
 function boardStoredGroups() {
   try {
-    const raw = localStorage.getItem(BOARD_GROUPS_KEY);
+    const raw = uiStorage.getItem(BOARD_GROUPS_KEY);
     const list = raw === null ? null : JSON.parse(raw);
     if (!Array.isArray(list)) return ["col"];
     return [...new Set(list.filter((field) => Object.keys(BOARD_FIELDS).includes(field)))];
   } catch { return ["col"]; }
 }
 function boardStoredFilter() {
-  try { return readFilter(localStorage.getItem(BOARD_FILTER_KEY)); } catch { return defaultFilter(); }
+  try { return readFilter(uiStorage.getItem(BOARD_FILTER_KEY)); } catch { return defaultFilter(); }
 }
 function boardStoredOrder() {
-  try { return readOrder(localStorage.getItem(BOARD_ORDER_KEY)); } catch { return {}; }
+  try { return readOrder(uiStorage.getItem(BOARD_ORDER_KEY)); } catch { return {}; }
 }
 function boardStoredShown() {
-  try { return readShown(localStorage.getItem(BOARD_SHOWN_KEY)); } catch { return {}; }
+  try { return readShown(uiStorage.getItem(BOARD_SHOWN_KEY)); } catch { return {}; }
 }
 function boardStoredSubs() {
-  try { return localStorage.getItem(BOARD_SUBS_KEY) === "hide" ? "hide" : "show"; } catch { return "show"; }
+  try { return uiStorage.getItem(BOARD_SUBS_KEY) === "hide" ? "hide" : "show"; } catch { return "show"; }
 }
 const boardState = {
   // stamp — ответ сервера (строкой), по которому нарисована доска: тот же ответ не перерисовывается.
@@ -7109,24 +7114,24 @@ function boardUrl() {
 function boardMoveRequest(body) {
   return request("/api/board/move", { method: "POST", body: JSON.stringify({ ...body, ...(boardState.subs === "show" ? { subtasks: true } : {}) }) });
 }
-function boardRemember() {
+function boardRemember(key) {
   try {
-    localStorage.setItem(BOARD_VIEW_KEY, boardState.view);
-    localStorage.setItem(BOARD_GROUPS_KEY, JSON.stringify(boardState.groups));
+    if (key === BOARD_VIEW_KEY) uiStorage.setItem(key, boardState.view);
+    else uiStorage.setItem(BOARD_GROUPS_KEY, JSON.stringify(boardState.groups));
   } catch {}
 }
 // Черновик условия (значение ещё не выбрано) не сохраняется: он ничего не отбирает.
 function boardRememberFilter() {
-  try { localStorage.setItem(BOARD_FILTER_KEY, JSON.stringify(activeConditions(boardState.filter))); } catch {}
+  try { uiStorage.setItem(BOARD_FILTER_KEY, JSON.stringify(activeConditions(boardState.filter))); } catch {}
 }
 function boardRememberOrder() {
-  try { localStorage.setItem(BOARD_ORDER_KEY, JSON.stringify(boardState.order)); } catch {}
+  try { uiStorage.setItem(BOARD_ORDER_KEY, JSON.stringify(boardState.order)); } catch {}
 }
 function boardRememberSubs() {
-  try { localStorage.setItem(BOARD_SUBS_KEY, boardState.subs); } catch {}
+  try { uiStorage.setItem(BOARD_SUBS_KEY, boardState.subs); } catch {}
 }
 function boardRememberShown() {
-  try { localStorage.setItem(BOARD_SHOWN_KEY, JSON.stringify(Object.fromEntries(Object.entries(boardState.shown).filter(([, keys]) => keys.length)))); } catch {}
+  try { uiStorage.setItem(BOARD_SHOWN_KEY, JSON.stringify(Object.fromEntries(Object.entries(boardState.shown).filter(([, keys]) => keys.length)))); } catch {}
 }
 const boardDropHint = (() => { const hint = document.createElement("div"); hint.className = "board-drop"; return hint; })();
 
@@ -7164,10 +7169,10 @@ const KC_REACTIONS = ["👍", "❤️", "🔥", "🙏", "👀", "✅"];
 const KC_KIND = localizedBuiltins({ todo: ["violet", "дело"], meeting: ["orange", "встреча"], outcome: ["blue", "результат"], note: ["teal", "заметка"], idea: ["pink", "идея"] });
 const KC_NAME_TONES = ["violet", "blue", "teal", "orange", "pink", "red"];
 function kcStored(key, fallback) {
-  try { const value = localStorage.getItem(key); return value === null ? fallback : JSON.parse(value); } catch { return fallback; }
+  try { const value = uiStorage.getItem(key); return value === null ? fallback : JSON.parse(value); } catch { return fallback; }
 }
 function kcStore(key, value) {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+  try { uiStorage.setItem(key, JSON.stringify(value)); } catch {}
 }
 kc.table = kcStored("pagent.circles-table", true) !== false;
 kc.circle = kcStored("pagent.circles-circle", null);
@@ -9765,8 +9770,8 @@ function paintBoardBar() {
 }
 // Вид или группировка сменились: запомнить и перерисовать. Открытое поле
 // быстрого дела не переезжает — колонки, где оно стояло, уже другие.
-function boardChanged() {
-  boardRemember();
+function boardChanged(key = BOARD_GROUPS_KEY) {
+  boardRemember(key);
   boardState.openAdder = null;
   boardState.adderDraft = null;
   // Выбор новой колонки относился к прежнему полю — на новом он не открывается сам.
@@ -9905,7 +9910,7 @@ function renderBoard(source) {
     const button = event.target.closest("[data-view]");
     if (!button || button.dataset.view === boardState.view) return;
     boardState.view = button.dataset.view;
-    boardChanged();
+    boardChanged(BOARD_VIEW_KEY);
   });
   $("#board-grp").addEventListener("change", (event) => {
     const select = event.target.closest("select");
@@ -10443,10 +10448,10 @@ const CAL_MONTHS_G = localizedBuiltins(["января", "февраля", "ма�
 const CAL_PHONE = window.matchMedia("(max-width: 760px)");
 const calState = { mode: "week", anchor: null, days: 7, data: null, hidden: new Set(), seq: 0, drag: null, pop: null, popAnchorId: null, scrollTop: null, gridScroll: null, search: "" };
 try {
-  const storedMode = localStorage.getItem("kizuna-calendar-mode");
+  const storedMode = uiStorage.getItem("kizuna-calendar-mode");
   if (["day", "week", "month"].includes(storedMode)) calState.mode = storedMode;
   else if (CAL_PHONE.matches) calState.mode = "day";
-  const storedHidden = JSON.parse(localStorage.getItem("kizuna-calendar-hidden") || "[]");
+  const storedHidden = JSON.parse(uiStorage.getItem("kizuna-calendar-hidden") || "[]");
   if (Array.isArray(storedHidden)) calState.hidden = new Set(storedHidden);
 } catch {}
 const calPad = (value) => String(value).padStart(2, "0");
@@ -10484,7 +10489,7 @@ function calTitle() {
 }
 function setCalendarMode(mode) {
   calState.mode = mode;
-  try { localStorage.setItem("kizuna-calendar-mode", mode); } catch {}
+  try { uiStorage.setItem("kizuna-calendar-mode", mode); } catch {}
 }
 function calStep(direction) {
   const anchor = calState.anchor || calToday();
@@ -10550,7 +10555,7 @@ function calSourcesEl() {
   const chip = (key, label, color, extra) => {
     const button = calButton(undefined, "cal-source", () => {
       if (calState.hidden.has(key)) calState.hidden.delete(key); else calState.hidden.add(key);
-      try { localStorage.setItem("kizuna-calendar-hidden", JSON.stringify([...calState.hidden])); } catch {}
+      try { uiStorage.setItem("kizuna-calendar-hidden", JSON.stringify([...calState.hidden])); } catch {}
       renderCalendar();
     });
     button.setAttribute("aria-pressed", String(!calState.hidden.has(key)));
@@ -10696,7 +10701,7 @@ function calEventEl(item, place = null) {
 const CAL_HEIGHT = { min: 240, key: "kizuna-calendar-height" };
 function storedCalendarHeight() {
   try {
-    const value = Number(localStorage.getItem(CAL_HEIGHT.key));
+    const value = Number(uiStorage.getItem(CAL_HEIGHT.key));
     return Number.isFinite(value) && value >= CAL_HEIGHT.min ? value : null;
   } catch {
     return null;
@@ -10708,7 +10713,7 @@ function fitCalendarHeight() {
   // Пока край тянут рукой, высоту задаёт рука, а не окно.
   if (!scroll?.getClientRects().length || wrap.classList.contains("resizing")) return;
   const stored = storedCalendarHeight();
-  if (stored) { wrap.style.setProperty("--cal-height", `${stored}px`); return; }
+  if (stored) { wrap.style.setProperty("--cal-height", `${Math.min(stored, Math.max(CAL_HEIGHT.min, window.innerHeight - 180))}px`); return; }
   const apply = (height) => wrap.style.setProperty("--cal-height", `${Math.round(Math.max(CAL_HEIGHT.min, height))}px`);
   // На телефоне сетка во весь экран забирала бы прокрутку страницы себе.
   if (window.matchMedia("(max-width: 760px)").matches) { apply(window.innerHeight * 0.6); return; }
@@ -10725,7 +10730,7 @@ function calResizeEl() {
   bindTranslation(grip, "Потяните, чтобы изменить высоту. Двойной клик — по высоте окна", "title");
   grip.setAttribute("aria-hidden", "true");
   grip.addEventListener("dblclick", () => {
-    try { localStorage.removeItem(CAL_HEIGHT.key); } catch {}
+    try { uiStorage.removeItem(CAL_HEIGHT.key); } catch {}
     fitCalendarHeight();
   });
   grip.addEventListener("pointerdown", (event) => {
@@ -10752,7 +10757,7 @@ function calResizeEl() {
       window.removeEventListener("pointercancel", stop);
       wrap.classList.remove("resizing");
       if (height !== startHeight) {
-        try { localStorage.setItem(CAL_HEIGHT.key, String(height)); } catch {}
+        try { uiStorage.setItem(CAL_HEIGHT.key, String(height)); } catch {}
       }
     };
     window.addEventListener("pointermove", move);
@@ -12554,3 +12559,54 @@ window.addEventListener("pagent:timezonechange", () => {
   if (page === "calendar") loadCalendar();
   if (page === "done") loadDone({ fresh: true });
 });
+
+// Apply remote display choices in place. Rebuilding an active editor or an
+// in-progress drag would lose text, so only board/calendar redraws wait for it.
+let pendingViewKeys = new Set();
+function applySyncedViewPreferences() {
+  const keys = pendingViewKeys;
+  paintCaptureSize();
+  paintDrawersWidth();
+  paintCardSize();
+  paintTalkHeight();
+  if (keys.has(CARD_MODE_KEY)) {
+    const dialog = $("#review-dialog");
+    paintCardMode();
+    if (dialog.open && dialog.matches(":modal") !== cardNeedsModal()) reopenCardDialog(dialog);
+    markOpenCard();
+  }
+  if (keys.has("pagent.theme")) { window.pagentTheme.refresh(); paintThemeButton(); }
+  if (keys.has("pagent.text")) window.pagentText.refresh();
+  const editing = document.activeElement?.matches("input, textarea, [contenteditable=true]");
+  const busy = editing || boardState.drag || calState.drag || boardState.openAdder || calState.pop;
+  const redraw = [...keys].some(key => key.startsWith("kizuna-board-") || key.startsWith("kizuna-calendar-") || key === "pagent.circles-table");
+  if (redraw && busy) return;
+  pendingViewKeys = new Set();
+  if ([...keys].some(key => key.startsWith("kizuna-board-"))) {
+    boardState.view = boardStoredView();
+    boardState.groups = boardStoredGroups();
+    boardState.filter = boardStoredFilter();
+    boardState.filterOpen = activeConditions(boardState.filter).length > 0;
+    boardState.order = boardStoredOrder();
+    boardState.shown = boardStoredShown();
+    boardState.subs = boardStoredSubs();
+    boardState.stamp = null;
+    if (!$("#board").hidden) loadBoard({ force: true });
+  }
+  if ([...keys].some(key => key.startsWith("kizuna-calendar-"))) {
+    calState.mode = uiStorage.getItem("kizuna-calendar-mode") || (CAL_PHONE.matches ? "day" : "week");
+    calState.hidden = new Set(JSON.parse(uiStorage.getItem("kizuna-calendar-hidden") || "[]"));
+    if (!$("#calendar").hidden) loadCalendar();
+  }
+  if (keys.has("pagent.circles-table")) {
+    kc.table = kcStored("pagent.circles-table", true) !== false;
+    if (!$("#circles").hidden) renderCircles();
+  }
+}
+window.addEventListener("kizuna-ui-preferences", event => {
+  for (const key of event.detail.keys) pendingViewKeys.add(key);
+  applySyncedViewPreferences();
+});
+setInterval(() => { if (pendingViewKeys.size) applySyncedViewPreferences(); }, 500);
+window.addEventListener("resize", () => { paintCaptureSize(); paintDrawersWidth(); });
+startUiPreferenceSync();

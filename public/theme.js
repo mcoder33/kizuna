@@ -3,6 +3,21 @@
 // Значение живёт и в браузере, и в настройках человека — в браузере, чтобы
 // применяться мгновенно, в настройках, чтобы переезжать вместе с ним.
 (function () {
+  function readPreference(key) {
+    if (window.pagentPreferenceStorage) return window.pagentPreferenceStorage.getItem(key);
+    var account = document.documentElement.dataset.accountId;
+    if (account) {
+      var queued = null;
+      try { queued = JSON.parse(localStorage.getItem("kizuna-ui-preferences:" + account + ":" + key) || "null"); } catch {}
+      if (queued && typeof queued.token === "string") return queued.value;
+      var seed = JSON.parse(decodeURIComponent(document.documentElement.dataset.uiPreferences || "{}"));
+      if (seed.userId === account && Object.prototype.hasOwnProperty.call(seed.values || {}, key)) return seed.values[key];
+      // Unowned legacy choices migrate on this first opening; an already
+      // claimed browser must not flash another account's old theme or font.
+      try { if (localStorage.getItem("kizuna-ui-preferences-legacy-owner")) return null; } catch { return null; }
+    }
+    return localStorage.getItem(key);
+  }
   var KEY = "pagent.theme";
   var root = document.documentElement;
 
@@ -12,7 +27,7 @@
 
   var stored = null;
   try {
-    stored = localStorage.getItem(KEY);
+    stored = readPreference(KEY);
   } catch {
     // Приватное окно или запрет на хранилище: по умолчанию светлая тема.
   }
@@ -23,7 +38,7 @@
   var TEXT_KEY = "pagent.text";
   var text = { font: "default", size: "normal" };
   try {
-    var saved = JSON.parse(localStorage.getItem(TEXT_KEY) || "null");
+    var saved = JSON.parse(readPreference(TEXT_KEY) || "null");
     if (saved && typeof saved === "object") text = { font: saved.font || "default", size: saved.size || "normal" };
   } catch {
     // Нет сохранённого выбора — обычный шрифт и размер.
@@ -37,10 +52,14 @@
   applyText();
   window.pagentText = {
     read: function () { return { font: text.font, size: text.size }; },
+    refresh: function () {
+      try { text = JSON.parse(readPreference(TEXT_KEY)) || { font: "default", size: "normal" }; } catch { text = { font: "default", size: "normal" }; }
+      applyText();
+    },
     set: function (next) {
       text = { font: next.font || text.font, size: next.size || text.size };
       applyText();
-      try { localStorage.setItem(TEXT_KEY, JSON.stringify(text)); } catch {
+      try { (window.pagentPreferenceStorage || localStorage).setItem(TEXT_KEY, JSON.stringify(text)); } catch {
         // Не сохранилось — выбор действует до конца сессии.
       }
     },
@@ -49,6 +68,10 @@
   // Один и тот же переключатель нужен и приложению, и странице входа, поэтому
   // он живёт здесь, а не в каждом из них.
   window.pagentTheme = {
+    refresh: function () {
+      try { stored = readPreference(KEY); } catch { stored = null; }
+      apply(stored);
+    },
     read: function () {
       return stored === "dark" ? "dark" : "light";
     },
@@ -57,7 +80,7 @@
       stored = theme === "dark" ? "dark" : "light";
       apply(stored);
       try {
-        localStorage.setItem(KEY, stored);
+        (window.pagentPreferenceStorage || localStorage).setItem(KEY, stored);
       } catch {
         // Не сохранилось — тема действует до конца сессии.
       }
