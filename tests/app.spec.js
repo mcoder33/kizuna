@@ -92,15 +92,21 @@ test("async capture shows a short success notification and adds the entry to the
   expect(await entryByRaw(page, "созвон по Hub")).toBeTruthy();
   await page.screenshot({ path: "tmp/screenshots/async-capture-ready.png" });
 });
-test("medium-confidence Codex classification remains visible in Plan", async ({ page }) => {
-  // Провайдера разбора выбирают в настройках, а не в шапке.
-  await page.goto("/#settings");
-  await page.getByLabel("Провайдер ИИ").selectOption("codex-cli");
-  await page.goto("/#today");
-  await capture(page, "Завтра в 11 созвон по Hub");
-  // Заглушка Codex не разбирает срок: дело без даты лежит в сегодняшнем списке.
-  await expect(page.locator("#todo")).toContainText("Созвон по Hub");
+test("medium-confidence Codex classification remains visible in Plan", async ({ page, request }) => {
+  const previous = (await (await request.get("/api/settings")).json()).settings.aiProvider;
+  try {
+    // Провайдера разбора выбирают в управлении ИИ.
+    await page.goto("/#admin/service/ai");
+    await page.getByLabel("Провайдер ИИ").selectOption("codex-cli");
+    await page.goto("/#today");
+    await capture(page, "Завтра в 11 созвон по Hub");
+    // Заглушка Codex не разбирает срок: дело без даты лежит в сегодняшнем списке.
+    await expect(page.locator("#todo")).toContainText("Созвон по Hub");
+  } finally {
+    await request.put("/api/settings", { data: { aiProvider: previous } });
+  }
 });
+
 test("success notification disappears without shifting the drawers under the field", async ({
   page,
 }) => {
@@ -1564,15 +1570,19 @@ test("настройки меняются в приложении и приме�
   await page.goto("/#settings");
   await expect(page.locator("#settings")).toBeVisible();
 
-  // Ключ показывается признаком, а не значением.
+  // Ключ сервиса показывается признаком, а не значением.
+  await page.goto("/#admin/service/ai");
   await expect(page.locator("#setting-openaiKey")).toHaveValue("");
   await expect(page.locator("#state-openaiKey")).toHaveText(/не настроен|••••/);
 
-  // Меняем напоминания и предел ответа модели.
+  // Личное напоминание и предел ответа сервиса сохраняются в своих разделах.
+  await page.goto("/#settings");
   await page.locator("#setting-remindHour").selectOption("08:00");
+  await expect(page.locator("#settings-status")).toHaveText("Сохранено");
+  await page.goto("/#admin/service/ai");
   await page.locator("#setting-modelMaxTokens").fill("2048");
   await page.locator("#setting-modelMaxTokens").blur();
-  await expect(page.locator("#settings-status")).toHaveText("Сохранено");
+  await expect(page.locator("#admin-settings-status")).toHaveText("Сохранено");
 
   // Сохранилось на сервере само, без кнопки, — и не только на экране.
   await expect
@@ -1586,7 +1596,7 @@ test("настройки меняются в приложении и приме�
   const created = [];
   for (const name of ["дело 1", "дело 2", "дело 3", "дело 4", "дело 5", "дело 6"])
     created.push(await request.post("/api/captures", { data: { raw: name } }));
-  await page.locator('nav a[href="#today"]').click();
+  await page.getByRole("link", { name: "Вернуться в Кизуну", exact: true }).click();
   await expect(page.locator("#todo .entry:visible")).toHaveCount(6, { timeout: 15000 });
 
   // Возвращаем как было и убираем записи.
@@ -1599,7 +1609,7 @@ test("настройки меняются в приложении и приме�
 
 
 test("некорректная настройка не сохраняется и объясняет причину", async ({ page, request }) => {
-  await page.goto("/#settings");
+  await page.goto("/#admin/service/limits");
   await page.locator("#setting-timeZone").fill("Не/Зона");
   await page.locator("#setting-timeZone").blur();
   await expect(page.locator("#toast")).toContainText("Некорректное значение");
@@ -1609,9 +1619,9 @@ test("некорректная настройка не сохраняется и
 
 
 // Расходы должны быть видны, а не выясняться в личном кабинете провайдера.
-test("расходы видно в настройках", async ({ page, request }) => {
+test("расходы видно в администрировании", async ({ page, request }) => {
   await request.post("/api/reset", { data: { confirmation: "СБРОСИТЬ КИЗУНА" } });
-  await page.goto("/#settings");
+  await page.goto("/#admin/service/usage");
   const table = page.locator("#usage-table");
   await expect(table).toContainText("За сутки");
   await expect(table).toContainText("За неделю");
@@ -1625,9 +1635,9 @@ test("расходы видно в настройках", async ({ page, request
   // Сначала убеждаемся, что расход вообще записан: иначе непонятно, врёт
   // страница или его правда нет.
   await expect
-    .poll(async () => (await (await request.get("/api/usage")).json()).total.calls, { timeout: 15000 })
+    .poll(async () => (await (await request.get("/api/admin/usage")).json()).total.calls, { timeout: 15000 })
     .toBeGreaterThan(0);
-  await page.goto("/#settings");
+  await page.goto("/#admin/service/usage");
   await expect(page.locator("#usage-table")).not.toContainText("Пока ничего не потрачено");
   await expect(page.locator("#usage-table .usage-detail")).toContainText("fake/fast");
 });

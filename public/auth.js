@@ -1,4 +1,3 @@
-import { shareReturnPath } from './share-intent.js';
 import { t, getLocale, getRequestedLocale, getDetectedLocale } from "./browser-i18n.js";
 // Вход, регистрация и второй фактор. Одна форма на три состояния, потому что
 // это один разговор: «кто ты» — «докажи» — «тебя ещё не пустили».
@@ -73,7 +72,7 @@ form.addEventListener("submit", async (event) => {
         ...(getDetectedLocale() ? { detectedLocale: getDetectedLocale() } : {}),
       });
       if (!ok) return show(error, payload.error?.message || t("Не получилось зарегистрироваться."));
-      return location.replace(shareReturnPath());
+      return location.replace("/");
     }
 
     const { ok, status, payload } = await send("/api/auth/login", {
@@ -81,7 +80,7 @@ form.addEventListener("submit", async (event) => {
       password: password.value,
       code: code.value.trim() || undefined,
     });
-    if (ok) return location.replace(shareReturnPath());
+    if (ok) return location.replace("/");
     if (payload.error?.code === "totp_required") {
       needsCode = true;
       paint();
@@ -93,7 +92,7 @@ form.addEventListener("submit", async (event) => {
       code.select();
       return show(error, payload.error.message);
     }
-    // Ожидание подтверждения и блокировка — это не ошибка ввода, а состояние
+    // Закрытый доступ и блокировка — это не ошибка ввода, а состояние
     // учётной записи: повторять пароль бессмысленно, и об этом стоит сказать.
     if (status === 403) return show(notice, payload.error?.message || t("Доступ закрыт."));
     show(error, payload.error?.message || t("Не удалось войти."));
@@ -132,7 +131,7 @@ paintTheme();
 (async () => {
   try {
     const state = await (await fetch("/api/auth/state")).json();
-    if (state.authenticated) return location.replace(shareReturnPath());
+    if (state.authenticated) return location.replace("/");
     if (state.needsBootstrap) {
       mode = "register";
       $("#auth-bootstrap").hidden = false;

@@ -188,20 +188,27 @@ test("администратор ставит человеку потолок р
   await expect(page.locator("#admin-users .admin-user").filter({ hasText: email })).toContainText("потолок общий");
 });
 
-test("свой расход за месяц виден в настройках", async ({ page, request }) => {
-  await request.put("/api/settings", { data: { monthlyLimitUsd: "50" } });
-  await page.goto("/#settings");
-  await expect(page.locator("#spend-state")).toContainText("потрачено");
-  await expect(page.locator("#spend-state")).toContainText("осталось");
+test("администратор видит расходы сервиса и общий потолок в администрировании", async ({ page, request }) => {
+  expect((await request.put("/api/settings", { data: { monthlyLimitUsd: "50" } })).status()).toBe(200);
+  try {
+    // Расходы и лимиты перенесены из личных настроек в управление сервисом.
+    await page.goto("/#admin/service/usage");
+    const usage = page.locator("#usage-table");
+    await expect(usage).toContainText("За сутки");
+    await expect(usage).toContainText("За неделю");
+    await expect(usage).toContainText("Всего");
+    await expect(usage).toContainText(/\$\d/);
+    await page.goto("/#admin/service/limits");
+    await expect(page.locator("#setting-monthlyLimitUsd")).toHaveValue("50");
+    await page.goto("/#admin/users");
+    const self = page.locator("#admin-users .admin-user").filter({ hasText: E2E_EMAIL });
+    await expect(self).toContainText(/в этом месяце \$\d+\.\d{2}/);
+    await expect(self).toContainText("потолок общий");
+  } finally {
+    expect((await request.put("/api/settings", { data: { monthlyLimitUsd: "" } })).status()).toBe(200);
+  }
   await page.goto("/#admin/service/limits");
-  await expect(page.locator("#setting-monthlyLimitUsd")).toHaveValue("50");
-  await page.goto("/#settings");
-  // Возвращаем как было: потолок общий, и он касается остальных проверок.
-  expect((await request.put("/api/settings", { data: { monthlyLimitUsd: "" } })).status()).toBe(200);
-  // Перезагрузка, а не переход по тому же адресу: адрес и хэш те же, и переход
-  // по ним страницу не обновит — она осталась бы с прежними числами.
-  await page.reload();
-  await expect(page.locator("#spend-state")).toContainText("потолка нет");
+  await expect(page.locator("#setting-monthlyLimitUsd")).toHaveValue("");
 });
 
 test("выбор темы в настройках запоминается за учётной записью, а не только в браузере", async ({ page, request }) => {

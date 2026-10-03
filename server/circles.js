@@ -1,4 +1,3 @@
-import { currentTitle } from './collaboration-storage.js';
 // Круги: общее дело в личном журнале.
 //
 // Круг — не второй журнал, а общая полка. Запись остаётся у автора; в круг она
@@ -178,7 +177,6 @@ export function circleDetail(db, circleId, userId) {
     WHERE a.circle_id=? AND a.assignee_id=? AND a.cancelled_at IS NULL AND c.deleted_at IS NULL AND a.state IN ('pending','accepted') ORDER BY a.created_at LIMIT 3`);
   return serializeCircle(row, {
     role: row.role,
-    ...(row.role==='owner'?{removedMembers:db.prepare(`SELECT u.*,m.role,m.left_at FROM circle_members m JOIN users u ON u.id=m.user_id WHERE m.circle_id=? AND m.left_at IS NOT NULL ORDER BY m.left_at DESC LIMIT 500`).all(circleId).map(person=>({...publicUser(person),role:person.role,leftAt:person.left_at}))}:{}),
     muted: Boolean(row.muted_at),
     members: membersOf(db, circleId).map(member => ({
       ...member,
@@ -199,7 +197,6 @@ export function leaveCircle(db, circleId, userId) {
   const owners = db.prepare("SELECT COUNT(*) AS n FROM circle_members WHERE circle_id=? AND left_at IS NULL AND role='owner'").get(circleId).n;
   if (member.role === 'owner' && owners <= 1) return { error: 'last_owner' };
   db.prepare('UPDATE circle_members SET left_at=? WHERE circle_id=? AND user_id=?').run(now(), circleId, userId);
-  denyCircleRejoin(db,circleId,userId);
   return { left: true };
 }
 
@@ -240,7 +237,6 @@ export function peekInvite(db, token) {
 export function acceptInvite(db, token, userId) {
   const peek = peekInvite(db, token);
   if (peek.error) return peek;
-  if(db.prepare('SELECT 1 FROM circle_share_denials WHERE circle_id=? AND user_id=?').get(peek.circle.id,userId))return {error:'membership_removed'};
   const at = now();
   const existing = db.prepare('SELECT * FROM circle_members WHERE circle_id=? AND user_id=?').get(peek.circle.id, userId);
   // Ссылка не тратится: она заведена для многих. Считается только, сколько
@@ -274,9 +270,6 @@ export function candidates(db, circleId, userId, query) {
 // добавлении строкой «к вам» и может выйти в одно нажатие.
 export function addMember(db, circleId, userId, personId) {
   if (!membership(db, circleId, userId)) return { error: 'not_found' };
-  const denied=db.prepare('SELECT 1 FROM circle_share_denials WHERE circle_id=? AND user_id=?').get(circleId,personId);
-  if(denied&&membership(db,circleId,userId)?.role!=='owner')return {error:'not_owner'};
-  if(denied)db.prepare('DELETE FROM circle_share_denials WHERE circle_id=? AND user_id=?').run(circleId,personId);
   const person = db.prepare("SELECT * FROM users WHERE id=? AND status='active'").get(personId);
   if (!person) return { error: 'person_not_found' };
   if (membership(db, circleId, personId)) return { error: 'already_member' };
@@ -330,25 +323,24 @@ export function circleMarksFor(db, userId) {
     if (!marks.has(row.capture_id)) marks.set(row.capture_id, { id: row.id, name: row.name, color: row.color });
   return marks;
 }
-export function shareCapture(db, captureId, circleId, userId, { persistent = false } = {}) {
+export function shareCapture(db, captureId, circleId, userId) {
   const at = now();
-  db.prepare(`INSERT INTO capture_circles(capture_id,circle_id,shared_by,shared_at,persistent) VALUES(?,?,?,?,?)
-    ON CONFLICT(capture_id,circle_id) DO UPDATE SET removed_at=NULL, shared_at=excluded.shared_at, persistent=MAX(capture_circles.persistent,excluded.persistent)`).run(captureId, circleId, userId, at, Number(persistent));
+  db.prepare(`INSERT INTO capture_circles(capture_id,circle_id,shared_by,shared_at) VALUES(?,?,?,?)
+    ON CONFLICT(capture_id,circle_id) DO UPDATE SET removed_at=NULL, shared_at=excluded.shared_at`).run(captureId, circleId, userId, at);
 }
 export function unshareCapture(db, captureId, circleId) {
-  db.prepare('UPDATE public_todo_shares SET revoked_at=COALESCE(revoked_at,?) WHERE capture_id=? AND circle_id=?').run(now(),captureId,circleId);
   db.prepare('UPDATE capture_circles SET removed_at=? WHERE capture_id=? AND circle_id=? AND removed_at IS NULL').run(now(), captureId, circleId);
 }
 // Запись видна своему автору всегда, а участнику круга — пока она в круге.
 // Ответ на чужое остаётся честным «не найдено»: существование чужой записи —
 // тоже не наше дело.
 export function canSeeCapture(db, captureId, userId) {
-  const capture = db.prepare('SELECT user_id FROM captures WHERE id=? AND deleted_at IS NULL').get(captureId);
+  const capture = db.prepare('SELECT user_id FROM captures WHERE id=?').get(captureId);
   if (!capture) return false;
   if (capture.user_id === userId) return true;
   if (isParticipant(db, captureId, userId)) return true;
   return Boolean(db.prepare(`SELECT 1 FROM capture_circles cc JOIN circle_members m ON m.circle_id=cc.circle_id AND m.user_id=? AND m.left_at IS NULL
-    JOIN circles c ON c.id=cc.circle_id AND c.deleted_at IS NULL WHERE cc.capture_id=? AND cc.removed_at IS NULL`).get(userId, captureId));
+    WHERE cc.capture_id=? AND cc.removed_at IS NULL`).get(userId, captureId));
 }
 
 // ── дела другим людям ──
@@ -419,13 +411,13 @@ export function assign(db, { captureId, assigneeId, assignerId, circleId = null 
   return { assignment: assignmentFor(db, captureId) };
 }
 export function unassign(db, captureId, userId) {
-  const capture = db.prepare('SELECT user_id FROM captures WHERE id=? AND deleted_at IS NULL').get(captureId);
+  const capture = db.prepare('SELECT user_id FROM captures WHERE id=?').get(captureId);
   if (!capture || capture.user_id !== userId) return { error: 'not_found' };
   const current = db.prepare('SELECT * FROM assignments WHERE capture_id=? AND cancelled_at IS NULL').get(captureId);
   if (!current) return { assignment: null };
   db.prepare('UPDATE assignments SET cancelled_at=? WHERE id=?').run(now(), current.id);
   resolveNotifications(db, { kind: 'request', assignmentId: current.id });
-  if (current.circle_id && !db.prepare('SELECT 1 FROM capture_circles WHERE capture_id=? AND circle_id=? AND persistent=1').get(captureId,current.circle_id)) unshareCapture(db, captureId, current.circle_id);
+  if (current.circle_id) unshareCapture(db, captureId, current.circle_id);
   return { assignment: null };
 }
 // «Беру» опускает дело в день исполнителя; «не я» возвращает его автору вместе
@@ -782,7 +774,6 @@ export function captureKind(db, captureId) {
 export const captureTitle = (db, captureId, fallback = '') => titleOf(db, captureId, fallback || db.prepare('SELECT raw FROM captures WHERE id=?').get(captureId)?.raw || '');
 export const captureDue = (db, captureId) => dueOf(db, captureId);
 function titleOf(db, captureId, fallback = '') {
-  const live=currentTitle(db,captureId,null);if(live!==null)return live||'Без названия';
   const row = db.prepare("SELECT i.classification_json FROM interpretations i WHERE i.capture_id=? AND i.status='active'").get(captureId);
   if (row) {
     const classification = JSON.parse(row.classification_json);
@@ -892,9 +883,9 @@ export function acceptedFor(db, userId) {
 }
 // Может ли человек закрыть чекбокс: своё — всегда, чужое — только то, что взял.
 export function canCompleteCapture(db, captureId, userId) {
-  const capture = db.prepare('SELECT user_id FROM captures WHERE id=? AND deleted_at IS NULL').get(captureId);
+  const capture = db.prepare('SELECT user_id FROM captures WHERE id=?').get(captureId);
   if (!capture) return false;
-  if (capture.user_id === userId || canEditCapture(db,captureId,userId)) return true;
+  if (capture.user_id === userId) return true;
   const row = db.prepare("SELECT 1 FROM assignments WHERE capture_id=? AND assignee_id=? AND state IN ('accepted','done') AND cancelled_at IS NULL").get(captureId, userId);
   return Boolean(row);
 }
@@ -915,36 +906,4 @@ export function dissolveCircle(db, circleId, userId) {
   // Фото распущенного круга больше некому показать — байты уходят вместе с ним.
   db.prepare('DELETE FROM circle_photos WHERE circle_id=?').run(circleId);
   return { dissolved: true };
-}
-
-// R3: editing is separate from legacy membership and invitation permissions.
-export function canEditCapture(db,captureId,userId) {
-  const capture=db.prepare('SELECT user_id FROM captures WHERE id=? AND deleted_at IS NULL').get(captureId);
-  if (!capture || !userId) return false;
-  if (capture.user_id===userId) return true;
-  return Boolean(db.prepare(`SELECT 1 FROM capture_circles cc
-    JOIN circles c ON c.id=cc.circle_id AND c.deleted_at IS NULL
-    JOIN circle_members m ON m.circle_id=cc.circle_id AND m.user_id=? AND m.left_at IS NULL AND (m.role='editor' OR m.can_edit=1)
-    WHERE cc.capture_id=? AND cc.removed_at IS NULL`).get(userId,captureId));
-}
-export function editorCirclesForCapture(db,captureId,userId) {
-  return circlesForCapture(db,captureId).filter(circle=>canEditCapture(db,captureId,userId)&&membership(db,circle.id,userId));
-}
-export function denyCircleRejoin(db,circleId,userId) {
-  db.prepare(`INSERT INTO circle_share_denials(circle_id,user_id,denied_at) VALUES(?,?,?) ON CONFLICT(circle_id,user_id) DO UPDATE SET denied_at=excluded.denied_at`).run(circleId,userId,now());
-}
-export function removeCircleMember(db,circleId,ownerId,userId) {
-  if (membership(db,circleId,ownerId)?.role!=='owner') return {error:'not_owner'};
-  const member=membership(db,circleId,userId);if(!member)return {error:'not_found'};
-  if(member.role==='owner')return {error:'not_owner'};
-  return db.transaction(()=>{db.prepare('UPDATE circle_members SET left_at=? WHERE circle_id=? AND user_id=?').run(now(),circleId,userId);denyCircleRejoin(db,circleId,userId);return {removed:true};})();
-}
-export function restoreCircleMember(db,circleId,ownerId,userId) {
-  if(membership(db,circleId,ownerId)?.role!=='owner')return {error:'not_owner'};
-  if(!db.prepare("SELECT 1 FROM users WHERE id=? AND status='active'").get(userId))return {error:'person_not_found'};
-  return db.transaction(()=>{
-    db.prepare('DELETE FROM circle_share_denials WHERE circle_id=? AND user_id=?').run(circleId,userId);
-    db.prepare("UPDATE circle_members SET left_at=NULL,joined_at=? WHERE circle_id=? AND user_id=?").run(now(),circleId,userId);
-    return {restored:true};
-  })();
 }

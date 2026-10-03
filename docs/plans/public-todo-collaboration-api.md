@@ -1,3 +1,5 @@
+> **Статус: функциональность отменена по запросу пользователя (2026-10-03).** Публичные ссылки, присоединение по ссылке и совместный редактор отключены. Регистрация без одобрения администратора сохранена. Миграция 30 переносит актуальные сохранённые текст и заголовок в обычные заметки, сохраняет историю, отзывает ссылки и снимает права редакторов; исторические таблицы остаются неактивными. Локальные неотправленные черновики доступны только для копирования. Ниже — исторический план/контракт, а не описание действующего приложения.
+
 # Public todo collaboration API (backend contract)
 
 All routes use the existing cookie session and Origin policy. Errors are `{error:{code,message}}`; unauthorized 401, forbidden/revoked 403, unavailable 404, stale revision/idempotency conflict 409. Do not join on view/login; consent is explicit.

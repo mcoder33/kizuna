@@ -12,25 +12,18 @@
     "test": "node --test tests/*.test.js",
     "test:e2e": "playwright test",
     "smoke:provider": "node server/smoke-provider.js",
-    "build:collaboration": "node scripts/build-collaboration.mjs",
-    "check:collaboration": "node scripts/build-collaboration.mjs --check",
-    "pretest": "npm run check:collaboration"
+    "build:draft-recovery": "node scripts/build-draft-recovery.mjs",
+    "check:draft-recovery": "node scripts/build-draft-recovery.mjs --check",
+    "pretest": "npm run check:draft-recovery"
   },
   "dependencies": {
-    "@codemirror/commands": "6.10.2",
-    "@codemirror/lang-markdown": "6.5.2",
-    "@codemirror/state": "6.7.6",
-    "@codemirror/view": "6.43.13",
     "better-sqlite3": "^12.2.0",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
     "openai": "^5.12.2",
     "qrcode": "^1.5.4",
     "web-push": "^3.6.7",
-    "ws": "8.18.3",
-    "y-codemirror.next": "0.3.6",
     "y-indexeddb": "9.0.12",
-    "y-protocols": "1.0.6",
     "yjs": "13.6.27",
     "zod": "^3.25.76"
   },

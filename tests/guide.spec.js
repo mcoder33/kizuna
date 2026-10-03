@@ -18,7 +18,7 @@ test("по адресу #guide вопросы слева, прогон про п
   const guide = page.locator("#guide");
   await expect(guide).toBeVisible();
   await expect(page.locator("nav a.active")).toHaveCount(0);
-  await expect(guide.locator(".gd-q")).toHaveCount(21);
+  await expect(guide.locator(".gd-q")).toHaveCount(19);
   await expect(guide.locator(".gd-q-side.live")).toHaveCount(3);
   await expect(guide.getByText("Выберите вопрос слева")).toBeVisible();
 
