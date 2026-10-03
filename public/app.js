@@ -33,7 +33,6 @@ const providerNames = {
   "codex-cli": "Codex CLI",
   "claude-cli": "Claude CLI",
 };
-const modelStorageKey = "pagent.ai-model";
 // У кого можно выбирать модель прямо в шапке. У OpenAI каталог приходит из их
 // же API, у OpenRouter — из своего; у CLI-провайдеров модель задаёт окружение.
 const modelCapableProviders = new Set(["openrouter", "openai", "gemini"]);
@@ -150,25 +149,9 @@ function toast(text, action = null) {
 function selectedProvider() {
   return $("#ai-provider").value || "fallback";
 }
-function selectedModel() {
-  const picker = $("#ai-model");
-  return modelCapableProviders.has(selectedProvider()) && picker.value
-    ? picker.value
-    : null;
-}
-function withModel(body) {
-  const model = selectedModel();
-  return model ? { ...body, model } : body;
-}
-// Пока список провайдеров не загрузился, выбор ещё не известен. Раньше в этот
-// момент отправлялся provider: "fallback", и запись молча сохранялась без
-// разбора при настроенном провайдере. Теперь поле не отправляется — провайдера
-// выбирает сервер по своей настройке.
-function providerReady() {
-  return $("#ai-provider").options.length > 0;
-}
+// User actions use the service configuration saved by an administrator.
 function withProvider(body = {}) {
-  return withModel(providerReady() ? { ...body, provider: selectedProvider() } : body);
+  return body;
 }
 function fallbackSuffix(provenance) {
   return provenance?.fallbackReason &&
@@ -189,7 +172,7 @@ function showProvenance(provenance) {
 // «День» — первая вкладка и вкладка по умолчанию: обзор открывают спросить
 // «что было вчера», а сводные «Записи» нужны реже и стоят в конце.
 const reportsState = { tab: "day", period: "week", dayDate: null };
-const adminArea = mountAdministration({ request, toast, accountKnown: async () => { await accountKnown; return currentUser; }, loadUsers: loadAdmin, loadSettings });
+const adminArea = mountAdministration({ request, toast, accountKnown: async () => { await accountKnown; return currentUser; }, loadUsers: loadAdmin, loadSettings, loadAi: status, loadUsage });
 const feedbackArea = mountFeedback({ request, accountKnown: async () => { await accountKnown; return currentUser; } });
 function updatePageFromHash() {
   // Внутренние ссылки Obsidian ведут в память с запросом: «#memory?query=Hub».
@@ -239,7 +222,6 @@ function updatePageFromHash() {
   if (activePage === "settings") {
     paintPush();
     paintUpcomingReminders();
-    loadUsage();
     loadCalendarAccounts();
     loadTelegram();
     loadMemory();
@@ -5049,7 +5031,7 @@ $("#capture-form").addEventListener("submit", async (event) => {
   if (!raw) return;
   setCaptureBusy(true);
   try {
-    const provider = providerReady() ? selectedProvider() : null,
+    const provider = null,
       result = await requestResponse("/api/captures", {
         method: "POST",
         headers: {
@@ -5136,7 +5118,7 @@ function renderModelPicker(data) {
     clear(picker);
     return;
   }
-  const stored = localStorage.getItem(modelStorageKey);
+  const stored = appSettings[aiModelSetting(provider)];
   clear(picker);
   for (const entry of models) {
     const option = node("option", entry.name || entry.id);
@@ -5148,20 +5130,35 @@ function renderModelPicker(data) {
     : data.providers[provider]?.model || models[0].id;
   wrapper.hidden = false;
 }
-function onProviderChange() {
-  if (providerReady()) localStorage.setItem("pagent.ai-provider", selectedProvider());
-  status().catch((error) => toast(error.message));
+function aiModelSetting(provider) {
+  return { openai: "aiModel", openrouter: "openrouterModel", gemini: "geminiModel" }[provider];
 }
-function onModelChange() {
-  const model = $("#ai-model").value;
-  if (model) localStorage.setItem(modelStorageKey, model);
+async function onProviderChange() {
+  const provider = $("#ai-provider"), model = $("#ai-model");
+  provider.disabled = model.disabled = true;
+  try {
+    await saveSettings({ aiProvider: selectedProvider() });
+    await status();
+  } catch (error) { toast(error.message); }
+  finally { provider.disabled = model.disabled = false; }
 }
+async function onModelChange() {
+  const provider = $("#ai-provider"), model = $("#ai-model");
+  const name = aiModelSetting(selectedProvider());
+  if (!name) return;
+  provider.disabled = model.disabled = true;
+  try {
+    await saveSettings({ [name]: model.value });
+    await status();
+  } catch (error) { toast(error.message); }
+  finally { provider.disabled = model.disabled = false; }
+}
+let aiStatusRevision = 0;
 async function status() {
-  const stored = localStorage.getItem("pagent.ai-provider"),
-    data = await request(
-      `/api/status${stored ? `?selectedProvider=${encodeURIComponent(stored)}` : ""}`,
-    ),
+  const revision = ++aiStatusRevision;
+  const data = await request("/api/admin/ai/status"),
     selector = $("#ai-provider");
+  if (revision !== aiStatusRevision) return;
   clear(selector);
   for (const id of Object.keys(providerNames)) {
     const info = data.providers[id],
@@ -5173,7 +5170,7 @@ async function status() {
     option.disabled = id !== "fallback" && !info?.available;
     selector.append(option);
   }
-  const chosen = stored || data.defaultProvider;
+  const chosen = data.selectedProvider || data.defaultProvider;
   selector.value = [...selector.options].some(
     (option) => option.value === chosen,
   )
@@ -5220,7 +5217,7 @@ async function bootstrap() {
     bootstrapQueued = false;
     bootstrapInFlight = true;
     try {
-      await Promise.all([status(), load(), loadSettings(), loadNotifications()]);
+      await Promise.all([load(), loadSettings(), loadNotifications()]);
       resumeCapture();
       syncPushSubscription();
     } catch {
@@ -5242,6 +5239,9 @@ const SETTING_FIELDS = [
   "googleClientSecret",
   "telegramBotToken",
   "aiProvider",
+  "aiModel",
+  "openrouterModel",
+  "geminiModel",
   "timeZone",
   "remindDefault",
   "remindHour",
@@ -5317,7 +5317,6 @@ function paintSettings(payload, { updatedFields = null, submittedValues = null }
     paintThemeButton();
   }
   paintNotifySettings();
-  paintSpend(payload.spend);
 }
 // Расходы: сколько ушло токенов и денег. Показываем три окна — сутки, неделя,
 // всё время, — потому что «сколько я трачу» это вопрос про темп, а не про сумму.
@@ -5341,30 +5340,18 @@ function usageRow(title, slice) {
   );
   return row;
 }
-// Сколько ушло за календарный месяц и сколько осталось до потолка. Месяц
-// календарный нарочно: деньги человек считает по счетам, а не по скользящему
-// окну, и «первого числа снова можно» — понятное правило.
-function paintSpend(spend) {
-  const line = $("#spend-state");
-  if (!line || !spend) return;
-  const money = (value) => `$${value < 0.01 && value > 0 ? value.toFixed(4) : value.toFixed(2)}`;
-  const parts = [t("За {month} потрачено {value2}", { month: spend.month, value2: money(spend.totalUsd) })];
-  if (spend.limitUsd === null) parts.push(t("потолка нет"));
-  else parts.push(spend.allowed ? t("осталось {value1} из {value2}", { value1: money(spend.remainingUsd), value2: money(spend.limitUsd) }) : t("потолок {value1} исчерпан", { value1: money(spend.limitUsd) }));
-  if (spend.unpriced) parts.push(t("{unpriced} вызовов без цены в сумму не вошли", { unpriced: spend.unpriced }));
-  line.textContent = parts.join(" · ");
-  line.classList.toggle("quota-exhausted", !spend.allowed);
-}
+let usageLoadRevision = 0;
 async function loadUsage() {
   const box = $("#usage-table");
   if (!box) return;
-  let data;
-  try {
-    data = await request("/api/usage");
-  } catch {
-    return;
-  }
-  paintSpend(data.spend);
+  const revision = ++usageLoadRevision;
+  const period = $("#admin-usage-period").value;
+  const [data, report] = await Promise.all([
+    request("/api/admin/usage"),
+    request(`/api/admin/reports?period=${period}`),
+  ]);
+  if (revision !== usageLoadRevision) return;
+  renderReportsService($("#admin-reports-service"), report);
   clear(box);
   box.append(usageRow(t("За сутки"), data.day), usageRow(t("За неделю"), data.week), usageRow(t("Всего"), data.total));
   if (!data.total.calls) {
@@ -5532,7 +5519,6 @@ async function loadSettings() {
       });
       await settingsPreferenceSaveQueue;
     }
-    loadUsage();
   } catch {
     // Настройки не открылись — приложение всё равно работает на прежних.
   }
@@ -5629,6 +5615,7 @@ $("#reset-submit").addEventListener("click", async (event) => {
     toast(error.message);
   }
 });
+$("#admin-usage-period").addEventListener("change", () => loadUsage().catch(error => toast(error.message)));
 $("#ai-provider").addEventListener("change", onProviderChange);
 $("#ai-model").addEventListener("change", onModelChange);
 $("#review-close").addEventListener("click", requestCardClose);
@@ -6936,11 +6923,11 @@ function renderReportsDay(area, data) {
   area.append(feedCard);
 }
 function reportsView(tab) {
-  return { life: $("#reports-life"), day: $("#reports-day"), service: $("#reports-service") }[tab];
+  return { life: $("#reports-life"), day: $("#reports-day") }[tab];
 }
 async function loadReports() {
   const tab = reportsState.tab;
-  for (const name of ["life", "day", "service"]) reportsView(name).hidden = name !== tab;
+  for (const name of ["life", "day"]) reportsView(name).hidden = name !== tab;
   $("#reports-period").hidden = tab === "day";
   $("#reports-daynav").hidden = tab !== "day";
   const area = reportsView(tab);
@@ -6951,8 +6938,7 @@ async function loadReports() {
       renderReportsDay(area, await request(`/api/reports/day${query}`));
     } else {
       const data = await request(`/api/reports?period=${reportsState.period}`);
-      if (tab === "life") renderReportsLife(area, data);
-      else renderReportsService(area, data);
+      renderReportsLife(area, data);
     }
     reportsState.loaded = true;
   } catch (error) {
@@ -8427,7 +8413,7 @@ function kcBoundEl() {
         kcEl("li", null, kcEl("b", null, t("Разговоры")), t(" круга и комнат")))),
       kcEl("div", "kc-bound-out", kcEl("h4", null, kcIcon("lock"), t("Остаётся вашим")), kcEl("ul", null,
         kcEl("li", null, t("День, заметки, «Сделано»")),
-        kcEl("li", null, t("Голос и расход на модели")),
+        kcEl("li", null, t("Память помощника")),
         kcEl("li", null, t("Всё, что не отдали в круг"))))),
     kcEl("p", "kc-hint", kcEl("b", null, t("Правит запись автор")), t(", исполнитель закрывает дело и пишет в обсуждение. "), kcEl("b", null, t("Разбор моделью")), t(" считается тому, кто записал.")));
 }
@@ -8710,7 +8696,7 @@ function kcInviteCard() {
   name.append(node("i", undefined, `circle-dot big ${CIRCLE_TONES[peek.circle.color] || "violet"}`), node("span", peek.circle.name));
   card.append(name);
   card.append(bindTranslation(node("p", t("{invitedBy} зовёт вас в круг «{name}». Сейчас там {members} {value4}.", { invitedBy: peek.invitedBy, name: peek.circle.name, members: peek.members, value4: pluralRu(peek.members, t("человек"), t("человека"), t("человек")) }), "invite-lead"), "{invitedBy} зовёт вас в круг «{name}». Сейчас там {members} {value4}.", { invitedBy: peek.invitedBy, name: peek.circle.name, members: peek.members, value4: pluralRu(peek.members, t("человек"), t("человека"), t("человек")) }));
-  card.append(bindTranslation(node("p", t("Войдёте — участники круга увидят записи, которые вы туда отдадите, и вы увидите их. Журнал, заметки и расход остаются личными."), "invite-hint"), "Войдёте — участники круга увидят записи, которые вы туда отдадите, и вы увидите их. Журнал, заметки и расход остаются личными."));
+  card.append(bindTranslation(node("p", t("Участники круга увидят записи, которыми вы поделитесь. Ваш журнал, заметки и память помощника остаются личными."), "invite-hint"), "Участники круга увидят записи, которыми вы поделитесь. Ваш журнал, заметки и память помощника остаются личными."));
   const accept = bindTranslation(node("button", t("Войти в круг"), "mini primary"), "Войти в круг");
   accept.type = "button";
   accept.addEventListener("click", async () => {
@@ -12368,7 +12354,7 @@ function openNotification(item) {
     else location.hash = target;
     return;
   }
-  const hash = { signup: "#admin", spend: "#settings", calendar_error: "#settings", digest: "#today" }[item.kind];
+  const hash = { signup: "#admin", spend: "#admin/users", calendar_error: "#settings", digest: "#today" }[item.kind];
   if (hash) location.hash = hash;
 }
 async function markNotificationsRead(body) {

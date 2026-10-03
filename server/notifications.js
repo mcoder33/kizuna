@@ -37,7 +37,7 @@ export const NOTIFICATION_KINDS = {
   digest: { group: 'time', label: 'Утренняя сводка', hint: 'в час напоминаний: встречи, дела и кто ждёт ответа', bell: true, phone: true },
   clarify: { group: 'other', label: 'Запись ждёт уточнения', hint: 'модель не разобрала однозначно', bell: true, phone: false },
   calendar_error: { group: 'other', label: 'Календарь перестал обновляться', hint: 'нужно переподключить', bell: true, phone: false },
-  spend: { group: 'other', label: 'Расходы подошли к потолку', hint: 'на 80% и на 100% месячного', bell: true, phone: false },
+  spend: { admin: true, group: 'other', label: 'Расходы подошли к потолку', hint: 'на 80% и на 100% месячного', bell: true, phone: false },
   signup: { group: 'other', label: 'Новая заявка на вход', hint: 'только администратору', bell: true, phone: true, admin: true },
   feedback: { group: 'other', label: 'Новое пожелание', hint: 'только администратору', bell: true, phone: true, admin: true },
   feedback_reply: { group: 'other', label: 'Ответ на ваше пожелание', hint: '', bell: true, phone: false },
@@ -259,7 +259,7 @@ export function listNotifications(db, userId, { before = null, limit = PAGE_SIZE
   // а ответить могли и из карточки. Устаревшее закрывается при чтении ленты.
   for (const row of db.prepare('SELECT * FROM notifications WHERE user_id=? AND waits=1 AND resolved_at IS NULL').all(userId))
     if (!stillWaits(row)) resolveNotification(db, row.id);
-  const rows = db.prepare(`SELECT * FROM notifications WHERE user_id=? AND snoozed_until IS NULL AND dismissed_at IS NULL ${scope === 'personal' ? "AND kind NOT IN ('signup','feedback')" : ''} ${before ? 'AND updated_at < ?' : ''} ORDER BY updated_at DESC LIMIT ?`)
+  const rows = db.prepare(`SELECT * FROM notifications WHERE user_id=? AND snoozed_until IS NULL AND dismissed_at IS NULL ${scope === 'personal' ? "AND kind NOT IN ('signup','feedback','spend')" : ''} ${before ? 'AND updated_at < ?' : ''} ORDER BY updated_at DESC LIMIT ?`)
     .all(...(before ? [userId, before, limit] : [userId, limit]));
   return { notifications: rows, nextCursor: rows.length === limit ? rows.at(-1).updated_at : null };
 }
@@ -267,7 +267,7 @@ export function notificationCounts(db, userId, { scope = 'all' } = {}) {
   const row = db.prepare(`SELECT
       SUM(CASE WHEN waits=1 AND resolved_at IS NULL AND snoozed_until IS NULL THEN 1 ELSE 0 END) AS waits,
       SUM(CASE WHEN read_at IS NULL AND snoozed_until IS NULL THEN 1 ELSE 0 END) AS unread
-    FROM notifications WHERE user_id=? AND dismissed_at IS NULL ${scope === 'personal' ? "AND kind NOT IN ('signup','feedback')" : ''}`).get(userId);
+    FROM notifications WHERE user_id=? AND dismissed_at IS NULL ${scope === 'personal' ? "AND kind NOT IN ('signup','feedback','spend')" : ''}`).get(userId);
   return { waits: row.waits || 0, unread: row.unread || 0 };
 }
 
@@ -279,7 +279,7 @@ export function readNotifications(db, userId, { ids = null, captureId = null, ro
   }
   if (captureId) return db.prepare('UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL AND capture_id=? AND waits=0').run(at, userId, captureId).changes;
   if (roomId) return db.prepare('UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL AND room_id=?').run(at, userId, roomId).changes;
-  return db.prepare(`UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL ${scope === 'personal' ? "AND kind NOT IN ('signup','feedback')" : ''}`).run(at, userId).changes;
+  return db.prepare(`UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL ${scope === 'personal' ? "AND kind NOT IN ('signup','feedback','spend')" : ''}`).run(at, userId).changes;
 }
 
 // Убрать из ленты: открытое, закрытое делом или ненужное. Ждущее ответа не
@@ -296,7 +296,7 @@ export function dismissNotifications(db, userId, { ids = null, captureId = null,
   // Очистить ленту — то, что в ней видно: отложенное вернётся в свой срок.
   else if (all && userId) {
     where.push('snoozed_until IS NULL');
-    if (scope === 'personal') where.push("kind NOT IN ('signup','feedback')");
+    if (scope === 'personal') where.push("kind NOT IN ('signup','feedback','spend')");
   }
   else return [];
   if (Array.isArray(kinds) && kinds.length) { where.push(`kind IN (${kinds.map(() => '?').join(',')})`); args.push(...kinds); }

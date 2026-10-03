@@ -330,8 +330,11 @@ test('расход считается на каждого отдельно', asy
   const first = authed(application, { email: 'first@example.com', role: 'user' });
   const second = authed(application, { email: 'second@example.com', role: 'user' });
   recordUsage(application.database, { provider: 'openai', model: 'gpt-5.6-luna', kind: 'classify', inputTokens: 100, outputTokens: 20, costUsd: 0.01, userId: first.user.id });
-  assert.equal((await first.get('/api/usage')).body.total.calls, 1);
-  assert.equal((await second.get('/api/usage')).body.total.calls, 0, 'чужой расход в свою сумму не входит');
+  const admin = authed(application);
+  await first.get('/api/usage').expect(403);
+  await second.get('/api/usage').expect(403);
+  assert.equal((await admin.get(`/api/admin/usage?userId=${first.user.id}`).expect(200)).body.total.calls, 1);
+  assert.equal((await admin.get(`/api/admin/usage?userId=${second.user.id}`).expect(200)).body.total.calls, 0, 'учёт ведётся отдельно');
 });
 
 test('без входа не открывается ничего, кроме страницы входа', async () => {
@@ -362,7 +365,8 @@ test('новому человеку открыто всё, но с потолк�
   const listed = (await admin.get('/api/admin/users')).body.users.find(user => user.email === 'gost@example.com');
   assert.equal(listed.monthlyLimitUsd, 1);
   // Человек вошёл и видит свой расход: запретов нет, есть только потолок.
-  const spend = (await api.get('/api/usage').set('Cookie', cookie).expect(200)).body.spend;
+  await api.get('/api/usage').set('Cookie', cookie).expect(403);
+  const spend = (await admin.get(`/api/admin/usage?userId=${gost.id}`).expect(200)).body.spend;
   assert.equal(spend.limitUsd, 1);
   assert.equal(spend.allowed, true);
   // Хозяину дома потолок не ставится: платит он.
@@ -430,16 +434,16 @@ test('потолок ставит администратор, личный си�
   const gost = authed(application, { email: 'gost@example.com', role: 'user' });
 
   await admin.put('/api/settings').send({ monthlyLimitUsd: '10' }).expect(200);
-  assert.equal((await gost.get('/api/usage').expect(200)).body.spend.limitUsd, 10, 'общий потолок действует на всех');
+  assert.equal((await admin.get(`/api/admin/usage?userId=${gost.user.id}`).expect(200)).body.spend.limitUsd, 10, 'общий потолок действует на всех');
 
   await admin.post(`/api/admin/users/${gost.user.id}/limits`).send({ monthlyLimitUsd: '3' }).expect(200);
-  const personal = (await gost.get('/api/usage').expect(200)).body.spend;
+  const personal = (await admin.get(`/api/admin/usage?userId=${gost.user.id}`).expect(200)).body.spend;
   assert.equal(personal.limitUsd, 3, 'личный сильнее общего');
   assert.equal(personal.allowed, true);
 
   // Пустое поле — «своего нет», а не ноль.
   await admin.post(`/api/admin/users/${gost.user.id}/limits`).send({ monthlyLimitUsd: '' }).expect(200);
-  assert.equal((await gost.get('/api/usage')).body.spend.limitUsd, 10);
+  assert.equal((await admin.get(`/api/admin/usage?userId=${gost.user.id}`)).body.spend.limitUsd, 10);
   await admin.post(`/api/admin/users/${gost.user.id}/limits`).send({ monthlyLimitUsd: 'много' }).expect(400);
   // Свой потолок человек себе не ставит.
   await gost.put('/api/settings').send({ monthlyLimitUsd: '1000' }).expect(403);
@@ -452,7 +456,7 @@ test('за потолком запись сохраняется, но разби
   await admin.post(`/api/admin/users/${gost.user.id}/limits`).send({ monthlyLimitUsd: '1' }).expect(200);
   recordUsage(application.database, { provider: 'openrouter', model: 'x', kind: 'classify', costUsd: 2, userId: gost.user.id });
 
-  const created = await gost.post('/api/captures').send({ raw: 'мысль за потолком', provider: 'openrouter' }).expect(201);
+  const created = await gost.post('/api/captures').send({ raw: 'мысль за потолком' }).expect(201);
   assert.equal(created.body.entry.raw, 'мысль за потолком', 'мысль не потеряна');
   assert.equal(created.body.provenance.usedProvider, 'fallback');
   assert.equal(created.body.provenance.fallbackReason, 'spend_limit', 'сказано, почему разобрали правилами');
@@ -460,7 +464,7 @@ test('за потолком запись сохраняется, но разби
 
   // Повторный разбор — действие платное и по своей воле: подменять модель
   // правилами нельзя, хороший разбор затёрся бы худшим.
-  const refused = await gost.post(`/api/captures/${created.body.entry.id}/classify`).send({ provider: 'openrouter' }).expect(429);
+  const refused = await gost.post(`/api/captures/${created.body.entry.id}/classify`).send({}).expect(429);
   assert.equal(refused.body.error.code, 'spend_limit');
 
   // У соседа потолка нет — у него всё по-прежнему.

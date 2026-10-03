@@ -659,17 +659,18 @@ test("provider selection persists and explicit fallback never says not configure
   await expect(page.locator("#capture-notifications")).not.toContainText(
     "не настроен",
   );
+  await page.goto("/#admin/service/ai");
   await page.reload();
   await expect(page.getByLabel("Провайдер ИИ")).toHaveValue("openrouter");
 });
-test("an unavailable requested provider is labelled unavailable", async ({
-  page,
+test("an unavailable configured provider is labelled unavailable in administration", async ({
+  page, request,
 }) => {
-  await page.addInitScript(() =>
-    localStorage.setItem("pagent.ai-provider", "openai"),
-  );
-  await page.goto("/#settings");
-  await expect(page.locator("#ai-status")).toContainText("OpenAI — недоступен");
+  await request.put("/api/settings", { data: { aiProvider: "openai" } });
+  try {
+    await page.goto("/#admin/service/ai");
+    await expect(page.locator("#ai-status")).toContainText("OpenAI — недоступен");
+  } finally { await request.put("/api/settings", { data: { aiProvider: "openrouter" } }); }
 });
 test("reload resumes one pending poller without a second capture POST", async ({
   page,
@@ -866,21 +867,21 @@ test("online bootstrap retries initial failures and resumes one stored job", asy
 test("online during an active bootstrap schedules one follow-up load", async ({
   page,
 }) => {
-  let statusReads = 0;
-  let releaseFirstStatus;
-  const firstStatus = new Promise((resolve) => {
-    releaseFirstStatus = resolve;
+  let dayReads = 0;
+  let releaseFirstDay;
+  const firstDay = new Promise((resolve) => {
+    releaseFirstDay = resolve;
   });
-  await page.route("**/api/status**", async (route) => {
-    statusReads += 1;
-    if (statusReads === 1) await firstStatus;
+  await page.route("**/api/day**", async (route) => {
+    dayReads += 1;
+    if (dayReads === 1) await firstDay;
     await route.continue();
   });
   await page.goto("/");
-  await expect.poll(() => statusReads).toBe(1);
+  await expect.poll(() => dayReads).toBe(1);
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
-  releaseFirstStatus();
-  await expect.poll(() => statusReads, { timeout: 5000 }).toBe(2);
+  releaseFirstDay();
+  await expect.poll(() => dayReads, { timeout: 5000 }).toBe(2);
 });
 test("failed cancellation resumes one poller for the same active job", async ({
   page,
@@ -937,30 +938,26 @@ test("failed cancellation resumes one poller for the same active job", async ({
   await page.waitForTimeout(1300);
   expect(jobReads).toBe(2);
 });
-test("provider selection has one stable listener after failed and repeated online bootstraps", async ({
-  page,
-}) => {
-  let online = false,
-    statusReads = 0;
-  await page.route("**/api/status**", (route) => {
+test("provider selection has one stable listener after reopening administration", async ({ page, request }) => {
+  let online = false, statusReads = 0;
+  await page.route("**/api/admin/ai/status", route => {
     statusReads += 1;
     return online ? route.continue() : route.abort();
   });
-  await page.goto("/");
-  await expect(page.locator("#toast")).toContainText(
-    "Не удалось загрузить данные",
-  );
+  await page.goto("/#admin/service/ai");
+  await expect(page.locator("#admin-error")).not.toBeEmpty();
   online = true;
-  await page.evaluate(() => window.dispatchEvent(new Event("online")));
-  await expect.poll(() => statusReads).toBe(2);
-  await page.evaluate(() => window.dispatchEvent(new Event("online")));
-  await expect.poll(() => statusReads).toBe(3);
-  await page.evaluate(() => { location.hash = "#settings"; });
-  await page.getByLabel("Провайдер ИИ").selectOption("fallback");
-  await expect.poll(() => statusReads).toBe(4);
-  expect(
-    await page.evaluate(() => localStorage.getItem("pagent.ai-provider")),
-  ).toBe("fallback");
+  for (const count of [2, 3]) {
+    await page.goto("/#admin/service/integrations");
+    await expect(page.locator("#setting-telegramBotToken")).toBeVisible();
+    await page.goto("/#admin/service/ai");
+    await expect.poll(() => statusReads).toBe(count);
+  }
+  try {
+    await page.getByLabel("Провайдер ИИ").selectOption("fallback");
+    await expect.poll(() => statusReads).toBe(4);
+    expect((await (await request.get("/api/settings")).json()).settings.aiProvider).toBe("fallback");
+  } finally { await request.put("/api/settings", { data: { aiProvider: "openrouter" } }); }
 });
 test("cancelled and failed jobs keep raw text visible and expose explicit next action", async ({
   page,

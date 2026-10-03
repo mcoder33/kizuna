@@ -227,23 +227,24 @@ export function periodReport(db, { period, now, timeZone, userId }) {
 
 // Служебная сторона: расходы и качество разбора за тот же период.
 function serviceReport(db, { fromAt, toAt, userId }) {
+  const scope = userId === undefined ? [] : [userId];
   const from = fromAt.toISOString(), to = toAt.toISOString();
-  const usageRows = db.prepare(`SELECT provider, model, COUNT(*) calls, SUM(COALESCE(cost_usd,0)) cost, SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END) unpriced FROM usage_events WHERE created_at >= ? AND created_at < ? AND user_id IS ? GROUP BY provider, model ORDER BY cost DESC, calls DESC`).all(from, to, userId);
-  const corrections = db.prepare('SELECT co.correction_json FROM corrections co JOIN captures c ON c.id = co.capture_id WHERE co.created_at >= ? AND co.created_at < ? AND c.user_id IS ?').all(from, to, userId);
+  const usageRows = db.prepare(`SELECT provider, model, COUNT(*) calls, SUM(COALESCE(cost_usd,0)) cost, SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END) unpriced FROM usage_events WHERE created_at >= ? AND created_at < ? ${userId === undefined ? '' : 'AND user_id IS ?'} GROUP BY provider, model ORDER BY cost DESC, calls DESC`).all(from, to, ...scope);
+  const corrections = db.prepare(`SELECT co.correction_json FROM corrections co JOIN captures c ON c.id = co.capture_id WHERE co.created_at >= ? AND co.created_at < ? ${userId === undefined ? '' : 'AND c.user_id IS ?'}`).all(from, to, ...scope);
   const fields = new Map();
   for (const row of corrections)
     try { for (const field of Object.keys(JSON.parse(row.correction_json) || {})) fields.set(field, (fields.get(field) || 0) + 1); } catch {}
   const topField = [...fields.entries()].sort((a, b) => b[1] - a[1])[0] || null;
   // Переразбор — новая версия от настоящего провайдера; правки руками приходят
   // как provider='manual' и посчитаны отдельной строкой выше.
-  const reclassified = db.prepare(`SELECT COUNT(*) n FROM interpretations i JOIN captures c ON c.id = i.capture_id WHERE i.version > 1 AND i.provider != 'manual' AND i.created_at >= ? AND i.created_at < ? AND c.user_id IS ?`).get(from, to, userId).n;
-  const pendingNow = db.prepare(`SELECT COUNT(*) n FROM capture_jobs WHERE state IN ('pending','running') AND user_id IS ?`).get(userId).n;
-  const failed = db.prepare(`SELECT COUNT(*) n FROM capture_jobs WHERE state = 'failed' AND created_at >= ? AND created_at < ? AND user_id IS ?`).get(from, to, userId).n;
+  const reclassified = db.prepare(`SELECT COUNT(*) n FROM interpretations i JOIN captures c ON c.id = i.capture_id WHERE i.version > 1 AND i.provider != 'manual' AND i.created_at >= ? AND i.created_at < ? ${userId === undefined ? '' : 'AND c.user_id IS ?'}`).get(from, to, ...scope).n;
+  const pendingNow = db.prepare(`SELECT COUNT(*) n FROM capture_jobs WHERE state IN ('pending','running') ${userId === undefined ? '' : 'AND user_id IS ?'}`).get(...scope).n;
+  const failed = db.prepare(`SELECT COUNT(*) n FROM capture_jobs WHERE state = 'failed' AND created_at >= ? AND created_at < ? ${userId === undefined ? '' : 'AND user_id IS ?'}`).get(from, to, ...scope).n;
   // Точность по провайдерам: сколько разборов сделал и сколько из них пришлось
   // править. Правка привязана к интерпретации; провайдер ошибки — у той версии,
   // которую правка заменила.
-  const parses = db.prepare(`SELECT i.provider, COUNT(*) n FROM interpretations i JOIN captures c ON c.id = i.capture_id WHERE i.provider NOT IN ('manual') AND i.created_at >= ? AND i.created_at < ? AND c.user_id IS ? GROUP BY i.provider`).all(from, to, userId);
-  const corrected = db.prepare(`SELECT COALESCE(prev.provider, ni.provider) provider, COUNT(*) n FROM corrections co JOIN captures c ON c.id = co.capture_id JOIN interpretations ni ON ni.id = co.interpretation_id LEFT JOIN interpretations prev ON prev.id = ni.supersedes_id WHERE co.created_at >= ? AND co.created_at < ? AND c.user_id IS ? GROUP BY 1`).all(from, to, userId);
+  const parses = db.prepare(`SELECT i.provider, COUNT(*) n FROM interpretations i JOIN captures c ON c.id = i.capture_id WHERE i.provider NOT IN ('manual') AND i.created_at >= ? AND i.created_at < ? ${userId === undefined ? '' : 'AND c.user_id IS ?'} GROUP BY i.provider`).all(from, to, ...scope);
+  const corrected = db.prepare(`SELECT COALESCE(prev.provider, ni.provider) provider, COUNT(*) n FROM corrections co JOIN captures c ON c.id = co.capture_id JOIN interpretations ni ON ni.id = co.interpretation_id LEFT JOIN interpretations prev ON prev.id = ni.supersedes_id WHERE co.created_at >= ? AND co.created_at < ? ${userId === undefined ? '' : 'AND c.user_id IS ?'} GROUP BY 1`).all(from, to, ...scope);
   const correctedBy = new Map(corrected.map(row => [row.provider, row.n]));
   return {
     usage: {
@@ -293,4 +294,10 @@ export function dayReport(db, { date, now, timeZone, userId }) {
   // Крайний день — сегодняшний: он ещё идёт, но «что сделано к этому часу»
   // спрашивают именно днём. По умолчанию открывается вчера — законченный день.
   return { date, timeZone, latest: today, hasOlder, meetings, done, missed, feed };
+}
+
+export function servicePeriodReport(db, { period, now, timeZone }) {
+  const today = dateInZone(now, timeZone);
+  const { from, to } = periodRange(period, today, []);
+  return serviceReport(db, { fromAt: from ? dayStartInZone(from, timeZone) : new Date(0), toAt: dayStartInZone(to, timeZone) });
 }

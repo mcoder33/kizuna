@@ -4,7 +4,7 @@ test("«День» в обзоре листается назад и вперёд
   await page.goto("/#reports");
   // «День» — вкладка по умолчанию: «Записи» стоят в конце.
   await expect(page.locator('[data-reports-tab="day"]')).toHaveAttribute("aria-pressed", "true");
-  await expect(page.locator("[data-reports-tab]")).toHaveText(["День", "Служебное", "Записи"]);
+  await expect(page.locator("[data-reports-tab]")).toHaveText(["День", "Записи"]);
   const label = page.locator("#reports-day-label"),
     prev = page.locator("#reports-day-prev"),
     next = page.locator("#reports-day-next");

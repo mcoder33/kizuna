@@ -75,7 +75,9 @@ function validatedAnswer(candidate, sources) {
   } catch (error) { throw Object.assign(new Error('answer invalid'), { code:error.message === 'citation failure' ? 'citation_failure' : 'schema_invalid' }); }
 }
 
-export function createAiService({ apiKey = process.env.OPENAI_API_KEY, model = process.env.PAGENT_AI_MODEL || 'gpt-5.6-luna', client, fetch: fetchImplementation, timeoutMs = 8000, maxCalls = 100, timeZone = 'Europe/Samara', now = () => new Date(), env = process.env, cliConfig, cliRunner, cliProviders, openRouter, gemini: geminiProvider, log = (event) => console.warn(JSON.stringify(event)), retryDelayMs = 1500 } = {}) {
+export function createAiService({ apiKey, model, client, fetch: fetchImplementation, timeoutMs = 8000, maxCalls = 100, timeZone = 'Europe/Samara', now = () => new Date(), env = process.env, cliConfig, cliRunner, cliProviders, openRouter, gemini: geminiProvider, log = (event) => console.warn(JSON.stringify(event)), retryDelayMs = 1500 } = {}) {
+  apiKey ??= env.OPENAI_API_KEY;
+  model ||= env.PAGENT_AI_MODEL || 'gpt-5.6-luna';
   const openai = client || (apiKey ? new OpenAI({ apiKey, fetch:fetchImplementation, timeout: timeoutMs, maxRetries: 0 }) : null);
   const openaiEnabled = Boolean(openai && apiKey); let calls = 0;
   const config = cliConfig || createCliConfig(env);

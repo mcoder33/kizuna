@@ -36,7 +36,7 @@ test('dynamic validation uses each recipient locale and preserves numeric and na
  try{
   for(const [i,api] of apis.entries()){
    const locale=['en','ja'][i];await api.put('/api/settings').send({locale}).expect(200);
-   const raw='User 山田 record';const capture=(await api.post('/api/captures').send({raw,provider:'fallback'}).expect(201)).body.entry.id;
+   const raw='User 山田 record';const capture=(await api.post('/api/captures').send({raw}).expect(201)).body.entry.id;
    const checks=[
     [()=>api.post(`/api/captures/${capture}/subtasks`).send({title:''}),400,sources[0],{limit:SUBTASK_TITLE_LIMIT},'invalid_subtask'],
     [()=>api.put('/api/settings').send({'Field 山田':'value'}),400,sources[1],{name:'Field 山田'},'unknown_setting'],
