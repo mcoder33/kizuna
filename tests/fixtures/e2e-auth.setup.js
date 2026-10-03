@@ -28,6 +28,7 @@ setup('первый администратор заходит и сохраня�
   // Доска в первый заход фильтрует по «сегодня» (просроченное и сегодняшнее), а
   // проверкам, которым до этого дела нет, нужны все дела: с пустого фильтра они
   // и стартуют. Проверки самого фильтра сами убирают этот ключ и видят умолчание.
-  await page.evaluate(() => localStorage.setItem('kizuna-board-filter', '[]'));
+  const { userId } = await (await page.request.get('/api/ui-preferences')).json();
+  expect((await page.request.patch('/api/ui-preferences', { data: { userId, changes: { 'kizuna-board-filter': '[]' } } })).ok()).toBe(true);
   await page.context().storageState({ path: E2E_STORAGE });
 });

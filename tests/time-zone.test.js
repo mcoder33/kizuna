@@ -66,6 +66,7 @@ test('queue and retry retain server-generated timezone/reference and all manual 
   assert.deepEqual(overrides.timeContext,{timeZone:'America/New_York',referenceAt:clock.toISOString()});
   await api.put('/api/settings').send({requestedTimeZone:'Asia/Tokyo'}).expect(200);clock=new Date('2026-10-03T04:00:00Z');
   const repeated=(await api.post('/api/captures').set('Prefer','respond-async').set('Idempotency-Key','zone-context-123').send({raw:'Untouched 山田',provider:'fallback',due:{date:'2026-10-02',time:'09:00'},priority:'high'}).expect(202)).body;assert.equal(repeated.jobId,queued.jobId);
+  // Lease expiry uses the real worker clock; the fake app clock only controls timeContext.
   let claim=claimCaptureJob(app.database,{owner:'test',leaseToken:'one',leaseMs:30000});await app.captureJobWorker.run(claim,new AbortController());
   assert.deepEqual(calls[0][6],overrides.timeContext);
   const retry=(await api.post(`/api/jobs/${queued.jobId}/retry`).send({}).expect(202)).body;

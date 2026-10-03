@@ -1,3 +1,4 @@
+import { mountUiPreferences, readUiPreferences, writeUiPreferences } from './ui-preferences.js';
 import { createAiAdmission } from './ai-admission.js';
 import { createHttpSecurity, loopbackProxy, validOccurredAt } from './security.js';
 import { normalizeTimeZone, userTimeZone, captureTimeContext } from './time-zone.js';
@@ -655,6 +656,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     notifyJournal('subtask');
     res.status(201).json({entry:fullEntry(db,getAggregate(db,created.captureId)),tree:subtaskTree(db,req.params.id,req.user.id,{today:subtaskDay(req)})});
   }catch(error){next(error);}});
+  mountUiPreferences(app, { db, notifyUser, onChanged: () => { stored = readSettings(db); } });
   // ── настройки ──
   app.get('/api/settings',(req,res)=>{
     res.json({ settings: publicSettings(stored, process.env, req.user), editable: editableSettings(req.user), timeZone: requestTimeZone(req), spend: spendState(req.user) });
@@ -676,6 +678,10 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
         next[key] = ['requestedTimeZone','detectedTimeZone'].includes(name) && value !== 'system' ? normalizeTimeZone(value) : String(value).trim();
       }
       writeSettings(db, next);
+      if (Object.hasOwn(body, 'theme')) {
+        const preferences = writeUiPreferences(db, req.user.id, { 'pagent.theme': ['light', 'dark'].includes(body.theme) ? body.theme : null }, { mirrorTheme: false });
+        notifyUser(req.user.id, 'ui-preferences', preferences);
+      }
       rebuildServices();
       const globalKeys = Object.keys(body).filter(name => SETTINGS[name] && !SETTINGS[name].personal);
       if (globalKeys.length) logAuthEvent(db, { userId: req.user.id, email: req.user.email, event: 'admin_settings', result: 'succeeded', detail: globalKeys.join(', ') });
@@ -1096,7 +1102,8 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     const locale = validLocaleSetting(preferences.locale) ? preferences.locale : 'system';
     const detectedLocale = validDetectedLocale(preferences.detectedLocale) ? preferences.detectedLocale : null;
     const resolvedLocale = userLocale(db, req.user.id, requestLanguages(req.get('accept-language')));
-    const attributes = `lang="${resolvedLocale}" data-account-locale="${locale}"${detectedLocale ? ` data-account-detected-locale="${detectedLocale}"` : ''}`;
+    const uiPreferences = encodeURIComponent(JSON.stringify(readUiPreferences(db, req.user.id)));
+    const attributes = `data-account-id="${req.user.id}" data-ui-preferences="${uiPreferences}" lang="${resolvedLocale}" data-account-locale="${locale}"${detectedLocale ? ` data-account-detected-locale="${detectedLocale}"` : ''}`;
     const html = fs.readFileSync(path.join(__dirname,'..','public','app.html'),'utf8').replace('<html lang="ru">', `<html ${attributes}>`);
     res.set('Cache-Control','no-store').vary('Cookie').vary('Accept-Language').type('html').send(html);
   });

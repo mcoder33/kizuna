@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/ui-preferences.js";
 async function capture(page, raw) {
   const posted = page.waitForResponse(
     (response) =>
@@ -297,7 +297,7 @@ test("ящики под полем тянутся за боковые края �
   expect(await width(drawers)).toBe(920);
   expect(await width(form)).toBe(formWidth);
   expect(await page.locator("#today").evaluate((element) => element.style.getPropertyValue("--drawers-width"))).toBe("920px");
-  expect(await page.evaluate(() => localStorage.getItem("kizuna-drawers-width"))).toBe("920");
+  expect(await page.evaluate(() => window.pagentPreferenceStorage.getItem("kizuna-drawers-width"))).toBe("920");
   // Вкладки растут вместе с колонкой, а не остаются в прежних 800px.
   expect(await width(page.locator("#today-tabs"))).toBe(920);
   await page.reload();
@@ -314,14 +314,14 @@ test("ящики под полем тянутся за боковые края �
   await drag(grip("e"), 280);
   expect(await width(drawers)).toBe(1120 - 48);
   // Простой щелчок по краю ничего не запоминает: хранится то, что выставили.
-  const stored = await page.evaluate(() => localStorage.getItem("kizuna-drawers-width"));
+  const stored = await page.evaluate(() => window.pagentPreferenceStorage.getItem("kizuna-drawers-width"));
   await grip("e").click();
-  expect(await page.evaluate(() => localStorage.getItem("kizuna-drawers-width"))).toBe(stored);
+  expect(await page.evaluate(() => window.pagentPreferenceStorage.getItem("kizuna-drawers-width"))).toBe(stored);
 
   // Двойной клик возвращает 800, а ключ из браузера уходит.
   await grip("e").dblclick();
   expect(await width(drawers)).toBe(800);
-  expect(await page.evaluate(() => localStorage.getItem("kizuna-drawers-width"))).toBeNull();
+  expect(await page.evaluate(() => window.pagentPreferenceStorage.getItem("kizuna-drawers-width"))).toBeNull();
   expect(await width(form)).toBe(formWidth);
 });
 
@@ -1547,12 +1547,12 @@ test("future-dated todos stay in their days while the tail counts them", async (
   expect(await page.locator("#todo .entry").count()).toBe(0);
   // Полный список — доска, открывается этой же ссылкой. В первый заход доска фильтрует по
   // «сегодня» и этих дел не показала бы, поэтому ссылка «весь список» снимает фильтр.
-  await page.evaluate(() => localStorage.removeItem("kizuna-board-filter"));
+  await page.evaluate(() => window.pagentPreferenceStorage.removeItem("kizuna-board-filter"));
   await tail.click();
   await expect(page.locator("#board")).toBeVisible();
   await expect(page.locator("#board-columns .board-card").filter({ hasText: /первое|второе|третье/ })).toHaveCount(3);
   await expect(page.locator("#board-filter-toggle")).toHaveText("Фильтр");
-  expect(await page.evaluate(() => localStorage.getItem("kizuna-board-filter"))).toBe("[]");
+  expect(await page.evaluate(() => window.pagentPreferenceStorage.getItem("kizuna-board-filter"))).toBe("[]");
   await page.locator('nav a[href="#today"]').click();
   await openTab(page, /^Закрыто/);
   // Семь «Обсудили …» — закрытые сразу туду: «Закрыто» показывает все.

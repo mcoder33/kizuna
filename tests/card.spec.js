@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, setUiPreferences } from "./fixtures/ui-preferences.js";
 
 async function capture(page, raw) {
   const posted = page.waitForResponse(
@@ -1119,8 +1119,8 @@ async function openByLink(page, id) {
 }
 const settled = (page) => page.locator("#review-dialog").evaluate((element) => Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => {}))));
 const isModal = (page) => page.locator("#review-dialog").evaluate((element) => element.matches(":modal"));
-const storedValue = (page, key) => page.evaluate((name) => localStorage.getItem(name), key);
-const startInMode = (page, mode) => page.addInitScript((value) => localStorage.setItem("kizuna-card-mode", value), mode);
+const storedValue = (page, key) => page.evaluate((name) => window.pagentPreferenceStorage.getItem(name), key);
+const startInMode = (page, mode) => setUiPreferences(page.request, { "kizuna-card-mode": mode });
 async function dragBy(page, locator, dx, dy) {
   const box = await locator.boundingBox();
   const x = box.x + box.width / 2, y = box.y + box.height / 2;
@@ -1341,7 +1341,7 @@ test("сбоку щелчок по строке списка и по строк�
   await makeDeed(request, "Первое дело строк");
   await makeDeed(request, "Второе дело строк");
   await startInMode(page, "side");
-  await page.addInitScript(() => { localStorage.setItem("kizuna-board-view", "list"); localStorage.setItem("kizuna-board-filter", "[]"); });
+  await setUiPreferences(page.request, { "kizuna-board-view": "list", "kizuna-board-filter": "[]" });
   await page.goto("/#board");
   const dialog = page.locator("#review-dialog");
   const row = (text) => page.locator("#board-flat .g-row").filter({ hasText: text }).locator(".board-title");

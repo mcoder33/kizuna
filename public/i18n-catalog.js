@@ -3,6 +3,8 @@ import { adminCatalogs } from './admin-i18n.js';
 
 export const catalogs = {
   "ru": {
+    "Уведомления запрещены в macOS. Разрешите их в Системных настройках → Уведомления → Кизуна.": "Уведомления запрещены в macOS. Разрешите их в Системных настройках → Уведомления → Кизуна.",
+    "Уведомления работают, пока Кизуна запущена, в том числе с закрытым окном.": "Уведомления работают, пока Кизуна запущена, в том числе с закрытым окном.",
     " {value1} мин": " {value1} мин",
     " · {late} {value2} ответа второй день": " · {late} {value2} ответа второй день",
     " · {value1} из {length}": " · {value1} из {length}",
@@ -2409,6 +2411,8 @@ export const catalogs = {
     "Код из приложения или резервный код": "Код из приложения или резервный код"
   },
   "en": {
+    "Уведомления запрещены в macOS. Разрешите их в Системных настройках → Уведомления → Кизуна.": "Notifications are blocked in macOS. Enable them in System Settings → Notifications → Kizuna.",
+    "Уведомления работают, пока Кизуна запущена, в том числе с закрытым окном.": "Notifications work while Kizuna is running, including with its window closed.",
     " {value1} мин": " {value1} min",
     " · {late} {value2} ответа второй день": " · {late} {value2} replies, second day",
     " · {value1} из {length}": " · {value1} of {length}",
@@ -4813,6 +4817,8 @@ export const catalogs = {
     "Код из приложения или резервный код": "Authenticator code or recovery code"
   },
   "es": {
+    "Уведомления запрещены в macOS. Разрешите их в Системных настройках → Уведомления → Кизуна.": "Las notificaciones están bloqueadas en macOS. Actívalas en Ajustes del Sistema → Notificaciones → Kizuna.",
+    "Уведомления работают, пока Кизуна запущена, в том числе с закрытым окном.": "Las notificaciones funcionan mientras Kizuna está en ejecución, incluso con la ventana cerrada.",
     " {value1} мин": " {value1} min",
     " · {late} {value2} ответа второй день": " · {late} {value2} respuestas, segundo día",
     " · {value1} из {length}": " · {value1} de {length}",
@@ -7218,6 +7224,8 @@ export const catalogs = {
     "Код из приложения или резервный код": "Código de autenticación o código de recuperación"
   },
   "pt-BR": {
+    "Уведомления запрещены в macOS. Разрешите их в Системных настройках → Уведомления → Кизуна.": "As notificações estão bloqueadas no macOS. Ative-as em Ajustes do Sistema → Notificações → Kizuna.",
+    "Уведомления работают, пока Кизуна запущена, в том числе с закрытым окном.": "As notificações funcionam enquanto o Kizuna está em execução, mesmo com a janela fechada.",
     " {value1} мин": " {value1} min",
     " · {late} {value2} ответа второй день": " · {late} {value2} respostas, segundo dia",
     " · {value1} из {length}": " · {value1} de {length}",
@@ -9623,6 +9631,8 @@ export const catalogs = {
     "Код из приложения или резервный код": "Código do autenticador ou código de recuperação"
   },
   "de": {
+    "Уведомления запрещены в macOS. Разрешите их в Системных настройках → Уведомления → Кизуна.": "Mitteilungen sind in macOS gesperrt. Aktiviere sie unter Systemeinstellungen → Mitteilungen → Kizuna.",
+    "Уведомления работают, пока Кизуна запущена, в том числе с закрытым окном.": "Mitteilungen funktionieren, solange Kizuna läuft, auch bei geschlossenem Fenster.",
     " {value1} мин": " {value1} Min.",
     " · {late} {value2} ответа второй день": " · {late} {value2} Antworten, zweiter Tag",
     " · {value1} из {length}": " · {value1} von {length}",
@@ -12027,6 +12037,8 @@ export const catalogs = {
     "Код из приложения или резервный код": "Authentifizierungscode oder Wiederherstellungscode"
   },
   "fr": {
+    "Уведомления запрещены в macOS. Разрешите их в Системных настройках → Уведомления → Кизуна.": "Les notifications sont bloquées dans macOS. Activez-les dans Réglages Système → Notifications → Kizuna.",
+    "Уведомления работают, пока Кизуна запущена, в том числе с закрытым окном.": "Les notifications fonctionnent tant que Kizuna est en cours d’exécution, même si sa fenêtre est fermée.",
     " {value1} мин": " {value1} min",
     " · {late} {value2} ответа второй день": " · {late} {value2} réponses, deuxième jour",
     " · {value1} из {length}": " · {value1} sur {length}",
@@ -14432,6 +14444,8 @@ export const catalogs = {
     "Код из приложения или резервный код": "Code d’authentification ou code de récupération"
   },
   "ja": {
+    "Уведомления запрещены в macOS. Разрешите их в Системных настройках → Уведомления → Кизуна.": "macOSで通知がブロックされています。システム設定 → 通知 → Kizunaで許可してください。",
+    "Уведомления работают, пока Кизуна запущена, в том числе с закрытым окном.": "ウィンドウを閉じていても、Kizunaが起動している間は通知が届きます。",
     " {value1} мин": " {value1}分",
     " · {late} {value2} ответа второй день": " · {late} {value2}件の返信、2日目",
     " · {value1} из {length}": " · {length}件中{value1}",
