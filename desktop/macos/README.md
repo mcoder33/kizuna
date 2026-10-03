@@ -48,6 +48,7 @@ bash desktop/macos/build.sh --universal
 desktop/macos/dist/Kizuna.app/Contents/MacOS/Kizuna --self-test
 python3 desktop/macos/Tests/test-updates.py
 bash desktop/macos/Tests/test-reminders.sh
+bash desktop/macos/Tests/test-notifications.sh
 # With npm dependencies and Playwright Chromium installed:
 node --test desktop/macos/Tests/restart-guard.test.cjs
 ```
@@ -72,6 +73,7 @@ Close the demo window or press **Ctrl+C** in the Terminal to stop it and remove 
 
 - Press **Command-Shift-Space** to open a small new-entry window from any app while Kizuna is running. Closing the main window leaves the app available from the menu bar.
 - The menu bar draws the Kizuna torii mark as a transparent monochrome template, so macOS adapts it to light and dark appearances.
-- Notifications require explicit opt-in from the app menu. While the app is open, it checks for notifications about once a minute and handles up to the 60 most recent items, once per notification ID.
+- Notifications require explicit opt-in from the app menu or the notification controls in Settings. The same controls show native permission status, disable delivery on this Mac, and send a local test banner. A macOS denial explains where to restore permission. While the app runs (including with its window closed), it checks about once a minute and immediately after wake, activation, and login. It handles up to the 60 most recent items, once per successfully delivered notification ID; failed OS submissions are retried. Quiet hours and per-kind account preferences still apply. Historical items at first login are not replayed. Delivery while the app is quit or the Mac is asleep is not provided.
+- The current day refreshes across midnight and immediately after wake/activation without reloading the web page or discarding drafts.
 - Sign in to an existing Kizuna account through the app's browser view. The app connects to the existing Kizuna server.
 - There is no offline sync. The update banner updates the native app; **Вид → Обновить** (⌘R) reloads only the web page.
