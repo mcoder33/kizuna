@@ -103,11 +103,19 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
         let key: String
         let account: String
         let body: Data
+        let flowId: String
     }
     private var attempt: Attempt?
     private var busy = false
     private var unconfirmed = false
     private var awaitingLogin = false
+    private let telemetrySessionId = UUID().uuidString.lowercased()
+    private var telemetryFlowId = UUID().uuidString.lowercased()
+    private var telemetryEvents: [[String: Any]] = []
+    private var telemetryTask: Task<Void, Never>?
+    private var telemetrySeq = 0
+    private var telemetryInputCount = 0
+    private var telemetryStartedAt = Date()
     private var previousApp: NSRunningApplication?
     var onLogin: (() -> Void)?
     var preventsRestart: Bool { busy || unconfirmed || !editor.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -202,6 +210,8 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
     func show() {
         refreshLocale()
         if panel.isVisible { panel.makeKeyAndOrderFront(nil); panel.makeFirstResponder(editor); return }
+        if telemetryInputCount == 0 && editor.string.isEmpty && attempt == nil { telemetryStartedAt = Date() }
+        recordTelemetry("native_opened")
         previousApp = NSWorkspace.shared.frontmostApplication
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
         if let frame = screen?.visibleFrame {
@@ -220,6 +230,7 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
     }
     private func hide(restoreFocus: Bool) {
         let wasVisible = panel.isVisible
+        if wasVisible && !busy && !editor.string.isEmpty { recordTelemetry("native_abandoned", fields: ["inputChars": min(10000, editor.string.utf16.count)]) }
         panel.orderOut(nil)
         if restoreFocus && wasVisible, let previousApp, !previousApp.isTerminated { previousApp.activate(options: []) }
     }
@@ -228,6 +239,8 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
     @objc private func submitAction() { submit() }
     func textDidChange(_ notification: Notification) {
         let raw = editor.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        telemetryInputCount += 1
+        recordTelemetry("native_input", fields: ["inputChars": min(10000, raw.utf16.count), "inputCount": telemetryInputCount])
         if raw.isEmpty && !unconfirmed { attempt = nil }
         submitButton.isEnabled = !busy && QuickCapturePolicy.validText(raw)
         if !QuickCapturePolicy.validText(raw) && !raw.isEmpty { setMessage(L("В записи может быть не больше 10 000 символов.")) }
@@ -271,11 +284,44 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
         guard !selected.isEmpty, let header = HTTPCookie.requestHeaderFields(with: selected)["Cookie"] else { throw CaptureError.login }
         return header
     }
+    // The native panel reports the same metadata as the web input, without text,
+    // cookies, filenames or error messages in event payloads. Input is coalesced.
+    private func recordTelemetry(_ event: String, fields: [String: Any] = [:]) {
+        telemetrySeq += 1
+        var item: [String: Any] = ["event": event, "flowId": attempt?.flowId ?? telemetryFlowId,
+            "browserSessionId": telemetrySessionId, "surface": "mac_native", "view": "today", "seq": telemetrySeq,
+            "clientAt": ISO8601DateFormatter().string(from: Date())]
+        for (key, value) in fields { item[key] = value }
+        if event == "native_input", telemetryEvents.last?["event"] as? String == event { telemetryEvents.removeLast() }
+        if telemetryEvents.count >= 40 { telemetryEvents.removeFirst() }
+        telemetryEvents.append(item)
+        scheduleTelemetryFlush()
+    }
+    private func scheduleTelemetryFlush() {
+        guard telemetryTask == nil else { return }
+        telemetryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard let self else { return }
+            defer { self.telemetryTask = nil; if !self.telemetryEvents.isEmpty { self.scheduleTelemetryFlush() } }
+            let events = self.telemetryEvents; self.telemetryEvents.removeAll()
+            guard !events.isEmpty, let cookie = try? await self.cookieHeader(),
+                  let url = URL(string: "/api/telemetry", relativeTo: self.origin)?.absoluteURL else { return }
+            var request = URLRequest(url: url); request.httpMethod = "POST"
+            request.setValue(cookie, forHTTPHeaderField: "Cookie")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: ["events": events])
+            // Telemetry never blocks submission and does not retry network errors.
+            _ = try? await self.session.data(for: request)
+        }
+    }
     private func request(_ path: String, cookie: String, attempt: Attempt? = nil) async throws -> (Int, [String: Any]) {
         let url = URL(string: path, relativeTo: origin)!.absoluteURL
         var request = URLRequest(url: url); request.setValue(cookie, forHTTPHeaderField: "Cookie")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(DesktopLocale.current, forHTTPHeaderField: "Accept-Language")
+        request.setValue("mac_native", forHTTPHeaderField: "X-Kizuna-Surface")
+        request.setValue(telemetrySessionId, forHTTPHeaderField: "X-Kizuna-Session-Id")
+        request.setValue(attempt?.flowId ?? telemetryFlowId, forHTTPHeaderField: "X-Kizuna-Flow-Id")
         if let attempt {
             request.httpMethod = "POST"; request.httpBody = attempt.body
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -298,6 +344,7 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
             return
         }
         setBusy(true); setMessage(L("Сохраняем запись…"))
+        recordTelemetry("native_submit", fields: ["inputChars": min(10000, raw.utf16.count), "durationMs": Date().timeIntervalSince(telemetryStartedAt) * 1000])
         Task { [weak self] in
             guard let self else { return }
             let previouslyUnconfirmed = self.unconfirmed
@@ -324,7 +371,7 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
                        """), let options = selected as? [String: String] {
                         for key in ["provider", "model"] { if let value = options[key] { body[key] = value } }
                     }
-                    self.attempt = Attempt(raw: raw, key: "mac-\(UUID().uuidString)", account: account, body: try JSONSerialization.data(withJSONObject: body))
+                    self.attempt = Attempt(raw: raw, key: "mac-\(UUID().uuidString)", account: account, body: try JSONSerialization.data(withJSONObject: body), flowId: self.telemetryFlowId)
                 }
                 guard let pending = self.attempt else { return }
                 // Never send a draft after the session in the web view changes.
@@ -336,18 +383,24 @@ final class DesktopQuickCapture: NSObject, NSWindowDelegate, NSTextViewDelegate 
                     let detail = (payload["error"] as? [String: Any])?["message"] as? String
                     throw CaptureError.message(detail ?? L("Сервер не подтвердил сохранение. Черновик остался здесь."))
                 }
+                self.recordTelemetry("native_accepted", fields: ["captureId": payload["captureId"] ?? "", "jobId": payload["jobId"] ?? ""])
                 self.editor.string = ""; self.editor.undoManager?.removeAllActions(); self.attempt = nil
+                self.telemetryFlowId = UUID().uuidString.lowercased(); self.telemetryInputCount = 0; self.telemetryStartedAt = Date()
                 self.unconfirmed = false
                 self.setMessage(L("⌘+Enter — отправить, Enter — новая строка"))
                 self.hide(restoreFocus: true)
             } catch CaptureError.login {
+                self.recordTelemetry("native_failed", fields: ["reason": "login"])
                 self.awaitingLogin = true; self.setMessage(L("Войдите в Кизуну. Черновик останется здесь."))
                 self.hide(restoreFocus: false); self.onLogin?()
             } catch CaptureError.changedAccount {
+                self.recordTelemetry("native_failed", fields: ["reason": "account_changed"])
                 self.setMessage(L("Учётная запись изменилась. Вернитесь в прежнюю учётную запись для отправки этого черновика."))
             } catch CaptureError.message(let message) {
+                self.recordTelemetry("native_failed", fields: ["reason": "unconfirmed"])
                 self.setMessage(message)
             } catch {
+                self.recordTelemetry("native_failed", fields: ["reason": "network"])
                 if self.unconfirmed {
                     self.setMessage(L("Сервер не подтвердил сохранение. Повторите отправку.") + " " + L("Сохранить запись — {CAPTURE_MOD}+Enter", ["CAPTURE_MOD": "⌘"]))
                 } else {

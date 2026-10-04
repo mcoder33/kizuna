@@ -1,6 +1,7 @@
 import { userTimeZone, captureTimeContext, validTimeContext } from './time-zone.js';
 import { userLocale } from './locale.js';
 import crypto from 'node:crypto';
+import { newTrace, withTrace, errorFields, classificationFields } from './observability.js';
 import { claimCaptureJob, completeCaptureJob, failCaptureJob, releaseCaptureJob, renewCaptureJobLease, recordUsage } from './db.js';
 import { autoAssign, callFromText } from './circles.js';
 import { applyUserOverrides } from './classifier.js';
@@ -45,21 +46,28 @@ export class CaptureJobWorker {
 
   tick() {
     if (!this.running || this.stopping) return;
+    try {
     while (this.active.size < this.maxConcurrent) {
       const claim = claimCaptureJob(this.db, { owner:this.owner, leaseToken:crypto.randomUUID(), leaseMs:this.leaseMs, currentTime:this.now().toISOString() });
       if (!claim) break;
       const controller = new AbortController();
-      this.report({event:'capture_job_started',jobId:claim.id,provider:claim.selected_provider});
-      const work = this.run(claim, controller).finally(() => { this.active.delete(claim.id); this.schedule(0); });
+      let savedTrace = {}; try { savedTrace = JSON.parse(claim.trace_json || '{}'); } catch {}
+      const work = withTrace({ ...newTrace(), ...savedTrace, userId: claim.user_id, captureId: claim.capture_id, jobId: claim.id, source: claim.origin || savedTrace.source || 'api' },
+        () => this.run(claim, controller)).finally(() => { this.active.delete(claim.id); this.schedule(0); });
       this.active.set(claim.id, { claim, controller, work });
     }
+    } catch (error) { this.report({ event: 'capture_worker_tick_failed', ...errorFields(error) }); }
     this.schedule();
   }
 
   async run(claim, controller) {
     const startedAt = Date.now();
+    this.report({ event: 'capture_job_started', jobId: claim.id, provider: claim.selected_provider, attemptCount: claim.attempt_count,
+      queueWaitMs: Math.max(0, this.now().getTime() - Date.parse(claim.created_at)), reclaimed: claim.attempt_count > 1 });
     const heartbeat = setInterval(() => {
-      if (!renewCaptureJobLease(this.db, claim, { leaseMs:this.leaseMs, currentTime:this.now().toISOString() })) controller.abort();
+      try {
+        if (!renewCaptureJobLease(this.db, claim, { leaseMs:this.leaseMs, currentTime:this.now().toISOString() })) controller.abort('lease_lost');
+      } catch (error) { this.report({ event: 'capture_heartbeat_failed', ...errorFields(error) }); controller.abort('lease_lost'); }
     }, Math.max(1, Math.floor(this.leaseMs / 2)));
     heartbeat.unref();
     const stopHeartbeat = () => clearInterval(heartbeat);
@@ -82,11 +90,12 @@ export class CaptureJobWorker {
           // Хозяин расхода — тот, чью запись разбирали: расход у каждого свой,
           // и безымянная строка не попала бы ни в чей счёт.
           recordUsage(this.db, { provider:result.usedProvider, model:result.model || null, kind:'classify', inputTokens:result.usage.inputTokens, outputTokens:result.usage.outputTokens, costUsd:result.usage.costUsd, userId:claim.user_id ?? null });
-      } catch {}
+      } catch (error) { this.report({ event: 'capture_side_effect_failed', operation: 'usage', ...errorFields(error) }); }
       if (controller.signal.aborted || this.stopping) return;
       // Ручные параметры карточки ввода перекрывают разбор модели.
       if (claim.overrides_json) {
-        try { result.classification = applyUserOverrides(result.classification, overrides, new Date(timeContext.referenceAt), timeContext.timeZone); } catch {}
+        try { result.classification = applyUserOverrides(result.classification, overrides, new Date(timeContext.referenceAt), timeContext.timeZone); }
+        catch (error) { this.report({ event: 'capture_side_effect_failed', operation: 'overrides', ...errorFields(error) }); }
       }
       if (completeCaptureJob(this.db, claim, result, { timeZone: timeContext.timeZone, referenceAt: timeContext.referenceAt, completedAt: this.now().toISOString() })) {
         // Просьба уходит человеку и тогда, когда разбор закончился в фоне:
@@ -95,18 +104,26 @@ export class CaptureJobWorker {
         // «сделай отчёт» переслали себе, не должен получить эту просьбу от вас.
         const foreign = claim.origin === 'telegram_forward';
         let assigned = null;
-        if (!foreign) try { assigned = autoAssign(this.db, { captureId:claim.capture_id, userId:claim.user_id ?? null, classification:result.classification, raw:claim.raw }); } catch {}
+        if (!foreign) try { assigned = autoAssign(this.db, { captureId:claim.capture_id, userId:claim.user_id ?? null, classification:result.classification, raw:claim.raw }); }
+        catch (error) { this.report({ event: 'capture_side_effect_failed', operation: 'assignment', ...errorFields(error) }); }
         // «@Аня» в самой записи — тоже призыв: Аня её видит и знает о ней.
-        if (!foreign) try { callFromText(this.db, { captureId:claim.capture_id, authorId:claim.user_id ?? null, raw:claim.raw, assigneeId:assigned?.assignee?.id || null }); } catch {}
+        if (!foreign) try { callFromText(this.db, { captureId:claim.capture_id, authorId:claim.user_id ?? null, raw:claim.raw, assigneeId:assigned?.assignee?.id || null }); }
+        catch (error) { this.report({ event: 'capture_side_effect_failed', operation: 'mention', ...errorFields(error) }); }
         // Разобрано в фоне, а человек мог уже уйти: неясная запись ждёт его за колокольчиком.
-        try { noticeUnclear(this.db, { userId:claim.user_id ?? null, captureId:claim.capture_id, classification:result.classification, raw:claim.raw }); } catch {}
-        this.report({event:'capture_job_succeeded',jobId:claim.id,provider:claim.selected_provider,usedProvider:result.usedProvider||result.provider,fallbackReason:result.fallbackReason||null,durationMs:Date.now()-startedAt});
-      }
+        try { noticeUnclear(this.db, { userId:claim.user_id ?? null, captureId:claim.capture_id, classification:result.classification, raw:claim.raw }); }
+        catch (error) { this.report({ event: 'capture_side_effect_failed', operation: 'notice', ...errorFields(error) }); }
+        this.report({event:'capture_job_succeeded',jobId:claim.id,provider:claim.selected_provider,usedProvider:result.usedProvider||result.provider,model:result.model,fallbackReason:result.fallbackReason||null,
+          durationMs:Date.now()-startedAt,totalMs:Math.max(0,this.now().getTime()-Date.parse(claim.created_at)),...classificationFields(result.classification)});
+      } else this.report({ event: 'capture_commit_lost', jobId: claim.id, durationMs: Date.now()-startedAt });
     } catch (error) {
       if (controller.signal.aborted || this.stopping) return;
       const errorCode=safeErrorCodes.has(error?.code) ? error.code : 'unavailable';
-      try { if(failCaptureJob(this.db, claim, errorCode)) this.report({event:'capture_job_failed',jobId:claim.id,provider:claim.selected_provider,durationMs:Date.now()-startedAt,errorCode}); } catch {}
-    } finally { executionGate?.release(); clearInterval(heartbeat); controller.signal.removeEventListener('abort', stopHeartbeat); }
+      try { if(failCaptureJob(this.db, claim, errorCode)) this.report({event:'capture_job_failed',jobId:claim.id,provider:claim.selected_provider,durationMs:Date.now()-startedAt,...errorFields(error),errorCode}); }
+      catch (storageError) { this.report({ event: 'capture_failure_not_saved', jobId: claim.id, ...errorFields(storageError) }); }
+    } finally {
+      if (controller.signal.aborted || this.stopping) this.report({ event: 'capture_job_aborted', jobId: claim.id, reason: this.stopping ? 'shutdown' : typeof controller.signal.reason === 'string' ? controller.signal.reason : 'aborted', durationMs: Date.now()-startedAt });
+      executionGate?.release(); clearInterval(heartbeat); controller.signal.removeEventListener('abort', stopHeartbeat);
+    }
   }
 
   wake() {
@@ -114,7 +131,7 @@ export class CaptureJobWorker {
   }
 
   abort(jobId) {
-    this.active.get(jobId)?.controller.abort();
+    this.active.get(jobId)?.controller.abort('cancelled');
   }
 
   async stop() {
@@ -124,7 +141,7 @@ export class CaptureJobWorker {
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
     for (const { claim, controller } of this.active.values()) {
       releaseCaptureJob(this.db, claim);
-      controller.abort();
+      controller.abort('shutdown');
     }
     const activeWork = Promise.allSettled([...this.active.values()].map(active => active.work));
     let graceTimer;

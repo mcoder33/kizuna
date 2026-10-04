@@ -13,6 +13,9 @@ import { migrateNotesTree } from './notes-schema.js';
 import { migrateAdministration } from './admin-schema.js';
 import { registerDaySummaryHistoryClock, migrateDaySummaryHistory, exportDaySummaryHistory, resetDaySummaryHistory, daySummaryHistoryRowCount } from './day-summary-history.js';
 import { initializeTaskSearchSchema, exportEntrySearchTraces, resetEntrySearchTraces } from './task-search.js';
+import { jobTrace, traceContext, reportDatabaseEvent } from './observability.js';
+import { pruneDiagnostics } from './diagnostic-retention.js';
+const authEventWrites = new WeakMap();
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -39,6 +42,7 @@ export function openDatabase(filename) {
   retirePublicCollaboration(db);
   repairMissingProjections(db);
   migrateDaySummaryHistory(db);
+  if (!db.prepare('PRAGMA table_info(capture_jobs)').all().some(column => column.name === 'trace_json')) db.exec('ALTER TABLE capture_jobs ADD COLUMN trace_json TEXT');
   return db;
 }
 
@@ -1080,7 +1084,8 @@ function insertLedgerEvent(db, eventType, captureId, jobId, createdAt, { project
 
 export function enqueueCaptureJob(db, { raw, occurredAt, selectedProvider, selectedModel = null, idempotencyKey = null, requestFingerprint = null, overrides = null, userId = null, origin = null }) {
   const createdAt = now();
-  return withImmediateTransaction(db, () => {
+  const trace = jobTrace(userId, origin || traceContext().surface || 'api');
+  const queued = withImmediateTransaction(db, () => {
     if (idempotencyKey) {
       // Ключ идемпотентности уникален на всю базу, а повтором считается только
       // свой же запрос: чужой ключ — это столкновение, а не «то же самое».
@@ -1092,12 +1097,14 @@ export function enqueueCaptureJob(db, { raw, occurredAt, selectedProvider, selec
     }
     const captureId = id(), jobId = id();
     db.prepare(INSERT_CAPTURE).run(captureId, raw, 'text', occurredAt || createdAt, createdAt, 'private', userId);
-    db.prepare(`INSERT INTO capture_jobs(id,capture_id,selected_provider,selected_model,state,stage,retryable,retry_of_id,idempotency_key,request_fingerprint,overrides_json,created_at,user_id,origin)
-      VALUES(?,?,?,?,'pending','queued',0,NULL,?,?,?,?,?,?)`).run(jobId, captureId, selectedProvider, selectedModel, idempotencyKey, requestFingerprint, overrides ? JSON.stringify(overrides) : null, createdAt, userId, origin);
+    db.prepare(`INSERT INTO capture_jobs(id,capture_id,selected_provider,selected_model,state,stage,retryable,retry_of_id,idempotency_key,request_fingerprint,overrides_json,created_at,user_id,origin,trace_json)
+      VALUES(?,?,?,?,'pending','queued',0,NULL,?,?,?,?,?,?,?)`).run(jobId, captureId, selectedProvider, selectedModel, idempotencyKey, requestFingerprint, overrides ? JSON.stringify(overrides) : null, createdAt, userId, origin, JSON.stringify(trace));
     insertJobEvent(db, jobId, 'queued', createdAt);
     insertLedgerEvent(db, 'capture_queued', captureId, jobId, createdAt);
     return { captureId, jobId, state:'pending', existing:false };
   });
+  if (!queued.conflict) reportDatabaseEvent(db, { ...trace, event: 'capture_queued', captureId: queued.captureId, jobId: queued.jobId, existing: queued.existing, inputChars: raw.length, provider: selectedProvider });
+  return queued;
 }
 
 export function claimCaptureJob(db, { owner, leaseToken, leaseMs, currentTime = now() }) {
@@ -1188,17 +1195,23 @@ export function cancelCaptureJob(db, jobId) {
 
 export function retryCaptureJob(db, jobId) {
   const createdAt = now();
-  return withImmediateTransaction(db, () => {
+  const queued = withImmediateTransaction(db, () => {
     const previous = db.prepare('SELECT * FROM capture_jobs WHERE id=?').get(jobId);
     if (!previous) return null;
     if (!['failed','cancelled'].includes(previous.state) || !previous.retryable) return { invalidState:true };
     const retryId = id();
-    db.prepare(`INSERT INTO capture_jobs(id,capture_id,selected_provider,selected_model,state,stage,retryable,retry_of_id,created_at,user_id,origin,overrides_json)
-      VALUES(?,?,?,?,'pending','queued',0,?,?,?,?,?)`).run(retryId, previous.capture_id, previous.selected_provider, previous.selected_model || null, previous.id, createdAt, previous.user_id ?? null, previous.origin ?? null, previous.overrides_json ?? null);
+    let previousTrace = {}; try { previousTrace = JSON.parse(previous.trace_json || '{}'); } catch {}
+    const current = traceContext();
+    const trace = jobTrace(previous.user_id, previous.origin || 'api');
+    if (!current.flowId && previousTrace.flowId) trace.flowId = previousTrace.flowId;
+    db.prepare(`INSERT INTO capture_jobs(id,capture_id,selected_provider,selected_model,state,stage,retryable,retry_of_id,created_at,user_id,origin,overrides_json,trace_json)
+      VALUES(?,?,?,?,'pending','queued',0,?,?,?,?,?,?)`).run(retryId, previous.capture_id, previous.selected_provider, previous.selected_model || null, previous.id, createdAt, previous.user_id ?? null, previous.origin ?? null, previous.overrides_json ?? null, JSON.stringify(trace));
     insertJobEvent(db, retryId, 'queued', createdAt);
     insertLedgerEvent(db, 'capture_retry_queued', previous.capture_id, retryId, createdAt);
     return { captureId:previous.capture_id, jobId:retryId, state:'pending' };
   });
+  if (queued?.jobId) reportDatabaseEvent(db, { event: 'capture_retry_queued', captureId: queued.captureId, jobId: queued.jobId, retryOfId: jobId });
+  return queued;
 }
 
 export function getCaptureJob(db, jobId) {
@@ -1695,7 +1708,11 @@ export function countUserSessions(db, userId, at = now()) { return db.prepare('S
 // Кто и когда пытался войти — единственный след, по которому потом можно
 // понять, был ли перебор. Пароли и коды сюда не попадают никогда.
 export function logAuthEvent(db, { ip = null, userId = null, email = null, event, result, detail = null }) {
-  try { db.prepare('INSERT INTO auth_events(id,user_id,email,event,result,detail,created_at,ip) VALUES(?,?,?,?,?,?,?,?)').run(id(), userId, email, event, result, detail, now(), ip); } catch {}
+  try {
+    db.prepare('INSERT INTO auth_events(id,user_id,email,event,result,detail,created_at,ip) VALUES(?,?,?,?,?,?,?,?)').run(id(), userId, email, event, result, detail, now(), ip);
+    const count = (authEventWrites.get(db) || 0) + 1; authEventWrites.set(db, count);
+    if (count % 100 === 0) { const pruned = pruneDiagnostics(db); if (pruned.auth || pruned.search) reportDatabaseEvent(db, {event:'diagnostics_pruned',count:pruned.auth+pruned.search}); }
+  } catch (error) { reportDatabaseEvent(db, {event:'auth_audit_failed',errorCode:error?.code || 'storage_error'}); }
 }
 export function listAuthEvents(db, { limit = 50, userId = null } = {}) {
   const capped = Math.min(Math.max(Number(limit) || 50, 1), 200);

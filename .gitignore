@@ -6,6 +6,7 @@ data/*.sqlite
 data/*.sqlite-*
 data/attachments/
 data/report-images/
+data/logs/
 test-results/
 playwright-report/
 tmp/

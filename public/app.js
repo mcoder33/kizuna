@@ -3413,6 +3413,7 @@ async function renderCardEntry(id, adjustStack = () => {}) {
   adjustStack();
   const review = reviewFromEntry(entry);
   showCardInner(entry, review.level === "high" ? undefined : review);
+  window.KizunaTelemetry?.emit('card_opened', { captureId: entry.id });
   keepCardFocus();
   return entry;
 }
@@ -4983,15 +4984,21 @@ function layToast(record, job) {
 async function pollCapture(record) {
   if (!activeCapture(record)) return;
   try {
-    const job = await request(record.statusUrl);
+    const job = await request(record.statusUrl, { headers: record.flowId ? { 'X-Kizuna-Flow-Id': record.flowId } : {} });
     if (!activeCapture(record)) return;
     renderCaptureProgress(job, record);
+    if (activeCapture(record).observedState !== job.state) {
+      window.KizunaTelemetry?.emit('capture_job_observed', { flowId: record.flowId, captureId: record.captureId, jobId: record.jobId, state: job.state });
+      activeCapture(record).observedState = job.state;
+    }
     if (terminal(job)) {
       activeCapture(record).terminal = true;
       if (job.state === "succeeded") {
         await load();
         if (!activeCapture(record)) return;
         toast(layToast(record, job));
+        window.KizunaTelemetry?.emit('capture_result_visible', { flowId: record.flowId, captureId: record.captureId, jobId: record.jobId,
+          totalMs: record.submittedAt ? Math.max(0, Date.now()-record.submittedAt) : undefined });
         return;
       }
       persistActiveCaptures();
@@ -4999,6 +5006,7 @@ async function pollCapture(record) {
     }
     activeCapture(record).delay = Math.min(activeCapture(record).delay * 2, 5000);
   } catch {
+    window.KizunaTelemetry?.emit('capture_poll_failed', { flowId: record.flowId, captureId: record.captureId, jobId: record.jobId, reason: 'other' });
     if (!activeCapture(record)) return;
     activeCapture(record).delay = Math.min(activeCapture(record).delay * 2, 5000);
     toast(t("Не удалось проверить статус классификации. Повторим автоматически."));
@@ -5274,6 +5282,7 @@ $("#capture-form").addEventListener("submit", async (event) => {
   if ($("#capture-submit").disabled) return;
   const raw = captureField.getValue().trim();
   if (!raw) return;
+  const telemetry = window.KizunaTelemetry?.submit(raw.length) || {};
   setCaptureBusy(true);
   try {
     const provider = null,
@@ -5282,20 +5291,23 @@ $("#capture-form").addEventListener("submit", async (event) => {
         headers: {
           Prefer: "respond-async",
           "Idempotency-Key": idempotencyKey(),
+          ...(telemetry.flowId ? { 'X-Kizuna-Flow-Id': telemetry.flowId } : {}),
         },
         body: JSON.stringify(withProvider({ raw })),
       });
     if (result.response.status !== 202 || !safeCaptureEnvelope(result.data))
       throw new Error(t("Сервер не подтвердил асинхронное сохранение."));
+    window.KizunaTelemetry?.accepted({ ...telemetry, captureId: result.data.captureId, jobId: result.data.jobId });
     captureField.clear();
     if (captureLarge()) setCaptureLarge(false);
-    startCapturePolling({ ...result.data, raw, provider: provider || "fallback" });
+    startCapturePolling({ ...result.data, ...telemetry, raw, provider: provider || "fallback" });
     uploadPendingShots(result.data.captureId);
     // Потолок исчерпан — запись сохранится, но разберут её правила. Сказать об
     // этом надо сразу: иначе человек решит, что разбор сломался.
     if (result.data.spend && !result.data.spend.allowed)
       toast(t("Потолок расходов исчерпан: запись сохранена, но разобрана по правилам"));
   } catch (error) {
+    window.KizunaTelemetry?.failed(telemetry);
     toast(error.message);
   } finally {
     setCaptureBusy(false);
@@ -5461,11 +5473,14 @@ async function bootstrap() {
   do {
     bootstrapQueued = false;
     bootstrapInFlight = true;
+    const telemetryStarted = performance.now();
     try {
       await Promise.all([load(), loadSettings(), loadNotifications()]);
       resumeCapture();
       syncPushSubscription();
+      window.KizunaTelemetry?.emit('bootstrap_finished', { durationMs: performance.now()-telemetryStarted });
     } catch {
+      window.KizunaTelemetry?.emit('bootstrap_failed', { durationMs: performance.now()-telemetryStarted });
       toast(t("Не удалось загрузить данные. Повторим при восстановлении сети."));
     } finally {
       bootstrapInFlight = false;
@@ -6304,9 +6319,11 @@ function listenToJournal() {
   // окне. Сервер здоровается сообщением «поток жив» — по нему и перечитываем,
   // иначе такая правка осталась бы невидимой до следующего события.
   journalStream.addEventListener("ready", reloadJournalSoon);
+  journalStream.addEventListener('ready', () => window.KizunaTelemetry?.emit('stream_connected'));
   // Браузер переподключается сам; на всякий случай сбрасываем ссылку, чтобы
   // повторный вызов мог открыть поток заново.
   journalStream.addEventListener("error", () => {
+    window.KizunaTelemetry?.emit('stream_disconnected');
     if (journalStream?.readyState === EventSource.CLOSED) {
       journalStream = null;
     }

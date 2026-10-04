@@ -43,8 +43,12 @@ import { NOTIFICATION_KINDS, DEFAULT_QUIET_HOURS, validNotifyPrefs, validQuietHo
 import { zonedToUtc } from './ics.js';
 import { correctCapture } from './corrections.js';
 import { activeNote, completeOccurrence, undoOccurrence, captureOwner, attachmentOwner, projectionOwner, undoGroupOwner, monthlySpend, findUserById, countUsers } from './db.js';
+import { contextualAudit, requestTracing, attachActor, observeService, observeFetch, observeDatabase, registerDatabaseAudit, errorFields, startRuntimeMonitor, newTrace, withTrace, span } from './observability.js';
+import { mountClientEvents } from './client-events.js';
+import { createLogStore, logConfig } from './log-store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const publicDirectory = path.join(__dirname, '..', 'public');
 function validateTimeZone(timeZone) {
   try { new Intl.DateTimeFormat('en-CA', { timeZone }).format(new Date()); return timeZone; }
   catch { throw new Error('Invalid PAGENT_TIMEZONE configuration'); }
@@ -188,8 +192,11 @@ function noteUsage(db, result, kind, userId = null) {
 function applyCorrection(db,req,res,next,notify=()=>{},timeZone='Europe/Samara'){try{const body=req.body||{},patch=body.patch||body,providedKey=req.get('Idempotency-Key');if(providedKey!==undefined&&!validIdempotencyKey(providedKey))return res.status(400).json({error:{code:'invalid_idempotency_key',message:'Некорректный ключ идемпотентности.'}});const result=correctCapture(db,{captureId:req.params.id,userId:req.user?.id??null,patch,operationKey:providedKey||null,timeZone});if(result.error)return res.status(result.error.status).json({error:{code:result.error.code,message:result.error.message}});notify();res.json({entry:result.entry,undoGroupId:result.undoGroupId,review:result.review,replayed:result.replayed});}catch(error){next(error);}}
 async function snapshotProvider(ai, requested) { if (requested) return requested; const status = await ai.status(); return providerIds.has(status?.selectedProvider) ? status.selectedProvider : providerIds.has(status?.defaultProvider) ? status.defaultProvider : 'fallback'; }
 export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.join(__dirname, '..', 'data', 'pagent.sqlite'), aiService, timeZone = process.env.PAGENT_TIMEZONE || 'Europe/Samara', now = () => new Date(), workerOptions, audit = () => {}, secureCookies, securityOptions = {}, authAdmissionOptions = {}, aiAdmissionOptions = {}, calendarService = null, calendarFetch = globalThis.fetch, calendarWorkerOptions = {}, calendarKey = null, pushTransport = null, reminderWorkerOptions = {}, telegramFetch = globalThis.fetch, telegramOptions = {} } = {}) {
+  audit = contextualAudit(audit);
   const security = createHttpSecurity({ ...securityOptions, ...(secureCookies === undefined ? {} : { secureCookies }) });
   const db = openDatabase(databasePath);
+  registerDatabaseAudit(db, audit);
+  observeDatabase(db, audit);
   const requestText = (req, source, params = {}) => translate(userLocale(db, req.user?.id, requestLanguages(req.get('accept-language'))), source, params);
   let administration;
   const accounts = createAccounts({ db, now, secureCookies: security.secureCookies, admissionOptions: authAdmissionOptions, audit, timeZone: () => configuredTimeZone, onPreferencesChanged: () => { stored = readSettings(db); },
@@ -207,7 +214,8 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   fs.mkdirSync(attachmentsDirectory, { recursive: true });
   const attachmentPath = attachmentId => path.join(attachmentsDirectory, attachmentId);
   const paidAdmission = createAiAdmission({ now: () => now().getTime(), ...aiAdmissionOptions });
-  let ai = aiService || createAiService({ timeZone:configuredTimeZone, now, env:environment() });
+  const buildAi = env => observeService(aiService || createAiService({ timeZone: configuredTimeZone, now, env, log: audit, fetch: observeFetch(globalThis.fetch, audit, 'ai') }), audit, ['classify','answer','planSearch','status'], 'ai');
+  let ai = buildAi(environment());
   const app = express();
   app.set('trust proxy', loopbackProxy);
   // Живое обновление журнала: страница подписывается на поток и перерисовывает
@@ -216,16 +224,16 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   const journalListeners = new Set();
   const notifyJournal = (reason) => {
     const line = `event: journal\ndata: ${JSON.stringify({ reason, at: now().toISOString() })}\n\n`;
-    for (const listener of journalListeners) { try { listener.write(line); } catch {} }
+    for (const listener of journalListeners) { try { listener.write(line); } catch (error) { audit({ event: 'stream_write_failed', userId: listener.userId, ...errorFields(error) }); } }
     // Любое изменение журнала — повод свериться с внешним календарём: новое
     // дело со сроком, перенос, «сделано», удаление. Сам календарь себя не будит.
-    if (reason !== 'calendar' && reason !== 'queued') { try { calendar.wakeAutoExport?.(); } catch {} }
+    if (reason !== 'calendar' && reason !== 'queued') { try { calendar.wakeAutoExport?.(); } catch (error) { audit({ event: 'calendar_wake_failed', ...errorFields(error) }); } }
   };
   // Личное сообщение в открытые вкладки одного человека: напоминание не
   // должно всплыть у соседа по серверу.
   const notifyUser = (userId, event, payload) => {
     const line = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
-    for (const listener of journalListeners) { if (listener.userId === userId) { try { listener.write(line); } catch {} } }
+    for (const listener of journalListeners) { if (listener.userId === userId) { try { listener.write(line); } catch (error) { audit({ event: 'stream_write_failed', userId, ...errorFields(error) }); } } }
   };
   // Новость об общем деле касается двоих: автора записи и того, кому она
   // ушла. Остальным участникам круга знать о каждом чекбоксе незачем.
@@ -241,7 +249,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   // Разбор заканчивается в воркере, а не в запросе: там журнал и меняется.
   // Запись из Telegram ждёт итога там же: ответ «ИИ разбирает…» правится.
   let telegram = null;
-  const workerAudit = (event) => { try { audit(event); } finally { if (event?.event === 'capture_job_succeeded' || event?.event === 'capture_job_failed') { notifyJournal('job'); telegram?.answer(event.jobId).catch(() => {}); } } };
+  const workerAudit = (event) => { try { audit(event); } finally { if (event?.event === 'capture_job_succeeded' || event?.event === 'capture_job_failed') { notifyJournal('job'); telegram?.answer(event.jobId).catch(error => audit({ event: 'telegram_answer_failed', jobId: event.jobId, ...errorFields(error) })); } } };
   const captureJobWorker = new CaptureJobWorker({ db, ai, now, audit: workerAudit, timeZone: () => configuredTimeZone, timeZoneFor, beforeClassify: paidExecutionGate, ...workerOptions });
   // Смена ключа или пояса пересобирает службы на месте: перезапускать
   // сервер ради строчки в настройках человек не должен.
@@ -249,7 +257,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     stored = readSettings(db);
     const env = environment();
     try { configuredTimeZone = validateTimeZone(stored.timeZone || timeZone); } catch {}
-    if (!aiService) ai = createAiService({ timeZone:configuredTimeZone, now, env });
+    if (!aiService) ai = buildAi(env);
     captureJobWorker.ai = ai;
     telegram?.reconfigure();
   }
@@ -258,13 +266,14 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   // настройки Google читаются на каждый вызов — ключ, введённый в приложении,
   // должен работать без перезапуска, как и ключи моделей.
   const secrets = createSecretBox({ keyPath: path.join(path.dirname(databasePath), 'calendar.key'), key: calendarKey });
-  const calendar = calendarService || createCalendarService({ db, secrets, now, timeZone: timeZoneFor, legacyTimeZone: () => configuredTimeZone, audit, fetch: calendarFetch, onChange: () => notifyJournal('calendar'), autoExportDelayMs: calendarWorkerOptions.autoExportDelayMs, googleConfig: () => { const env = environment(); return { clientId: env.PAGENT_GOOGLE_CLIENT_ID || null, clientSecret: env.PAGENT_GOOGLE_CLIENT_SECRET || null }; } });
+  const calendar = observeService(calendarService || createCalendarService({ db, secrets, now, timeZone: timeZoneFor, legacyTimeZone: () => configuredTimeZone, audit, fetch: observeFetch(calendarFetch, audit, 'calendar'), onChange: () => notifyJournal('calendar'), autoExportDelayMs: calendarWorkerOptions.autoExportDelayMs, googleConfig: () => { const env = environment(); return { clientId: env.PAGENT_GOOGLE_CLIENT_ID || null, clientSecret: env.PAGENT_GOOGLE_CLIENT_SECRET || null }; } }), audit,
+    ['addCaldavAccount','googleFinish','syncAccount','syncDue','exportCapture','removeExport','autoExport','updateExternalEvent','deleteExternalEvent','respondExternalEvent','moveExternalEvent'], 'calendar');
   const calendarSyncWorker = new CalendarSyncWorker({ service: calendar, audit, ...calendarWorkerOptions });
   app.calendar = calendar;
   app.calendarSyncWorker = calendarSyncWorker;
   // Напоминания: доставка — в открытые вкладки потоком и на устройства
   // push-ем; что и когда — считает служба напоминаний по настройкам человека.
-  const push = createPushService({ db, now, audit, ...(pushTransport ? { transport: pushTransport } : {}), subject: process.env.PAGENT_PUSH_SUBJECT || (process.env.PAGENT_PUBLIC_URL && /^https:/.test(process.env.PAGENT_PUBLIC_URL) ? process.env.PAGENT_PUBLIC_URL : 'mailto:kizuna@example.com') });
+  const push = observeService(createPushService({ db, now, audit, ...(pushTransport ? { transport: pushTransport } : {}), subject: process.env.PAGENT_PUSH_SUBJECT || (process.env.PAGENT_PUBLIC_URL && /^https:/.test(process.env.PAGENT_PUBLIC_URL) ? process.env.PAGENT_PUBLIC_URL : 'mailto:kizuna@example.com') }), audit, ['send'], 'push');
   const reminders = createReminderService({ db, now, audit, timeZone: timeZoneFor,
     settingsFor: userId => { const env = environment(); return { minutes: settingValue(stored, env, 'remindDefault', userId), hour: settingValue(stored, env, 'remindHour', userId) }; },
     // Напоминание — такой же повод, как остальные: строка за колокольчиком и
@@ -276,7 +285,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     } });
   // Обход раз в полминуты общий: напоминания, отложенные уведомления, чистка
   // ленты, утренняя сводка и пороги расходов.
-  const reminderWorker = new ReminderWorker({ service: { tick: async () => { const sent = await reminders.tick(); await notificationTick(); return sent; } }, audit, ...reminderWorkerOptions });
+  const reminderWorker = new ReminderWorker({ service: { tick: () => withTrace(newTrace({ source: 'reminders' }), () => span(audit, 'reminders.tick', async () => { const sent = await reminders.tick(); await notificationTick(); return sent; })) }, audit, ...reminderWorkerOptions });
 
   // ── уведомления ──
   // Строка ленты уже сохранена; здесь решается, как о ней сказать. В открытые
@@ -306,7 +315,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     notifyUser(row.user_id, 'notification', { notification: view, counts: notificationCounts(db, row.user_id, { scope: 'personal' }), toast: prefs.phone && !merged });
     const listening = [...journalListeners].some(listener => listener.userId === row.user_id);
     if (!prefs.phone || merged || listening || isQuiet(quietHoursOf(db, row.user_id), now(), timeZoneFor(row.user_id))) return;
-    const sending = push.send(row.user_id, pushOf(view)).catch(() => {}).finally(() => deliveries.delete(row.id));
+    const sending = push.send(row.user_id, pushOf(view)).catch(error => audit({ event: 'notification_push_failed', userId: row.user_id, ...errorFields(error) })).finally(() => deliveries.delete(row.id));
     deliveries.set(row.id, sending);
   });
   app.notificationsDelivered = () => Promise.all([...deliveries.values(), administration?.flush()]);
@@ -385,14 +394,14 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   }
   async function notificationTick() {
     const at = now();
-    try { wakeSnoozed(db, at, refreshSnoozed); } catch {}
-    try { purgeNotifications(db, at); } catch {}
+    try { wakeSnoozed(db, at, refreshSnoozed); } catch (error) { audit({ event: 'notification_wake_failed', ...errorFields(error) }); }
+    try { purgeNotifications(db, at); } catch (error) { audit({ event: 'notification_purge_failed', ...errorFields(error) }); }
     // Сводка живёт свой день: с новым утром вчерашняя уходит из ленты сама.
 
     for (const user of db.prepare("SELECT * FROM users WHERE status='active'").all()) {
-      try { dismissStaleDigests(db, dateInTimeZone(at, timeZoneFor(user.id)), at.toISOString(), user.id); } catch {}
-      try { morningDigest(user, at); } catch {}
-      try { spendThresholds(user); } catch {}
+      try { dismissStaleDigests(db, dateInTimeZone(at, timeZoneFor(user.id)), at.toISOString(), user.id); } catch (error) { audit({ event: 'digest_dismiss_failed', userId: user.id, ...errorFields(error) }); }
+      try { morningDigest(user, at); } catch (error) { audit({ event: 'digest_failed', userId: user.id, ...errorFields(error) }); }
+      try { spendThresholds(user); } catch (error) { audit({ event: 'spend_notice_failed', userId: user.id, ...errorFields(error) }); }
     }
     await Promise.all([...deliveries.values(), administration?.flush(), telegram?.tick()]);
   }
@@ -402,6 +411,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   app.accounts = accounts;
   app.database = db;
   app.disable('x-powered-by');
+  app.use(requestTracing(audit));
   app.use((req, res, next) => {
     const sendJson = res.json.bind(res);
     res.json = payload => {
@@ -418,10 +428,17 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   // Кто перед нами — выясняется до всего остального, но никого не заворачивает:
   // страница входа и заявка на регистрацию должны работать без учётной записи.
   app.use(accounts.attachUser);
+  app.use(attachActor);
+  app.get('/healthz', (req,res) => {
+    try { db.prepare('SELECT 1').get(); res.json({status:'ok'}); }
+    catch (error) { audit({event:'health_check_failed',...errorFields(error)}); res.status(503).json({status:'unavailable'}); }
+  });
   accounts.registerRoutes(app);
   // Отсюда и ниже — только для вошедших. Граница одна и видна глазом: любой
   // маршрут, добавленный после этой строки, закрыт по умолчанию.
   app.use('/api', accounts.requireAuth);
+  const clientEvents = mountClientEvents(app, { audit });
+  app.stopTelemetry = clientEvents.stop;
   // Чужой идентификатор в адресе не должен открывать чужую запись: владельца
   // спрашиваем у базы, а не у клиента.
   // Хозяин задания нужен серверу для проверки, но наружу не уходит: ответ о
@@ -466,9 +483,9 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
       query,context,providerIds.has(environment().PAGENT_AI_PROVIDER) ? environment().PAGENT_AI_PROVIDER : 'fallback',signal,undefined,userLocale(db,userId),
     ],{canRun:isCurrent}),
   });
-  const reportImages = createReportImageService({directory:path.join(path.dirname(databasePath),'report-images'),env:environment,audit,
+  const reportImages = observeService(createReportImageService({directory:path.join(path.dirname(databasePath),'report-images'),env:environment,audit,fetch:observeFetch(globalThis.fetch,audit,'report_image'),
     allowGenerate:userId=>{const user=findUserById(db,userId);return user?.status==='active'&&spendState(user).allowed;},
-    onUsage:(result,userId)=>noteUsage(db,result,'report_image',userId)});
+    onUsage:(result,userId)=>noteUsage(db,result,'report_image',userId)}),audit,['prepare'],'report_image');
   telegram = createTelegramService({
     db, now, audit,
     canAccessDaySummary: createTelegramDaySummaryAccess(),
@@ -476,7 +493,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     onSettingsChanged: () => { stored = readSettings(db); },
     token: () => environment().PAGENT_TELEGRAM_BOT_TOKEN || null,
     apiBase: () => process.env.PAGENT_TELEGRAM_API_BASE || TELEGRAM_API,
-    fetch: telegramFetch,
+    fetch: observeFetch(telegramFetch, audit, 'telegram'),
     timeZone: timeZoneFor,
     userActive: userId => findUserById(db, userId)?.status === 'active',
     queueCapture: async ({ userId, raw, occurredAt, origin }) => {
@@ -1011,6 +1028,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   async function executeAi(userId, kind, args, { canRun = null } = {}) {
     const providerIndex = kind === 'classify' ? 1 : 2;
     const gate = await paidExecutionGate(userId, args[providerIndex]);
+    if (gate.reason) audit({event:'ai_execution_degraded',userId,operation:kind,provider:gate.requestedProvider,fallbackReason:gate.reason});
     const input = [...args]; input[providerIndex] = gate.provider;
     try {
       if (kind==='planSearch' && (input[3]?.aborted || (canRun && !canRun()))) return {plan:null};
@@ -1124,13 +1142,13 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   // журнал, живёт за ним.
   // Сервис-воркер живёт в корне: его область действия — весь адрес, а из
   // /public/ он видел бы только /public/. Манифест — рядом, ради «Домой» на iPhone.
-  app.get('/sw.js',(req,res)=>{ res.set({ 'Cache-Control':'no-store', 'Content-Type':'text/javascript; charset=utf-8' }); res.sendFile(path.join(__dirname,'..','public','sw.js')); });
-  app.get('/manifest.webmanifest',(req,res)=>{ res.set({ 'Content-Type':'application/manifest+json; charset=utf-8' }); res.sendFile(path.join(__dirname,'..','public','manifest.webmanifest')); });
-  app.get('/login',(req,res)=>res.sendFile(path.join(__dirname,'..','public','auth.html')));
+  app.get('/sw.js',(req,res)=>{ res.set({ 'Cache-Control':'no-store', 'Content-Type':'text/javascript; charset=utf-8' }); res.sendFile('sw.js', { root: publicDirectory, dotfiles: 'deny' }); });
+  app.get('/manifest.webmanifest',(req,res)=>{ res.set({ 'Content-Type':'application/manifest+json; charset=utf-8' }); res.sendFile('manifest.webmanifest', { root: publicDirectory, dotfiles: 'deny' }); });
+  app.get('/login',(req,res)=>res.sendFile('auth.html', { root: publicDirectory, dotfiles: 'deny' }));
   // Гостю корень показывает, что это за приложение, а не форму входа: по
   // ссылке человек попадал на поле почты и не понимал, куда пришёл.
   app.get('/',(req,res)=>{
-    if (!req.user) return res.sendFile(path.join(__dirname,'..','public','hello.html'));
+    if (!req.user) return res.sendFile('hello.html', { root: publicDirectory, dotfiles: 'deny' });
     const preferences = publicSettings(stored, process.env, req.user);
     const locale = validLocaleSetting(preferences.locale) ? preferences.locale : 'system';
     const detectedLocale = validDetectedLocale(preferences.detectedLocale) ? preferences.detectedLocale : null;
@@ -1149,19 +1167,45 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   // на собственную опечатку и не мог отличить свою ошибку от отказа сервера.
   const bodyErrorCodes={400:'invalid_json',413:'payload_too_large',415:'unsupported_media_type'};
   const bodyErrorMessages={400:'Не удалось разобрать тело запроса.',413:'Тело запроса слишком велико.',415:'Неподдерживаемый формат тела запроса.'};
-  app.use((error,req,res,next)=>{if(res.headersSent)return next(error);const status=Number(error?.status||error?.statusCode);if(typeof error?.type==='string'&&(error.type.startsWith('entity.')||error.type.startsWith('encoding.'))&&status>=400&&status<500)return res.status(status).json({error:{code:bodyErrorCodes[status]||'invalid_request',message:bodyErrorMessages[status]||'Некорректный запрос.'}});res.status(500).json({error:{code:'internal_error',message:'Не удалось обработать запрос.'}});});
+  app.use((error,req,res,next)=>{
+    const status=Number(error?.status||error?.statusCode);
+    const bodyError=typeof error?.type==='string'&&(error.type.startsWith('entity.')||error.type.startsWith('encoding.'))&&status>=400&&status<500;
+    audit({ event: bodyError ? 'http_body_rejected' : 'http_handler_failed', route: typeof req.route?.path === 'string' ? req.route.path : 'unmatched', userId: req.user?.id, ...errorFields(error) });
+    if(res.headersSent) { res.destroy(); return; }
+    if(bodyError)return res.status(status).json({error:{code:bodyErrorCodes[status]||'invalid_request',message:bodyErrorMessages[status]||'Некорректный запрос.'}});
+    res.status(500).json({error:{code:'internal_error',message:'Не удалось обработать запрос.'}});
+  });
   return app;
 }
-// Аудит службы — в stdout, то есть в journalctl: события у кода были всегда
-// (удаление записи, экспорт, блокировка, ошибки календаря), но сборщик по
-// умолчанию пустой, и они падали в никуда. Одной строкой в JSON, чтобы журнал
-// можно было грепать и читать через `journalctl -u kizuna -o cat | jq`.
-if(process.argv[1]===fileURLToPath(import.meta.url)){const app=createApp({audit:(event)=>{try{console.log(JSON.stringify({at:new Date().toISOString(),...event}));}catch{}}});const server=app.listen(Number(process.env.PORT||3000),process.env.HOST||'127.0.0.1',()=>{app.captureJobWorker.start();app.calendarSyncWorker.start();app.reminderWorker.start();app.telegram.start();console.log('Kizuna server started.');});let shuttingDown=false;const shutdown=()=>{if(shuttingDown)return;shuttingDown=true;
-  // Потоки событий держали ответы открытыми, и server.close ждал их вечно:
-  // systemd убивал процесс по таймауту через 90 с — каждый деплой давал
-  // полторы минуты простоя. Потоки закрываем сами, простаивающие соединения
-  // тоже, а на всё выключение — жёсткий срок.
-  const deadline=setTimeout(()=>process.exit(0),10000);deadline.unref();
-  app.closeEventStreams();
-  app.accounts.stop();
-  Promise.allSettled([app.captureJobWorker.stop(),app.calendarSyncWorker.stop(),app.reminderWorker.stop(),app.telegram.stop()]).finally(()=>{server.close(()=>process.exit(0));server.closeIdleConnections?.();});};process.once('SIGTERM',shutdown);process.once('SIGINT',shutdown);}
+// Production owns one bounded JSONL sink. Tests can inject audit without files.
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const databasePath = process.env.PAGENT_DB_PATH || path.join(__dirname, '..', 'data', 'pagent.sqlite');
+  const store = createLogStore({ directory: process.env.PAGENT_LOG_DIR || path.join(path.dirname(databasePath), 'logs'), ...logConfig() });
+  const audit = contextualAudit(store.write);
+  let app, server, monitor, shuttingDown = false, shutdownExitCode = 0;
+  const shutdown = async (exitCode = 0) => {
+    shutdownExitCode = Math.max(shutdownExitCode, exitCode);
+    if (shuttingDown) return; shuttingDown = true;
+    const deadline = setTimeout(() => process.exit(shutdownExitCode), 10000); deadline.unref();
+    monitor?.stop(); audit({ event: 'service_stopping' });
+    if (app) {
+      app.closeEventStreams(); app.accounts.stop(); app.stopTelemetry();
+      const results = await Promise.allSettled([app.captureJobWorker.stop(), app.calendarSyncWorker.stop(), app.reminderWorker.stop(), app.telegram.stop()]);
+      for (const result of results) if (result.status === 'rejected') audit({ event: 'service_stop_failed', ...errorFields(result.reason) });
+      if (server) await new Promise(resolve => { server.close(resolve); server.closeIdleConnections?.(); });
+      app.database.close();
+    }
+    audit({ event: 'service_stopped' }); await store.close(); clearTimeout(deadline); process.exit(shutdownExitCode);
+  };
+  const fatal = error => { audit({ event: 'service_fatal', ...errorFields(error) }); shutdown(1).catch(() => process.exit(1)); };
+  process.once('uncaughtException', fatal); process.once('unhandledRejection', fatal);
+  process.once('SIGTERM', () => shutdown().catch(fatal)); process.once('SIGINT', () => shutdown().catch(fatal));
+  try {
+    app = createApp({ databasePath, audit });
+    monitor = startRuntimeMonitor({ audit, db: app.database, store });
+    server = app.listen(Number(process.env.PORT || 3000), process.env.HOST || '127.0.0.1', () => {
+      app.captureJobWorker.start(); app.calendarSyncWorker.start(); app.reminderWorker.start(); app.telegram.start();
+      audit({ event: 'service_started' }); monitor.sample();
+    });
+  } catch (error) { fatal(error); }
+}

@@ -14,6 +14,7 @@
     "smoke:provider": "node server/smoke-provider.js",
     "build:draft-recovery": "node scripts/build-draft-recovery.mjs",
     "check:draft-recovery": "node scripts/build-draft-recovery.mjs --check",
+    "logs:report": "node scripts/log-report.mjs",
     "pretest": "npm run check:draft-recovery"
   },
   "dependencies": {
