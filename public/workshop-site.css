@@ -1,0 +1,141 @@
+/* Public workshop: quiet pages around a product demo, never a room behind copy. */
+html[data-public-appearance="workshop"] .hello-body {
+  --hello-canvas: #f7f8f7;
+  --hello-surface: #fff;
+  --hello-soft: #eff1ef;
+  --hello-rule: #dce0dc;
+  --hello-ink: #292e2c;
+  --hello-muted: #626b67;
+}
+
+html[data-public-appearance="workshop"][data-theme="dark"] .hello-body {
+  --hello-canvas: #1d2222;
+  --hello-surface: #292e2d;
+  --hello-soft: #303635;
+  --hello-rule: #434c49;
+  --hello-ink: #f0f1ee;
+  --hello-muted: #b7bfba;
+}
+
+@media (prefers-color-scheme: dark) {
+  html[data-public-appearance="workshop"]:not([data-theme="light"]) .hello-body {
+    --hello-canvas: #1d2222;
+    --hello-surface: #292e2d;
+    --hello-soft: #303635;
+    --hello-rule: #434c49;
+    --hello-ink: #f0f1ee;
+    --hello-muted: #b7bfba;
+  }
+}
+
+html[data-public-appearance="workshop"] .hello-demo {
+  border-color: var(--hello-rule);
+  box-shadow: 0 22px 55px rgb(20 30 27 / 12%);
+}
+
+html[data-public-appearance="workshop"] .hello-app {
+  --workshop-demo-ink: #203128;
+  --workshop-demo-secondary: #2d3a30;
+  --workshop-demo-line: #617269;
+  --workshop-demo-hover: rgb(255 255 255 / 7%);
+  isolation: isolate;
+  background: #fcfcf5;
+  color: var(--workshop-demo-ink);
+}
+
+html[data-public-appearance="workshop"] .hello-app::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--workshop-room-image, none) center top / cover no-repeat;
+  opacity: .8;
+}
+
+html[data-public-appearance="workshop"][data-room-light="night"] .hello-app {
+  --workshop-demo-ink: #f4f6ef;
+  --workshop-demo-secondary: #f4f6ef;
+  --workshop-demo-line: #e2e8df;
+  --workshop-demo-hover: rgb(255 255 255 / 6%);
+  background-color: #2c3030;
+}
+
+html[data-public-appearance="workshop"][data-room-light="night"] .hello-app::before {
+  opacity: 1;
+  filter: brightness(.78);
+}
+
+html[data-public-appearance="workshop"] .hello-app :is(.hello-app-step, .hello-app-step i, .hello-app-current span, .hello-app-shelf, .hello-app-shelf.is-today, .hello-app-time) {
+  color: var(--workshop-demo-secondary);
+}
+html[data-public-appearance="workshop"] .hello-app .hello-app-tab:not(.is-on),
+html[data-public-appearance="workshop"] .hello-app .hello-app-tab:not(.is-on) b {
+  color: var(--workshop-demo-ink);
+}
+html[data-public-appearance="workshop"] .hello-app .hello-app-row { background: transparent; }
+html[data-public-appearance="workshop"] .hello-app .hello-app-row.is-fresh { background: var(--workshop-demo-hover); }
+html[data-public-appearance="workshop"] .hello-app .hello-app-check { background: transparent; border-color: var(--workshop-demo-line); }
+html[data-public-appearance="workshop"] .hello-app .hello-app-row.is-done .hello-app-check { background: var(--green); border-color: var(--green); }
+html[data-public-appearance="workshop"] .hello-app .hello-app-title { color: var(--workshop-demo-ink); font-weight: 500; }
+html[data-public-appearance="workshop"] .hello-app .hello-app-row.is-done .hello-app-title { color: var(--workshop-demo-secondary); }
+
+html[data-public-appearance="workshop"] .hello-keep-ring { display: none; }
+html[data-public-appearance="workshop"] .hello-keep-art::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 10px;
+  left: max(0px, calc(50% - 230px));
+  width: 245px;
+  height: 255px;
+  background: url("/public/workshop/torii-guide.webp") center 52% / 166% auto no-repeat;
+  opacity: .9;
+  pointer-events: none;
+}
+html[data-public-appearance="workshop"] .hello-memory-note { transform: translate(54px, 24px) rotate(-5deg); }
+
+html[data-public-appearance="workshop"] .auth-body,
+html[data-public-appearance="workshop"] .macapp-page {
+  background: #f7f8f7;
+}
+html[data-public-appearance="workshop"] .auth-card,
+html[data-public-appearance="workshop"] .macapp-page main.macapp-panel {
+  background: #fff;
+  border-color: #dce0dc;
+  box-shadow: 0 18px 48px rgb(20 30 27 / 9%);
+}
+html[data-public-appearance="workshop"] .macapp-page .macapp-notice { background: #eff1ef; }
+html[data-public-appearance="workshop"] .macapp-page .macapp-footer { color: #626b67; }
+
+html[data-public-appearance="workshop"][data-theme="dark"] :is(.auth-body, .macapp-page) {
+  background: #1d2222;
+  color: #f0f1ee;
+}
+html[data-public-appearance="workshop"][data-theme="dark"] :is(.auth-card, .macapp-page main.macapp-panel) {
+  background: #292e2d;
+  border-color: #434c49;
+}
+html[data-public-appearance="workshop"][data-theme="dark"] .macapp-page .macapp-notice { background: #303635; }
+html[data-public-appearance="workshop"][data-theme="dark"] .macapp-page .macapp-footer { color: #b7bfba; }
+
+@media (prefers-color-scheme: dark) {
+  html[data-public-appearance="workshop"]:not([data-theme="light"]) :is(.auth-body, .macapp-page) { background: #1d2222; color: #f0f1ee; }
+  html[data-public-appearance="workshop"]:not([data-theme="light"]) :is(.auth-card, .macapp-page main.macapp-panel) { background: #292e2d; border-color: #434c49; }
+  html[data-public-appearance="workshop"]:not([data-theme="light"]) .macapp-page .macapp-notice { background: #303635; }
+  html[data-public-appearance="workshop"]:not([data-theme="light"]) .macapp-page .macapp-footer { color: #b7bfba; }
+}
+
+@media (max-width: 760px) {
+  html[data-public-appearance="workshop"] .hello-app::before { background-position: 65% top; }
+  html[data-public-appearance="workshop"][data-room-light="day"] .hello-app::before { opacity: .6; }
+}
+@media (max-width: 620px) {
+  html[data-public-appearance="workshop"] .hello-keep-art::before { left: -18px; top: 12px; width: 205px; height: 228px; }
+  html[data-public-appearance="workshop"] .hello-memory-note { transform: translate(25px, 30px) rotate(-5deg); }
+  html[data-public-appearance="workshop"] .hello-app-hint { display: none; }
+  html[data-public-appearance="workshop"] .hello-app-foot { justify-content: flex-end; }
+}
+@media (max-width: 760px) {
+  html[data-public-appearance="workshop"][data-room-light="day"] .hello-app { --workshop-demo-ink: #101913; }
+}

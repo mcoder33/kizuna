@@ -1,4 +1,5 @@
 import { mountUiPreferences, readUiPreferences, writeUiPreferences } from './ui-preferences.js';
+import { createWorkshopAccess } from './workshop-access.js';
 import { createAiAdmission } from './ai-admission.js';
 import { createApplicationMetrics, startMetricsServer, metricsPort, administratorRecipients } from './metrics.js';
 import { createHttpSecurity, loopbackProxy, validOccurredAt } from './security.js';
@@ -206,6 +207,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   // приложении, сильнее того, что лежит в .env, и применяется без перезапуска.
   let stored = readSettings(db);
   const environment = () => environmentWith(stored, process.env);
+  const workshopAccess = createWorkshopAccess();
   let configuredTimeZone = validateTimeZone(stored.timeZone || timeZone);
   const timeZoneFor = userId => userTimeZone(db, userId, configuredTimeZone);
   const requestTimeZone = req => timeZoneFor(req.user?.id);
@@ -702,10 +704,10 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     notifyJournal('subtask');
     res.status(201).json({entry:fullEntry(db,getAggregate(db,created.captureId)),tree:subtaskTree(db,req.params.id,req.user.id,{today:subtaskDay(req)})});
   }catch(error){next(error);}});
-  mountUiPreferences(app, { db, notifyUser, onChanged: () => { stored = readSettings(db); } });
+  mountUiPreferences(app, { db, notifyUser, workshopAccess, onChanged: () => { stored = readSettings(db); } });
   // ── настройки ──
   app.get('/api/settings',(req,res)=>{
-    res.json({ settings: publicSettings(stored, process.env, req.user), editable: editableSettings(req.user), timeZone: requestTimeZone(req) });
+    res.json({ settings: publicSettings(stored, process.env, req.user), editable: editableSettings(req.user), timeZone: requestTimeZone(req), capabilities: workshopAccess.capabilities(req.user.id) });
   });
   app.put('/api/settings',(req,res,next)=>{
     try {
@@ -732,7 +734,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
       const globalKeys = Object.keys(body).filter(name => SETTINGS[name] && !SETTINGS[name].personal);
       if (globalKeys.length) logAuthEvent(db, { userId: req.user.id, email: req.user.email, event: 'admin_settings', result: 'succeeded', detail: globalKeys.join(', ') });
       reportAudit(audit,{event:'settings_changed',result:'succeeded',keys:Object.keys(next)});
-      res.json({ settings: publicSettings(stored, process.env, req.user), editable: editableSettings(req.user), timeZone: requestTimeZone(req) });
+      res.json({ settings: publicSettings(stored, process.env, req.user), editable: editableSettings(req.user), timeZone: requestTimeZone(req), capabilities: workshopAccess.capabilities(req.user.id) });
     } catch(error){ next(error); }
   });
   app.get('/api/usage',accounts.requireAdmin,(req,res,next)=>{try{res.json({...usageSummary(db,{now:now(),userId:req.user.id}),spend:spendState(req.user)});}catch(error){next(error);}});
@@ -1138,6 +1140,12 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
       res.json({ ...removed, attachments: attachmentsFor(db, removed.captureId) });
     } catch(error){ next(error); }
   });
+  const sendPublicPage = (req, res, file) => {
+    const appearance = workshopAccess.publicEnabled() ? 'workshop' : 'classic';
+    const html = fs.readFileSync(path.join(publicDirectory, file), 'utf8').replace('<html ', '<html data-public-appearance="' + appearance + '" ');
+    res.set('Cache-Control', 'no-store').type('html').send(html);
+  };
+  for (const file of ['auth.html', 'hello.html', 'mac-download.html']) app.get('/public/' + file, (req, res) => sendPublicPage(req, res, file));
   app.use('/public',express.static(path.join(__dirname,'..','public'),{index:false,dotfiles:'deny'}));
   // Без учётной записи открывается только вход: приложение целиком, включая
   // журнал, живёт за ним.
@@ -1145,17 +1153,17 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   // /public/ он видел бы только /public/. Манифест — рядом, ради «Домой» на iPhone.
   app.get('/sw.js',(req,res)=>{ res.set({ 'Cache-Control':'no-store', 'Content-Type':'text/javascript; charset=utf-8' }); res.sendFile('sw.js', { root: publicDirectory, dotfiles: 'deny' }); });
   app.get('/manifest.webmanifest',(req,res)=>{ res.set({ 'Content-Type':'application/manifest+json; charset=utf-8' }); res.sendFile('manifest.webmanifest', { root: publicDirectory, dotfiles: 'deny' }); });
-  app.get('/login',(req,res)=>res.sendFile('auth.html', { root: publicDirectory, dotfiles: 'deny' }));
+  app.get('/login',(req,res)=>sendPublicPage(req,res,'auth.html'));
   // Гостю корень показывает, что это за приложение, а не форму входа: по
   // ссылке человек попадал на поле почты и не понимал, куда пришёл.
   app.get('/',(req,res)=>{
-    if (!req.user) return res.sendFile('hello.html', { root: publicDirectory, dotfiles: 'deny' });
+    if (!req.user) return sendPublicPage(req,res,'hello.html');
     const preferences = publicSettings(stored, process.env, req.user);
     const locale = validLocaleSetting(preferences.locale) ? preferences.locale : 'system';
     const detectedLocale = validDetectedLocale(preferences.detectedLocale) ? preferences.detectedLocale : null;
     const resolvedLocale = userLocale(db, req.user.id, requestLanguages(req.get('accept-language')));
-    const uiPreferences = encodeURIComponent(JSON.stringify(readUiPreferences(db, req.user.id)));
-    const attributes = `data-account-id="${req.user.id}" data-ui-preferences="${uiPreferences}" lang="${resolvedLocale}" data-account-locale="${locale}"${detectedLocale ? ` data-account-detected-locale="${detectedLocale}"` : ''}`;
+    const uiPreferences = encodeURIComponent(JSON.stringify({ ...readUiPreferences(db, req.user.id), capabilities: workshopAccess.capabilities(req.user.id) }));
+    const attributes = `data-account-id="${req.user.id}" data-workshop-enabled="${workshopAccess.allows(req.user.id)}" data-ui-preferences="${uiPreferences}" lang="${resolvedLocale}" data-account-locale="${locale}"${detectedLocale ? ` data-account-detected-locale="${detectedLocale}"` : ''}`;
     const html = fs.readFileSync(path.join(__dirname,'..','public','app.html'),'utf8').replace('<html lang="ru">', `<html ${attributes}>`);
     res.set('Cache-Control','no-store').vary('Cookie').vary('Accept-Language').type('html').send(html);
   });

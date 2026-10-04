@@ -1,0 +1,93 @@
+/* A quiet, in-flow guide for genuinely empty product pages. */
+html[data-appearance="workshop"] .torii-help {
+  position: relative;
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 18px;
+  width: min(100%, 610px);
+  min-height: 128px;
+  box-sizing: border-box;
+  margin: 22px auto 12px;
+  padding: 14px 16px 14px 10px;
+  color: var(--ws-ink, var(--ink));
+  background: var(--ws-surface, var(--paper));
+  border: 1px solid var(--ws-line, var(--line));
+  border-radius: 20px;
+}
+
+html[data-appearance="workshop"] .torii-help-art {
+  display: block;
+  width: 92px;
+  height: 92px;
+  background: url("/public/workshop/torii-guide.webp") center / 145% auto no-repeat;
+}
+
+html[data-appearance="workshop"] .torii-help-copy { min-width: 0; }
+
+html[data-appearance="workshop"] .torii-help-name {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+html[data-appearance="workshop"] .torii-help-message {
+  margin: 0 0 11px;
+  color: var(--ws-secondary, var(--muted));
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+html[data-appearance="workshop"] .torii-help-action {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ws-ink, var(--ink));
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-color: var(--ws-line, var(--line));
+}
+
+html[data-appearance="workshop"] .torii-help-close {
+  align-self: start;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ws-secondary, var(--muted));
+  font: 24px/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+
+html[data-appearance="workshop"] .torii-help-close:hover { background: var(--ws-raised, var(--paper)); }
+
+html[data-appearance="workshop"] .torii-help :is(button):focus-visible {
+  outline: 2px solid var(--ws-ink, var(--ink));
+  outline-offset: 3px;
+}
+
+html[data-appearance="workshop"] .today-start.torii-suppressed { display: none; }
+
+@media (max-width: 600px) {
+  html[data-appearance="workshop"] .torii-help {
+    grid-template-columns: 70px minmax(0, 1fr) 44px;
+    gap: 10px;
+    min-height: 112px;
+    margin: 16px auto;
+    padding: 12px 8px;
+    border-radius: 16px;
+  }
+  html[data-appearance="workshop"] .torii-help-art { width: 70px; height: 84px; }
+}

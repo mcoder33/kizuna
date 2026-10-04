@@ -1,0 +1,87 @@
+/* UI materials follow the interface theme; open text follows the room light. */
+html[data-appearance="workshop"] {
+  --ws-canvas: #f7f8f7;
+  --ws-surface: #fcfdfb;
+  --ws-raised: #fff;
+  --ws-soft: #eff2ee;
+  --ws-ink: #29322d;
+  --ws-secondary: #5e6a62;
+  --ws-tertiary: #727d75;
+  --ws-line: #d8dfd8;
+  --ws-line-strong: #b9c5bb;
+  --ws-hover: rgba(41, 50, 45, .05);
+  --ws-selected: rgba(53, 107, 75, .08);
+  --ws-shadow: 0 12px 36px rgba(29, 43, 34, .10);
+  --ws-shadow-small: 0 3px 10px rgba(29, 43, 34, .06);
+  --ws-focus: #39705a;
+  --ws-accent: var(--coral);
+  --ws-positive: var(--green);
+  --ws-danger: var(--red-66);
+  --ws-radius: 14px;
+  --ws-radius-small: 9px;
+  --ws-leading: 1.55;
+  --ws-scene-ink: #233027;
+  --ws-scene-secondary: #2d3a30;
+  --ws-scene-line: #4c5c4f;
+  --ws-scene-hover: rgba(25, 42, 29, .055);
+  --ws-scene-link: #264f83;
+  --ws-scene-danger: #a92d48;
+  --ws-room-grade: 248, 245, 234;
+}
+html[data-appearance="workshop"][data-theme="dark"] {
+  --ws-canvas: #1d2222;
+  --ws-surface: #252b28;
+  --ws-raised: #2c3330;
+  --ws-soft: #303934;
+  --ws-ink: #eef1ec;
+  --ws-secondary: #bdc7be;
+  --ws-tertiary: #a1aea4;
+  --ws-line: #47554b;
+  --ws-line-strong: #647467;
+  --ws-hover: rgba(238, 241, 236, .055);
+  --ws-selected: rgba(170, 208, 181, .11);
+  --ws-shadow: 0 12px 36px rgba(0, 0, 0, .24);
+  --ws-shadow-small: 0 3px 10px rgba(0, 0, 0, .14);
+  --ws-focus: #a3d6b9;
+}
+@media (prefers-color-scheme: dark) {
+  html[data-appearance="workshop"]:not([data-theme="light"]) {
+    --ws-canvas: #1d2222;
+    --ws-surface: #252b28;
+    --ws-raised: #2c3330;
+    --ws-soft: #303934;
+    --ws-ink: #eef1ec;
+    --ws-secondary: #bdc7be;
+    --ws-tertiary: #a1aea4;
+    --ws-line: #47554b;
+    --ws-line-strong: #647467;
+    --ws-hover: rgba(238, 241, 236, .055);
+    --ws-selected: rgba(170, 208, 181, .11);
+    --ws-shadow: 0 12px 36px rgba(0, 0, 0, .24);
+    --ws-shadow-small: 0 3px 10px rgba(0, 0, 0, .14);
+    --ws-focus: #a3d6b9;
+  }
+}
+html[data-appearance="workshop"][data-room-light="night"] {
+  --ws-scene-ink: #f4f6ef;
+  --ws-scene-secondary: #f4f6ef;
+  --ws-scene-line: #d2ddcc;
+  --ws-scene-hover: rgba(239, 246, 232, .065);
+  --ws-scene-link: #c1d9fa;
+  --ws-scene-danger: #ffb3bb;
+  --ws-room-grade: 28, 27, 24;
+}
+@media (max-width: 760px) {
+  html[data-appearance="workshop"][data-room-light="day"] {
+    --ws-scene-ink: #101913;
+    --ws-scene-secondary: #101913;
+  }
+}
+html[data-appearance="workshop"][data-room-fallback="true"] {
+  --ws-scene-ink: var(--ws-ink);
+  --ws-scene-secondary: var(--ws-secondary);
+  --ws-scene-line: var(--ws-line-strong);
+  --ws-scene-hover: var(--ws-hover);
+  --ws-scene-link: var(--ws-focus);
+  --ws-scene-danger: var(--ws-danger);
+}
