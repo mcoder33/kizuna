@@ -21,7 +21,7 @@ else
   free=$(df -B1 --output=avail "$root" | tail -n 1 | tr -d ' ')
   (( free >= 10737418240 )) || { echo 'Нужно минимум 10 ГиБ доступного места до резервирования 6 ГиБ.' >&2; exit 1; }
   fallocate -l 6G "$image"
-  mkfs.ext4 -q -m 0 "$image"
+  mkfs.ext4 -q -E nodiscard -m 0 "$image"
   unit=$(systemd-escape --path --suffix=mount "$data")
   cat > "/etc/systemd/system/$unit" <<EOF
 [Unit]
@@ -37,6 +37,17 @@ EOF
   systemctl daemon-reload
   systemctl enable --now "$unit"
 fi
+# Formatting must preserve the reservation. Also repair images created by
+# older installers whose default mkfs discard punched holes in the backing file.
+# fallocate allocates holes without changing existing filesystem contents.
+allocated=$(( $(stat -c %b "$image") * 512 ))
+if (( allocated < 6442450944 )); then
+  missing=$(( 6442450944 - allocated ))
+  free=$(df -B1 --output=avail "$root" | tail -n 1 | tr -d ' ')
+  (( free >= missing + 536870912 )) || { echo 'Недостаточно места для резервирования образа с запасом 512 МиБ.' >&2; exit 1; }
+  fallocate -l 6G "$image"
+fi
+(( $(stat -c %b "$image") * 512 >= 6442450944 )) || { echo 'Образ не зарезервирован полностью.' >&2; exit 1; }
 chown root:root "$image"
 chmod 600 "$image" # Raw ext4 bytes contain private cache/Grafana state too.
 install -d -m 0750 -o 65534 -g 65534 "$data/prometheus" "$data/alertmanager"
