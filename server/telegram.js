@@ -21,6 +21,7 @@ import { userLocale, localizedDay, localizedRepeat } from './locale.js';
 // становится одной записью: Telegram присылает такие сообщения по одному
 // подряд, и бот ждёт полторы секунды тишины, прежде чем сложить их вместе.
 import crypto from 'node:crypto';
+import { newTrace, withTrace, span, errorFields } from './observability.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -352,7 +353,7 @@ export function createTelegramService({
       for (const [name, file] of Object.entries(files)) form.append(name, new Blob([file.bytes], { type: file.type }), file.filename);
       request = { body: form };
     }
-    return withDeadline(async requestSignal => {
+    return span(note, `telegram.${method}`, () => withDeadline(async requestSignal => {
     const response = await fetchImpl(`${apiBase().replace(/\/+$/, '')}/bot${key}/${method}`, { method: 'POST', ...request, signal: requestSignal, redirect: 'error' });
     const bytes = await readBoundedBody(response, { maxBytes: maxResponseBytes, signal: requestSignal });
     let body = null;
@@ -364,7 +365,7 @@ export function createTelegramService({
       throw error;
     }
     return body.result;
-    }, { signal, timeoutMs: method === 'getUpdates' ? ((Number(params.timeout) || 0) + 15) * 1000 : requestTimeoutMs });
+    }, { signal, timeoutMs: method === 'getUpdates' ? ((Number(params.timeout) || 0) + 15) * 1000 : requestTimeoutMs }), {}, { slowMs: method === 'getUpdates' ? 65000 : 2000 });
   }
   async function download(fileId) {
     try {
@@ -511,6 +512,11 @@ export function createTelegramService({
   // Незнакомая «/команда» получает подсказку, а не становится записью.
   const COMMAND = /^\/([a-z_]+)(?:@\w+)?(?:\s+(\S+))?\s*$/i;
   async function take(update) {
+    const sender = update.message?.from?.id || update.callback_query?.from?.id;
+    const userId = sender ? linkByTelegram(sender)?.user_id : null;
+    return withTrace(newTrace({ source: 'telegram', userId }), () => span(note, 'telegram.update', () => takeUpdate(update)));
+  }
+  async function takeUpdate(update) {
     if(update.callback_query) return menuRouter.routeCallback(update.callback_query,{update});
     const message = update.message;
     if (!message || message.chat?.type !== 'private' || !message.from || message.from.is_bot) return;
@@ -524,7 +530,7 @@ export function createTelegramService({
     if (command) { await quietly(say(message.chat.id, link ? TELEGRAM_TEXTS.help : TELEGRAM_TEXTS.notLinked,null,link && currentBinding(link)?{reply_markup:menuRouter.replyKeyboard(link)}:{})); return; }
     if (!link || String(link.chat_id)!==String(message.chat.id) || String(message.chat.id)!==String(message.from.id)) { await quietly(say(message.chat.id, TELEGRAM_TEXTS.notLinked, message.message_id)); return; }
     if (db.prepare('SELECT 1 FROM telegram_messages WHERE chat_id=? AND message_id=?').get(message.chat.id, message.message_id)) return;
-    const group = held.get(message.chat.id) || { chatId: message.chat.id, link, items: [], lastAt: 0 };
+    const group = held.get(message.chat.id) || { chatId: message.chat.id, link, items: [], lastAt: 0, trace: newTrace({ source: 'telegram', userId: link.user_id }) };
     group.items.push({ updateId: update.update_id, message });
     group.lastAt = clock();
     held.set(message.chat.id, group);
@@ -569,6 +575,10 @@ export function createTelegramService({
   // Пачка сообщений — одна запись. Файлы качаются заранее: запись без них
   // потом пришлось бы переписывать, а слишком большой файл лучше назвать сразу.
   async function save(group) {
+    group.trace ||= newTrace({ source: 'telegram', userId: group.link?.user_id });
+    return withTrace(group.trace, () => span(note, 'telegram.capture', () => saveGroup(group)));
+  }
+  async function saveGroup(group) {
     const { chatId, link } = group;
     const messages = group.items.map(item => item.message).sort((a, b) => a.message_id - b.message_id);
     const head = messages[0];
@@ -587,7 +597,7 @@ export function createTelegramService({
       if (files.length >= attachmentsPerCapture) { problems.push(`«${file.filename}» не приложен: к записи можно приложить не больше ${attachmentsPerCapture} файлов.`); continue; }
       if (file.size > attachmentLimit) { problems.push(`«${file.filename}» не сохранён: файлы больше ${limitText} не принимаются.`); continue; }
       try { files.push({ ...file, bytes: await download(file.fileId) }); }
-      catch (error) { problems.push(error?.tooLarge ? `«${file.filename}» не сохранён: файлы больше ${limitText} не принимаются.` : `«${file.filename}» не удалось скачать из Telegram.`); }
+      catch (error) { note({ event: 'telegram_attachment_failed', operation: 'download', ...errorFields(error) }); problems.push(error?.tooLarge ? `«${file.filename}» не сохранён: файлы больше ${limitText} не принимаются.` : `«${file.filename}» не удалось скачать из Telegram.`); }
     }
     const composed = composeCapture(messages, { files, timeZone: timeZone(link.user_id), now: now() });
     if (!composed) { await quietly(say(chatId, problems.length ? problems.join('\n') : TELEGRAM_TEXTS.unsupported, head.message_id)); return; }
@@ -603,12 +613,12 @@ export function createTelegramService({
       catch { note({ event: 'telegram_source_metadata_failed' }); }
       for (const file of files) {
         try { if (!attach({ captureId: queued.captureId, filename: file.filename, contentType: file.contentType, bytes: file.bytes })) problems.push(`«${file.filename}» не приложен.`); }
-        catch { problems.push(`«${file.filename}» не приложен.`); }
+        catch (error) { note({ event: 'telegram_attachment_failed', captureId: queued.captureId, jobId: queued.jobId, operation: 'attach', ...errorFields(error) }); problems.push(`«${file.filename}» не приложен.`); }
       }
       const sent = await quietly(say(chatId, [queued.spent ? TELEGRAM_TEXTS.savingByRules : TELEGRAM_TEXTS.saving, ...extra].join('\n'), head.message_id, currentBinding(link) ? {reply_markup:menuRouter.replyKeyboard(link)} : {}));
       if (sent?.message_id) db.prepare('UPDATE telegram_messages SET reply_id=? WHERE chat_id=? AND message_id=?').run(sent.message_id, chatId, head.message_id);
     } finally { sending.delete(queued.jobId); }
-    note({ event: 'telegram_capture_queued', result: 'succeeded', messages: messages.length, files: files.length });
+    note({ event: 'telegram_capture_queued', captureId: queued.captureId, jobId: queued.jobId, result: 'succeeded', messages: messages.length, files: files.length, partial: problems.length > 0 });
     await answer(queued.jobId);
   }
 
@@ -616,6 +626,13 @@ export function createTelegramService({
   // задание разбора закончилось, и сразу после записи: быстрый разбор мог
   // закончиться раньше, чем ушёл первый ответ.
   async function answer(jobId) {
+    if (!jobId) return false;
+    const job = db.prepare('SELECT trace_json,user_id,capture_id FROM capture_jobs WHERE id=?').get(jobId);
+    let trace = {}; try { trace = JSON.parse(job?.trace_json || '{}'); } catch {}
+    return withTrace({ ...newTrace(), ...trace, source: 'telegram', userId: job?.user_id, jobId, captureId: job?.capture_id },
+      () => span(note, 'telegram.answer', () => answerJob(jobId)));
+  }
+  async function answerJob(jobId) {
     if (!jobId || sending.has(jobId)) return false;
     const row = db.prepare('SELECT * FROM telegram_messages WHERE job_id=? AND answered_at IS NULL').get(jobId);
     if (!row) return false;
@@ -630,9 +647,10 @@ export function createTelegramService({
     const extra = { link_preview_options: { is_disabled: true }, ...(markup ? { reply_markup: markup } : {}) };
     if (row.reply_id) {
       const edited = await quietly(call('editMessageText', { chat_id: row.chat_id, message_id: row.reply_id, text, ...extra }));
-      if (edited) return true;
+      if (edited) { note({ event: 'telegram_result_delivered', jobId, captureId: row.capture_id, userId: row.user_id }); return true; }
     }
-    await quietly(say(row.chat_id, text, row.message_id, markup ? { reply_markup: markup } : {}));
+    const sent = await quietly(say(row.chat_id, text, row.message_id, markup ? { reply_markup: markup } : {}));
+    note({ event: sent ? 'telegram_result_delivered' : 'telegram_result_delivery_failed', jobId, captureId: row.capture_id, userId: row.user_id });
     return true;
   }
   // После перезапуска: разборы, которые закончились без нас, всё равно

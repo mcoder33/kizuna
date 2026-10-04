@@ -14,6 +14,7 @@ import {
 } from './auth.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createAdmission } from './auth-admission.js';
+import { pruneDiagnostics } from './diagnostic-retention.js';
 import { clientAddress } from './security.js';
 import QRCode from 'qrcode';
 import express from 'express';
@@ -87,7 +88,7 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
     updateUser(db, user.id, { approved_at: at() });
     if (first) adoptOrphanRecords(db, user.id);
     logEvent(db, { userId: user.id, email: address, event: 'register', result: 'succeeded', detail: first ? 'bootstrap-admin' : null });
-    note({ event: 'user_registered', result: 'succeeded', role: first ? 'admin' : 'user' });
+    note({ event: 'user_registered', userId: user.id, result: 'succeeded', role: first ? 'admin' : 'user' });
     return { user: findUserById(db, user.id), first, userAgent };
   }
 
@@ -144,7 +145,7 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
       const attempts = (user.failed_attempts || 0) + 1;
       updateUser(db, user.id, { failed_attempts: attempts, locked_until: null });
       logEvent(db, { userId: user.id, email: address, event: 'login', result: 'wrong_password', detail: `attempt ${attempts}` });
-      note({ event: 'login_failed', result: 'failed' });
+      note({ event: 'login_failed', userId: user.id, result: 'failed' });
       return { error: wrong };
     }
     const refreshed = findUserById(db, user.id);
@@ -167,7 +168,7 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
     }
     const token = issueSession(user, { userAgent });
     logEvent(db, { userId: user.id, email: address, event: 'login', result: 'succeeded' });
-    note({ event: 'login', result: 'succeeded' });
+    note({ event: 'login', userId: user.id, result: 'succeeded' });
     return { token, user: findUserById(db, user.id) };
   }
 
@@ -476,8 +477,15 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
 
   // Раз в час — чтобы протухшие сессии не копились вечно; на первом же запросе
   // после запуска — чтобы уборка не ждала часа на редко используемом сервере.
-  purgeExpiredSessions(db, at());
-  const cleanupTimer = setInterval(() => { try { purgeExpiredSessions(db, at()); } catch {} }, 60 * 60 * 1000);
+  const cleanup = () => {
+    try {
+      purgeExpiredSessions(db, at());
+      const pruned = pruneDiagnostics(db, {at: now()});
+      if (pruned.auth || pruned.search) note({event:'diagnostics_pruned',count:pruned.auth+pruned.search});
+    } catch (error) { note({event:'diagnostics_cleanup_failed',errorCode:error?.code || 'storage_error'}); }
+  };
+  cleanup();
+  const cleanupTimer = setInterval(cleanup, 60 * 60 * 1000);
   cleanupTimer.unref();
 
   return { attachUser, userFromCookieHeader, requireAuth, requireAdmin, registerRoutes, issueSession, needsBootstrap, registerAccount, publicUser, readLimits, PASSWORD_MIN_LENGTH, stop: () => clearInterval(cleanupTimer) };

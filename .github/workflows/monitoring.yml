@@ -1,0 +1,34 @@
+name: Мониторинг
+on:
+  pull_request:
+    paths: ['ops/monitoring/**', 'server/metrics.js', 'server/index.js', 'server/observability.js', 'server/client-events.js', 'package*.json', 'tests/*alerts*', 'tests/metrics.test.js', '.github/workflows/monitoring.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: monitoring-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  monitoring:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run monitoring:check
+      - run: npx playwright install --with-deps chromium
+      - run: sudo apt-get update && sudo apt-get install -y apache2-utils
+      - run: npm run monitoring:smoke
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: monitoring-smoke
+          path: |
+            tmp/monitoring-smoke-*/result.json
+            tmp/monitoring-smoke-*/*.png
+          if-no-files-found: ignore

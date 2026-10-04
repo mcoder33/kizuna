@@ -49,6 +49,7 @@ if ! cmp -s package-lock.json /opt/kizuna/.lock-deployed 2>/dev/null; then
 else
   echo "  зависимости не менялись"
 fi
+bash ops/install-observability.sh
 systemctl restart kizuna
 REMOTE_STEPS
 

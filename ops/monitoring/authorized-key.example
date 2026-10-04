@@ -1,0 +1,1 @@
+command="/usr/sbin/nologin",restrict,port-forwarding,permitopen="127.0.0.1:9108",permitopen="127.0.0.1:9100" ssh-ed25519 REPLACE_WITH_MONITORING_PUBLIC_KEY

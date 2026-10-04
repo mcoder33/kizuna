@@ -282,6 +282,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
   }
   const syncing = new Set();
   async function syncAccount(id, { userId = undefined } = {}) {
+    const syncStartedAt = performance.now();
     const row = userId === undefined ? db.prepare('SELECT * FROM calendar_accounts WHERE id=?').get(id) : accountRow(userId, id);
     if (!row) return { error: 'not_found' };
     if (row.disabled_at) return { account: rowToAccount(row), skipped: 'disabled' };
@@ -291,7 +292,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
       const window = syncWindow();
       const events = await fetchAccountEvents(row, window);
       storeEvents(row, window, events);
-      report({ event: 'calendar_synced', provider: row.provider, events: events.length });
+      report({ event: 'calendar_synced', provider: row.provider, userId: row.user_id, accountId: row.id, events: events.length, durationMs: performance.now() - syncStartedAt });
       return { account: rowToAccount(db.prepare('SELECT * FROM calendar_accounts WHERE id=?').get(id)), events: events.length };
     } catch (error) {
       const message = String(error?.message || 'Синхронизация не удалась.').slice(0, 300);
@@ -299,7 +300,7 @@ export function createCalendarService({ db, secrets, now = () => new Date(), tim
       // Одна строка на поломку: пока её не починили, повторные неудачи молчат.
       if (!db.prepare("SELECT 1 FROM notifications WHERE user_id=? AND kind='calendar_error' AND account_id=? AND resolved_at IS NULL").get(row.user_id, id))
         notify(db, { userId: row.user_id, kind: 'calendar_error', accountId: id, lead: `${row.label} не обновляется:`, template:{lead:{source:'{name} не обновляется:',params:{name:row.label}}}, textTemplate:error?.code === 'unauthorized' ? {source:'пароль приложения или доступ больше не подходит'} : error.presentation, text: error?.code === 'unauthorized' ? 'пароль приложения или доступ больше не подходит' : message, meta: ['события в сетке — на момент последней синхронизации'], metaTemplates: [{source:'события в сетке — на момент последней синхронизации'}], data: { url: '/#settings' } });
-      report({ event: 'calendar_sync_failed', provider: row.provider, errorCode: error?.code || 'sync_error' });
+      report({ event: 'calendar_sync_failed', provider: row.provider, userId: row.user_id, accountId: row.id, durationMs: performance.now() - syncStartedAt, errorCode: error?.code || 'sync_error' });
       return { account: rowToAccount(db.prepare('SELECT * FROM calendar_accounts WHERE id=?').get(id)), error: error?.code === 'unauthorized' ? 'unauthorized' : 'sync_error', message, messageTemplate:error.presentation };
     } finally { syncing.delete(id); }
   }
