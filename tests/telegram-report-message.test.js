@@ -16,6 +16,31 @@ test('short report sends one photo with unchanged text/entities and no buttons',
   assert.equal(calls[0][2].reply_markup, undefined);
 });
 
+test('multiline caption entity offsets survive actual multipart CRLF normalization', async () => {
+  const text = '☀️ Утро\nСамара\n\nСегодня можно продолжить начатое 🌱\n\nЧто остаётся в работе:\n⬜ Карусель 🐈';
+  const titles = ['☀️ Утро','Что остаётся в работе:','Карусель 🐈'];
+  const entities = titles.map(title => ({ type:'bold', offset:text.indexOf(title), length:title.length }));
+  let wire;
+  await sendTelegramReport({ ...base, text, entities,
+    sendPhoto: async (_,__,extra) => {
+      const form = new FormData(); form.append('caption',extra.caption); form.append('caption_entities',JSON.stringify(extra.caption_entities));
+      wire = await new Response(form).formData(); return { message_id:30 };
+    }, sendText: () => assert.fail('must deliver the captioned photo') });
+  const caption = wire.get('caption'), sentEntities = JSON.parse(wire.get('caption_entities'));
+  assert.equal(caption,text.replace(/\n/g,'\r\n'));
+  assert.deepEqual(sentEntities.map(entity => caption.slice(entity.offset,entity.offset+entity.length)),titles);
+  for(const entity of sentEntities)assert.ok(!/[\uDC00-\uDFFF]/.test(caption[entity.offset]));
+});
+
+test('caption limit counts normalized multipart newlines and preserves long text separately', async () => {
+  const text = 'A\n'.repeat(510), calls=[];
+  await sendTelegramReport({ ...base, text, entities:[],
+    sendPhoto: async (_,__,extra) => { calls.push(['photo',extra]); return { message_id:31 }; },
+    sendText: async (_,body) => { calls.push(['text',body]); return { message_id:32 }; } });
+  assert.equal(calls[0][0],'photo');assert.equal(calls[0][1].caption,undefined);
+  assert.deepEqual(calls[1],['text',text]);
+});
+
 test('photo may succeed on the tenth retry without failure logging or text fallback', async () => {
   let photos = 0, elapsed = 0; const pauses = [], starts = [];
   const result = await sendTelegramReport({ ...base, clock: () => elapsed, sleep: async ms => { pauses.push(ms); elapsed += ms; },
