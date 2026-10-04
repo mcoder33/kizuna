@@ -51,6 +51,7 @@ services:
   blackbox:
     <<: *service
     image: prom/blackbox-exporter:v0.28.0
+    user: '65534:65534' # Matches the private exporter-toolkit web config owner.
     mem_limit: 64m
     cpus: 0.05
     command: ['--config.file=/etc/blackbox/blackbox.yaml', '--web.config.file=/run/secrets/web.yaml', '--web.listen-address=127.0.0.1:9115']
