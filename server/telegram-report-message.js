@@ -23,6 +23,19 @@ function rateLimitDelay(error) {
   return Number.isFinite(seconds) && seconds > 0 ? Math.max(1000, Math.ceil(seconds * 1000)) : 1000;
 }
 
+function multipartCaption({ text, entities }) {
+  // FormData serializes text fields with CRLF line endings. Telegram reads
+  // entity offsets against that serialized caption, not the original LF text.
+  const normalize = value => value.replace(/\r\n|\r|\n/g, '\r\n');
+  const caption = normalize(text);
+  if (caption === text) return { text, entities };
+  const boundary = offset => normalize(text.slice(0, offset)).length;
+  return { text: caption, entities: entities?.map(entity => {
+    const offset = boundary(entity.offset);
+    return { ...entity, offset, length: boundary(entity.offset + entity.length) - offset };
+  }) };
+}
+
 // One pacer is shared by all report recipients. Measure from completion of the
 // previous request, including failures, and recheck access after waiting.
 export function createTelegramReportPacer({ sleep = sleepFor, clock = () => performance.now() } = {}) {
@@ -78,9 +91,10 @@ export async function sendTelegramReport({ chatId, text, entities, image, sendTe
       sent = await pace(() => {
         const message = fresh();
         if (!message) return null;
-        captionFits = message.text.length <= 1024;
+        const caption = multipartCaption(message);
+        captionFits = caption.text.length <= 1024;
         return sendPhoto(chatId, image, captionFits
-          ? { caption: message.text, caption_entities: message.entities } : { disable_notification: true });
+          ? { caption: caption.text, caption_entities: caption.entities } : { disable_notification: true });
       }, stillAllowed);
     } catch (error) {
       if (!stillAllowed()) return null;
