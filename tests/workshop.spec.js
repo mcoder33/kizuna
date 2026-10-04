@@ -14,7 +14,7 @@ async function account(browser, baseURL) {
   expect(capabilities.workshopAppearance).toBe(true);
   const save = async changes => expect((await context.request.patch('/api/ui-preferences', { data: { userId, changes } })).ok()).toBe(true);
   expect((await context.request.put('/api/settings', { data: { locale: 'ru', theme: 'light' } })).ok()).toBe(true);
-  await save({ 'kizuna-room-season': 'autumn', 'kizuna-room-light': 'night' });
+  await save({ 'kizuna-appearance': 'classic', 'kizuna-room-season': 'autumn', 'kizuna-room-light': 'night' });
   return { context, save, userId, page: await context.newPage() };
 }
 async function ready(page, route = 'today') {
@@ -252,11 +252,20 @@ test('scene refresh waits through composition, HTML drag cancellation and an ope
   } finally { await context.close(); }
 });
 
-test('a revoked appearance write does not block other queued view preferences', async ({ browser, baseURL }) => {
-  const { context, page } = await account(browser, baseURL);
+test('workshop defaults on, classic choice survives reload, and revocation does not block other preferences', async ({ browser, baseURL }) => {
+  const { context, page, save } = await account(browser, baseURL);
+  await save({ 'kizuna-appearance': null });
   let denied = 0;
   try {
     await ready(page, 'settings');
+    await expect(root(page)).toHaveAttribute('data-appearance', 'workshop');
+    await room(page, 'autumn', 'day');
+    await expect(page.locator('#setting-appearance')).toHaveValue('workshop');
+    await page.locator('#setting-appearance').selectOption('classic');
+    await expect.poll(async () => (await (await context.request.get('/api/ui-preferences')).json()).values['kizuna-appearance']).toBe('classic');
+    await page.reload();
+    await expect(root(page)).toHaveAttribute('data-appearance', 'classic');
+    await expect(page.locator('.workshop-backdrop')).toHaveCount(0);
     await page.route('**/api/ui-preferences', async route => {
       const request = route.request();
       if (request.method() === 'PATCH' && request.postDataJSON().changes['kizuna-appearance'] === 'workshop') {
