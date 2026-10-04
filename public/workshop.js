@@ -13,7 +13,7 @@ let lastAppearance = root.dataset.appearance || 'classic';
 let timer = 0;
 const allowed = () => root.dataset.workshopEnabled === 'true';
 const preference = (key, fallback) => { try { return uiStorage.getItem(key) || fallback; } catch { return fallback; } };
-const selectedAppearance = () => account && allowed() && preference('kizuna-appearance', 'classic') === 'workshop' ? 'workshop' : 'classic';
+const selectedAppearance = () => account && allowed() && preference('kizuna-appearance', 'workshop') === 'workshop' ? 'workshop' : 'classic';
 const active = () => selectedAppearance() === 'workshop' || !!publicDemo;
 const busy = () => composing || pointerHeld || dragging || document.activeElement?.matches('input,textarea,select,[contenteditable="true"]') || !!document.querySelector('dialog[open]');
 const roomChoice = () => chooseRoom({ timeZone: getTimeZone(), season: account ? preference('kizuna-room-season', 'auto') : 'auto', theme: root.dataset.theme || 'system', systemDark: systemTheme.matches });
@@ -82,7 +82,7 @@ function paintSettings() {
   const controls = document.querySelector('#workshop-settings');
   if (controls) controls.hidden = selectedAppearance() !== 'workshop';
   for (const [id, key, fallback] of [
-    ['setting-appearance', 'kizuna-appearance', 'classic'],
+    ['setting-appearance', 'kizuna-appearance', 'workshop'],
     ['setting-room-season', 'kizuna-room-season', 'auto'],
     ['setting-torii-hints', 'kizuna-torii-hints', 'enabled'],
   ]) {

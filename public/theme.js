@@ -36,7 +36,7 @@
   apply(stored);
   // Account entitlement is server supplied; saved choices never opt other users in.
   var appearance = "classic";
-  try { if (root.dataset.workshopEnabled === "true" && readPreference("kizuna-appearance") === "workshop") appearance = "workshop"; } catch {}
+  try { if (root.dataset.workshopEnabled === "true" && (readPreference("kizuna-appearance") || "workshop") === "workshop") appearance = "workshop"; } catch {}
   root.dataset.appearance = appearance;
 
   // Шрифт и размер текста записей — как в Notion: выбор страницы, а не куска
