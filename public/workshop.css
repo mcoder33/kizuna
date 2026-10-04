@@ -1,0 +1,280 @@
+/* Room layers are decoded and supplied by the appearance runtime. */
+html[data-appearance="workshop"] body { isolation: isolate; background: transparent; }
+html[data-appearance="workshop"] .workshop-backdrop {
+  position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  overflow: hidden; background: #fcfcf5;
+}
+html[data-appearance="workshop"][data-room-fallback="true"] .workshop-backdrop { background: var(--ws-canvas); }
+html[data-appearance="workshop"] .workshop-backdrop > .workshop-scene {
+  position: absolute; inset: 0; background-size: cover; background-position: center top;
+  opacity: 0; transition: opacity .9s ease;
+}
+html[data-appearance="workshop"] .workshop-scene.shown { opacity: .8; }
+html[data-appearance="workshop"][data-room-light="night"] .workshop-scene.shown { opacity: 1; filter: brightness(.78); }
+/* One feathered grade belongs to the room, never to a list or individual label. */
+html[data-appearance="workshop"]:is([data-workshop-route="today"],[data-workshop-route="done"]) .workshop-scene::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(90deg,
+    rgba(var(--ws-room-grade), 0) 0%, rgba(var(--ws-room-grade), .08) 12%,
+    rgba(var(--ws-room-grade), .42) 23%, rgba(var(--ws-room-grade), .70) 36%,
+    rgba(var(--ws-room-grade), .70) 64%, rgba(var(--ws-room-grade), .42) 77%,
+    rgba(var(--ws-room-grade), .08) 88%, rgba(var(--ws-room-grade), 0) 100%);
+}
+html[data-appearance="workshop"][data-room-light="day"] .workshop-scene::after { opacity: .42; }
+
+/* Material aliases are local to working panels: capture and open lists retain their roles. */
+html[data-appearance="workshop"] :is(#board,#calendar,#notes,#settings,#guide,#circles,#admin,#feedback,#memory,#brief,dialog,.bell-popover,.account-menu-popover,.board-menu-popover,.mention-menu,.slash-menu,.link-menu,.fmt-bar) {
+  --ink: var(--ws-ink); --muted: var(--ws-secondary);
+  --paper: var(--ws-surface); --wash: var(--ws-canvas);
+  --line: var(--ws-line); --hairline: var(--ws-hover);
+  color: var(--ws-ink);
+}
+
+/* Today: the same open rhythm for any number of tasks. */
+html[data-appearance="workshop"] #todo { gap: 4px; }
+html[data-appearance="workshop"] #today :is(.today-date,.today-brief,.day-group,.day-time,.day-now-text,.day-head-act,.daynav,.daynav-step,.daynav-arrow,.daynav-current,.daynav-mark,.daynav-today,.preview-more) { color: var(--ws-scene-secondary); }
+html[data-appearance="workshop"] #today :is(.today-brief b,.daynav-current b) { color: var(--ws-scene-ink); }
+html[data-appearance="workshop"] #today .daynav-step:hover { color: var(--ws-scene-ink); background: var(--ws-scene-hover); }
+html[data-appearance="workshop"] #today :is(.today-brief a,.day-head-act:hover) { color: var(--ws-scene-link); border-color: currentColor; }
+html[data-appearance="workshop"] #today .drawer-tab:not([aria-selected="true"]),
+html[data-appearance="workshop"] #today .drawer-tab:not([aria-selected="true"]) b { color: var(--ws-scene-ink); }
+html[data-appearance="workshop"] #today .drawer-tab[aria-selected="true"] { background: var(--ws-surface); color: var(--ws-ink); border-color: var(--ws-line); }
+html[data-appearance="workshop"] #today .drawer-tab[aria-selected="true"] b { color: var(--ws-ink); }
+html[data-appearance="workshop"] #todo .day-group { font-size: 10.5px; font-weight: 600; letter-spacing: .07em; padding: 18px 4px 7px; }
+html[data-appearance="workshop"] #todo > .day-group:first-child { padding-top: 9px; }
+html[data-appearance="workshop"] #todo .day-head { padding-top: 18px; align-items: center; }
+html[data-appearance="workshop"] #todo .day-head .day-group { padding-block: 0; }
+html[data-appearance="workshop"] #todo .day-head-act { opacity: 1; font-size: 10.5px; font-weight: 400; padding: 8px 4px; border-radius: 5px; }
+html[data-appearance="workshop"] #todo .day-row { grid-template-columns: 44px minmax(0,1fr); gap: 8px; align-items: start; }
+html[data-appearance="workshop"] #todo .day-time { padding-top: 13px; font-size: 11.5px; font-weight: 500; font-variant-numeric: tabular-nums; }
+html[data-appearance="workshop"] #todo .day-now-text { padding: 3px 0 8px; background: none; border-radius: 0; box-shadow: none; font-size: 11.5px; line-height: 1.5; }
+html[data-appearance="workshop"] #todo .day-row.now-mark .day-time { padding-top: 0; padding-bottom: 5px; color: var(--ws-scene-secondary); }
+html[data-appearance="workshop"] #todo .entry.dense { align-items: start; min-height: 44px; padding: 7px 8px; column-gap: 11px; border-radius: 7px; font-size: 13px; }
+html[data-appearance="workshop"] #todo .day-row .entry.dense { padding-left: 0; }
+html[data-appearance="workshop"] #todo .entry.dense .entry-title {
+  color: var(--ws-scene-ink); font-weight: 500; min-height: 28px; line-height: 1.5;
+  padding-block: 3px; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere;
+}
+html[data-appearance="workshop"] #todo .entry.dense .entry-title:hover { color: var(--ws-scene-ink); }
+html[data-appearance="workshop"] #todo :is(.entry-meta,.entry-meta .tag,.empty,.today-start) { color: var(--ws-scene-secondary); }
+html[data-appearance="workshop"] #todo .entry.dense .entry-meta { padding-top: 6px; font-size: 10.5px; }
+html[data-appearance="workshop"] #todo .entry-meta:empty { display: none; }
+html[data-appearance="workshop"] #todo .entry.dense:not(.swiping):not(.flash):hover { background: var(--ws-scene-hover); }
+html[data-appearance="workshop"] #todo .entry.dense:is(.completed,.completing) .entry-title { color: var(--ws-scene-secondary); }
+html[data-appearance="workshop"] #todo .day-rows > .entry.dense + .entry.dense,
+html[data-appearance="workshop"] #todo .day-late > .entry.dense + .entry.dense { border-top: 0; }
+html[data-appearance="workshop"] #todo .completion-button { position: relative; width: 18px; height: 18px; margin-top: 5px; }
+html[data-appearance="workshop"] #todo .completion-button::after { content: ""; position: absolute; inset: -13px; border-radius: 50%; }
+html[data-appearance="workshop"] #todo .entry:not(.completed):not(.completing):not(.overdue) > .completion-button:not(.auto) { background: transparent; border: 1.3px solid var(--ws-scene-line); }
+html[data-appearance="workshop"] #todo :is(.day-group.late,.entry.overdue .entry-title,.entry.overdue .entry-title:hover) { color: var(--ws-scene-danger); }
+html[data-appearance="workshop"] #todo .entry.overdue > .completion-button { border-color: var(--ws-scene-danger); }
+html[data-appearance="workshop"][data-room-light] #todo .entry:not(.completed):not(.completing):not(.overdue) > .completion-button:not(.auto):hover { border-color: var(--green); }
+html[data-appearance="workshop"] #todo .completion-button:focus-visible { outline: 2px solid var(--ws-focus); outline-offset: 5px; }
+html[data-appearance="workshop"] #todo .day-row.now .day-event { background: color-mix(in srgb,var(--coral) 9%,transparent); box-shadow: none; }
+html[data-appearance="workshop"] #todo:has(.day-rows > .entry:nth-child(n + 5)) { padding-bottom: clamp(116px,18vh,190px); }
+html[data-appearance="workshop"] #journal .entry.dense { background: var(--ws-surface); color: var(--ws-ink); }
+html[data-appearance="workshop"] #journal .entry-title { color: var(--ws-ink); }
+html[data-appearance="workshop"] #journal :is(.entry-meta,.entry-meta .tag) { color: var(--ws-secondary); }
+html[data-appearance="workshop"] #journal > .empty { color: var(--ws-scene-secondary); }
+/* Paint only: no capture dimensions, padding, prompt content or editor layout. */
+html[data-appearance="workshop"] :is(.today-page,#capture-form) { --capture-placeholder: var(--ws-secondary); --capture-expand-ink: var(--ws-secondary); }
+
+/* Done: open summaries and rows, with existing meaningful controls preserved. */
+html[data-appearance="workshop"] #done > .page-heading { background: transparent; border: 0; border-radius: 0; padding: 18px 20px 0; margin-bottom: 0; color: var(--ws-scene-ink); }
+html[data-appearance="workshop"] #done .done-top { background: transparent; border: 0; border-radius: 0; padding: 18px 20px; margin: 0 0 16px; color: var(--ws-scene-ink); }
+html[data-appearance="workshop"] #done .done-days { background: transparent; border: 0; border-radius: 0; padding: 14px 18px; color: var(--ws-scene-ink); }
+html[data-appearance="workshop"] #done .entry.dense { background: transparent; border: 0; border-radius: 0; box-shadow: none; }
+html[data-appearance="workshop"] #done .entry.dense:hover { background: var(--ws-scene-hover); }
+html[data-appearance="workshop"] #done :is(h2,.entry-title,.done-line b:not(.g),.done-wd:not(.today) b,.done-chip b) { color: var(--ws-scene-ink); }
+html[data-appearance="workshop"] #done .entry-title { font-weight: 500; line-height: 1.5; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+html[data-appearance="workshop"] #done :is(.entry-meta,.tag.time,.shelf-head,.done-cap,.done-summary p,.done-grid-lbl,.done-grid-hd,.done-wd:not(.today),.eyebrow,.empty) { color: var(--ws-scene-secondary); }
+html[data-appearance="workshop"] #done .done-wd.z b { color: var(--ws-scene-secondary); }
+html[data-appearance="workshop"] #done .shelf-head::after { background: var(--ws-scene-hover); }
+html[data-appearance="workshop"] #done .done-all { color: var(--ws-scene-link); }
+html[data-appearance="workshop"] #done .done-chip:not(.meet) { background: var(--ws-raised); color: var(--ws-ink); border-color: var(--ws-line); }
+html[data-appearance="workshop"] #done .done-chip:not(.meet) b { color: var(--ws-ink); }
+html[data-appearance="workshop"] #done .done-cell:not(.l1):not(.l2):not(.l3):not(.future) { background: var(--ws-line-strong); }
+html[data-appearance="workshop"] #done .done-cell.future { border-color: var(--ws-scene-line); }
+html[data-appearance="workshop"] #done .done-cell.today { outline-color: var(--ws-scene-ink); }
+
+/* Shared materials: source layouts and semantic controls remain intact. */
+html[data-appearance="workshop"] :is(.settings-group,.admin-user,.feedback-card,.memory-item,.daily-brief) { background: var(--ws-surface); border-color: var(--ws-line); color: var(--ws-ink); }
+html[data-appearance="workshop"] :is(.setting-hint,.setting-state,.admin-user-facts) { color: var(--ws-secondary); line-height: var(--ws-leading); }
+html[data-appearance="workshop"] :is(.settings-group,.feedback-card,.memory-item) :is(input:not([type="checkbox"]):not([type="radio"]),select,textarea) { background: var(--ws-raised); border-color: var(--ws-line-strong); color: var(--ws-ink); }
+html[data-appearance="workshop"] :is(.settings-group,.feedback-card,.memory-item) input::placeholder,
+html[data-appearance="workshop"] :is(.settings-group,.feedback-card,.memory-item) textarea::placeholder { color: var(--ws-secondary); opacity: 1; }
+html[data-appearance="workshop"] :is(#board,#calendar,#settings,#feedback) .page-heading { background: var(--ws-surface); color: var(--ws-ink); border: 1px solid var(--ws-line); border-radius: var(--ws-radius); padding: 18px 20px; margin-bottom: 18px; }
+html[data-appearance="workshop"] :is(#board,#calendar,#settings,#feedback) .page-heading :is(.eyebrow,p) { color: var(--ws-secondary); }
+html[data-appearance="workshop"] :is(#board,#calendar) > .page-heading { border-bottom: 0; border-radius: var(--ws-radius) var(--ws-radius) 0 0; margin-bottom: 0; padding-bottom: 10px; }
+html[data-appearance="workshop"] :is(#board,#calendar) > .board-controls { background: var(--ws-surface); color: var(--ws-ink); border: 1px solid var(--ws-line); border-top: 0; border-radius: 0 0 var(--ws-radius) var(--ws-radius); padding: 6px 20px 14px; margin: 0 0 16px; }
+html[data-appearance="workshop"] .board-controls :is(.board-bar-label,.board-hint,.board-search,.calendar-manage,.board-tools > button) { color: var(--ws-secondary); }
+html[data-appearance="workshop"] .board-controls input { color: var(--ws-ink); }
+html[data-appearance="workshop"] .board-controls input::placeholder { color: var(--ws-secondary); opacity: 1; }
+
+/* Board. Completed and automatic controls keep their original state styling. */
+html[data-appearance="workshop"] .board-column:not(.ghost) { background: var(--ws-surface); border-color: var(--ws-line); color: var(--ws-ink); }
+html[data-appearance="workshop"] .board-card:not(.overdue):not(.waiting):not(.clarify) { background: var(--ws-raised); }
+html[data-appearance="workshop"] .board-card { box-shadow: var(--ws-shadow-small); }
+html[data-appearance="workshop"] .board-column :is(.board-col-count,.board-meta,.board-hint) { color: var(--ws-secondary); }
+html[data-appearance="workshop"] .board-calendar { background: var(--ws-surface); color: var(--ws-ink); border-color: var(--ws-line); }
+html[data-appearance="workshop"] .board-filter { background: var(--ws-surface); color: var(--ws-ink); border: 1px solid var(--ws-line); border-radius: var(--ws-radius-small); padding: 12px 16px; margin-bottom: 16px; }
+html[data-appearance="workshop"] .board-filter :is(.board-bar-label,.board-filter-label,.board-hint,.board-subs-label,.board-filter-clear) { color: var(--ws-secondary); }
+html[data-appearance="workshop"] .board-filter-tail { flex-wrap: wrap; gap: 8px 4px; min-width: 0; max-width: 100%; }
+html[data-appearance="workshop"] .board-subs { flex-wrap: wrap; max-width: 100%; }
+html[data-appearance="workshop"] .board-segments { background: var(--ws-surface); color: var(--ws-ink); border-color: var(--ws-line); border-radius: var(--ws-radius-small); padding-inline: 10px; }
+html[data-appearance="workshop"] :is(.board-seg,.cal-source) { background: var(--ws-raised); border-color: var(--ws-line); color: var(--ws-ink); }
+html[data-appearance="workshop"] .board-seg button { color: var(--ws-secondary); }
+html[data-appearance="workshop"] .board-seg button[aria-pressed="true"] { background: var(--ws-ink); color: var(--ws-surface); }
+html[data-appearance="workshop"] #board .board-done:not(.is-done):not(.auto) { background: transparent; border-color: var(--ws-line-strong); }
+html[data-appearance="workshop"] #board .board-done.meeting:not(.is-done) { color: var(--ws-secondary); }
+html[data-appearance="workshop"] #board .board-card.overdue .board-done:not(.is-done) { border-color: var(--red-66); }
+html[data-appearance="workshop"] #board .board-done:not(.is-done):not(.auto):hover { border-color: var(--green); color: var(--green); }
+
+/* Calendar, including quick-entry popup and month/day secondary roles. */
+html[data-appearance="workshop"] .cal-top { border-color: var(--ws-line); }
+html[data-appearance="workshop"] :is(.cal-nav button,.cal-seg button[aria-pressed="true"]) { background: var(--ws-raised); color: var(--ws-ink); border-color: var(--ws-line); }
+html[data-appearance="workshop"] .cal-seg { background: var(--ws-soft); border-color: var(--ws-line); }
+html[data-appearance="workshop"] .cal-pop { background: var(--ws-raised); color: var(--ws-ink); border-color: var(--ws-line); box-shadow: var(--ws-shadow); }
+html[data-appearance="workshop"] #calendar :is(.cal-hours div,.cal-nt-label,.cal-row time,.cal-mdh,.cal-more,.cal-hint) { color: var(--ws-secondary); }
+html[data-appearance="workshop"] #calendar .cal-mc.off .cal-md { color: var(--ws-tertiary); }
+html[data-appearance="workshop"] .cal-pop input { color: var(--ws-ink); }
+html[data-appearance="workshop"] .cal-pop input::placeholder,
+html[data-appearance="workshop"] .cal-pop :is(.cal-pop-note,.cal-pop-src) { color: var(--ws-secondary); opacity: 1; }
+
+/* Notes and Card inherit one material language, including empty nested content. */
+html:root[data-appearance="workshop"] :is(.notes-page,#review-dialog) {
+  --nt-bg: var(--ws-surface); --nt-text: var(--ws-ink);
+  --nt-secondary: var(--ws-secondary); --nt-tertiary: var(--ws-secondary);
+  --nt-divider: var(--ws-line); --nt-hover: var(--ws-hover);
+  --nt-hover-strong: var(--ws-selected); --nt-sidebar: var(--ws-soft); --nt-page: var(--ws-surface);
+}
+html[data-appearance="workshop"] :is(.notes-shell,.notes-main) { background: var(--ws-surface); }
+html[data-appearance="workshop"] .notes-side { background: var(--ws-soft); border-color: var(--ws-line); }
+html[data-appearance="workshop"] :is(.notes-page,#review-dialog) :is(.notes-empty,.notes-crumb,.notes-meta) { color: var(--ws-secondary); }
+html[data-appearance="workshop"] :is(#review-dialog,#preview-dialog,#mac-download-dialog,#password-dialog,#totp-disable-dialog,#reset-dialog) { background: var(--ws-surface); color: var(--ws-ink); border-color: var(--ws-line); box-shadow: var(--ws-shadow); }
+html[data-appearance="workshop"] #review-dialog :is(.card-main,.card-workspace) { background: var(--ws-surface); }
+html[data-appearance="workshop"] #review-dialog :is(.card-params,.thread-composer) { background: var(--ws-soft); border-color: var(--ws-line); }
+html[data-appearance="workshop"] #review-dialog :is(.card-toolbar,.card-head,.card-body,.card-subtasks) { border-color: var(--ws-line); }
+html[data-appearance="workshop"] #review-dialog input::placeholder,
+html[data-appearance="workshop"] #review-dialog textarea::placeholder { color: var(--ws-secondary); opacity: 1; }
+html[data-appearance="workshop"] #review-dialog :is(.prop-ghost,.chip.quiet,.subtask-empty,.attach-empty) { color: var(--ws-secondary); }
+
+/* Settings: legends stay inside their sections, not across the artwork. */
+html[data-appearance="workshop"] #settings .settings { background: var(--ws-surface); color: var(--ws-ink); border-color: var(--ws-line); }
+html[data-appearance="workshop"] .settings-group > legend { float: left; width: 100%; max-width: 100%; padding: 0; margin: 0; background: none; border-radius: 0; text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 600; line-height: 1.5; color: var(--ws-ink); }
+html[data-appearance="workshop"] .settings-group > legend + * { clear: both; }
+html[data-appearance="workshop"] #settings .page-heading a { color: var(--ws-focus); text-decoration-color: currentColor; text-underline-offset: 3px; }
+html[data-appearance="workshop"] .workshop-room-settings > p { margin: 0 0 16px; color: var(--ws-secondary); font-size: 13px; }
+html[data-appearance="workshop"] .workshop-room-controls { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; margin-bottom: 16px; }
+html[data-appearance="workshop"] .workshop-room-controls label { display: grid; gap: 7px; font-size: 12px; }
+html[data-appearance="workshop"] .workshop-room-controls select { width: 100%; min-height: 38px; border-radius: 10px; padding: 8px 10px; font: inherit; }
+html[data-appearance="workshop"] .workshop-room-settings small { display: block; color: var(--ws-secondary); font-size: 12px; line-height: 1.6; }
+
+/* Guide preserves the real interactive demo. */
+html[data-appearance="workshop"] :is(.gd-shell,.gd-main) { background: var(--ws-surface); color: var(--ws-ink); }
+html[data-appearance="workshop"] :is(.gd-side,.gd-stage) { background: var(--ws-soft); border-color: var(--ws-line); }
+html[data-appearance="workshop"] :is(.gd-side-sub,.gd-search,.gd-demo-note,.gd-group,.gd-q-side:not(.live):not(.done)) { color: var(--ws-secondary); }
+html[data-appearance="workshop"] .gd-search input { color: var(--ws-ink); }
+html[data-appearance="workshop"] .gd-search input::placeholder { color: var(--ws-secondary); opacity: 1; }
+
+/* Circles: real conversation canvas, incoming/outgoing semantics unchanged. */
+html[data-appearance="workshop"] #circles {
+  --kc-side: var(--ws-soft); --kc-head: var(--ws-surface); --kc-in: var(--ws-raised);
+  --kc-meta: var(--ws-secondary); --kc-out-meta: var(--ws-secondary);
+  --kc-hover: var(--ws-hover); --kc-plate: var(--ws-selected);
+  --kc-pill: var(--ws-soft); --kc-pill-ink: var(--ws-secondary);
+  --kc-shadow: var(--ws-shadow); --kc-shadow-sm: var(--ws-shadow-small);
+}
+html[data-appearance="workshop"] #circles :is(.kc,.kc-chat-pane) { background: var(--ws-surface); color: var(--ws-ink); }
+html[data-appearance="workshop"] #circles .kc-bb { color: var(--ws-ink); }
+html[data-appearance="workshop"] #circles :is(.kc-start,.kc-deed-meta,.kc-round) { color: var(--ws-secondary); }
+html[data-appearance="workshop"] #circles .kc-field { background: var(--ws-raised); box-shadow: inset 0 0 0 1px var(--ws-line); }
+html[data-appearance="workshop"] #circles .kc-field:focus-within { box-shadow: inset 0 0 0 2px var(--ws-focus); }
+html[data-appearance="workshop"] #circles .kc-field textarea { color: var(--ws-ink); }
+html[data-appearance="workshop"] #circles .kc-field textarea::placeholder { color: var(--ws-secondary); opacity: 1; }
+html[data-appearance="workshop"] #circles .kc-field textarea:focus-visible { outline: none; }
+html[data-appearance="workshop"] #circles .kc-send:disabled { color: var(--ws-secondary); }
+
+/* Notifications, account and editor menus use readable opaque material. */
+html[data-appearance="workshop"] :is(.kc-modal,.bell-popover,.account-menu-popover,.board-menu-popover,.mention-menu,.slash-menu,.link-menu,.fmt-bar) { background: var(--ws-raised); color: var(--ws-ink); border-color: var(--ws-line); }
+html[data-appearance="workshop"] :is(.kc-modal,.bell-popover,.account-menu-popover,.board-menu-popover,.mention-menu,.slash-menu,.link-menu) { box-shadow: var(--ws-shadow); }
+html[data-appearance="workshop"] .bell-popover :is(.bell-meta,.bell-time,.bell-empty,.bell-foot,.bell-group) { color: var(--ws-secondary); }
+
+/* Admin and feedback, including service panels and lower scroll states. */
+html[data-appearance="workshop"] #admin { background: var(--ws-canvas); color: var(--ws-ink); }
+html[data-appearance="workshop"] #admin :is(.admin-topbar,.admin-sidebar,.admin-mobile-nav) { background: var(--ws-surface); border-color: var(--ws-line); }
+html[data-appearance="workshop"] #admin :is(.admin-user,.settings-group,.feedback-card,.admin-notices) { background: var(--ws-raised); border-color: var(--ws-line); }
+html[data-appearance="workshop"] #admin :is(.setting-hint,.setting-state,.admin-user-facts,.admin-limit-name,.admin-event) { color: var(--ws-secondary); }
+html[data-appearance="workshop"] #admin [data-admin-section] { color: var(--ws-secondary); }
+html[data-appearance="workshop"] #admin [data-admin-section].active { background: var(--ws-selected); color: var(--ws-ink); box-shadow: none; }
+html[data-appearance="workshop"] #feedback #feedback-form,
+html[data-appearance="workshop"] #feedback .feedback-card { background: var(--ws-surface); color: var(--ws-ink); border-color: var(--ws-line); }
+html[data-appearance="workshop"] #feedback #feedback-text { background: var(--ws-raised); color: var(--ws-ink); border-color: var(--ws-line); }
+html[data-appearance="workshop"] #my-feedback-group > h2 { color: var(--ws-scene-ink); }
+
+/* Existing secondary routes, without restoring hidden navigation. */
+html[data-appearance="workshop"] :is(.memory,.daily-brief) { background: var(--ws-surface); color: var(--ws-ink); border-color: var(--ws-line); }
+html[data-appearance="workshop"] :is(.memory,.daily-brief) :is(.eyebrow,.empty,.daily-brief-stale) { color: var(--ws-secondary); }
+html[data-appearance="workshop"] .memory { min-width: 0; }
+html[data-appearance="workshop"] #memory-form { min-width: 0; max-width: 100%; flex-wrap: wrap; }
+html[data-appearance="workshop"] #memory-form input { width: 0; min-width: 0; flex: 1 1 170px; }
+html[data-appearance="workshop"] #memory-form button { flex: 0 0 auto; max-width: 100%; }
+html[data-appearance="workshop"] #memory-input { background: var(--ws-raised); color: var(--ws-ink); border-color: var(--ws-line); }
+html[data-appearance="workshop"] #memory-input::placeholder { color: var(--ws-secondary); opacity: 1; }
+
+/* One focus outline on functional surfaces; capture owns its original focus. */
+html[data-appearance="workshop"] :is(#board,#done,#calendar,#notes,#settings,#guide,#circles,#admin,#feedback,#memory,#review-dialog,.bell-popover,.account-menu-popover) :is(button,a,input,select,textarea,[contenteditable="true"]):focus-visible { outline: 2px solid var(--ws-focus); outline-offset: 3px; }
+html[data-appearance="workshop"] :is(.cal-pop,#password-dialog,#totp-disable-dialog,#reset-dialog) input:focus { border-color: var(--ws-line-strong); box-shadow: none; }
+html[data-appearance="workshop"] :is(.cal-pop,#password-dialog,#totp-disable-dialog,#reset-dialog) input:focus-visible { outline: 2px solid var(--ws-focus); outline-offset: 3px; }
+/* Composer already has a rounded focus indicator around its complete field. */
+html[data-appearance="workshop"] #circles .kc-field textarea:focus-visible { outline: none; }
+
+@media (min-width: 601px) {
+  html[data-appearance="workshop"] #todo :is(.day-rows,.day-late) > .entry.dense { padding-left: 52px; }
+}
+@media (min-width: 761px) and (max-width: 1100px) {
+  html[data-appearance="workshop"] #today :is(#todo,#journal) { padding-inline: 72px; }
+}
+@media (max-width: 1100px) {
+  html[data-appearance="workshop"]:is([data-workshop-route="today"],[data-workshop-route="done"]) .workshop-scene::after {
+    background: linear-gradient(90deg,rgba(var(--ws-room-grade), .12) 0%,rgba(var(--ws-room-grade), .43) 14%,rgba(var(--ws-room-grade), .70) 36%,rgba(var(--ws-room-grade), .70) 76%,rgba(var(--ws-room-grade), .34) 100%);
+  }
+}
+@media (max-width: 760px) {
+  html[data-appearance="workshop"] .workshop-backdrop > .workshop-scene { background-position: 65% top; }
+  html[data-appearance="workshop"][data-room-light="day"] .workshop-scene.shown { opacity: .6; }
+  /* Inline position from an earlier wide viewport cannot strand an open popup. */
+  html[data-appearance="workshop"] .cal-pop { left: 12px !important; right: 12px !important; width: auto; max-width: calc(100vw - 24px); box-sizing: border-box; }
+}
+@media (max-width: 600px) {
+  html[data-appearance="workshop"][data-room-light="day"] .workshop-scene.shown { opacity: .78; }
+  html[data-appearance="workshop"]:is([data-workshop-route="today"],[data-workshop-route="done"]) .workshop-scene::after {
+    background: linear-gradient(90deg,rgba(var(--ws-room-grade), .44) 0%,rgba(var(--ws-room-grade), .65) 20%,rgba(var(--ws-room-grade), .70) 60%,rgba(var(--ws-room-grade), .56) 100%);
+  }
+  html[data-appearance="workshop"] #todo .day-row { grid-template-columns: 36px minmax(0,1fr); gap: 8px; }
+  html[data-appearance="workshop"] #todo .entry.dense { grid-template-columns: 18px minmax(0,1fr); column-gap: 10px; padding: 8px 4px; }
+  html[data-appearance="workshop"] #todo .entry.dense .entry-title { grid-column: 2; grid-row: 1; }
+  html[data-appearance="workshop"] #todo .entry.dense .entry-meta { grid-column: 2; grid-row: 2; flex-wrap: wrap; white-space: normal; padding-top: 2px; margin: 0; line-height: 1.4; }
+  html[data-appearance="workshop"] #todo .day-row:has(.entry.dense) .day-time { padding-top: 14px; }
+  html[data-appearance="workshop"] #todo .day-head { align-items: flex-start; gap: 6px; }
+  html[data-appearance="workshop"] #todo .day-head .day-group { padding-top: 9px; }
+  html[data-appearance="workshop"] #todo .day-head-act { font-size: 10px; max-width: 54%; line-height: 1.5; text-align: right; min-height: 32px; }
+  html[data-appearance="workshop"] #done > .page-heading { padding: 14px 14px 0; }
+  html[data-appearance="workshop"] #done .done-top { padding: 14px; }
+  html[data-appearance="workshop"] #done .done-days { padding: 10px 12px; }
+  html[data-appearance="workshop"] #done .entry.dense { grid-template-columns: 20px minmax(0,1fr); align-items: start; gap: 3px 10px; padding-block: 9px; }
+  html[data-appearance="workshop"] #done .entry.dense > .completion-button { grid-column: 1; grid-row: 1 / span 2; margin-top: 3px; }
+  html[data-appearance="workshop"] #done .entry.dense > .entry-title { grid-column: 2; grid-row: 1; }
+  html[data-appearance="workshop"] #done .entry.dense > .entry-meta { grid-column: 2; grid-row: 2; justify-content: flex-start; flex-wrap: wrap; white-space: normal; }
+  html[data-appearance="workshop"] :is(#board,#calendar,#settings,#feedback) .page-heading { padding: 14px; }
+  html[data-appearance="workshop"] :is(#board,#calendar) > .page-heading { padding-bottom: 8px; }
+  html[data-appearance="workshop"] :is(#board,#calendar) > .board-controls { padding: 6px 14px 12px; }
+  html[data-appearance="workshop"] :is(.settings-group,.feedback-card,.admin-user) { min-width: 0; }
+  html[data-appearance="workshop"] .workshop-room-controls { grid-template-columns: 1fr; }
+  html[data-appearance="workshop"] .memory { padding: 20px; }
+  html[data-appearance="workshop"] #memory-form input { flex-basis: 100%; width: 100%; }
+  html[data-appearance="workshop"] #memory-form button { margin-left: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-appearance="workshop"] .workshop-scene { transition: none; }
+}

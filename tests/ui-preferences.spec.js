@@ -113,7 +113,8 @@ test('two independent browsers sync dimensions and modes live, preserve drafts a
   await reopened.setViewportSize({ width: 390, height: 844 });
   expect(await reopened.locator('#capture-form').evaluate(element => element.getBoundingClientRect().right <= innerWidth)).toBe(true);
   await reopened.setViewportSize({ width: 1440, height: 900 });
-  expect(await cssValue(reopened, '#today', '--capture-width')).toBe(width);
+  // setViewportSize resolves before the browser delivers its resize event.
+  await expect.poll(() => cssValue(reopened, '#today', '--capture-width')).toBe(width);
   await reopened.screenshot({ path: '/tmp/pagent-view-sync-smoke.png', fullPage: true });
   expect(errors).toEqual([]);
   await fresh.close(); await second.close();

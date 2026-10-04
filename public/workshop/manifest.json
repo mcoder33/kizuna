@@ -1,0 +1,124 @@
+{
+  "source": "Reviewed Torii studio illustrations, October 2026",
+  "assets": [
+    {
+      "file": "winter-day-desktop.webp",
+      "width": 1448,
+      "height": 1086,
+      "bytes": 164892,
+      "source": "workshop/assets/winter-day-desktop.png"
+    },
+    {
+      "file": "winter-day-mobile.webp",
+      "width": 900,
+      "height": 1599,
+      "bytes": 146550,
+      "source": "workshop/assets/winter-day-mobile.png"
+    },
+    {
+      "file": "winter-night-desktop.webp",
+      "width": 1448,
+      "height": 1086,
+      "bytes": 126258,
+      "source": "workshop/assets/winter-night-desktop.png"
+    },
+    {
+      "file": "winter-night-mobile.webp",
+      "width": 900,
+      "height": 1599,
+      "bytes": 104482,
+      "source": "workshop/assets/winter-night-mobile.png"
+    },
+    {
+      "file": "spring-day-desktop.webp",
+      "width": 1448,
+      "height": 1086,
+      "bytes": 158466,
+      "source": "workshop/assets/spring-day-desktop.png"
+    },
+    {
+      "file": "spring-day-mobile.webp",
+      "width": 900,
+      "height": 1599,
+      "bytes": 146328,
+      "source": "workshop/assets/spring-day-mobile.png"
+    },
+    {
+      "file": "spring-night-desktop.webp",
+      "width": 1448,
+      "height": 1086,
+      "bytes": 131592,
+      "source": "workshop/assets/spring-night-desktop.png"
+    },
+    {
+      "file": "spring-night-mobile.webp",
+      "width": 900,
+      "height": 1599,
+      "bytes": 114662,
+      "source": "workshop/assets/spring-night-mobile.png"
+    },
+    {
+      "file": "summer-day-desktop.webp",
+      "width": 1448,
+      "height": 1086,
+      "bytes": 145032,
+      "source": "workshop/assets/summer-day-desktop.png"
+    },
+    {
+      "file": "summer-day-mobile.webp",
+      "width": 900,
+      "height": 1599,
+      "bytes": 158916,
+      "source": "workshop/assets/summer-day-mobile.png"
+    },
+    {
+      "file": "summer-night-desktop.webp",
+      "width": 1448,
+      "height": 1086,
+      "bytes": 122920,
+      "source": "workshop/assets/summer-night-desktop.png"
+    },
+    {
+      "file": "summer-night-mobile.webp",
+      "width": 900,
+      "height": 1599,
+      "bytes": 107698,
+      "source": "workshop/assets/summer-night-mobile.png"
+    },
+    {
+      "file": "autumn-day-desktop.webp",
+      "width": 1448,
+      "height": 1086,
+      "bytes": 164494,
+      "source": "consilium/assets/c5-day-desktop.png"
+    },
+    {
+      "file": "autumn-day-mobile.webp",
+      "width": 900,
+      "height": 1599,
+      "bytes": 160464,
+      "source": "consilium/assets/c5-day-mobile.png"
+    },
+    {
+      "file": "autumn-night-desktop.webp",
+      "width": 1448,
+      "height": 1086,
+      "bytes": 119286,
+      "source": "consilium/assets/room-night.png"
+    },
+    {
+      "file": "autumn-night-mobile.webp",
+      "width": 900,
+      "height": 1599,
+      "bytes": 108610,
+      "source": "consilium/assets/room-night-mobile.png"
+    },
+    {
+      "file": "torii-guide.webp",
+      "width": 420,
+      "height": 280,
+      "bytes": 20682,
+      "source": "torii-guide.png"
+    }
+  ]
+}

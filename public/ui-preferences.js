@@ -81,6 +81,13 @@ export const uiStorage = {
 
 export function receiveUiPreferences(record) {
   if (record?.userId !== accountId || !Number.isInteger(record.revision)) return;
+  if (typeof record.capabilities?.workshopAppearance === "boolean") {
+    const allowed = String(record.capabilities.workshopAppearance);
+    if (document.documentElement.dataset.workshopEnabled !== allowed) {
+      document.documentElement.dataset.workshopEnabled = allowed;
+      window.dispatchEvent(new CustomEvent("kizuna-ui-capabilities", { detail: record.capabilities }));
+    }
+  }
   if (record.revision >= revision) { revision = record.revision; serverValues = clean(record.values); }
   // A newer SSE snapshot may arrive before an older PATCH response. After an
   // acknowledgement removes pending edits, reveal that latest snapshot.
@@ -92,7 +99,11 @@ export function receiveUiPreferences(record) {
 async function fetchPreferences(options) {
   const response = await fetch("/api/ui-preferences", { cache: "no-store", ...options, signal: AbortSignal.timeout(8000) });
   if ([401, 409].includes(response.status)) { stopped = true; throw new Error("Session expired"); }
-  if (!response.ok) throw new Error("Preferences unavailable");
+  if (!response.ok) {
+    const error = new Error("Preferences unavailable");
+    if (response.status === 403) { try { error.code = (await response.json()).error?.code; } catch {} }
+    throw error;
+  }
   const record = await response.json();
   // A tab left open while someone switches account must never replay the old
   // account's pending preferences into the new session.
@@ -122,7 +133,14 @@ export async function flushUiPreferences() {
       if (pendingTokens[key] === sentTokens[key]) rememberEntry(key, null);
     }
     receiveUiPreferences(record);
-  } catch {
+  } catch (error) {
+    // Revoked access must not block unrelated offline preferences indefinitely.
+    const key = "kizuna-appearance";
+    if (error.code === "workshop_unavailable" && sent[key] === "workshop" && pendingTokens[key] === sentTokens[key]) {
+      try { if (readPendingEntry(key)?.token === sentTokens[key]) localStorage.removeItem(pendingKey(key)); } catch {}
+      rememberEntry(key, null);
+      await refreshUiPreferences();
+    }
     schedule(5000);
   } finally {
     saving = false;

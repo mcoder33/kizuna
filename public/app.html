@@ -19,6 +19,9 @@
     <link rel="stylesheet" href="/public/notes.css" />
     <link rel="stylesheet" href="/public/guide.css" />
     <link rel="stylesheet" href="/public/mac-download.css" />
+    <link rel="stylesheet" href="/public/workshop-tokens.css" />
+    <link rel="stylesheet" href="/public/workshop.css" />
+    <link rel="stylesheet" href="/public/workshop-guide.css" />
     <link rel="modulepreload" href="/public/i18n-catalog.js" />
     <link rel="modulepreload" href="/public/app.js" />
   <script type="module" src="/public/browser-i18n.js"></script>
@@ -752,6 +755,13 @@
                 <option value="dark" data-i18n="Тёмная">Тёмная</option>
               </select></label
             >
+            <label class="setting" id="workshop-appearance-row" hidden>
+              <span class="setting-name" data-i18n="Оформление">Оформление</span>
+              <select id="setting-appearance">
+                <option value="classic" data-i18n="Классическое">Классическое</option>
+                <option value="workshop" data-i18n="Мастерская">Мастерская</option>
+              </select>
+            </label>
             <div class="setting-actions">
               <button id="password-change" class="secondary" type="button" data-i18n="Сменить пароль">
                 Сменить пароль
@@ -764,6 +774,35 @@
           </fieldset>
 
 
+
+          <fieldset class="settings-group" id="workshop-settings" hidden>
+            <legend data-i18n="Комната и подсказки">Комната и подсказки</legend>
+            <label class="setting"><span class="setting-name" data-i18n="Сезон комнаты">Сезон комнаты</span>
+              <select id="setting-room-season">
+                <option value="auto" data-i18n="Автоматически">Автоматически</option>
+                <option value="winter" data-i18n="Зима">Зима</option>
+                <option value="spring" data-i18n="Весна">Весна</option>
+                <option value="summer" data-i18n="Лето">Лето</option>
+                <option value="autumn" data-i18n="Осень">Осень</option>
+              </select>
+            </label>
+            <label class="setting"><span class="setting-name" data-i18n="Свет в комнате">Свет в комнате</span>
+              <select id="setting-room-light">
+                <option value="auto" data-i18n="По времени суток">По времени суток</option>
+                <option value="day" data-i18n="День">День</option>
+                <option value="night" data-i18n="Ночь">Ночь</option>
+              </select>
+            </label>
+            <p class="setting-hint" data-i18n="Комната меняется по вашему часовому поясу. Тема интерфейса выбирается отдельно.">Комната меняется по вашему часовому поясу. Тема интерфейса выбирается отдельно.</p>
+            <p class="setting-hint" data-i18n="Сезоны в автоматическом режиме соответствуют Северному полушарию.">Сезоны в автоматическом режиме соответствуют Северному полушарию.</p>
+            <label class="setting"><span class="setting-name" data-i18n="Подсказки Тории">Подсказки Тории</span>
+              <select id="setting-torii-hints">
+                <option value="enabled" data-i18n="Включены">Включены</option>
+                <option value="disabled" data-i18n="Выключены">Выключены</option>
+              </select>
+            </label>
+            <div class="setting-actions"><button type="button" class="secondary" id="torii-restore-hints" data-i18n="Вернуть скрытые подсказки">Вернуть скрытые подсказки</button></div>
+          </fieldset>
 
           <fieldset class="settings-group" id="calendar-settings">
             <legend data-i18n="Календари">Календари</legend>
@@ -1184,5 +1223,7 @@
     <div id="notify-toasts" class="notify-toasts" aria-live="polite"></div>
     <script type="module" src="/public/app.js"></script>
     <script type="module" src="/public/daily-brief.js"></script>
+    <script type="module" src="/public/workshop.js"></script>
+    <script type="module" src="/public/workshop-guide.js"></script>
   </body>
 </html>

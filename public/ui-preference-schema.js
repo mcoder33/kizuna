@@ -9,6 +9,11 @@ const fields = ["col", "day", "who", "proj", "src", "status"];
 const columns = json(value => object(value) && Object.entries(value).every(([key, items]) => fields.includes(key) && strings(items)));
 const rules = {
   "pagent.theme": choice("system", "light", "dark"),
+  "kizuna-appearance": choice("classic", "workshop"),
+  "kizuna-room-season": choice("auto", "winter", "spring", "summer", "autumn"),
+  "kizuna-room-light": choice("auto", "day", "night"),
+  "kizuna-torii-hints": choice("enabled", "disabled"),
+  "kizuna-torii-dismissed": json(value => Array.isArray(value) && value.length <= 32 && new Set(value).size === value.length && value.every(id => typeof id === "string" && /^[a-z][a-z0-9-]{0,63}$/.test(id))),
   "pagent.text": json(value => object(value) && ["default", "serif", "mono"].includes(value.font) && ["normal", "small"].includes(value.size)),
   "kizuna-capture-width": dimension(480, 4096),
   "kizuna-capture-height": dimension(96, 480),

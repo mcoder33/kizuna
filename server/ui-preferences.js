@@ -28,8 +28,9 @@ export function writeUiPreferences(db, userId, patch, { onlyIfMissing = [], mirr
   })();
 }
 
-export function mountUiPreferences(app, { db, notifyUser, onChanged = () => {} }) {
-  app.get('/api/ui-preferences', (req, res) => res.json(readUiPreferences(db, req.user.id)));
+export function mountUiPreferences(app, { db, notifyUser, onChanged = () => {}, workshopAccess }) {
+  const snapshot = userId => ({ ...readUiPreferences(db, userId), capabilities: workshopAccess?.capabilities(userId) || { workshopAppearance: false } });
+  app.get('/api/ui-preferences', (req, res) => res.json(snapshot(req.user.id)));
   app.patch('/api/ui-preferences', (req, res) => {
     if (req.body?.userId !== req.user.id) return res.status(409).json({ error: { code: 'account_changed', message: 'Учётная запись изменилась.' } });
     const patch = req.body?.changes;
@@ -38,9 +39,12 @@ export function mountUiPreferences(app, { db, notifyUser, onChanged = () => {} }
     if (!patch || typeof patch !== 'object' || Array.isArray(patch) || Object.keys(patch).length > 30 || !Object.entries(patch).every(([key, value]) => validUiPreference(key, value))) {
       return res.status(400).json({ error: { code: 'invalid_ui_preferences', message: 'Некорректные настройки отображения.' } });
     }
+    if (patch['kizuna-appearance'] === 'workshop' && !workshopAccess?.allows(req.user.id)) {
+      return res.status(403).json({ error: { code: 'workshop_unavailable' } });
+    }
     // Read and merge inside the same transaction. Two devices editing different
     // keys cannot replace one another's snapshot; null is a persisted reset.
-    const saved = writeUiPreferences(db, req.user.id, patch, { onlyIfMissing });
+    const saved = { ...writeUiPreferences(db, req.user.id, patch, { onlyIfMissing }), capabilities: snapshot(req.user.id).capabilities };
     onChanged();
     notifyUser(req.user.id, 'ui-preferences', saved);
     res.json(saved);
