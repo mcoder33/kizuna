@@ -1,4 +1,4 @@
-/* UI materials follow the interface theme; open text follows the room light. */
+/* Interface theme selects the room light and its matching materials. */
 html[data-appearance="workshop"] {
   --ws-canvas: #f7f8f7;
   --ws-surface: #fcfdfb;
@@ -26,6 +26,13 @@ html[data-appearance="workshop"] {
   --ws-scene-hover: rgba(25, 42, 29, .055);
   --ws-scene-link: #264f83;
   --ws-scene-danger: #a92d48;
+  --ws-scene-surface: #f0ece2;
+  --ws-scene-surface-secondary: #4f594f;
+  --ws-scene-surface-line: #d4cbb9;
+  --ws-scene-chip: #e4decf;
+  --ws-scene-positive: #1b6047;
+  --ws-scene-warm: #775010;
+  --ws-scene-on-danger: #fff;
   --ws-room-grade: 248, 245, 234;
 }
 html[data-appearance="workshop"][data-theme="dark"] {
@@ -69,6 +76,13 @@ html[data-appearance="workshop"][data-room-light="night"] {
   --ws-scene-hover: rgba(239, 246, 232, .065);
   --ws-scene-link: #c1d9fa;
   --ws-scene-danger: #ffb3bb;
+  --ws-scene-surface: #332c26;
+  --ws-scene-surface-secondary: #d5ccbd;
+  --ws-scene-surface-line: #5b5044;
+  --ws-scene-chip: #51463b;
+  --ws-scene-positive: #b4ddc4;
+  --ws-scene-warm: #f1d199;
+  --ws-scene-on-danger: #31171c;
   --ws-room-grade: 28, 27, 24;
 }
 @media (max-width: 760px) {
@@ -84,4 +98,11 @@ html[data-appearance="workshop"][data-room-fallback="true"] {
   --ws-scene-hover: var(--ws-hover);
   --ws-scene-link: var(--ws-focus);
   --ws-scene-danger: var(--ws-danger);
+  --ws-scene-surface: var(--ws-surface);
+  --ws-scene-surface-secondary: var(--ws-secondary);
+  --ws-scene-surface-line: var(--ws-line);
+  --ws-scene-chip: var(--ws-soft);
+  --ws-scene-positive: var(--ws-ink);
+  --ws-scene-warm: var(--ws-ink);
+  --ws-scene-on-danger: var(--ws-surface);
 }

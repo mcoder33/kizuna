@@ -225,9 +225,6 @@ import WebKit
         let workshopLight = fixture.verify("workshop", "light", false, "day", draft: draft)
         fixture.waitForCircle(token: "#4c5c4f", rendered: "rgb(76, 92, 79)")
         fixture.saveSnapshot("workshop-light-day-wkwebview", in: output)
-        fixture.set("setting-room-light", to: "night")
-        fixture.wait("night room without changing interface theme") { fixture.state()["roomLight"] as? String == "night" }
-        _ = fixture.verify("workshop", "light", false, "night", draft: draft, expectedGeometry: workshopLight)
         _ = fixture.evaluate("window.pagentTheme.set('dark')")
         let workshopDark = fixture.verify("workshop", "dark", true, "night", draft: draft)
         fixture.waitForCircle(token: "#d2ddcc", rendered: "rgb(210, 221, 204)")
@@ -237,13 +234,13 @@ import WebKit
         _ = fixture.evaluate("window.pagentTheme.set('light')")
         let classicLight = fixture.verify("classic", "light", false, draft: draft, expectedGeometry: workshopLight)
         fixture.set("setting-appearance", to: "workshop")
-        _ = fixture.verify("workshop", "light", false, "night", draft: draft, expectedGeometry: classicLight)
+        _ = fixture.verify("workshop", "light", false, "day", draft: draft, expectedGeometry: classicLight)
         _ = fixture.evaluate("window.pagentTheme.set('system')")
-        _ = fixture.verify("workshop", "system", false, "night", draft: draft)
+        _ = fixture.verify("workshop", "system", false, "day", draft: draft)
         NSApp.appearance = NSAppearance(named: .darkAqua)
         _ = fixture.verify("workshop", "system", true, "night", draft: draft)
         NSApp.appearance = NSAppearance(named: .aqua)
-        _ = fixture.verify("workshop", "system", false, "night", draft: draft)
+        _ = fixture.verify("workshop", "system", false, "day", draft: draft)
         print("PASS: production WKWebView capture bridge follows classic/workshop, day/night and light/dark/system without changing the draft")
     }
 }

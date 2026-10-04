@@ -7,6 +7,7 @@ const account = root.dataset.accountId;
 const publicDemo = !account && root.dataset.publicAppearance === 'workshop' && document.querySelector('.hello-app');
 const compact = matchMedia('(max-width:1100px)');
 const reducedMotion = matchMedia('(prefers-reduced-motion:reduce)');
+const systemTheme = matchMedia('(prefers-color-scheme:dark)');
 let backdrop, composing = false, pointerHeld = false, dragging = false, pending = false, applied = null, revision = 0;
 let lastAppearance = root.dataset.appearance || 'classic';
 let timer = 0;
@@ -15,7 +16,7 @@ const preference = (key, fallback) => { try { return uiStorage.getItem(key) || f
 const selectedAppearance = () => account && allowed() && preference('kizuna-appearance', 'classic') === 'workshop' ? 'workshop' : 'classic';
 const active = () => selectedAppearance() === 'workshop' || !!publicDemo;
 const busy = () => composing || pointerHeld || dragging || document.activeElement?.matches('input,textarea,select,[contenteditable="true"]') || !!document.querySelector('dialog[open]');
-const roomChoice = () => chooseRoom({ timeZone: getTimeZone(), season: account ? preference('kizuna-room-season', 'auto') : 'auto', light: account ? preference('kizuna-room-light', 'auto') : 'auto' });
+const roomChoice = () => chooseRoom({ timeZone: getTimeZone(), season: account ? preference('kizuna-room-season', 'auto') : 'auto', theme: root.dataset.theme || 'system', systemDark: systemTheme.matches });
 
 function ensureBackdrop() {
   if (publicDemo || backdrop) return;
@@ -27,10 +28,20 @@ function ensureBackdrop() {
 
 async function renderRoom({ force = false } = {}) {
   if (!active()) return;
-  if (document.hidden || (!force && busy())) { pending = true; return; }
   const room = roomChoice();
+  force ||= !!applied && applied.light !== room.light;
+  if (document.hidden || (!force && busy())) { pending = true; return; }
   const src = roomAsset(room, compact.matches);
-  if (applied?.src === src) { pending = false; return; }
+  if (applied?.src === src) {
+    ++revision;
+    pending = false;
+    delete root.dataset.roomFallback;
+    delete root.dataset.roomError;
+    return;
+  }
+  // While decoding a different theme, keep readable neutral materials instead
+  // of briefly combining the previous room with the new interface colors.
+  if (applied && applied.light !== room.light) root.dataset.roomFallback = 'true';
   pending = false;
   const generation = ++revision;
   const image = new Image();
@@ -39,7 +50,7 @@ async function renderRoom({ force = false } = {}) {
   catch {
     if (generation !== revision || !active()) return;
     root.dataset.roomError = 'true';
-    if (!applied) root.dataset.roomFallback = 'true';
+    if (!applied || applied.light !== room.light) root.dataset.roomFallback = 'true';
     return;
   }
   if (generation !== revision || !active()) return;
@@ -73,7 +84,6 @@ function paintSettings() {
   for (const [id, key, fallback] of [
     ['setting-appearance', 'kizuna-appearance', 'classic'],
     ['setting-room-season', 'kizuna-room-season', 'auto'],
-    ['setting-room-light', 'kizuna-room-light', 'auto'],
     ['setting-torii-hints', 'kizuna-torii-hints', 'enabled'],
   ]) {
     const field = document.getElementById(id);
@@ -115,7 +125,6 @@ function resumePending() {
 for (const [id, key] of [
   ['setting-appearance', 'kizuna-appearance'],
   ['setting-room-season', 'kizuna-room-season'],
-  ['setting-room-light', 'kizuna-room-light'],
   ['setting-torii-hints', 'kizuna-torii-hints'],
 ]) document.getElementById(id)?.addEventListener('change', event => {
   event.stopPropagation();
@@ -148,6 +157,9 @@ document.addEventListener('drop', () => { dragging = false; resumePending(); });
 document.addEventListener('focusout', resumePending);
 document.addEventListener('close', resumePending, true);
 compact.addEventListener('change', () => refresh());
+// Theme changes must stay in sync even while a draft or dialog is focused.
+new MutationObserver(() => refresh({ force: true })).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+systemTheme.addEventListener('change', () => refresh({ force: true }));
 route();
 refresh();
 setInterval(() => { if (active()) renderRoom(); }, ROOM_REFRESH_MS);

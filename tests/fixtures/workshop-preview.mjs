@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import express from 'express';
+import {seedWorkshopCalendar} from './workshop-calendar.js';
 const here=path.dirname(fileURLToPath(import.meta.url));
 const root=path.resolve(here,'../..');
 process.chdir(root);
@@ -21,6 +22,7 @@ for(const name of ['typical','empty','many']) {
  await api.put('/api/settings').send({locale:'ru',requestedTimeZone:'Europe/Samara'}).expect(200);
  await api.patch('/api/account').send({name:name==='typical'?'Мастерская':name==='empty'?'Новый день':'Большой проект'}).expect(200);
  if(name==='empty')continue;
+ seedWorkshopCalendar(app.database,api.user.id,day);
  const titles=['Отправить наброски для сайта','Забрать книгу из магазина','Выбрать маршрут на выходные','Собрать идеи для новой главы','Проверить макет письма','Договориться о встрече с командой'];
  if(name==='many') titles.push('Подготовить презентацию проекта: собрать решения, выбрать примеры и показать команде следующий шаг','Разобрать фотографии из поездки','Ответить на письмо издательства','Записаться на профилактику велосипеда','Заказать новую лампу для рабочего стола','Перечитать заметки после встречи с редактором','Выбрать подарок на день рождения','Проверить расписание электричек','Отправить документы бухгалтеру','Забронировать столик на пятницу','Собрать плейлист для дороги','Обновить список книг на осень','Согласовать время созвона','Сохранить идеи для следующего выпуска');
  for(const [i,raw] of titles.entries()) {
@@ -40,6 +42,8 @@ for(const name of ['typical','empty','many']) {
    await api.post(`/api/captures/${page.id}/notes`).send({body:`# ${title}\n\nМесто, где мысли постепенно обретают форму.\n\n## На этой неделе\n\n- Сохранить простоту\n- Собрать примеры\n- Обсудить следующий шаг\n\n> Хороший день начинается с одной ясной мысли.\n\nНе нужно делать всё сразу. Запишите главное, а к деталям можно вернуться позже.`}).expect(200);
  }
  await api.post(`/api/captures/${fixture[name].tasks[0]}/notes`).send({body:'## Что подготовить\n\nПоказать спокойную дневную сцену и вечерний вариант. Сохранить знакомое поле ввода.\n\n- [ ] Выбрать три примера\n- [ ] Проверить на телефоне\n\n[Материалы](https://example.com)'}).expect(200);
+ await api.post(`/api/captures/${fixture[name].tasks[2]}/subtasks`).send({title:'Посмотреть расписание'}).expect(201);
+ await api.post(`/api/captures/${fixture[name].tasks[2]}/subtasks`).send({title:'Выбрать остановки'}).expect(201);
  if(name==='typical')await api.post(`/api/captures/${fixture[name].tasks[0]}/attachments`).set('Content-Type','image/webp').set('X-Attachment-Name',encodeURIComponent('Дневная комната.webp')).send(fs.readFileSync(path.join(root,'public/workshop/autumn-day-mobile.webp'))).expect(201);
  await api.post('/api/feedback').set('Idempotency-Key',`workshop-feedback-${name}`).send({text:'Хочется, чтобы вечером комната становилась уютнее, а список дел оставался хорошо читаемым.',allowContact:true}).expect(201);
 }
@@ -47,6 +51,7 @@ const admin=profiles.typical, peer=authed(app,{email:'reader@workshop.test',role
 await peer.patch('/api/account').send({name:'Аня'}).expect(200);
 const circle=(await admin.post('/api/circles').send({name:'Мастерская'}).expect(201)).body.circle;
 await admin.post(`/api/circles/${circle.id}/members`).send({userId:peer.user.id}).expect(200);
+await admin.post(`/api/captures/${fixture.typical.tasks[2]}/assign`).send({assigneeId:peer.user.id,circleId:circle.id}).expect(200);
 const rooms=(await admin.get('/api/rooms').expect(200)).body.rooms;
 fixture.typical.circle=circle.id;
 if(rooms[0]) {
@@ -59,8 +64,8 @@ const wrapper=express();
 wrapper.get('/__fixture',(_req,res)=>res.json({day,...fixture}));
 wrapper.get('/__preview',async(req,res)=>{
  const api=profiles[req.query.profile]||profiles.typical;
- await api.patch('/api/ui-preferences').send({userId:api.user.id,changes:{'kizuna-appearance':req.query.appearance==='classic'?'classic':'workshop','kizuna-room-season':String(req.query.season||'autumn'),'kizuna-room-light':String(req.query.light||'day'),'kizuna-torii-hints':'enabled','kizuna-torii-dismissed':null}}).expect(200);
- await api.put('/api/settings').send({theme:req.query.theme==='dark'?'dark':'light'}).expect(200);
+ await api.patch('/api/ui-preferences').send({userId:api.user.id,changes:{'kizuna-appearance':req.query.appearance==='classic'?'classic':'workshop','kizuna-room-season':String(req.query.season||'autumn'),'kizuna-torii-hints':'enabled','kizuna-torii-dismissed':null}}).expect(200);
+ await api.put('/api/settings').send({theme:['light','dark','system'].includes(req.query.theme)?req.query.theme:'light'}).expect(200);
  res.cookie('pagent_session',api.cookie.slice(api.cookie.indexOf('=')+1),{httpOnly:true,sameSite:'lax'});
  res.redirect('/#'+String(req.query.route||'today').replace(/[^a-zA-Z0-9/?=&_:\-]/g,''));
 });

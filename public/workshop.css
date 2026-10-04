@@ -5,6 +5,7 @@ html[data-appearance="workshop"] .workshop-backdrop {
   overflow: hidden; background: #fcfcf5;
 }
 html[data-appearance="workshop"][data-room-fallback="true"] .workshop-backdrop { background: var(--ws-canvas); }
+html[data-appearance="workshop"][data-room-fallback="true"] .workshop-scene { visibility: hidden; }
 html[data-appearance="workshop"] .workshop-backdrop > .workshop-scene {
   position: absolute; inset: 0; background-size: cover; background-position: center top;
   opacity: 0; transition: opacity .9s ease;
@@ -56,7 +57,18 @@ html[data-appearance="workshop"] #todo .entry.dense .entry-title {
   padding-block: 3px; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere;
 }
 html[data-appearance="workshop"] #todo .entry.dense .entry-title:hover { color: var(--ws-scene-ink); }
-html[data-appearance="workshop"] #todo :is(.entry-meta,.entry-meta .tag,.empty,.today-start) { color: var(--ws-scene-secondary); }
+html[data-appearance="workshop"] #todo :is(.entry-meta,.empty,.today-start) { color: var(--ws-scene-secondary); }
+/* Labels and meetings use matching materials from the seasonal room. */
+html[data-appearance="workshop"] #todo :is(.entry-meta,.day-event-meta,.day-own) .tag { background: var(--ws-scene-chip); color: var(--ws-scene-ink); }
+html[data-appearance="workshop"] #todo .tag:is(.task,.done,.ontime,.auto) { color: var(--ws-scene-positive); }
+html[data-appearance="workshop"] #todo .tag:is(.project,.calm) { color: var(--ws-scene-link); }
+html[data-appearance="workshop"] #todo .tag:is(.soon,.warm,.urgent) { color: var(--ws-scene-warm); }
+html[data-appearance="workshop"] #todo .tag.late { color: var(--ws-scene-danger); }
+html[data-appearance="workshop"] #todo .tag.now { background: var(--ws-scene-danger); color: var(--ws-scene-on-danger); }
+html[data-appearance="workshop"] #todo .entry-meta .tag:is(.time,.auto,.files) { background: none; }
+html[data-appearance="workshop"] #todo .sub-badge { color: var(--ws-scene-secondary); }
+html[data-appearance="workshop"] #todo .sub-badge.all-done { color: var(--ws-scene-positive); }
+html[data-appearance="workshop"] #todo .sub-badge:hover { background: var(--ws-scene-hover); }
 html[data-appearance="workshop"] #todo .entry.dense .entry-meta { padding-top: 6px; font-size: 10.5px; }
 html[data-appearance="workshop"] #todo .entry-meta:empty { display: none; }
 html[data-appearance="workshop"] #todo .entry.dense:not(.swiping):not(.flash):hover { background: var(--ws-scene-hover); }
@@ -70,7 +82,13 @@ html[data-appearance="workshop"] #todo :is(.day-group.late,.entry.overdue .entry
 html[data-appearance="workshop"] #todo .entry.overdue > .completion-button { border-color: var(--ws-scene-danger); }
 html[data-appearance="workshop"][data-room-light] #todo .entry:not(.completed):not(.completing):not(.overdue) > .completion-button:not(.auto):hover { border-color: var(--green); }
 html[data-appearance="workshop"] #todo .completion-button:focus-visible { outline: 2px solid var(--ws-focus); outline-offset: 5px; }
-html[data-appearance="workshop"] #todo .day-row.now .day-event { background: color-mix(in srgb,var(--coral) 9%,transparent); box-shadow: none; }
+html[data-appearance="workshop"] #todo :is(.day-event,.day-own) { background: var(--ws-scene-surface); color: var(--ws-scene-ink); box-shadow: inset 0 0 0 1px var(--ws-scene-surface-line); }
+html[data-appearance="workshop"] #todo :is(.day-event-meta,.day-event-cal,.day-own.done .day-own-title) { color: var(--ws-scene-surface-secondary); }
+/* Fading the entire past event also fades its fill and destroys text contrast. */
+html[data-appearance="workshop"] #todo .day-row.past .day-event { opacity: 1; }
+html[data-appearance="workshop"] #todo .day-row.past .day-event-title { color: var(--ws-scene-surface-secondary); }
+html[data-appearance="workshop"] #todo .day-row.now .day-event { box-shadow: inset 0 0 0 1px var(--ws-scene-danger); }
+html[data-appearance="workshop"] #todo .day-ghost { background: var(--ws-scene-chip); color: var(--ws-scene-ink); }
 html[data-appearance="workshop"] #todo:has(.day-rows > .entry:nth-child(n + 5)) { padding-bottom: clamp(116px,18vh,190px); }
 html[data-appearance="workshop"] #journal .entry.dense { background: var(--ws-surface); color: var(--ws-ink); }
 html[data-appearance="workshop"] #journal .entry-title { color: var(--ws-ink); }
