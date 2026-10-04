@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": "^22 || ^24 || >=26"
   },
   "scripts": {
     "dev": "NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-/etc/ssl/cert.pem} node --watch server/index.js",
@@ -15,9 +15,12 @@
     "build:draft-recovery": "node scripts/build-draft-recovery.mjs",
     "check:draft-recovery": "node scripts/build-draft-recovery.mjs --check",
     "logs:report": "node scripts/log-report.mjs",
-    "pretest": "npm run check:draft-recovery"
+    "monitoring:check": "node ops/monitoring/check.mjs",
+    "pretest": "npm run check:draft-recovery",
+    "monitoring:smoke": "node ops/monitoring/smoke.mjs"
   },
   "dependencies": {
+    "@prometheus-io/client": "0.16.1",
     "better-sqlite3": "^12.2.0",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",

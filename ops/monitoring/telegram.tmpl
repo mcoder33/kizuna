@@ -1,0 +1,9 @@
+{{ define "kizuna.telegram" }}{{ if eq .Status "firing" }}⚠️ Кизуна: {{ .CommonLabels.severity }}{{ else }}✅ Кизуна: условие алерта больше не срабатывает{{ end }}
+{{ range .Alerts }}
+{{ .Labels.instance }} · {{ .Labels.alertname }}
+{{ .Annotations.summary }}
+{{ .Annotations.description }}
+{{ if .Annotations.dashboard_url }}Дашборд: {{ .Annotations.dashboard_url }}{{ end }}
+{{ end }}
+Runbook: https://github.com/mcoder33/kizuna/blob/main/docs/monitoring.md
+{{ end }}

@@ -69,6 +69,8 @@ CLI читает файлы потоком, держит ограниченну�
 
 Публичный `GET /healthz` проверяет чтение SQLite и возвращает только `status`, без данных аккаунтов. Для обнаружения полного падения VM он пригоден внешнему uptime-монитору: локальный процесс после остановки не может записать событие о собственной недоступности.
 
+Подготовлен следующий слой: [Grafana, VM metrics и Telegram-алерты](monitoring.md). Тот же audit обновляет ограниченные агрегаты в памяти; отдельный loopback `127.0.0.1:9108/metrics` отдаёт Prometheus exposition. Scrape не читает JSONL и не создаёт дополнительных access-логов. Production-запуск мониторинга описан отдельно.
+
 ## Выкладка и проверки
 
 `deploy.sh` устанавливает service/journald drop-in через `ops/install-observability.sh` перед обычным перезапуском. Ветка сама ничего не меняет на VM. После одобренного релиза проверить `/healthz`, `service_started`, `runtime_health`, реальную запись из каждого источника, `capture_result_visible`/`telegram_result_delivered`, фактический размер/права каталога, `journalctl --namespace=kizuna --disk-usage` и отсутствие секретов. При проблеме с namespace installer завершится до перезапуска приложения.

@@ -1,5 +1,6 @@
 import { mountUiPreferences, readUiPreferences, writeUiPreferences } from './ui-preferences.js';
 import { createAiAdmission } from './ai-admission.js';
+import { createApplicationMetrics, startMetricsServer, metricsPort, administratorRecipients } from './metrics.js';
 import { createHttpSecurity, loopbackProxy, validOccurredAt } from './security.js';
 import { normalizeTimeZone, userTimeZone, captureTimeContext } from './time-zone.js';
 import { userLocale, requestLanguages, validLocaleSetting, validDetectedLocale } from './locale.js';
@@ -1181,13 +1182,14 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const databasePath = process.env.PAGENT_DB_PATH || path.join(__dirname, '..', 'data', 'pagent.sqlite');
   const store = createLogStore({ directory: process.env.PAGENT_LOG_DIR || path.join(path.dirname(databasePath), 'logs'), ...logConfig() });
-  const audit = contextualAudit(store.write);
-  let app, server, monitor, shuttingDown = false, shutdownExitCode = 0;
+  const metrics = createApplicationMetrics();
+  const audit = contextualAudit(event => { metrics.observe(event); store.write(event); });
+  let app, server, monitor, metricsServer, shuttingDown = false, shutdownExitCode = 0;
   const shutdown = async (exitCode = 0) => {
     shutdownExitCode = Math.max(shutdownExitCode, exitCode);
     if (shuttingDown) return; shuttingDown = true;
     const deadline = setTimeout(() => process.exit(shutdownExitCode), 10000); deadline.unref();
-    monitor?.stop(); audit({ event: 'service_stopping' });
+    monitor?.stop(); await metricsServer?.stop(); audit({ event: 'service_stopping' });
     if (app) {
       app.closeEventStreams(); app.accounts.stop(); app.stopTelemetry();
       const results = await Promise.allSettled([app.captureJobWorker.stop(), app.calendarSyncWorker.stop(), app.reminderWorker.stop(), app.telegram.stop()]);
@@ -1203,6 +1205,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     app = createApp({ databasePath, audit });
     monitor = startRuntimeMonitor({ audit, db: app.database, store });
+    const port = metricsPort(process.env.PAGENT_METRICS_PORT);
+    const recipientsToken=()=>{try{return fs.readFileSync(process.env.PAGENT_ADMIN_ALERTS_TOKEN_FILE||'/opt/kizuna/alert-recipients-token','utf8').trim();}catch{return null;}};
+    if(!recipientsToken())audit({event:'admin_alerts_token_missing'});
+    if (port !== null) metricsServer = startMetricsServer({ metrics, port, audit, recipients:()=>administratorRecipients(app.database),recipientsToken });
     server = app.listen(Number(process.env.PORT || 3000), process.env.HOST || '127.0.0.1', () => {
       app.captureJobWorker.start(); app.calendarSyncWorker.start(); app.reminderWorker.start(); app.telegram.start();
       audit({ event: 'service_started' }); monitor.sample();

@@ -1,0 +1,21 @@
+[Unit]
+Description=Kizuna monitoring stack
+After=docker.service network-online.target
+Requires=docker.service
+RequiresMountsFor=/opt/kizuna-monitoring/data
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/kizuna-monitoring
+EnvironmentFile=/etc/kizuna-monitoring/stack.env
+ExecStart=/usr/bin/docker compose -f /opt/kizuna-monitoring/compose.yaml up -d
+ExecStop=/usr/bin/docker compose -f /opt/kizuna-monitoring/compose.yaml stop
+TimeoutStartSec=300
+TimeoutStopSec=30
+LogNamespace=kizuna-monitoring
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=100
+
+[Install]
+WantedBy=multi-user.target

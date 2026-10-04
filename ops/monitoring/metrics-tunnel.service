@@ -1,0 +1,22 @@
+[Unit]
+Description=Kizuna metrics SSH tunnel (forwarding-only key)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/kizuna-monitoring/tunnel.env
+ExecStart=/usr/bin/ssh -NT -o BatchMode=yes -o ConnectTimeout=10 -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/kizuna-monitoring/known_hosts -i /etc/kizuna-monitoring/metrics_key -L 127.0.0.1:19108:127.0.0.1:9108 -L 127.0.0.1:19100:127.0.0.1:9100 kizuna-metrics@${KIZUNA_SSH_HOST}
+Restart=always
+RestartSec=5s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+MemoryMax=32M
+TasksMax=16
+LogNamespace=kizuna-monitoring
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=100
+
+[Install]
+WantedBy=multi-user.target

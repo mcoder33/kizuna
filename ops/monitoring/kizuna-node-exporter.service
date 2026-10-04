@@ -1,0 +1,24 @@
+[Unit]
+Description=Kizuna VM metrics (loopback only)
+After=network.target
+
+[Service]
+User=kizuna-exporter
+Group=kizuna-exporter
+ExecStart=/usr/local/bin/kizuna-node-exporter --web.listen-address=127.0.0.1:9100 --collector.disable-defaults --collector.cpu --collector.meminfo --collector.vmstat --collector.loadavg --collector.diskstats --collector.filesystem --collector.netdev --collector.stat --collector.time --collector.uname --collector.pressure --collector.filesystem.mount-points-exclude=^/(dev|proc|run|sys|var/lib/docker)(/|$)
+Restart=on-failure
+RestartSec=5s
+MemoryMax=96M
+CPUQuota=10%
+TasksMax=32
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+LogNamespace=kizuna
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=100
+
+[Install]
+WantedBy=multi-user.target

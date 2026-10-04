@@ -1,0 +1,98 @@
+name: kizuna-monitoring
+x-service: &service
+  network_mode: host
+  restart: on-failure:5
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 128
+  logging:
+    driver: json-file
+    options: {max-size: 5m, max-file: '3'}
+services:
+  prometheus:
+    <<: *service
+    image: prom/prometheus:v3.15.0
+    mem_limit: 512m
+    cpus: 0.25
+    command: ['--config.file=/etc/prometheus/prometheus.yaml', '--web.config.file=/run/secrets/web.yaml', '--web.listen-address=127.0.0.1:9090', '--storage.tsdb.path=/prometheus', '--storage.tsdb.retention.time=7d', '--storage.tsdb.retention.size=1GB']
+    volumes:
+      - ${MONITORING_CONFIG_DIR:?}:/etc/prometheus:ro
+      - ${MONITORING_DATA_DIR:?}/prometheus:/prometheus
+      - ${MONITORING_SECRETS_DIR:?}/web.yaml:/run/secrets/web.yaml:ro
+      - ${MONITORING_SECRETS_DIR:?}/web_password:/run/secrets/web_password:ro
+  alertmanager:
+    <<: *service
+    image: prom/alertmanager:v0.34.1
+    mem_limit: 96m
+    cpus: 0.05
+    command: ['--config.file=/etc/alertmanager/alertmanager.yaml', '--web.config.file=/run/secrets/web.yaml', '--web.listen-address=127.0.0.1:9093', '--cluster.listen-address=', '--storage.path=/alertmanager', '--data.retention=120h', '--silences.max-silences=200', '--silences.max-silence-size-bytes=16384']
+    volumes:
+      - ${MONITORING_CONFIG_DIR:?}/alertmanager:/etc/alertmanager:ro
+      - ${MONITORING_DATA_DIR:?}/alertmanager:/alertmanager
+      - ${MONITORING_SECRETS_DIR:?}/web.yaml:/run/secrets/web.yaml:ro
+      - ${MONITORING_SECRETS_DIR:?}/telegram_bot_token:/run/secrets/telegram_bot_token:ro
+  admin-sync:
+    <<: *service
+    image: node:22.22.1-slim
+    user: '65534:65534'
+    mem_limit: 64m
+    cpus: 0.05
+    command: ['node', '/app/admin-sync.mjs']
+    volumes:
+      - ${MONITORING_CONFIG_DIR:?}:/config:ro
+      - ${MONITORING_CONFIG_DIR:?}/alertmanager:/alertmanager
+      - ${MONITORING_DATA_DIR:?}/admin-sync:/state
+      - ${MONITORING_SECRETS_DIR:?}/web_password:/run/secrets/web_password:ro
+      - ${MONITORING_SECRETS_DIR:?}/admin_recipients_token:/run/secrets/admin_recipients_token:ro
+      - ./:/app:ro
+  blackbox:
+    <<: *service
+    image: prom/blackbox-exporter:v0.28.0
+    mem_limit: 64m
+    cpus: 0.05
+    command: ['--config.file=/etc/blackbox/blackbox.yaml', '--web.config.file=/run/secrets/web.yaml', '--web.listen-address=127.0.0.1:9115']
+    volumes:
+      - ${MONITORING_CONFIG_DIR:?}/blackbox.yaml:/etc/blackbox/blackbox.yaml:ro
+      - ${MONITORING_SECRETS_DIR:?}/web.yaml:/run/secrets/web.yaml:ro
+  grafana:
+    <<: *service
+    image: grafana/grafana:13.2.3
+    group_add: ['65534']
+    mem_limit: 512m
+    cpus: 0.25
+    tmpfs: [/tmp:size=32m]
+    environment:
+      GF_SERVER_HTTP_ADDR: 127.0.0.1
+      GF_SERVER_HTTP_PORT: '3001'
+      GF_SERVER_ROOT_URL: ${MONITORING_GRAFANA_URL:-http://127.0.0.1:3001}
+      GF_SECURITY_COOKIE_SECURE: ${MONITORING_GRAFANA_SECURE_COOKIE:-false}
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_password
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_AUTH_ANONYMOUS_ENABLED: 'false'
+      GF_ANALYTICS_REPORTING_ENABLED: 'false'
+      GF_ANALYTICS_CHECK_FOR_UPDATES: 'false'
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: 'false'
+      GF_ALERTING_ENABLED: 'false'
+      GF_UNIFIED_ALERTING_ENABLED: 'false'
+      GF_METRICS_ENABLED: 'true'
+      GF_METRICS_BASIC_AUTH_USERNAME: kizuna-monitoring
+      GF_METRICS_BASIC_AUTH_PASSWORD__FILE: /run/secrets/web_password
+      GF_LOG_LEVEL: warn
+      GOMEMLIMIT: 384MiB
+      GF_PLUGINS_PREINSTALL_DISABLED: 'true'
+    volumes:
+      - ${MONITORING_CONFIG_DIR:?}/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ${MONITORING_CONFIG_DIR:?}/grafana/dashboards:/etc/grafana/dashboards:ro
+      - ${MONITORING_DATA_DIR:?}/grafana:/var/lib/grafana
+      - ${MONITORING_SECRETS_DIR:?}/grafana_password:/run/secrets/grafana_password:ro
+      - ${MONITORING_SECRETS_DIR:?}/web_password:/run/secrets/web_password:ro
+  node-exporter:
+    <<: *service
+    image: prom/node-exporter:v1.12.1
+    pid: host
+    mem_limit: 64m
+    cpus: 0.05
+    command: ['--web.listen-address=127.0.0.1:9101', '--path.procfs=/host/proc', '--path.sysfs=/host/sys', '--path.rootfs=/host', '--collector.disable-defaults', '--collector.cpu', '--collector.meminfo', '--collector.vmstat', '--collector.loadavg', '--collector.diskstats', '--collector.filesystem', '--collector.netdev', '--collector.stat', '--collector.time', '--collector.uname', '--collector.pressure', '--collector.filesystem.mount-points-exclude=^/(dev|proc|run|sys|var/lib/docker)(/|$)']
+    volumes:
+      - /:/host:ro,rslave
