@@ -5,8 +5,9 @@ import { execFileSync } from 'node:child_process';
 import { writeMonitoringConfig } from './render.mjs';
 
 const directory=await fs.mkdtemp(path.join(os.tmpdir(),'kizuna-monitoring-check-'));
+await fs.chmod(directory,0o755); // Linux containers run as nobody, not the runner's UID.
 const config=await writeMonitoringConfig(directory,{});
-await fs.mkdir(path.join(directory,'secrets'));await fs.writeFile(path.join(directory,'secrets/web_password'),'local-check-password');
+await fs.mkdir(path.join(directory,'secrets'));await fs.writeFile(path.join(directory,'secrets/web_password'),'local-check-password');await fs.writeFile(path.join(directory,'secrets/admin_recipients_token'),'local-recipients-test-token');
 const input=(series,values)=>({series,values});
 const expected=(name,{instance='kizuna-vm',job}={})=>{const r=config.rules.groups.flatMap(g=>g.rules).find(r=>r.alert===name);return {exp_labels:{...r.labels,instance,...(name==='KizunaHttpErrors'?{}:{job:job||(name==='KizunaPublicUnavailable'?'kizuna-public':name.startsWith('KizunaVm')?'kizuna-node':'kizuna')})},exp_annotations:r.annotations};};
 const alert=(name,time,active,labels)=>({eval_time:time,alertname:name,exp_alerts:active?[expected(name,labels)]:[]});

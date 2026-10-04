@@ -26,6 +26,7 @@ test('only active admins with a linked private Telegram receive alerts; endpoint
   t.after(()=>listener.stop());await once(listener.server,'listening');
   const base=`http://127.0.0.1:${listener.server.address().port}`;
   assert.equal(listener.server.address().address,'127.0.0.1');
+  assert.equal((await fetch(`${base}/metrics`)).status,401);
   assert.equal((await fetch(`${base}/alert-recipients`)).status,401);
   assert.equal((await fetch(`${base}/alert-recipients`,{headers:{Authorization:'Bearer wrong'}})).status,401);
   assert.deepEqual(await readRecipients(`${base}/alert-recipients`,{token:'local-recipients-test-token'}),administratorRecipients(db));

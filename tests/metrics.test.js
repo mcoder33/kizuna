@@ -47,11 +47,11 @@ test('client journey counts only validated client events and separates attempts 
   assert.equal((await metric(m,'capture_visible_duration_seconds')).values.find(v=>v.metricName.endsWith('_sum')).value,.5);
 });
 test('metrics listener is loopback-only, exports Prometheus and does not serve other paths',async t=>{
-  const metrics=createApplicationMetrics(),listener=startMetricsServer({metrics,port:0});
+  const metrics=createApplicationMetrics(),listener=startMetricsServer({metrics,port:0,recipientsToken:'local-metrics-test-token'});
   t.after(()=>listener.stop());await once(listener.server,'listening');
   assert.equal(listener.server.address().address,'127.0.0.1');
   const base=`http://127.0.0.1:${listener.server.address().port}`;
-  const response=await fetch(`${base}/metrics`);assert.equal(response.status,200);assert.match(response.headers.get('content-type'),/text\/plain/);assert.match(await response.text(),/kizuna_process_resident_memory_bytes/);
+  const response=await fetch(`${base}/metrics`,{headers:{Authorization:'Bearer local-metrics-test-token'}});assert.equal(response.status,200);assert.match(response.headers.get('content-type'),/text\/plain/);assert.match(await response.text(),/kizuna_process_resident_memory_bytes/);
   assert.equal((await fetch(`${base}/metrics?token=secret`)).status,404);assert.equal((await fetch(`${base}/`,{method:'POST'})).status,404);
   assert.equal(metricsPort('off'),null);assert.equal(metricsPort('0'),null);assert.equal(metricsPort('65536'),null);assert.equal(metricsPort(undefined),9108);
 });

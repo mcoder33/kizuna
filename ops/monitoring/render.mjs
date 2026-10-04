@@ -36,6 +36,7 @@ export function monitoringConfig({mode='external',appTarget,nodeTarget,healthUrl
       {job_name:'alertmanager',static_configs:[{targets:['127.0.0.1:9093']}]},
     ]};
   const alertmanager=alertmanagerConfig({telegramChatIds,telegramEnabled});
+  prometheus.scrape_configs.find(job=>job.job_name==='kizuna').authorization={type:'Bearer',credentials_file:'/run/secrets/admin_recipients_token'};
   const basic_auth={username:'kizuna-monitoring',password_file:'/run/secrets/web_password'};
   for(const job of prometheus.scrape_configs)if(['prometheus','alertmanager','grafana','kizuna-public'].includes(job.job_name))job.basic_auth={...basic_auth};
   prometheus.alerting.alertmanagers[0].basic_auth={...basic_auth};

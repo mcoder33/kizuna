@@ -114,17 +114,17 @@ export function administratorRecipients(db) {
 
 export function startMetricsServer({metrics,port=9108,audit=()=>{},recipients,recipientsToken}) {
   const server=http.createServer(async(req,res)=>{
-    if(req.method==='GET'&&req.url==='/alert-recipients'&&recipients){
-      let token;
-      try {token=typeof recipientsToken==='function'?recipientsToken():recipientsToken;}catch{}
-      if(typeof token!=='string'||token.length<16){res.writeHead(503);res.end();return;}
-      const supplied=Buffer.from(req.headers.authorization||''),expected=Buffer.from(`Bearer ${token}`);
-      if(supplied.length!==expected.length||!crypto.timingSafeEqual(supplied,expected)){res.writeHead(401,{'WWW-Authenticate':'Bearer'});res.end();return;}
+    if(req.method!=='GET'||(req.url!=='/metrics'&&!(req.url==='/alert-recipients'&&recipients))){res.writeHead(404);res.end();return;}
+    let token;
+    try {token=typeof recipientsToken==='function'?recipientsToken():recipientsToken;}catch{}
+    if(typeof token!=='string'||token.length<16){res.writeHead(503);res.end();return;}
+    const supplied=Buffer.from(req.headers.authorization||''),expected=Buffer.from(`Bearer ${token}`);
+    if(supplied.length!==expected.length||!crypto.timingSafeEqual(supplied,expected)){res.writeHead(401,{'WWW-Authenticate':'Bearer'});res.end();return;}
+    if(req.url==='/alert-recipients'){
       try {res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(await recipients()));}
       catch {res.writeHead(503);res.end();}
       return;
     }
-    if(req.method!=='GET'||req.url!=='/metrics'){res.writeHead(404);res.end();return;}
     try {res.writeHead(200,{'Content-Type':metrics.contentType,'Cache-Control':'no-store'});res.end(await metrics.metrics());}
     catch(error){audit({event:'metrics_scrape_failed',...errorFields(error)});res.destroy();}
   });
