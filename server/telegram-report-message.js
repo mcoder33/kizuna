@@ -23,20 +23,41 @@ function rateLimitDelay(error) {
   return Number.isFinite(seconds) && seconds > 0 ? Math.max(1000, Math.ceil(seconds * 1000)) : 1000;
 }
 
+// One pacer is shared by all report recipients. Measure from completion of the
+// previous request, including failures, and recheck access after waiting.
+export function createTelegramReportPacer({ sleep = sleepFor, clock = () => performance.now() } = {}) {
+  let tail = Promise.resolve(), lastFinished = null;
+  return (send, stillAllowed = () => true) => {
+    const next = tail.then(async () => {
+      if (!stillAllowed()) return null;
+      if (lastFinished !== null) {
+        const remaining = Math.max(0, 1000 - (clock() - lastFinished));
+        if (remaining) await sleep(remaining);
+      }
+      if (!stillAllowed()) return null;
+      try { return await send(); }
+      finally { lastFinished = clock(); }
+    });
+    tail = next.catch(() => {});
+    return next;
+  };
+}
+
 // One initial photo request + up to ten retries. Long reports get a quiet photo
 // first, then their complete text. Retrying a timeout can duplicate an accepted
 // photo: Telegram offers no idempotency key for sendPhoto.
 export async function sendTelegramReport({ chatId, text, entities, image, sendText, sendPhoto, refreshMessage = null,
-  stillAllowed = () => true, audit = () => {}, sleep = sleepFor }) {
+  stillAllowed = () => true, audit = () => {}, sleep = sleepFor, clock, pace = createTelegramReportPacer({ sleep, clock }) }) {
   const fresh = () => {
     if (!stillAllowed()) return null;
     const message = refreshMessage ? refreshMessage() : { text, entities };
     return message && stillAllowed() ? message : null;
   };
   async function sendFreshText(photoHandled = false) {
-    const message = fresh();
-    if (!message) return null;
-    try { return await sendText(chatId, message.text, { entities: message.entities }); }
+    try { return await pace(() => {
+      const message = fresh();
+      return message ? sendText(chatId, message.text, { entities: message.entities }) : null;
+    }, stillAllowed); }
     catch (error) { if (photoHandled) error.reportPhotoHandled = true; throw error; }
   }
   async function pause(ms) {
@@ -49,19 +70,23 @@ export async function sendTelegramReport({ chatId, text, entities, image, sendTe
     }
     return stillAllowed();
   }
-  if (!image) return stillAllowed() ? sendText(chatId, text, { entities }) : null;
+  if (!image) return sendFreshText();
+  let retryDelay = 0;
   for (let retry = 0; retry <= maxPhotoRetries; retry++) {
-    const message = fresh();
-    if (!message) return null;
-    const captionFits = message.text.length <= 1024;
-    let sent;
+    let sent, captionFits;
     try {
-      sent = await sendPhoto(chatId, image, captionFits
-        ? { caption: message.text, caption_entities: message.entities } : { disable_notification: true });
+      sent = await pace(() => {
+        const message = fresh();
+        if (!message) return null;
+        captionFits = message.text.length <= 1024;
+        return sendPhoto(chatId, image, captionFits
+          ? { caption: message.text, caption_entities: message.entities } : { disable_notification: true });
+      }, stillAllowed);
     } catch (error) {
       if (!stillAllowed()) return null;
       if (retry < maxPhotoRetries) {
-        if (!await pause(Math.max(Math.min(1000 * 2 ** retry, 10000), rateLimitDelay(error)))) return null;
+        retryDelay = Math.max(retryDelay + 1000, rateLimitDelay(error));
+        if (!await pause(retryDelay)) return null;
         continue;
       }
       try { audit({ event: 'telegram_report_photo_failed', attempts: retry + 1, retries: retry, ...photoFailure(error) }); } catch {}
@@ -69,6 +94,6 @@ export async function sendTelegramReport({ chatId, text, entities, image, sendTe
       return sendFreshText(true);
     }
     // Text errors must never enter the photo retry loop.
-    return captionFits ? sent : sendFreshText(true);
+    return !sent || captionFits ? sent : sendFreshText(true);
   }
 }
