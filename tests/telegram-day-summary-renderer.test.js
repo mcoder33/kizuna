@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { renderDaySummary, renderDaySummaryMessage } from '../server/telegram-day-summary-renderer.js';
+import { splitTelegramReportMessage } from '../server/telegram-report-message.js';
 
 const sample = () => ({
   date: '2026-10-03', timeZone: 'Europe/Samara', phase: 'evening',
@@ -63,7 +64,7 @@ test('empty reports stay warm without inventing achievements or exposing technic
   }
 });
 
-test('meeting times, omission counts and completion markers survive literal markup and Unicode formatting', () => {
+test('all entries, meeting times and completion markers survive literal markup and Unicode formatting', () => {
   const title = '🧩 Дописать <b>отчёт</b> & [ссылку]  с пробелами';
   const review = { ...sample(),
     meetings: [{ title: 'Созвон', time: '09:30', end: '10:15' }, { title: 'Отпуск', allDay: true, end: '23:59' }],
@@ -77,7 +78,8 @@ test('meeting times, omission counts and completion markers survive literal mark
   assert.ok(message.text.includes('🗓 весь день · Отпуск'));
   assert.ok(message.text.includes('⬜ ' + title));
   assert.ok(boldTexts(message).includes(title));
-  assert.ok(message.text.includes('…ещё 36'));
+  assert.equal(message.text.split('⬜ ' + title).length - 1, 40);
+  assert.doesNotMatch(message.text, /…ещё \d/);
   assert.ok(message.text.includes('✅ Закрытое новое дело'));
   assert.ok(message.text.includes('⬜ Открытое новое дело'));
   assert.doesNotMatch(message.text, /просроченных дел нет/);
@@ -85,12 +87,32 @@ test('meeting times, omission counts and completion markers survive literal mark
 
   const long = { title: '😀'.repeat(2000) };
   for (const key of ['done', 'remaining', 'overdue', 'meetings', 'added']) review[key] = Array(100).fill(long);
-  const bounded = renderDaySummaryMessage(review);
-  assert.ok(bounded.text.length <= 3800);
-  assert.doesNotMatch(bounded.text, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
-  for (const entity of bounded.entities) {
-    assert.equal(entity.type, 'bold');
-    assert.ok(entity.offset >= 0 && entity.length > 0 && entity.offset + entity.length <= bounded.text.length);
-    assert.doesNotMatch(bounded.text.slice(entity.offset, entity.offset + entity.length), /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+  review.counts = Object.fromEntries(['done', 'remaining', 'overdue', 'meetings', 'added'].map(key => [key, 100]));
+  const complete = renderDaySummaryMessage(review), parts = splitTelegramReportMessage(complete);
+  assert.ok(parts.length > 1);
+  assert.equal(parts.map(part => part.text).join(''), complete.text);
+  assert.equal(parts.flatMap(boldTexts).filter(title => title.startsWith('😀')).length, 500);
+  for (const bounded of parts) {
+    assert.ok(bounded.text.length <= 3800);
+    assert.ok(bounded.entities.length <= 100);
+    assert.doesNotMatch(bounded.text, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    for (const entity of bounded.entities) {
+      assert.equal(entity.type, 'bold');
+      assert.ok(entity.offset >= 0 && entity.length > 0 && entity.offset + entity.length <= bounded.text.length);
+      assert.doesNotMatch(bounded.text.slice(entity.offset, entity.offset + entity.length), /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    }
+  }
+});
+
+test('manual, morning and evening reports show every task and meeting beyond four entries', () => {
+  const remaining = Array.from({ length: 7 }, (_, i) => ({ id: `task-${i}`, title: `Дело ${i + 1}` }));
+  const meetings = Array.from({ length: 7 }, (_, i) => ({ id: `meeting-${i}`, title: `Встреча ${i + 1}`, time: '11:00', end: '11:30' }));
+  for (const phase of ['manual', 'morning', 'evening']) {
+    const message = renderDaySummaryMessage({ ...sample(), date: '2026-10-05', phase, remaining, meetings,
+      counts: { done: 1, remaining: 7, meetings: 7 } });
+    assert.ok(message.text.includes('Что остаётся в работе · 7'));
+    assert.ok(message.text.includes('Встречи · 7'));
+    for (const item of [...remaining, ...meetings]) assert.ok(boldTexts(message).includes(item.title));
+    assert.doesNotMatch(message.text, /…ещ[её] \d/);
   }
 });

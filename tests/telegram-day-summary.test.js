@@ -21,6 +21,23 @@ test('persistent menu and slash day/date selection send plain reports without cr
  const ctx=fixture(t);await ctx.text('/today');assert.deepEqual(ctx.messages()[0].params.reply_markup,summaryReplyKeyboard());assert.deepEqual(summaryReplyKeyboard().keyboard,[[DAY_SUMMARY_LABELS.today,DAY_SUMMARY_LABELS.day],[DAY_SUMMARY_LABELS.settings]]);assert.equal(ctx.reviews[0].date,'2026-10-03');assert.equal(ctx.messages().at(-1).params.reply_markup,undefined);assert.ok(ctx.messages().at(-1).params.entities.some(entity=>entity.type==='bold'));assert.equal(ctx.captures.length,0);
  await ctx.text('/day 01.10.2026');assert.equal(ctx.reviews.at(-1).date,'2026-10-01');await ctx.callback('tds:date:2026-10-02');assert.equal(ctx.reviews.at(-1).date,'2026-10-02');assert.equal(ctx.acks().length,1);assert.equal(ctx.db.prepare('SELECT count(*) n FROM captures').get().n,0);
 });
+test('manual date review delivers full task and meeting lists across multiple messages',async t=>{
+ t.mock.timers.enable({apis:['Date'],now:Date.parse('2026-10-03T08:00:00Z')});
+ const ctx=fixture(t),titles=[];
+ for(let i=0;i<55;i++){
+  const title=`Дело ${i} — ${'Подробное название '.repeat(5)}`;titles.push(title);
+  createLedger(ctx.db,{userId:ctx.userId,raw:title,classification:{primaryType:'task',summary:title,entities:{schedule:{date:'2026-10-05'}}},provider:'manual'});
+ }
+ for(let i=0;i<7;i++){
+  const title=`Встреча ${i}`;titles.push(title);
+  createLedger(ctx.db,{userId:ctx.userId,raw:title,classification:{primaryType:'meeting_event',summary:title,entities:{schedule:{date:'2026-10-05',time:'11:00',end:'11:30'}}},provider:'manual'});
+ }
+ await ctx.callback('tds:date:2026-10-05');
+ const messages=ctx.messages();assert.ok(messages.length>1);assert.equal(ctx.reviews[0].limit,null);
+ const bold=messages.flatMap(({params})=>params.entities.map(entity=>params.text.slice(entity.offset,entity.offset+entity.length)));
+ for(const title of titles)assert.equal(bold.filter(value=>value===title).length,1);
+ for(const {params}of messages){assert.ok(params.text.length<=3800);assert.equal(params.reply_markup,undefined);assert.doesNotMatch(params.text,/…ещ[её] \d/);}
+});
 test('manual photo report rereads tasks after image preparation and loses access safely',async t=>{
  t.mock.timers.enable({apis:['Date'],now:Date.parse('2026-10-03T08:00:00Z')});
  const photo={bytes:Buffer.from('image'),type:'image/png',filename:'report.png'};
@@ -62,8 +79,8 @@ test('async overview cannot send private result after rebind and failure callbac
 test('bound pending mode never transfers to a new binding',async t=>{
  const ctx=fixture(t);await ctx.callback('tds:pick');ctx.db.prepare("UPDATE telegram_links SET linked_at='2026-10-03T12:01:00Z' WHERE user_id=?").run(ctx.userId);await ctx.text('2026-10-01');assert.equal(ctx.reviews.length,0);assert.equal(ctx.captures.length,1);
 });
-test('renderer bounds Unicode, counts omissions and renders literal plain text; unsafe links omitted',()=>{
- const item={title:'😀'.repeat(2000)+'<b>title</b>',time:'12:00',end:'13:00'};const output=renderDaySummary({date:'2026-10-01',timeZone:'UTC',phase:'evening',meetings:Array(100).fill(item),remaining:Array(100).fill(item),done:Array(100).fill(item),overdue:Array(100).fill(item),added:Array(100).fill(item),counts:{meetings:100,remaining:100,done:100,overdue:100,added:100},historyCoverage:{gaps:['History '+ '😀'.repeat(3000)]}});assert.ok(output.length<=3800);assert.equal(/(?:[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF])/.test(output),false);assert.ok(output.includes('ещё'));assert.ok(output.includes('Добавлено за день'));
+test('renderer preserves Unicode and every entry as literal plain text; unsafe links omitted',()=>{
+ const item={title:'😀'.repeat(2000)+'<b>title</b>',time:'12:00',end:'13:00'};const output=renderDaySummary({date:'2026-10-01',timeZone:'UTC',phase:'evening',meetings:Array(100).fill(item),remaining:Array(100).fill(item),done:Array(100).fill(item),overdue:Array(100).fill(item),added:Array(100).fill(item),counts:{meetings:100,remaining:100,done:100,overdue:100,added:100},historyCoverage:{gaps:['History '+ '😀'.repeat(3000)]}});assert.equal(output.split('⬜ ').length-1,300);assert.equal(output.split('✅ ').length-1,100);assert.equal(/(?:[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF])/.test(output),false);assert.doesNotMatch(output,/…ещё \d/);assert.ok(output.includes('Добавлено за день'));
  for(const url of ['http://kizuna.example','https://user:password@kizuna.example','https://localhost','https://127.0.0.1','javascript:alert(1)'])assert.equal(safeSummaryLink(url,'2026-10-01'),null);assert.equal(safeSummaryLink('https://kizuna.example/sub?q=secret#other','2026-10-01'),'https://kizuna.example/sub/#today?date=2026-10-01');assert.deepEqual(summaryPreferences('{broken').weekdays,[1,2,3,4,5,6,7]);assert.equal(weekdayReviewDate('покажи в пятницу','2026-10-03'),'2026-10-02');assert.equal(weekdayReviewDate('Надо покажи в пятницу отчёт','2026-10-03'),null);
 });
 
@@ -83,14 +100,14 @@ test('async preparation followed by current ACL reread removes revoked borrowed 
    const id=`private-${access}-${i}`,created='2026-09-30T10:00:00Z';ctx.db.prepare('INSERT INTO captures(id,raw,occurred_at,created_at,user_id) VALUES(?,?,?,?,?)').run(id,'Owner secret title',created,created,owner);ctx.db.prepare("INSERT INTO interpretations VALUES(?,?,1,'active','manual',NULL,?,'{}',?,NULL)").run(`${id}:i`,id,JSON.stringify({primaryType:'task',summary:'Owner secret title',entities:{schedule:{date:'2026-10-03'}}}),created);ctx.db.prepare("INSERT INTO projections VALUES(?,?,?,'task','{}','active',?,?,NULL)").run(`${id}:p`,id,`${id}:i`,id,created);ctx.db.prepare("INSERT INTO assignments(id,capture_id,assignee_id,assigner_id,state,created_at,responded_at) VALUES(?,?,?,?,'accepted',?,?)").run(`${id}:assignment`,id,ctx.userId,owner,created,created);
    if(access==='participant')ctx.db.prepare('INSERT INTO capture_people(capture_id,user_id,added_by,added_at) VALUES(?,?,?,?)').run(id,ctx.userId,owner,created);else ctx.db.prepare('INSERT INTO capture_circles(capture_id,circle_id,shared_by,shared_at) VALUES(?,?,?,?)').run(id,'private-circle',owner,created);
   }
-  await ctx.callback('tds:date:2026-10-03');assert.equal(initial.counts.remaining,42);assert.equal(initial.remaining.length,40);const message=ctx.messages().at(-1).params.text;assert.equal(message.includes('Owner secret title'),false);assert.equal(message.includes('Что остаётся в работе'),false);assert.equal(message.includes('⏰'),false);assert.equal(message.includes('⬜'),false);assert.equal(ctx.acks().length,1);assert.equal(ctx.captures.length,0);
+  await ctx.callback('tds:date:2026-10-03');assert.equal(initial.counts.remaining,42);assert.equal(initial.remaining.length,42);const message=ctx.messages().at(-1).params.text;assert.equal(message.includes('Owner secret title'),false);assert.equal(message.includes('Что остаётся в работе'),false);assert.equal(message.includes('⏰'),false);assert.equal(message.includes('⬜'),false);assert.equal(ctx.acks().length,1);assert.equal(ctx.captures.length,0);
  }
 });
 test('async preparation followed by current busy-mode reread removes old titles including hidden meetings',async t=>{
  let ctx,initial;ctx=fixture(t,{dayReview:async input=>{initial=reviewDay(ctx.db,input);await Promise.resolve();ctx.db.prepare("UPDATE calendar_accounts SET mode='busy' WHERE id='private-calendar'").run();return initial;}});
  ctx.db.prepare("INSERT INTO calendar_accounts(id,user_id,provider,label,credentials_enc,calendars_json,created_at) VALUES(?,?,'google','Private','mock',?,?)").run('private-calendar',ctx.userId,JSON.stringify([{id:'cal',selected:true}]),'2026-09-30T10:00:00Z');
  for(let i=0;i<42;i++)ctx.db.prepare('INSERT INTO calendar_events(id,account_id,calendar_id,uid,title,start_at,end_at,updated_at) VALUES(?,?,?,?,?,?,?,?)').run(`meeting-${i}`,'private-calendar','cal',`uid-${i}`,'Private calendar title','2026-10-03T08:00:00Z','2026-10-03T09:00:00Z','2026-09-30T10:00:00Z');
- await ctx.callback('tds:date:2026-10-03');assert.equal(initial.counts.meetings,42);assert.equal(initial.meetings.length,40);const message=ctx.messages().at(-1).params.text;assert.equal(message.includes('Private calendar title'),false);assert.ok(message.includes('Занято'));assert.ok(message.includes('Встречи · 42'));assert.equal(ctx.acks().length,1);assert.equal(ctx.captures.length,0);
+ await ctx.callback('tds:date:2026-10-03');assert.equal(initial.counts.meetings,42);assert.equal(initial.meetings.length,42);const message=ctx.messages().at(-1).params.text;assert.equal(message.includes('Private calendar title'),false);assert.ok(message.includes('Занято'));assert.ok(message.includes('Встречи · 42'));assert.equal(ctx.acks().length,1);assert.equal(ctx.captures.length,0);
 });
 
 test('extension pending mode receives actual message and registered keyboard button uses common menu',async t=>{

@@ -26,6 +26,28 @@ function fixture(t,{path=':memory:',zone='UTC',hook=null,finalHook=null,sendErro
  return{db,userId,fake,service,events,setAccess:value=>{allowed=value;},addLink,prefs,setNow:value=>{clock=new Date(value);},setEnabled:value=>{configured=value;},setZone:value=>{zone=value;},get attempts(){return attempts;},receipt:(phase='morning',date='2026-10-03')=>db.prepare('SELECT * FROM telegram_summary_receipts WHERE user_id=? AND local_date=? AND phase=?').get(userId,date,phase),messages:()=>fake.sent.filter(entry=>entry.method==='sendMessage')};
 }
 
+test('scheduled morning and evening reports deliver every task and meeting in multiple messages',async t=>{
+ t.mock.timers.enable({apis:['Date'],now:Date.parse('2026-10-03T08:00:00Z')});
+ const ctx=fixture(t),titles=[];
+ for(let i=0;i<55;i++){
+  const title=`Дело ${i} — ${'Подробное название '.repeat(5)}`;titles.push(title);
+  createLedger(ctx.db,{userId:ctx.userId,raw:title,classification:{primaryType:'task',summary:title,entities:{schedule:{date:'2026-10-03'}}},provider:'manual'});
+ }
+ for(let i=0;i<7;i++){
+  const title=`Встреча ${i}`;titles.push(title);
+  createLedger(ctx.db,{userId:ctx.userId,raw:title,classification:{primaryType:'meeting_event',summary:title,entities:{schedule:{date:'2026-10-03',time:'11:00',end:'11:30'}}},provider:'manual'});
+ }
+ ctx.prefs(ctx.userId,{evening:{enabled:true,time:'20:00',activatedAt:'2026-10-02T00:00:00Z'}});
+ for(const phase of ['morning','evening']){
+  const start=ctx.messages().length;if(phase==='evening')ctx.setNow('2026-10-03T20:15:00Z');
+  await ctx.service.tick();const messages=ctx.messages().slice(start);assert.ok(messages.length>1);
+  const bold=messages.flatMap(({params})=>params.entities.map(entity=>params.text.slice(entity.offset,entity.offset+entity.length)));
+  for(const title of titles)assert.ok(bold.includes(title));
+  for(const {params}of messages){assert.ok(params.text.length<=3800);assert.doesNotMatch(params.text,/…ещ[её] \d/);}
+  assert.equal(ctx.receipt(phase).status,'sent');
+ }
+});
+
 test('default off, empty weekdays, excluded weekday and blocked users produce no delivery',async t=>{
  const ctx=fixture(t);await ctx.service.tick();assert.equal(ctx.attempts,0);ctx.prefs(ctx.userId,{weekdays:[]});await ctx.service.tick();ctx.prefs(ctx.userId,{weekdays:[1]});await ctx.service.tick();ctx.prefs();ctx.db.prepare("UPDATE users SET status='blocked' WHERE id=?").run(ctx.userId);await ctx.service.tick();assert.equal(ctx.attempts,0);assert.equal(ctx.receipt(),undefined);
 });
@@ -172,12 +194,22 @@ test('text 429 after photo success or exhaustion does not restart the photo budg
    finalHook:(_,review)=>{for(const section of ['remaining','done','overdue']){review[section]=Array.from({length:4},()=>({title:'long task '.repeat(40)}));review.counts[section]=4;}}
   });ctx.prefs();await ctx.service.tick();assert.equal(ctx.receipt().status,'retry');assert.equal(ctx.receipt().error_code,'text_429_after_photo');
   ctx.setNow('2026-10-03T09:16:00Z');await ctx.service.tick();assert.equal(ctx.receipt().error_code,'text_429_after_photo');
-  ctx.setNow('2026-10-03T09:17:00Z');await ctx.service.tick();assert.equal(ctx.receipt().status,'sent');assert.equal(ctx.messages().length,1);assert.equal(photos,fails?11:1);assert.equal(preparations,1);
+  ctx.setNow('2026-10-03T09:17:00Z');await ctx.service.tick();assert.equal(ctx.receipt().status,'sent');assert.equal(ctx.messages().length,2);assert.equal(photos,fails?11:1);assert.equal(preparations,1);
+  const text=ctx.messages().map(message=>message.params.text).join('');assert.equal(text.split('⬜ ').length-1,8);assert.equal(text.split('✅ ').length-1,4);
  }
 });
 
-test('long illustrated report delivers complete text once even when the supplementary photo fails',async t=>{
+test('long illustrated report delivers all text parts once even when the supplementary photo fails',async t=>{
  const ctx=fixture(t,{prepareImage:async()=>reportPhoto,photoError:async()=>({status:403}),finalHook:(_,review)=>{
    for(const section of ['remaining','done','overdue','meetings','added']){review[section]=Array.from({length:4},(_,i)=>({title:`${section}-${i} ${'длинное название '.repeat(20)}`}));review.counts[section]=4;}
- }});ctx.prefs();await ctx.service.tick();assert.equal(ctx.messages().length,1);assert.ok(ctx.messages()[0].params.text.length>1024);assert.ok(ctx.messages()[0].params.text.includes('remaining-0'));assert.equal(ctx.messages()[0].params.reply_markup,undefined);assert.equal(ctx.receipt().status,'sent');await ctx.service.tick();assert.equal(ctx.messages().length,1);
+ }});ctx.prefs();await ctx.service.tick();const messages=ctx.messages();assert.ok(messages.length>1);const text=messages.map(message=>message.params.text).join('');assert.ok(text.includes('remaining-0'));assert.ok(text.includes('meetings-3'));for(const message of messages){assert.ok(message.params.text.length<=3800);assert.equal(message.params.reply_markup,undefined);}assert.equal(ctx.receipt().status,'sent');await ctx.service.tick();assert.equal(ctx.messages().length,messages.length);
+});
+
+test('exhausted rate limits after a sent text part do not restart the scheduled report',async t=>{
+ const ctx=fixture(t,{sendError:attempt=>attempt>1?{status:429,retryAfter:1}:null,finalHook:(_,review)=>{
+  review.remaining=Array.from({length:20},(_,i)=>({id:`task-${i}`,title:`Дело ${i} ${'длинное название '.repeat(20)}`}));review.counts.remaining=20;
+ }});
+ ctx.prefs();await ctx.service.tick();assert.equal(ctx.messages().length,1);assert.equal(ctx.attempts,12);
+ assert.equal(ctx.receipt().status,'failed');assert.equal(ctx.receipt().error_code,'text_429_after_partial');
+ await ctx.service.tick();assert.equal(ctx.attempts,12);assert.equal(ctx.messages().length,1);
 });

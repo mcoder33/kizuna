@@ -1,7 +1,3 @@
-const MAX_MESSAGE_LENGTH = 3800;
-const SECTION_LENGTH = 520;
-const MAX_SECTION_ITEMS = 4;
-
 const morningTitles = [
   '☀️ Новый день — в своём темпе',
   '☀️ Доброе утро. Начнём потихоньку',
@@ -84,56 +80,52 @@ export function renderDaySummaryMessage(review) {
     .format(new Date(`${review.date}T12:00:00Z`)).replace(/\s*г\.$/u, '');
   const zone = review.timeZone === 'Europe/Samara' ? 'Самара' : review.timeZone;
   let text = '';
-  const entities = [];
-  function line(value, { paragraph = false, bold = false } = {}) {
+  const entities = [], blocks = [];
+  function line(value, { id, paragraph = false, bold = false } = {}) {
+    const start = text.length;
     if (text) text += paragraph ? '\n\n' : '\n';
     const offset = text.length;
     text += value;
     if (bold) entities.push({ type: 'bold', offset, length: value.length });
+    blocks.push({ id, offset: start, length: text.length - start });
     return offset;
   }
-  line(morning ? copyFor(morningTitles, day) : evening ? copyFor(eveningTitles, day) : '📅 Обзор твоего дня', { bold: true });
-  line(`${formatted} · ${truncateTelegramText(zone, 80)}`);
+  line(morning ? copyFor(morningTitles, day) : evening ? copyFor(eveningTitles, day) : '📅 Обзор твоего дня', { id: 'title', bold: true });
+  line(`${formatted} · ${truncateTelegramText(zone, 80)}`, { id: 'date' });
 
   const selected = morning
     ? [['meetings', '🗓 Встречи'], ['remaining', 'Что остаётся в работе'], ['overdue', '⏰ Требуют внимания — просрочены'], ['done', 'Уже завершено']]
     : [['done', evening ? 'Сегодня завершено' : 'Завершено за этот день'], ['remaining', 'Что остаётся в работе'], ['overdue', '⏰ Требуют внимания — просрочены'], ['meetings', '🗓 Встречи']];
   if (evening) selected.push(['added', '➕ Добавлено за день']);
   const populated = selected.some(([key]) => countOf(review, key) > 0);
-  if (!populated) line(copyFor(emptyIntros, day), { paragraph: true });
+  if (!populated) line(copyFor(emptyIntros, day), { id: 'intro', paragraph: true });
   else if (morning) {
     const hasWork = countOf(review, 'remaining') + countOf(review, 'overdue') > 0;
     line(hasWork ? copyFor(morningIntros, day) : countOf(review, 'meetings') > 0
       ? 'Вот встречи на этот день. Пусть между ними найдётся время для себя 🌿'
-      : 'В этом дне уже есть завершённые дела 🌱', { paragraph: true });
+      : 'В этом дне уже есть завершённые дела 🌱', { id: 'intro', paragraph: true });
   }
 
   for (const [key, label] of selected) {
     const count = countOf(review, key);
     if (count <= 0) continue;
-    line(count > 1 ? `${label} · ${count}` : `${label}:`, { paragraph: true, bold: true });
-    let shown = 0, used = 0;
-    for (const item of review[key] || []) {
-      if (shown >= MAX_SECTION_ITEMS || SECTION_LENGTH - used < 60) break;
+    line(count > 1 ? `${label} · ${count}` : `${label}:`, { id: `${key}:heading`, paragraph: true, bold: true });
+    for (const [index, item] of (review[key] || []).entries()) {
       const when = item.allDay ? 'весь день' : `${item.time || 'без времени'}${item.end ? `–${item.end}` : ''}`;
       const prefix = key === 'meetings' ? `🗓 ${truncateTelegramText(when, 40)} · `
         : key === 'done' || (key === 'added' && item.completed === true) ? '✅ ' : '⬜ ';
-      const title = truncateTelegramText(String(item.title || 'Без названия').replace(/[\r\n]+/g, ' '), Math.min(360, SECTION_LENGTH - used - prefix.length - 1));
-      const offset = line(prefix + title) + prefix.length;
+      const title = truncateTelegramText(String(item.title || 'Без названия').replace(/[\r\n]+/g, ' '), 360);
+      const offset = line(prefix + title, { id: `${key}:item:${item.id ?? index}` }) + prefix.length;
       entities.push({ type: 'bold', offset, length: title.length });
-      used += prefix.length + title.length + 1;
-      shown++;
     }
-    if (count > shown) line(`…ещё ${count - shown}`);
-    if (key === 'done' && evening) line(copyFor(progress, day), { paragraph: true });
+    if (key === 'done' && evening) line(copyFor(progress, day), { id: 'progress', paragraph: true });
   }
   if (populated && countOf(review, 'overdue') === 0 && countOf(review, 'done') + countOf(review, 'remaining') > 0)
-    line('По доступной истории просроченных дел нет.', { paragraph: true });
+    line('По доступной истории просроченных дел нет.', { id: 'no-overdue', paragraph: true });
   line(morning ? copyFor(morningClosings, day) : evening ? copyFor(eveningClosings, day)
-    : 'Пусть найдётся время и для дел, и для себя ☕', { paragraph: true });
+    : 'Пусть найдётся время и для дел, и для себя ☕', { id: 'closing', paragraph: true });
 
-  text = truncateTelegramText(text, MAX_MESSAGE_LENGTH);
-  return { text, entities: entities.filter(entity => entity.offset + entity.length <= text.length) };
+  return { text, entities, blocks };
 }
 
 export const renderDaySummary = review => renderDaySummaryMessage(review).text;

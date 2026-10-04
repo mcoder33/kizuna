@@ -1,11 +1,74 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sendTelegramReport, createTelegramReportPacer } from '../server/telegram-report-message.js';
+import { sendTelegramReport, createTelegramReportPacer, splitTelegramReportMessage } from '../server/telegram-report-message.js';
+import { renderDaySummaryMessage } from '../server/telegram-day-summary-renderer.js';
 
 const image = { bytes: Buffer.from('image'), type: 'image/png', filename: 'report.png' };
 const entities = [{ type: 'bold', offset: 3, length: 7 }];
 const base = { chatId: 123, text: '✅ Мой туду', entities, image, sleep: async () => {} };
 const failure = status => Object.assign(Error('Bad Request: IMAGE_PROCESS_FAILED'), { status });
+
+const largeReview = () => ({ date:'2026-10-05', timeZone:'Europe/Samara', phase:'manual',
+  remaining:Array.from({length:205},(_,i)=>({id:`task-${i}`,title:`Дело ${i} — 🧩 ${'подробности '.repeat(8)}`})),
+  meetings:Array.from({length:7},(_,i)=>({id:`meeting-${i}`,title:`Созвон ${i}`,time:'11:00',end:'11:30'})) });
+
+test('long reports send every line and formatting entity in paced messages with a single photo', async () => {
+  const review = largeReview(), message = renderDaySummaryMessage(review), calls = [];
+  let elapsed=0;
+  const result = await sendTelegramReport({ ...base, ...message, clock:()=>elapsed, sleep:async ms=>{elapsed+=ms;},
+    refreshMessage:()=>renderDaySummaryMessage(review),
+    sendPhoto:async (_,__,extra)=>{calls.push({kind:'photo',extra,at:elapsed});return {message_id:1};},
+    sendText:async (_,text,extra)=>{calls.push({kind:'text',text,extra,at:elapsed});return {message_id:calls.length};} });
+  assert.equal(calls.filter(call=>call.kind==='photo').length,1);
+  assert.equal(calls[0].extra.caption,undefined);
+  const texts=calls.filter(call=>call.kind==='text');
+  assert.ok(texts.length>1);assert.equal(texts.map(call=>call.text).join(''),message.text);
+  for(const call of texts){assert.ok(call.text.length<=3800);assert.ok(call.extra.entities.length<=100);assert.equal(call.text.isWellFormed(),true);}
+  const titles=texts.flatMap(call=>call.extra.entities.map(entity=>call.text.slice(entity.offset,entity.offset+entity.length)));
+  for(const item of [...review.remaining,...review.meetings])assert.equal(titles.filter(title=>title===item.title).length,1);
+  for(let i=1;i<calls.length;i++)assert.ok(calls[i].at-calls[i-1].at>=1000);
+  assert.equal(result.message_id,calls.length);
+});
+
+test('later parts refresh access without skipping unsent work when earlier items disappear', async () => {
+  const review=largeReview(), sentTitles=[];
+  let texts=0;
+  await sendTelegramReport({...base,image:null,refreshMessage:()=>renderDaySummaryMessage(review),
+    sendText:async(_,text,extra)=>{
+      sentTitles.push(...extra.entities.map(entity=>text.slice(entity.offset,entity.offset+entity.length)));
+      if(++texts===1){review.remaining=review.remaining.filter(item=>!sentTitles.includes(item.title));review.remaining=review.remaining.filter(item=>item.id!=='task-204');review.meetings[6].title='Занято';}
+      return {message_id:texts};
+    }});
+  assert.ok(texts>1);
+  for(const item of largeReview().remaining.slice(0,204))assert.equal(sentTitles.filter(title=>title===item.title).length,1);
+  assert.equal(sentTitles.includes(largeReview().remaining[204].title),false);
+  assert.equal(sentTitles.includes('Созвон 6'),false);assert.ok(sentTitles.includes('Занято'));
+});
+
+test('revocation between text parts cancels the remaining report', async () => {
+  let allowed=true,texts=0;
+  const result=await sendTelegramReport({...base,image:null,refreshMessage:()=>renderDaySummaryMessage(largeReview()),stillAllowed:()=>allowed,
+    sendText:async()=>{texts++;allowed=false;return {message_id:1};}});
+  assert.equal(result,null);assert.equal(texts,1);
+});
+
+test('rate limit on a later part resumes without duplicating preceding text or photo', async () => {
+  const message=renderDaySummaryMessage(largeReview()),texts=[];
+  let photos=0,attempts=0,elapsed=0,failedAt;
+  await sendTelegramReport({...base,...message,refreshMessage:()=>message,clock:()=>elapsed,sleep:async ms=>{elapsed+=ms;},
+    sendPhoto:async()=>{photos++;return {message_id:1};},
+    sendText:async(_,text)=>{if(++attempts===2){failedAt=elapsed;throw Object.assign(failure(429),{retryAfter:17});}if(attempts===3)assert.ok(elapsed-failedAt>=17000);texts.push(text);return {message_id:attempts+1};}});
+  assert.equal(photos,1);assert.equal(texts.join(''),message.text);
+});
+
+test('text splitting preserves unbroken Unicode titles and clips entity offsets to each part',()=>{
+  const text='A'+'😀'.repeat(5000),message={text,entities:[{type:'bold',offset:1,length:text.length-1}]};
+  const parts=splitTelegramReportMessage(message);
+  assert.equal(parts.map(part=>part.text).join(''),text);
+  for(const part of parts){assert.ok(part.text.length<=3800);assert.equal(part.text.isWellFormed(),true);for(const entity of part.entities)assert.ok(entity.offset>=0 && entity.offset+entity.length<=part.text.length);}
+  const dense={text:'x'.repeat(205),entities:Array.from({length:205},(_,i)=>({type:'bold',offset:i,length:1}))};
+  const denseParts=splitTelegramReportMessage(dense);assert.equal(denseParts.length,3);assert.ok(denseParts.every(part=>part.entities.length<=100));
+});
 
 test('short report sends one photo with unchanged text/entities and no buttons', async () => {
   const calls = [];

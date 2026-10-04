@@ -1,6 +1,7 @@
 import { setTimeout as sleepFor } from 'node:timers/promises';
 
 const maxPhotoRetries = 10;
+const maxMessageLength = 3800;
 const networkCodes = new Set(['request_timeout', 'response_too_large', 'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN']);
 
 function photoFailure(error) {
@@ -36,6 +37,63 @@ function multipartCaption({ text, entities }) {
   }) };
 }
 
+function sliceMessage(message, start, end = message.text.length) {
+  const entities = message.entities?.flatMap(entity => {
+    const from = Math.max(start, entity.offset), to = Math.min(end, entity.offset + entity.length);
+    return to > from ? [{ ...entity, offset: from - start, length: to - from }] : [];
+  });
+  return { text: message.text.slice(start, end), entities,
+    ...(message.blocks ? { blocks: message.blocks.filter(block => block.offset >= start && block.offset + block.length <= end)
+      .map(block => ({ ...block, offset: block.offset - start })) } : {}) };
+}
+
+function firstMessagePart(message) {
+  let end = Math.min(message.text.length, maxMessageLength);
+  // Telegram also limits formatting entities. Keep long lists of short titles
+  // within that limit, even when the text itself would fit.
+  const extraEntity = message.entities?.[100];
+  if (extraEntity && extraEntity.offset < end) end = extraEntity.offset;
+  if (end < message.text.length) {
+    const blockEnd = message.blocks?.filter(block => block.offset + block.length <= end).at(-1);
+    if (blockEnd) end = blockEnd.offset + blockEnd.length;
+    else {
+      const newline = message.text.lastIndexOf('\n', end - 1);
+      if (newline > 0) end = newline + 1;
+    }
+    if (end > 0 && /[\uD800-\uDBFF]/.test(message.text[end - 1]) && /[\uDC00-\uDFFF]/.test(message.text[end])) end--;
+  }
+  if (end <= 0) throw new RangeError('Cannot split Telegram report entities');
+  return sliceMessage(message, 0, end);
+}
+
+export function splitTelegramReportMessage(message) {
+  const parts = [];
+  let offset = 0;
+  while (offset < message.text.length) {
+    const part = firstMessagePart(sliceMessage(message, offset));
+    parts.push(part);
+    offset += part.text.length;
+  }
+  return parts;
+}
+
+function unsentMessage(message, delivered) {
+  let text = '';
+  const entities = [], blocks = [];
+  let entityIndex = 0;
+  for (const block of message.blocks) {
+    const sent = delivered.has(block.id), end = block.offset + block.length;
+    while (entityIndex < (message.entities?.length || 0) && message.entities[entityIndex].offset < end) {
+      const entity = message.entities[entityIndex++];
+      if (!sent) entities.push({ ...entity, offset: entity.offset - block.offset + text.length });
+    }
+    if (sent) continue;
+    blocks.push({ ...block, offset: text.length });
+    text += message.text.slice(block.offset, end);
+  }
+  return { text, entities, blocks };
+}
+
 // One pacer is shared by all report recipients. Measure from completion of the
 // previous request, including failures, and recheck access after waiting.
 export function createTelegramReportPacer({ sleep = sleepFor, clock = () => performance.now() } = {}) {
@@ -67,11 +125,41 @@ export async function sendTelegramReport({ chatId, text, entities, image, sendTe
     return message && stillAllowed() ? message : null;
   };
   async function sendFreshText(photoHandled = false) {
-    try { return await pace(() => {
-      const message = fresh();
-      return message ? sendText(chatId, message.text, { entities: message.entities }) : null;
-    }, stillAllowed); }
-    catch (error) { if (photoHandled) error.reportPhotoHandled = true; throw error; }
+    const delivered = new Set();
+    let offset = 0, lastSent = null, textsSent = 0, retries = 0;
+    while (true) {
+      try {
+        const result = await pace(async () => {
+          const message = fresh();
+          if (!message) return null;
+          // Stable line IDs let us reread access and content before every part
+          // without skipping work when earlier records have been removed.
+          const pending = message.blocks ? unsentMessage(message, delivered) : sliceMessage(message, offset);
+          if (!pending.text) return { sent: lastSent, complete: true };
+          const part = firstMessagePart(pending);
+          const sent = await sendText(chatId, part.text, { entities: part.entities });
+          for (const block of part.blocks || []) delivered.add(block.id);
+          offset += part.text.length;
+          textsSent++;
+          return { sent, complete: part.text.length === pending.text.length };
+        }, stillAllowed);
+        if (!result) return null;
+        lastSent = result.sent;
+        if (result.complete) return lastSent;
+        retries = 0;
+      } catch (error) {
+        if (photoHandled) error.reportPhotoHandled = true;
+        if (textsSent) error.reportPartialText = true;
+        // Resume a definite rate limit at the unsent part, so a delivery retry
+        // cannot duplicate the photo or the preceding text messages.
+        if (error?.status === 429 && textsSent && retries < 10) {
+          retries++;
+          if (!await pause(rateLimitDelay(error))) return null;
+          continue;
+        }
+        throw error;
+      }
+    }
   }
   async function pause(ms) {
     // Recheck access/schedule during long retry_after waits as well as at send.
@@ -92,7 +180,7 @@ export async function sendTelegramReport({ chatId, text, entities, image, sendTe
         const message = fresh();
         if (!message) return null;
         const caption = multipartCaption(message);
-        captionFits = caption.text.length <= 1024;
+        captionFits = caption.text.length <= 1024 && (caption.entities?.length || 0) <= 100;
         return sendPhoto(chatId, image, captionFits
           ? { caption: caption.text, caption_entities: caption.entities } : { disable_notification: true });
       }, stillAllowed);

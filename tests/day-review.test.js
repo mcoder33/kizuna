@@ -25,6 +25,16 @@ test('reads more than last100, counts all while bounding items; creates are dist
  entry(db,userId,'added-future',{created:`${past}T12:00:00Z`,schedule:{date:'2026-10-05'}});
  const result=review(db,userId); assert.equal(result.counts.planned,125);assert.equal(result.planned.length,40);assert.equal(result.overflow.planned,85);assert.equal(result.counts.added,1);assert.equal(result.added[0].id,'added-future');
 });
+test('unlimited review retains all tasks and sorted meetings beyond the API maximum of 200',t=>{
+ const {db,userId}=fixture(t);
+ for(let i=0;i<205;i++) {
+  entry(db,userId,`task-${i}`);
+  entry(db,userId,`meeting-${i}`,{type:'meeting_event',schedule:{date:past,time:i%2?'09:00':'11:00'}});
+ }
+ const result=reviewDay(db,{userId,date:past,timeZone:'UTC',now,limit:null});
+ for(const key of ['remaining','meetings']) {assert.equal(result[key].length,205);assert.equal(result.counts[key],205);assert.equal(result.overflow[key],0);}
+ assert.equal(result.meetings[0].time,'09:00');assert.equal(result.meetings.at(-1).time,'11:00');
+});
 test('explicit due is overdue; defaulted/unscheduled carried work is remaining; timed task is no meeting',t=>{
  const {db,userId}=fixture(t);entry(db,userId,'due',{schedule:{date:'2026-09-30',time:'08:00'}});entry(db,userId,'default',{schedule:{date:'2026-09-30',defaulted:true}});entry(db,userId,'undated',{schedule:null});entry(db,userId,'timed',{schedule:{date:past,time:'09:00'}});entry(db,userId,'meeting',{type:'meeting_event',schedule:{date:past,time:'10:00'}});
  const result=review(db,userId);assert.deepEqual(result.overdue.map(x=>x.id),['due']);assert.deepEqual(new Set(result.remaining.map(x=>x.id)),new Set(['default','undated','timed']));assert.deepEqual(result.meetings.map(x=>x.id),['meeting']);assert.equal(result.meetings[0].completed,false);

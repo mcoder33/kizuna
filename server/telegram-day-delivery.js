@@ -61,7 +61,7 @@ export function createTelegramDayDelivery({db,canAccess=()=>false,now=()=>new Da
     if(receipt){if(!claimSummaryRetry(db,input))return;}else if(!reserveSummaryReceipt(db,input))return;
     let sending=false;
     try{
-      await prepareReview({userId:link.user_id,date:selection.date,timeZone:selection.timeZone,now:now(),phase});
+      await prepareReview({userId:link.user_id,date:selection.date,timeZone:selection.timeZone,now:now(),phase,limit:null});
       if(!canAccess(link.user_id)){finish(link,selection,'failed','access_revoked');return;}
       if(!currentBinding(link)){finish(link,selection,'failed','binding_changed');return;}
       if(!enabled()){finish(link,selection,'failed','telegram_disabled');return;}
@@ -71,7 +71,7 @@ export function createTelegramDayDelivery({db,canAccess=()=>false,now=()=>new Da
       let image=null;if(!photoHandled)try{image=await prepareReportImage({userId:link.user_id,date:selection.date,timeZone:selection.timeZone,now:now(),phase});}catch{}
       const current=eligible(link,phase);
       if(!current.eligible||current.date!==selection.date||current.signature!==selection.signature){finish(link,selection,'failed','preferences_or_due_changed');return;}
-      const overview=currentReview(link,{date:selection.date,phase});
+      const overview=currentReview(link,{date:selection.date,phase,limit:null});
       if(!overview){finish(link,selection,'failed','binding_changed');return;}
       const {text,entities}=renderDaySummaryMessage(overview);
       const stillAllowed=()=>{
@@ -80,14 +80,15 @@ export function createTelegramDayDelivery({db,canAccess=()=>false,now=()=>new Da
       };
       if(!canAccess(link.user_id)){finish(link,selection,'failed','access_revoked');return;}
       if(!stillAllowed()){finish(link,selection,'failed','final_eligibility_changed');return;}
-      const refreshMessage=()=>{if(!stillAllowed())return null;const fresh=currentReview(link,{date:selection.date,phase});if(!fresh)return null;const message=renderDaySummaryMessage(fresh);return stillAllowed()?message:null;};
+      const refreshMessage=()=>{if(!stillAllowed())return null;const fresh=currentReview(link,{date:selection.date,phase,limit:null});if(!fresh)return null;const message=renderDaySummaryMessage(fresh);return stillAllowed()?message:null;};
       sending=true;
       const sent=await send(link.chat_id,text,{entities,image,stillAllowed,refreshMessage},link);
       if(!sent){finish(link,selection,'failed','delivery_cancelled');return;}
       finish(link,selection,'sent',null,{messageId:sent?.message_id||null});
     }catch(error){
       if(!sending){finish(link,selection,'failed','review_failed');return;}
-      if(error?.status===429){
+      if(error?.status===429 && error.reportPartialText){finish(link,selection,'failed','text_429_after_partial');}
+      else if(error?.status===429){
         const wait=Number(error.retryAfter),retryAt=now().getTime()+Math.max(1000,Number.isFinite(wait)&&wait>0?wait*1000:1000);
         if(retryAt<=selection.due+SUMMARY_GRACE_MS&&dateInZone(new Date(retryAt),selection.timeZone)===selection.date)finish(link,selection,'retry',error.reportPhotoHandled||receipt?.error_code==='text_429_after_photo'?'text_429_after_photo':'429',{retryAt:new Date(retryAt).toISOString()});
         else finish(link,selection,'failed','rate_limit_outside_grace');

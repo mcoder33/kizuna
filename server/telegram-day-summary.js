@@ -4,6 +4,7 @@ import { validIsoDate } from './repeat.js';
 import { reviewDay } from './day-review.js';
 import { createTelegramDateCalendar } from './telegram-date-calendar.js';
 import { renderDaySummaryMessage, truncateTelegramText } from './telegram-day-summary-renderer.js';
+import { sendTelegramReport } from './telegram-report-message.js';
 export { renderDaySummary, renderDaySummaryMessage, truncateTelegramText } from './telegram-day-summary-renderer.js';
 
 export const DAY_SUMMARY_LABELS = { today:'☀️ Сегодня', day:'🗓 Другой день', settings:'⚙️ Настройки сводок' };
@@ -99,20 +100,20 @@ export function createTelegramDaySummaryRouter({db,canAccess=()=>false,now=()=>n
   // Filtering the rendered slice cannot repair hidden items or section counts.
   function currentReview(link,input){
     if(!dayFresh(link))return null;
-    const overview=finalReview({...input,userId:link.user_id,timeZone:timeZone(link.user_id),now:now()});
+    const overview=finalReview({...input,userId:link.user_id,timeZone:timeZone(link.user_id),now:now(),limit:null});
     if(overview && typeof overview.then==='function')throw new TypeError('Final day review must be synchronous');
     return dayFresh(link)?overview:null;
   }
   async function showReview(link,date){
     if(!dayFresh(link))return;
-    const input={userId:link.user_id,date,timeZone:timeZone(link.user_id),now:now(),phase:'manual'};
+    const input={userId:link.user_id,date,timeZone:timeZone(link.user_id),now:now(),phase:'manual',limit:null};
     await review(input);
     if(!dayFresh(link))return;
     let image=null;try{image=await prepareReportImage(input);}catch{}
     const overview=currentReview(link,input);if(!overview)return;
     const {text,entities}=renderDaySummaryMessage(overview);
     const refreshMessage=()=>{const fresh=currentReview(link,input);if(!fresh)return null;const message=renderDaySummaryMessage(fresh);return dayFresh(link)?message:null;};
-    if(dayFresh(link))await(sendReport?sendReport(link,text,{entities,image,refreshMessage,stillAllowed:()=>dayFresh(link)}):sendFresh(link,text,undefined,{entities}));
+    if(dayFresh(link))await(sendReport?sendReport(link,text,{entities,image,refreshMessage,stillAllowed:()=>dayFresh(link)}):sendTelegramReport({chatId:link.chat_id,text,entities,refreshMessage,stillAllowed:()=>dayFresh(link),sendText:(chatId,body,extra)=>sendFresh(link,body,undefined,extra)}));
   }
   async function manualDate(link){if(!dayFresh(link))return;interactions.begin(link,'date');await sendFresh(link,'Введите дату: ДД.ММ.ГГГГ или ГГГГ-ММ-ДД.\nОтмена — вернуться к заметкам.',replyKeyboard(link));}
   const calendar=createTelegramDateCalendar({now,fresh:dayFresh,todayOf,timeZone,send:sendFresh,showReview,manualDate,

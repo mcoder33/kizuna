@@ -57,10 +57,12 @@ export function reviewDay(db, { userId, date, timeZone = 'Europe/Samara', now = 
   if (historyCoverage.assignments === 'unavailable') historyCoverage.gaps.push('История принятых чужих дел до начала сохранения изменений недоступна.');
   const result = { date,timeZone,asOf:historical ? end : at.toISOString(),phase,historyCoverage,counts:{},overflow:{} };
   for (const section of sections) { result[section]=[]; result.counts[section]=0; }
-  const itemLimit = Math.max(1,Math.min(200,Number(limit)||40));
+  // Telegram requests the complete review with limit:null; bounded API callers
+  // retain their existing limits and overflow counts.
+  const itemLimit = limit === null ? Infinity : Math.max(1,Math.min(200,Number(limit)||40));
   const add = (section,item) => {
     result.counts[section]++;
-    if (section==='meetings') { result[section].push(item); result[section].sort(meetingOrder); if (result[section].length>itemLimit) result[section].pop(); }
+    if (section==='meetings') { result[section].push(item); if (Number.isFinite(itemLimit)) { result[section].sort(meetingOrder); if (result[section].length>itemLimit) result[section].pop(); } }
     else if (result[section].length<itemLimit) result[section].push(item);
   };
   const resetAt=db.prepare('SELECT reset_at FROM day_summary_user_resets WHERE user_id IS ?').get(userId)?.reset_at;
