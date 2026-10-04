@@ -114,26 +114,24 @@ test('automatic room season covers all months and follows the local month bounda
   assert.equal(sceneAt('2026-11-30T20:00:00Z', { timeZone: 'Europe/Samara' }).season, 'winter');
 });
 
-test('daylight includes 07:00, excludes 19:00, and uses the selected timezone including DST', () => {
-  for (const [time, light] of [['06:59:59', 'night'], ['07:00:00', 'day'], ['18:59:59', 'day'], ['19:00:00', 'night'], ['00:00:00', 'night']]) {
-    assert.equal(sceneAt(`2026-06-15T${time}Z`).light, light, time);
+test('room light follows the interface theme, never the clock, timezone or legacy light choice', () => {
+  for (const instant of ['2026-06-15T00:00:00Z', '2026-06-15T06:59:59Z', '2026-06-15T07:00:00Z', '2026-06-15T19:00:00Z', '2026-03-08T11:00:00Z']) {
+    for (const timeZone of ['UTC', 'Europe/Samara', 'America/New_York']) {
+      assert.equal(sceneAt(instant, { timeZone, theme: 'light', systemDark: true, light: 'night' }).light, 'day');
+      assert.equal(sceneAt(instant, { timeZone, theme: 'dark', systemDark: false, light: 'day' }).light, 'night');
+      for (const systemDark of [false, true]) {
+        assert.equal(sceneAt(instant, { timeZone, theme: 'system', systemDark }).light, systemDark ? 'night' : 'day');
+      }
+    }
   }
-  for (const [instant, light] of [['2026-06-15T02:59:59Z', 'night'], ['2026-06-15T03:00:00Z', 'day'], ['2026-06-15T14:59:59Z', 'day'], ['2026-06-15T15:00:00Z', 'night']]) {
-    assert.equal(sceneAt(instant, { timeZone: 'Europe/Samara' }).light, light, instant);
-  }
-  // New York's 07:00 is 12:00 UTC before DST and 11:00 UTC after it.
-  assert.equal(sceneAt('2026-03-07T11:59:59Z', { timeZone: 'America/New_York' }).light, 'night');
-  assert.equal(sceneAt('2026-03-07T12:00:00Z', { timeZone: 'America/New_York' }).light, 'day');
-  assert.equal(sceneAt('2026-03-08T10:59:59Z', { timeZone: 'America/New_York' }).light, 'night');
-  assert.equal(sceneAt('2026-03-08T11:00:00Z', { timeZone: 'America/New_York' }).light, 'day');
 });
 
-test('invalid timezone falls back to UTC; explicit room choices survive automatic boundaries', () => {
-  assert.deepEqual(sceneAt('2026-06-01T06:59:59Z', { timeZone: 'invalid/zone' }), { season: 'summer', light: 'night' });
-  assert.deepEqual(sceneAt('2026-06-01T07:00:00Z', { timeZone: 'invalid/zone' }), { season: 'summer', light: 'day' });
-  assert.deepEqual(sceneAt('2026-06-01T07:00:00Z', { season: 'winter', light: 'night' }), { season: 'winter', light: 'night' });
-  assert.deepEqual(sceneAt('2026-12-01T19:00:00Z', { season: 'summer', light: 'day' }), { season: 'summer', light: 'day' });
-  assert.deepEqual(sceneAt('2026-06-01T12:00:00Z', { season: '../../escape', light: 'invalid' }), { season: 'summer', light: 'day' });
+test('invalid timezone falls back to UTC; manual seasons survive month boundaries', () => {
+  assert.deepEqual(sceneAt('2026-06-01T06:59:59Z', { timeZone: 'invalid/zone', theme: 'light' }), { season: 'summer', light: 'day' });
+  assert.deepEqual(sceneAt('2026-06-01T07:00:00Z', { timeZone: 'invalid/zone', theme: 'dark' }), { season: 'summer', light: 'night' });
+  assert.deepEqual(sceneAt('2026-06-01T07:00:00Z', { season: 'winter', theme: 'dark' }), { season: 'winter', light: 'night' });
+  assert.deepEqual(sceneAt('2026-12-01T19:00:00Z', { season: 'summer', theme: 'light' }), { season: 'summer', light: 'day' });
+  assert.deepEqual(sceneAt('2026-06-01T12:00:00Z', { season: '../../escape', theme: 'invalid' }), { season: 'summer', light: 'day' });
 });
 
 test('room assets only resolve bounded seasonal variants and distinguish compact images', () => {

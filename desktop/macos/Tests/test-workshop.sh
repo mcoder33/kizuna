@@ -3,7 +3,7 @@ set -euo pipefail
 
 MAC_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$MAC_DIR/../.." && pwd)"
-PREVIEW_URL="${1:-http://127.0.0.1:8901/__preview?appearance=workshop&theme=light&light=day}"
+PREVIEW_URL="${1:-http://127.0.0.1:8901/__preview?appearance=workshop&theme=light}"
 BRIDGE="${2:-$MAC_DIR/Resources/CaptureAppearance.js}"
 OUTPUT_DIR="${3:-}"
 TEST_TMP="$(mktemp -d /tmp/kizuna-workshop-native.XXXXXX)"
@@ -17,7 +17,7 @@ trap cleanup EXIT
 read -r PREVIEW_PORT PREVIEW_ORIGIN < <(node -e '
 const url = new URL(process.argv[1]);
 if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.pathname !== "/__preview") process.exit(2);
-for (const [key, expected] of [["appearance","workshop"],["theme","light"],["light","day"]]) {
+for (const [key, expected] of [["appearance","workshop"],["theme","light"]]) {
   if (url.searchParams.get(key) !== expected) process.exit(2);
 }
 process.stdout.write(`${url.port} ${url.origin}\n`);
