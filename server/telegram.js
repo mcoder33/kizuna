@@ -31,7 +31,7 @@ import { dateInZone, shiftDate } from './reports.js';
 import { reviewDay } from './day-review.js';
 import { createTelegramDayDelivery } from './telegram-day-delivery.js';
 import { createTelegramDaySummaryRouter, DAY_SUMMARY_COMMANDS } from './telegram-day-summary.js';
-import { sendTelegramReport } from './telegram-report-message.js';
+import { sendTelegramReport, createTelegramReportPacer } from './telegram-report-message.js';
 
 export const TELEGRAM_API = 'https://api.telegram.org';
 export const LINK_TTL_MS = 15 * 60 * 1000;
@@ -335,6 +335,7 @@ export function createTelegramService({
   let loopToken = null, ready = false, failures = 0;
   let offset = 0;
   let reportGeneration = 0;
+  const paceReportSend = createTelegramReportPacer({ sleep: reportRetrySleep });
   const held = new Map();
   const seen = new Set();
   const sending = new Set();
@@ -450,7 +451,7 @@ export function createTelegramService({
     return sendTelegramReport({chatId:link.chat_id,text,entities,image,refreshMessage,
     sendText:(chatId,body,extra)=>say(chatId,body,null,extra),
     sendPhoto:(chatId,file,extra)=>call('sendPhoto',{chat_id:chatId,photo:'attach://report',...extra},{files:{report:file}}),
-    stillAllowed:()=>Boolean(generation===reportGeneration&&key&&token()===key&&currentBinding(link)&&canAccessDaySummary(link.user_id)&&(!stillAllowed||stillAllowed())),audit:note,sleep:reportRetrySleep});
+    stillAllowed:()=>Boolean(generation===reportGeneration&&key&&token()===key&&currentBinding(link)&&canAccessDaySummary(link.user_id)&&(!stillAllowed||stillAllowed())),audit:note,sleep:reportRetrySleep,pace:paceReportSend});
   };
   const menuRouter=createTelegramDaySummaryRouter({db,canAccess:canAccessDaySummary,now,timeZone,review:dayReview,finalReview:finalDayReview,authorize:authorizeMessage,currentBinding,prepareReportImage,sendReport,send:(chatId,text,extra)=>say(chatId,text,null,extra),edit:(chatId,messageId,text,extra)=>call('editMessageText',{chat_id:chatId,message_id:messageId,text,...extra}),acknowledge:id=>call('answerCallbackQuery',{callback_query_id:id}),onSettingsChanged});
   async function setupPrivateCommands(link) {

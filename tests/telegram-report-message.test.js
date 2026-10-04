@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sendTelegramReport } from '../server/telegram-report-message.js';
+import { sendTelegramReport, createTelegramReportPacer } from '../server/telegram-report-message.js';
 
 const image = { bytes: Buffer.from('image'), type: 'image/png', filename: 'report.png' };
 const entities = [{ type: 'bold', offset: 3, length: 7 }];
@@ -17,12 +17,46 @@ test('short report sends one photo with unchanged text/entities and no buttons',
 });
 
 test('photo may succeed on the tenth retry without failure logging or text fallback', async () => {
-  let photos = 0; const pauses = [];
-  const result = await sendTelegramReport({ ...base, sleep: async ms => pauses.push(ms),
-    sendPhoto: async () => { if (++photos <= 10) throw failure(400); return { message_id: 6 }; },
+  let photos = 0, elapsed = 0; const pauses = [], starts = [];
+  const result = await sendTelegramReport({ ...base, clock: () => elapsed, sleep: async ms => { pauses.push(ms); elapsed += ms; },
+    sendPhoto: async () => { starts.push(elapsed); if (++photos <= 10) throw failure(400); return { message_id: 6 }; },
     sendText: () => assert.fail('must not send text'), audit: () => assert.fail('must not log a final failure') });
   assert.equal(result.message_id, 6); assert.equal(photos, 11);
-  assert.equal(pauses.reduce((sum, ms) => sum + ms, 0), 75000);
+  assert.equal(pauses.reduce((sum, ms) => sum + ms, 0), 55000);
+  assert.deepEqual(starts.slice(1).map((at, index) => at - starts[index]), [1000,2000,3000,4000,5000,6000,7000,8000,9000,10000]);
+});
+
+test('shared pacing spaces photo, text and the next recipient by at least one second', async () => {
+  let elapsed = 0; const starts = [];
+  const sleep = async ms => { elapsed += ms; };
+  const pace = createTelegramReportPacer({ sleep, clock: () => elapsed });
+  const sendPhoto = async () => { starts.push(['photo',elapsed]); return { message_id: 20 }; };
+  const sendText = async () => { starts.push(['text',elapsed]); return { message_id: 21 }; };
+  await sendTelegramReport({ ...base, text: 'x'.repeat(1025), pace, sleep, sendPhoto, sendText });
+  await sendTelegramReport({ ...base, chatId: 456, image: null, pace, sleep, sendPhoto, sendText });
+  assert.deepEqual(starts, [['photo',0],['text',1000],['text',2000]]);
+});
+
+test('concurrent recipients share pacing and a failed request cannot break the queue', async () => {
+  let elapsed = 0; const starts = [];
+  const pace = createTelegramReportPacer({ sleep: async ms => { elapsed += ms; }, clock: () => elapsed });
+  const failed = pace(async () => { starts.push(elapsed); throw failure(400); });
+  const second = pace(async () => { starts.push(elapsed); return 2; });
+  const third = pace(async () => { starts.push(elapsed); return 3; });
+  await assert.rejects(failed); assert.equal(await second,2); assert.equal(await third,3);
+  assert.deepEqual(starts,[0,1000,2000]);
+});
+
+test('access and content are checked after the one-second send spacing', async () => {
+  let elapsed = 0, allowed = true, title = 'private title';
+  const pace = createTelegramReportPacer({ sleep: async ms => { elapsed += ms; title='fresh title'; }, clock: () => elapsed });
+  await pace(async () => {});
+  await sendTelegramReport({ ...base, pace, refreshMessage: () => ({ text: title, entities: [] }),
+    sendPhoto: async (_,__,extra) => { assert.equal(elapsed,1000); assert.equal(extra.caption,'fresh title'); return { message_id: 22 }; },
+    sendText: () => assert.fail('short photo report') });
+  const revoked = createTelegramReportPacer({ sleep: async () => { allowed=false; }, clock: () => 0 });
+  await revoked(async () => {});
+  assert.equal(await revoked(() => assert.fail('revoked access'), () => allowed),null);
 });
 
 test('all photo failures exhaust ten retries before one diagnostic and a fresh text fallback', async () => {
@@ -43,13 +77,15 @@ test('all photo failures exhaust ten retries before one diagnostic and a fresh t
   }
 });
 
-test('429 respects retry_after, including before text after the final photo failure', async () => {
+test('429 respects retry_after and continues increasing pauses, including a wait before final text', async () => {
   let photos = 0, elapsed = 0, failedAt = 0;
-  await sendTelegramReport({ ...base, sleep: async ms => { elapsed += ms; },
+  const gaps = [];
+  await sendTelegramReport({ ...base, clock: () => elapsed, sleep: async ms => { elapsed += ms; },
     sendPhoto: async () => {
-      if (photos) assert.ok(elapsed - failedAt >= 17000);
+      if (photos) { assert.ok(elapsed - failedAt >= 17000); gaps.push(elapsed - failedAt); }
       photos++; failedAt = elapsed; throw Object.assign(failure(429), { retryAfter: 17 });
     }, sendText: async () => { assert.equal(photos, 11); assert.ok(elapsed - failedAt >= 17000); } });
+  assert.deepEqual(gaps, [17000,18000,19000,20000,21000,22000,23000,24000,25000,26000]);
 });
 
 test('each retry refreshes caption/entities and can switch to a long report', async () => {
