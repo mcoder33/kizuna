@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 [[ $(id -u) == 0 && $(uname -s) == Linux ]] || { echo 'Запуск от root на сервере мониторинга после одобрения.' >&2; exit 1; }
 cd "$(dirname "$0")"
 root=/opt/kizuna-monitoring
@@ -36,6 +37,8 @@ EOF
   systemctl daemon-reload
   systemctl enable --now "$unit"
 fi
+chown root:root "$image"
+chmod 600 "$image" # Raw ext4 bytes contain private cache/Grafana state too.
 install -d -m 0750 -o 65534 -g 65534 "$data/prometheus" "$data/alertmanager"
 install -d -m 0700 -o 65534 -g 65534 "$data/admin-sync"
 install -d -m 0755 "$root/config"

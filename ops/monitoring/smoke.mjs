@@ -69,7 +69,7 @@ try {
       const response=await json(`/prometheus/api/v1/query?query=${encodeURIComponent(expr)}`);assert.equal(response.status,'success');queries++;
       const rendered=await json('/grafana/api/ds/query',{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({from:String(Date.now()-60000),to:String(Date.now()),queries:[{...target,expr,datasource:{type:'prometheus',uid:'kizuna-prometheus'},intervalMs:2000,maxDataPoints:300}]})});
       const frame=rendered.results[target.refId];assert.ok(!frame.error,`${dashboard.uid}/${panel.title}: ${frame.error}`);
-      if(response.data.result.length&&panel.type==='stat')assert.ok(frame.frames?.some(f=>f.data.values.some(values=>values.some(v=>typeof v==='number'&&v>0))),`Stat has no data: ${panel.title}`);
+      if(response.data.result.length&&panel.type==='stat')assert.ok(frame.frames?.some(f=>f.schema.fields.some((field,index)=>field.type==='number'&&f.data.values[index].some(Number.isFinite))),`Stat has no data: ${panel.title}`);
     }
   }
   const stats=await docker(['stats','--no-stream','--format','{{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}',...containers]);

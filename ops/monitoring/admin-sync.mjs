@@ -32,7 +32,8 @@ export function createAdministratorSync({settings,configFile,cacheFile,fetchReci
       catch(error){if(error.code!=='ENOENT')audit('recipient_cache_invalid');}
     }
     if(settings.recipientMode==='fixed'){
-      snapshot=validateRecipients({chatIds:settings.telegramChatIds,activeAdminCount:settings.telegramChatIds.length,linkedAdminCount:settings.telegramChatIds.length});
+      const ids=[...new Set(settings.telegramChatIds.map(id=>String(Number(id))))];
+      snapshot=validateRecipients({chatIds:ids,activeAdminCount:ids.length,linkedAdminCount:ids.length});
       state.lastSuccess=now()/1000;
     }else{
       try {

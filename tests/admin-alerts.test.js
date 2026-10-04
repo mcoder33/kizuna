@@ -73,3 +73,9 @@ test('default generated settings use automatic admins and leave notification del
   assert.equal(JSON.parse(await fs.readFile(path.join(dir,'alertmanager/alertmanager.yaml'))).route.receiver,'disabled');
   assert.ok(await fs.stat(path.join(dir,'alertmanager/telegram.tmpl')));
 });
+test('manual personal recipient override deduplicates IDs before applying routing',async t=>{
+  const dir=await directory(t),configFile=path.join(dir,'config.yaml');
+  const sync=createAdministratorSync({settings:{telegramEnabled:true,recipientMode:'fixed',telegramChatIds:['11','011','22']},configFile,cacheFile:path.join(dir,'unused-cache.json'),fetchRecipients:()=>{throw new Error('Manual override must not fetch');},reload:async()=>{}});
+  await sync.tick();assert.equal(sync.state.recipients,2);
+  assert.deepEqual(JSON.parse(await fs.readFile(configFile)).receivers.find(r=>r.name==='admins').telegram_configs.map(r=>r.chat_id),[11,22]);
+});
