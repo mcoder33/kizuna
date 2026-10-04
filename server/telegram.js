@@ -315,6 +315,7 @@ export function createTelegramService({
   onSettingsChanged = () => {},
   summaryBatchSize = 40,
   prepareReportImage = async () => null,
+  reportRetrySleep,
   canAccessDaySummary = () => false,
   onCaptureSaved = () => {},
   additionalCommands = () => [],
@@ -333,6 +334,7 @@ export function createTelegramService({
   let running = false, loopDone = null, controller = null, wakeUp = null;
   let loopToken = null, ready = false, failures = 0;
   let offset = 0;
+  let reportGeneration = 0;
   const held = new Map();
   const seen = new Set();
   const sending = new Set();
@@ -443,10 +445,13 @@ export function createTelegramService({
     if(!from || from.is_bot || chat?.type!=='private' || String(chat.id)!==String(from.id))return null;
     const link=linkByTelegram(from.id);return link && String(link.chat_id)===String(chat.id) && currentBinding(link)?link:null;
   }
-  const sendReport=(link,text,{entities,image,refreshMessage,stillAllowed})=>sendTelegramReport({chatId:link.chat_id,text,entities,image,refreshMessage,
+  const sendReport=(link,text,{entities,image,refreshMessage,stillAllowed})=>{
+    const generation=reportGeneration,key=token();
+    return sendTelegramReport({chatId:link.chat_id,text,entities,image,refreshMessage,
     sendText:(chatId,body,extra)=>say(chatId,body,null,extra),
     sendPhoto:(chatId,file,extra)=>call('sendPhoto',{chat_id:chatId,photo:'attach://report',...extra},{files:{report:file}}),
-    stillAllowed:()=>Boolean(token()&&currentBinding(link)&&canAccessDaySummary(link.user_id)&&(!stillAllowed||stillAllowed())),audit:note});
+    stillAllowed:()=>Boolean(generation===reportGeneration&&key&&token()===key&&currentBinding(link)&&canAccessDaySummary(link.user_id)&&(!stillAllowed||stillAllowed())),audit:note,sleep:reportRetrySleep});
+  };
   const menuRouter=createTelegramDaySummaryRouter({db,canAccess:canAccessDaySummary,now,timeZone,review:dayReview,finalReview:finalDayReview,authorize:authorizeMessage,currentBinding,prepareReportImage,sendReport,send:(chatId,text,extra)=>say(chatId,text,null,extra),edit:(chatId,messageId,text,extra)=>call('editMessageText',{chat_id:chatId,message_id:messageId,text,...extra}),acknowledge:id=>call('answerCallbackQuery',{callback_query_id:id}),onSettingsChanged});
   async function setupPrivateCommands(link) {
     if (!link || !currentBinding(link) || String(link.chat_id) !== String(link.telegram_id)) return;
@@ -688,6 +693,7 @@ export function createTelegramService({
   }
   async function stop() {
     running = false;
+    reportGeneration++;
     controller?.abort();
     wakeUp?.();
     if (loopDone) await Promise.race([loopDone, sleep(3000)]);
@@ -699,6 +705,7 @@ export function createTelegramService({
     const key = token() || null;
     if (key !== botToken) { bot = null; botToken = null; }
     if (key === loopToken) return;
+    reportGeneration++;
     if (!key) state = 'off';
     controller?.abort();
     wakeUp?.();

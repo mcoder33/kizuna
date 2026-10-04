@@ -65,7 +65,10 @@ export function createTelegramDayDelivery({db,canAccess=()=>false,now=()=>new Da
       if(!canAccess(link.user_id)){finish(link,selection,'failed','access_revoked');return;}
       if(!currentBinding(link)){finish(link,selection,'failed','binding_changed');return;}
       if(!enabled()){finish(link,selection,'failed','telegram_disabled');return;}
-      let image=null;try{image=await prepareReportImage({userId:link.user_id,date:selection.date,timeZone:selection.timeZone,now:now(),phase});}catch{}
+      // A text-only 429 after photo success/exhaustion must not restart the photo
+      // budget or duplicate a photo already sent on the previous delivery tick.
+      const photoHandled=receipt?.error_code==='text_429_after_photo';
+      let image=null;if(!photoHandled)try{image=await prepareReportImage({userId:link.user_id,date:selection.date,timeZone:selection.timeZone,now:now(),phase});}catch{}
       const current=eligible(link,phase);
       if(!current.eligible||current.date!==selection.date||current.signature!==selection.signature){finish(link,selection,'failed','preferences_or_due_changed');return;}
       const overview=currentReview(link,{date:selection.date,phase});
@@ -80,12 +83,13 @@ export function createTelegramDayDelivery({db,canAccess=()=>false,now=()=>new Da
       const refreshMessage=()=>{if(!stillAllowed())return null;const fresh=currentReview(link,{date:selection.date,phase});if(!fresh)return null;const message=renderDaySummaryMessage(fresh);return stillAllowed()?message:null;};
       sending=true;
       const sent=await send(link.chat_id,text,{entities,image,stillAllowed,refreshMessage},link);
+      if(!sent){finish(link,selection,'failed','delivery_cancelled');return;}
       finish(link,selection,'sent',null,{messageId:sent?.message_id||null});
     }catch(error){
       if(!sending){finish(link,selection,'failed','review_failed');return;}
       if(error?.status===429){
         const wait=Number(error.retryAfter),retryAt=now().getTime()+Math.max(1000,Number.isFinite(wait)&&wait>0?wait*1000:1000);
-        if(retryAt<=selection.due+SUMMARY_GRACE_MS&&dateInZone(new Date(retryAt),selection.timeZone)===selection.date)finish(link,selection,'retry','429',{retryAt:new Date(retryAt).toISOString()});
+        if(retryAt<=selection.due+SUMMARY_GRACE_MS&&dateInZone(new Date(retryAt),selection.timeZone)===selection.date)finish(link,selection,'retry',error.reportPhotoHandled||receipt?.error_code==='text_429_after_photo'?'text_429_after_photo':'429',{retryAt:new Date(retryAt).toISOString()});
         else finish(link,selection,'failed','rate_limit_outside_grace');
       }else if([400,401,403,404].includes(error?.status))finish(link,selection,'failed',String(error.status));
       else finish(link,selection,'uncertain',error?.code||'ambiguous_delivery');

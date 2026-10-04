@@ -11,14 +11,14 @@ import { summaryPreferences, summarySettingsKey, readSummaryPreferences, changeS
 import { reserveSummaryReceipt, claimSummaryRetry, updateSummaryReceipt, migrateDaySummaryHistory } from '../server/day-summary-history.js';
 import { createFakeTelegram } from './helpers/fake-telegram.js';
 
-function fixture(t,{path=':memory:',zone='UTC',hook=null,finalHook=null,sendError=null,prepareImage=async()=>null,photoError=null,batchSize=40}={}) {
+function fixture(t,{path=':memory:',zone='UTC',hook=null,finalHook=null,sendError=null,prepareImage=async()=>null,photoError=null,retrySleep=async()=>{},batchSize=40}={}) {
  const db=openDatabase(path);t.after(()=>{if(db.open)db.close();});const fake=createFakeTelegram(),events=[];
  let allowed=true;
  let clock=new Date('2026-10-03T09:15:00Z'),attempts=0,configured=true;
  const userId=createUser(db,{email:`delivery-${Math.random()}@example.org`,passwordHash:'test',status:'active'}).id;
  const addLink=(id,telegramId=fake.user.id)=>db.prepare('INSERT INTO telegram_links(user_id,telegram_id,chat_id,app_url,linked_at) VALUES(?,?,?,?,?)').run(id,telegramId,telegramId,'https://kizuna.example','2026-09-30T10:00:00Z');addLink(userId);
  const service=createTelegramService({db,canAccessDaySummary:()=>allowed,token:()=>configured?fake.token:null,now:()=>clock,clock:()=>clock.getTime(),timeZone:()=>zone,summaryBatchSize:batchSize,userActive:id=>db.prepare('SELECT status FROM users WHERE id=?').get(id)?.status==='active',audit:event=>events.push(event),requestTimeoutMs:20,
-  prepareReportImage:prepareImage,
+  prepareReportImage:prepareImage,reportRetrySleep:retrySleep,
   dayReview:async input=>{const initial=reviewDay(db,input);await hook?.(input,initial);return initial;},
   finalDayReview:input=>{const overview=reviewDay(db,input);finalHook?.(input,overview);return overview;},
   fetch:async(url,init)=>{if(new URL(url).pathname.endsWith('/sendMessage')){attempts++;const error=await sendError?.(attempts,init);if(error instanceof Error)throw error;if(error)return new Response(JSON.stringify({ok:false,error_code:error.status,description:'private credentials never show',parameters:{retry_after:error.retryAfter}}),{status:error.status});}if(new URL(url).pathname.endsWith('/sendPhoto')){const error=await photoError?.(init);if(error instanceof Error)throw error;if(error)return new Response(JSON.stringify({ok:false,error_code:error.status,description:'photo failed',parameters:{retry_after:error.retryAfter}}),{status:error.status});}return fake.fetch(url,init);}});
@@ -139,16 +139,41 @@ test('image preparation failure falls back to the normal report without technica
  const ctx=fixture(t,{prepareImage:async()=>{throw Error('private model error');}});ctx.prefs();await ctx.service.tick();assert.equal(ctx.messages().length,1);assert.equal(ctx.receipt().status,'sent');assert.equal(ctx.messages()[0].params.text.includes('private model error'),false);
 });
 
-test('a definitive photo rejection rereads revoked source data before delivering text',async t=>{
+test('photo retries and final text fallback reread revoked source data',async t=>{
  t.mock.timers.enable({apis:['Date'],now:Date.parse('2026-10-03T08:00:00Z')});
- let ctx,captureId;ctx=fixture(t,{prepareImage:async()=>reportPhoto,photoError:async init=>{assert.ok(init.body.get('caption').includes('Now private task'));ctx.db.prepare('UPDATE captures SET deleted_at=? WHERE id=?').run('2026-10-03T09:15:00Z',captureId);ctx.setNow('2026-10-03T09:15:01Z');return{status:400};}});ctx.prefs();
+ let ctx,captureId,photos=0;ctx=fixture(t,{prepareImage:async()=>reportPhoto,photoError:async init=>{assert.equal(init.body.get('caption').includes('Now private task'),photos++===0);ctx.db.prepare('UPDATE captures SET deleted_at=? WHERE id=?').run('2026-10-03T09:15:00Z',captureId);ctx.setNow('2026-10-03T09:15:01Z');return{status:400};}});ctx.prefs();
  captureId=createLedger(ctx.db,{userId:ctx.userId,raw:'Now private task',classification:{primaryType:'task',summary:'Now private task',entities:{schedule:{date:'2026-10-03'}}},provider:'manual',occurredAt:'2026-10-03T08:00:00Z'}).captureId;
- await ctx.service.tick();assert.equal(ctx.messages().length,1);assert.equal(ctx.messages()[0].params.text.includes('Now private task'),false);assert.equal(ctx.receipt().status,'sent');
+ await ctx.service.tick();assert.equal(photos,11);assert.equal(ctx.events.filter(event=>event.event==='telegram_report_photo_failed').length,1);assert.equal(ctx.messages().length,1);assert.equal(ctx.messages()[0].params.text.includes('Now private task'),false);assert.equal(ctx.receipt().status,'sent');
 });
 
-test('photo 429 obeys scheduled retry receipts; ambiguous photo timeout never sends text or repeats',async t=>{
- let photoAttempts=0;const ctx=fixture(t,{prepareImage:async()=>reportPhoto,photoError:async()=>{photoAttempts++;return photoAttempts===1?{status:429,retryAfter:60}:null;}});ctx.prefs();await ctx.service.tick();assert.equal(ctx.receipt().status,'retry');assert.equal(ctx.messages().length,0);await ctx.service.tick();assert.equal(photoAttempts,1);ctx.setNow('2026-10-03T09:16:00Z');await ctx.service.tick();assert.equal(photoAttempts,2);assert.equal(ctx.receipt().status,'sent');
- let timeouts=0;const timed=fixture(t,{prepareImage:async()=>reportPhoto,photoError:()=>{timeouts++;return new Promise(()=>{});}});timed.prefs();await timed.service.tick();await timed.service.tick();assert.equal(timeouts,1);assert.equal(timed.messages().length,0);assert.equal(timed.receipt().status,'uncertain');
+test('photo 429 waits within one delivery; repeated timeouts exhaust retries then send text once',async t=>{
+ let photoAttempts=0,elapsed=0;const ctx=fixture(t,{prepareImage:async()=>reportPhoto,retrySleep:async ms=>{elapsed+=ms;},photoError:async()=>{photoAttempts++;if(photoAttempts===2)assert.ok(elapsed>=60000);return photoAttempts===1?{status:429,retryAfter:60}:null;}});ctx.prefs();await ctx.service.tick();assert.equal(ctx.receipt().status,'sent');assert.equal(ctx.messages().length,0);assert.equal(photoAttempts,2);await ctx.service.tick();assert.equal(photoAttempts,2);
+ let timeouts=0;const timed=fixture(t,{prepareImage:async()=>reportPhoto,photoError:()=>{timeouts++;return new Promise(()=>{});}});timed.prefs();await timed.service.tick();await timed.service.tick();assert.equal(timeouts,11);assert.equal(timed.messages().length,1);assert.equal(timed.receipt().status,'sent');
+ const failure=timed.events.find(event=>event.event==='telegram_report_photo_failed');assert.equal(failure.errorCode,'request_timeout');assert.equal(failure.attempts,11);
+});
+
+test('revoked access, settings, binding, expired grace or shutdown during backoff cancel retries without a sent receipt',async t=>{
+ for(const change of ['access','off','binding','deadline','stop','reconfigure']){
+  let ctx,photos=0;ctx=fixture(t,{prepareImage:async()=>reportPhoto,photoError:async()=>{photos++;return{status:400};},retrySleep:async()=>{
+   if(change==='access')ctx.setAccess(false);
+   if(change==='off')changeSummaryPreferences(ctx.db,ctx.userId,{type:'enabled',phase:'morning',value:false});
+   if(change==='binding')ctx.db.prepare("UPDATE telegram_links SET linked_at='changed' WHERE user_id=?").run(ctx.userId);
+   if(change==='deadline')ctx.setNow('2026-10-03T10:00:01Z');
+   if(change==='stop')await ctx.service.stop();
+   if(change==='reconfigure'){ctx.setEnabled(false);ctx.service.reconfigure();}
+  }});ctx.prefs();await ctx.service.tick();assert.equal(photos,1,change);assert.equal(ctx.messages().length,0,change);assert.equal(ctx.receipt().status,'failed',change);assert.equal(ctx.receipt().error_code,'delivery_cancelled',change);
+ }
+});
+
+test('text 429 after photo success or exhaustion does not restart the photo budget across delivery ticks',async t=>{
+ for(const fails of [false,true]){
+  let photos=0,preparations=0;const ctx=fixture(t,{prepareImage:async()=>{preparations++;return reportPhoto;},
+   photoError:async()=>{photos++;return fails?{status:400}:null;},sendError:attempt=>attempt<=2?{status:429,retryAfter:60}:null,
+   finalHook:(_,review)=>{for(const section of ['remaining','done','overdue']){review[section]=Array.from({length:4},()=>({title:'long task '.repeat(40)}));review.counts[section]=4;}}
+  });ctx.prefs();await ctx.service.tick();assert.equal(ctx.receipt().status,'retry');assert.equal(ctx.receipt().error_code,'text_429_after_photo');
+  ctx.setNow('2026-10-03T09:16:00Z');await ctx.service.tick();assert.equal(ctx.receipt().error_code,'text_429_after_photo');
+  ctx.setNow('2026-10-03T09:17:00Z');await ctx.service.tick();assert.equal(ctx.receipt().status,'sent');assert.equal(ctx.messages().length,1);assert.equal(photos,fails?11:1);assert.equal(preparations,1);
+ }
 });
 
 test('long illustrated report delivers complete text once even when the supplementary photo fails',async t=>{
