@@ -1772,8 +1772,12 @@ test("вечером во фразе обложки «3 дела» и «пере
   await expect(brief).toContainText("Не закрыто 3 дела со сроком — перенести на завтра?");
   await expect(brief.locator("button.linkish")).toHaveText(["3 дела", "перенести на завтра?"]);
   // Кнопка-ссылка того же цвета, что слово «вечер».
-  const color = (locator) => locator.evaluate((element) => getComputedStyle(element).color);
-  expect(await color(brief.locator("button.linkish").first())).toBe(await color(page.locator("#today-date .today-phase")));
+  // Read both styles in the same frame: a journal update can replace the
+  // brief between two locator evaluations, leaving the first node detached.
+  await expect.poll(() => page.evaluate(() => {
+    const action = document.querySelector("#today-brief button.linkish"), phase = document.querySelector("#today-date .today-phase");
+    return Boolean(action && phase && getComputedStyle(action).color === getComputedStyle(phase).color);
+  })).toBe(true);
 
   // «3 дела» открывает «День», ведёт к полке «просрочено» и подсвечивает строки, которые не закрыты.
   // Подсветка живёт секунду — за ней следит наблюдатель, а не опрос: под нагрузкой опрос её пропускает.

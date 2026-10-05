@@ -85,7 +85,7 @@ function summaryOf(entry) { return entry.classification.summary || ''; }
 function stampOf(entry) { return entry.occurredAt || entry.createdAt; }
 function scheduleOf(entry) { return entry.classification.entities?.schedule || null; }
 // Срок выпадает на день: сама дата или экземпляр повтора.
-function onDate(schedule, date) { return Boolean(schedule?.date) && (schedule.date === date || occursOn(schedule, date)); }
+function onDate(schedule, date) { return Boolean(schedule?.date) && (schedule.repeat ? occursOn(schedule, date) : schedule.date === date); }
 function median(values) { if (!values.length) return null; const sorted = [...values].sort((a, b) => a - b); const middle = Math.floor(sorted.length / 2); return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2; }
 function topCounts(map, limit) { return [...map.values()].sort((a, b) => b.count - a.count).slice(0, limit); }
 function countInto(map, name, key = name.toLowerCase()) { const existing = map.get(key); if (existing) existing.count += 1; else map.set(key, { name, count: 1 }); }

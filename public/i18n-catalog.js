@@ -1,6 +1,7 @@
 // Shared web, server and macOS system phrases. User content is never translated.
 import { adminCatalogs } from './admin-i18n.js';
 import { workshopCatalogs } from './workshop-i18n.js';
+import { tomorrowCatalogs } from './tomorrow-i18n.js';
 
 export const catalogs = {
   "ru": {
@@ -16966,3 +16967,5 @@ export const catalogs = {
 for (const [locale, phrases] of Object.entries(adminCatalogs)) Object.assign(catalogs[locale], phrases);
 
 for (const [locale, phrases] of Object.entries(workshopCatalogs)) Object.assign(catalogs[locale], phrases);
+
+for (const [locale, phrases] of Object.entries(tomorrowCatalogs)) Object.assign(catalogs[locale], phrases);

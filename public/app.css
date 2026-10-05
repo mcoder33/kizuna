@@ -10241,3 +10241,38 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0 0 96px; }
 #review-dialog .card-work-divider:focus-visible::after { height: 3px; background: var(--nt-secondary); }
 #review-dialog .card-work-divider:focus-visible { outline: 2px solid var(--nt-secondary); outline-offset: 0; }
 #review-dialog .card-work-divider[hidden] { display: none; }
+
+/* Tomorrow: the approved quiet word with a small +1, on every task surface. */
+button.todo-tomorrow,
+#review-dialog button.todo-tomorrow {
+  display: inline-flex; align-items: center; justify-content: center; gap: 3px;
+  flex: none; min-height: 30px; padding: 3px 5px; border: 0; border-radius: 5px;
+  background: transparent; box-shadow: none; color: var(--muted);
+  font: 400 10.5px/1.3 var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  letter-spacing: .05px; white-space: nowrap; cursor: pointer;
+}
+button.todo-tomorrow sup { align-self: center; position: relative; top: -4px; font-size: 7px; font-weight: 500; line-height: 1; opacity: .75; }
+button.todo-tomorrow:hover:not(:disabled), #review-dialog button.todo-tomorrow:hover:not(:disabled) { color: var(--ink); background: transparent; }
+button.todo-tomorrow:disabled, #review-dialog button.todo-tomorrow:disabled { opacity: .42; cursor: default; }
+button.todo-tomorrow:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.entry-meta > .todo-tomorrow { margin-left: 5px; }
+.board-meta > .todo-tomorrow { margin-left: auto; }
+#review-dialog .card-chips > .todo-tomorrow { font-size: 12px; min-height: 34px; }
+#review-dialog .card-chips > .todo-tomorrow sup { font-size: 8px; }
+#review-dialog :is(.subtask, .tree-row) > .todo-tomorrow { margin-left: auto; }
+.cal-chip > .todo-tomorrow { margin-left: auto; min-height: 20px; padding: 0 2px; font-size: 9px; }
+.cal-ev.has-tomorrow { padding-right: 58px; }
+.cal-ev.has-tomorrow > .todo-tomorrow { position: absolute; right: 3px; top: 0; min-height: 20px; padding: 0 2px; font-size: 9px; }
+.cal-ev.has-tomorrow > .cal-ev-repeat { right: 58px; }
+.cal-mc .cal-chip > .todo-tomorrow { font-size: 8px; min-height: 18px; }
+.bell-digest-row.deal:has(.todo-tomorrow) { grid-template-columns: 38px 18px minmax(0,1fr) auto; }
+@media (max-width: 640px), (pointer: coarse) {
+  .entry-meta > button.todo-tomorrow, .g-right > button.todo-tomorrow,
+  .board-meta > button.todo-tomorrow, #review-dialog button.todo-tomorrow { min-height: 44px; }
+  #todo .entry.dense:has(.todo-tomorrow) { padding-top: 0; padding-bottom: 0; }
+}
+
+.entry-meta > .quick-due { position: static; transform: none; padding: 0; background: none; box-shadow: none; }
+html[data-appearance="workshop"] #todo .entry.dense .entry-meta:has(.todo-tomorrow) { padding-top: 0; }
+html[data-appearance="workshop"] #todo button.todo-tomorrow { color: var(--ws-scene-secondary); }
+html[data-appearance="workshop"] #todo button.todo-tomorrow:hover:not(:disabled) { color: var(--ws-scene-ink); }
