@@ -665,7 +665,7 @@ async function postponeOne(id, occurrence = null) {
   finally {
     restoreSavers();
     tomorrowPending.delete(id);
-    for (const button of document.querySelectorAll(`[data-tomorrow-id="${CSS.escape(id)}"]`)) button.disabled = button.dataset.alreadyTomorrow === "true";
+    for (const button of document.querySelectorAll(`[data-tomorrow-id="${CSS.escape(id)}"]`)) button.disabled = false;
   }
 }
 // One presentation for rows, boards, calendar blocks and nested task cards.
@@ -673,17 +673,16 @@ function tomorrowAction({ id, title, schedule = null, occurrence = null, done = 
   if (done || !mine) return null;
   const tomorrow = shiftDate(zoneDate(new Date()), 1);
   const date = schedule?.repeat ? occurrence || nextRepeatDate(schedule, zoneDate(new Date())) : schedule?.date;
-  const already = date === tomorrow;
+  if (date === tomorrow) return null;
   const button = node("button", undefined, "todo-tomorrow");
   button.type = "button";
   button.dataset.tomorrowId = id;
-  button.dataset.alreadyTomorrow = String(already);
-  button.disabled = already || tomorrowPending.has(id);
+  button.disabled = tomorrowPending.has(id);
   button.append(bindTranslation(node("span", t("завтра")), "завтра"));
   const plus = node("sup", "+1");
   plus.setAttribute("aria-hidden", "true");
   button.append(plus);
-  const label = already ? t("Уже на завтра") : t("Перенести на {label}", { label: t("завтра") });
+  const label = t("Перенести на {label}", { label: t("завтра") });
   button.title = `${label} · ${calHuman(tomorrow)}${schedule?.time ? ` · ${schedule.time}` : ""}`;
   button.setAttribute("aria-label", `${label}: ${title}`);
   button.addEventListener("pointerdown", event => { if (event.button === 0 && event.isPrimary) event.preventDefault(); });
