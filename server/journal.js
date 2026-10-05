@@ -37,7 +37,7 @@ function isOverdue(entry, today) {
   return entry.classification.primaryType === 'task' && isOpen(entry) && Boolean(schedule?.date) && !schedule.repeat && schedule.date < today;
 }
 // Приходится ли срок на этот день — с учётом повтора.
-const onDate = (schedule, date) => Boolean(schedule?.date) && (schedule.date === date || occursOn(schedule, date));
+const onDate = (schedule, date) => Boolean(schedule?.date) && (schedule.repeat ? occursOn(schedule, date) : schedule.date === date);
 // Ближайший день, когда запись всплывёт: у повтора — следующий экземпляр.
 function dueDate(entry, today) {
   const schedule = scheduleOf(entry);

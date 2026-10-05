@@ -561,7 +561,7 @@ function attachRowSwipe(row, { onRight = null, onLeft = null } = {}) {
   // Название — кнопка во всю строку, поэтому смахивание начинается и на нём;
   // кружок и кнопки срока нажимаются как обычно.
   row.addEventListener("pointerdown", (event) => {
-    if (event.pointerType !== "touch" || event.target.closest(".completion-button, .quick-due, .sub-badge, a, input")) return;
+    if (event.pointerType !== "touch" || event.target.closest(".completion-button, .quick-due, .todo-tomorrow, .sub-badge, a, input")) return;
     drag = { x: event.clientX, y: event.clientY, id: event.pointerId, moving: false, dx: 0 };
   });
   row.addEventListener("pointermove", (event) => {
@@ -606,6 +606,93 @@ function quickDueEl(entry, choices = [[t("сегодня"), 0], [t("завтра
     wrap.append(button);
   }
   return wrap;
+}
+const tomorrowPending = new Set();
+// A cancelled or failed move leaves the editor open. Keep its save callbacks
+// until a successful refresh replaces that exact card content.
+function preserveCardSavers() {
+  const content = $("#review")?.firstElementChild;
+  const body = flushCardBody, props = flushCardProps, title = flushCardTitle;
+  return () => {
+    if (!$("#review-dialog")?.open || $("#review")?.firstElementChild !== content) return;
+    flushCardBody ||= body;
+    flushCardProps ||= props;
+    flushCardTitle ||= title;
+  };
+}
+function tomorrowNotice(message, action = null) {
+  if ($("#review-dialog")?.open) cardSnack(message, action ? [action] : []);
+  else toast(message, action);
+}
+async function refreshAfterPostpone(sourceId, movedId, openId) {
+  await load();
+  await Promise.allSettled([
+    !$("#board")?.hidden ? loadBoard() : null,
+    !$("#calendar")?.hidden ? loadCalendar() : null,
+  ]);
+  if (openId && cardEntryId === openId && $("#review-dialog").open)
+    await renderCardEntry(openId === sourceId ? movedId : openId);
+  if ($("#bell-menu")?.open) renderBellPanel();
+}
+async function postponeOne(id, occurrence = null) {
+  if (tomorrowPending.has(id)) return;
+  const restoreSavers = preserveCardSavers();
+  tomorrowPending.add(id);
+  for (const button of document.querySelectorAll(`[data-tomorrow-id="${CSS.escape(id)}"]`)) button.disabled = true;
+  try {
+    const openId = $("#review-dialog")?.open ? cardEntryId : null;
+    if (openId) await flushCard();
+    const { entry } = await request(`/api/captures/${encodeURIComponent(id)}`);
+    const repeating = Boolean(scheduleOf(entry)?.repeat);
+    if (repeating && !confirm(t("Перенести только этот повтор? На завтра появится отдельное дело. Остальные повторы останутся на своих днях."))) return;
+    const result = await request(`/api/captures/${encodeURIComponent(id)}/postpone`, {
+      method: "POST", body: JSON.stringify({ operationId: crypto.randomUUID(), occurrence: repeating ? occurrence : null }),
+    });
+    await refreshAfterPostpone(id, result.captureId, openId);
+    if (result.unchanged) { tomorrowNotice(t("Уже на завтра")); return; }
+    tomorrowNotice(t("Перенесено на завтра"), { get label() { return t("Вернуть"); }, run: async () => {
+      const currentOpen = $("#review-dialog")?.open ? cardEntryId : null;
+      const restoreUndoSavers = preserveCardSavers();
+      if (currentOpen) await flushCard();
+      try {
+        await request(`/api/captures/${encodeURIComponent(id)}/undo-postpone`, { method: "POST", body: JSON.stringify({ operationId: result.operationId }) });
+        await refreshAfterPostpone(result.captureId, id, currentOpen);
+        tomorrowNotice(t("Перенос отменён"));
+      } catch (error) { tomorrowNotice(error.message); }
+      finally { restoreUndoSavers(); }
+    } });
+  } catch (error) { tomorrowNotice(error.message || t("Не получилось перенести")); }
+  finally {
+    restoreSavers();
+    tomorrowPending.delete(id);
+    for (const button of document.querySelectorAll(`[data-tomorrow-id="${CSS.escape(id)}"]`)) button.disabled = button.dataset.alreadyTomorrow === "true";
+  }
+}
+// One presentation for rows, boards, calendar blocks and nested task cards.
+function tomorrowAction({ id, title, schedule = null, occurrence = null, done = false, mine = true }) {
+  if (done || !mine) return null;
+  const tomorrow = shiftDate(zoneDate(new Date()), 1);
+  const date = schedule?.repeat ? occurrence || nextRepeatDate(schedule, zoneDate(new Date())) : schedule?.date;
+  const already = date === tomorrow;
+  const button = node("button", undefined, "todo-tomorrow");
+  button.type = "button";
+  button.dataset.tomorrowId = id;
+  button.dataset.alreadyTomorrow = String(already);
+  button.disabled = already || tomorrowPending.has(id);
+  button.append(bindTranslation(node("span", t("завтра")), "завтра"));
+  const plus = node("sup", "+1");
+  plus.setAttribute("aria-hidden", "true");
+  button.append(plus);
+  const label = already ? t("Уже на завтра") : t("Перенести на {label}", { label: t("завтра") });
+  button.title = `${label} · ${calHuman(tomorrow)}${schedule?.time ? ` · ${schedule.time}` : ""}`;
+  button.setAttribute("aria-label", `${label}: ${title}`);
+  button.addEventListener("pointerdown", event => { if (event.button === 0 && event.isPrimary) event.preventDefault(); });
+  button.addEventListener("click", event => { event.stopPropagation(); postponeOne(id, occurrence); });
+  return button;
+}
+function entryTomorrow(entry, occurrence = null) {
+  if (!completableProjections(entry).length) return null;
+  return tomorrowAction({ id: entry.id, title: titleOf(entry), schedule: scheduleOf(entry), occurrence, done: isClosed(entry), mine: entry.mine !== false && !entry.foreign });
 }
 // «с вчера», «с 28 сен»: с какого дня дело висит открытым.
 const SHORT_MONTHS = localizedBuiltins(["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]);
@@ -701,9 +788,9 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
   title.addEventListener("click", () => openCard());
   card.append(title);
   // Просроченное не переносят в карточке — оно решается прямо в строке.
-  if (overdue && !c.entities.schedule?.repeat && !completed) card.append(quickDueEl(entry, [[t("сегодня"), 0], [t("завтра"), 1]]));
+  if (overdue && !c.entities.schedule?.repeat && !completed) meta.append(quickDueEl(entry, [[t("сегодня"), 0]]));
   // Дело из запаса берут на сегодня, не открывая карточку.
-  if (takeToday && !completed) card.append(quickDueEl(entry, [[t("на сегодня"), 0]]));
+  if (takeToday && !completed) meta.append(quickDueEl(entry, [[t("на сегодня"), 0]]));
   const subs = subtaskBadge(entry.subtasks, () => openCard({ subtasks: true }));
   if (subs) meta.append(subs);
   const mark = circleOf(entry);
@@ -730,6 +817,8 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
     meta.append(faces);
   }
   if (doneAt != null) meta.append(node("span", hm(doneAt), "tag time"));
+  const tomorrow = entryTomorrow(entry, card.dataset.occurrence || null);
+  if (tomorrow && doneAt == null) meta.append(tomorrow);
   card.append(meta);
   return card;
 }
@@ -861,7 +950,7 @@ function repeatOccursOn(schedule, date) {
   if (rule.freq === "yearly") return target.getUTCDate() === base.getUTCDate() && target.getUTCMonth() === base.getUTCMonth() && (target.getUTCFullYear() - base.getUTCFullYear()) % interval === 0;
   return false;
 }
-function scheduledOn(entry, date) { const schedule = scheduleOf(entry); return Boolean(schedule?.date) && (schedule.date === date || repeatOccursOn(schedule, date)); }
+function scheduledOn(entry, date) { const schedule = scheduleOf(entry); return Boolean(schedule?.date) && (schedule.repeat ? repeatOccursOn(schedule, date) : schedule.date === date); }
 // Ближайший экземпляр повтора не раньше даты — для подписи срока.
 function nextRepeatDate(schedule, from) {
   if (!schedule?.repeat || !schedule.date) return null;
@@ -3976,6 +4065,8 @@ function cardSubtasks(entry, { halo, caption }) {
       arrow.setAttribute("aria-hidden", "true");
       open.append(arrow);
       row.append(check(item, "subtask-check", t("Выполнить")), open);
+      const tomorrow = tomorrowAction({ ...item, occurrence: item.occurrence });
+      if (tomorrow) row.append(tomorrow);
       list.append(row);
     }
   };
@@ -4025,6 +4116,8 @@ function cardSubtasks(entry, { halo, caption }) {
       open.append(title);
       if (branch) open.append(node("small", `${item.leafDone} / ${item.leafTotal}`));
       row.append(fold, status, open);
+      const tomorrow = tomorrowAction({ ...item, occurrence: item.occurrence });
+      if (tomorrow) row.append(tomorrow);
       map.append(row);
       if (expanded) for (let index = item.children.length - 1; index >= 0; index--) stack.push({ item: item.children[index], depth: depth + 1 });
     }
@@ -4466,6 +4559,8 @@ function showReview(entry, review, undoGroupId, provenance) {
     if (!scheduleWrap.hidden) {
       const due = scheduleLabel({ state: "ok", date: date.value || null, time: time.value || null });
       chips.append(chip("schedule", due ? `${due}${time.value && end.value ? `–${end.value}` : ""}` : t("Назначить день"), { quiet: !due, target: date, get label() { return t("Срок"); } }));
+      const tomorrow = tomorrowAction({ id: entry.id, title: titleOf(entry), schedule: { date: date.value || null, time: time.value || null, repeat: repeat.value ? storedRepeat : null }, occurrence: doneState.occurrence, done: doneState.done, mine: doneState.own });
+      if (tomorrow) chips.append(tomorrow);
       if (date.value) {
         const remindText = remind.value === "off" ? t("Без напоминания") : remind.value ? t("Напомнить {value1}", { value1: remind.selectedOptions[0]?.textContent || "" }) : t("Напомнить");
         chips.append(chip("bell", remindText, { quiet: !remind.value, target: remind, get label() { return t("Напомнить"); } }));
@@ -8199,6 +8294,8 @@ function kcDeedBubble(message) {
     kcEl("div", "kc-deed-meta", avatarEl(deed.assigner, { size: "mini" }), deed.assigner?.id === me ? t("вы") : deed.assigner?.name, " → ", avatarEl(deed.assignee, { size: "mini" }), deed.forMe ? t("вам") : deed.assignee?.name, deed.due?.date ? t(" · до {value1}", { value1: kcDue(deed.due) }) : ""),
     kcEl("div", "kc-reacts", kcEl("span", `kc-state ${stateClass}`, stateWord), kcEl("span", "kc-meta", kcClock(message.createdAt))));
   bubble.dataset.id = message.id;
+  const tomorrow = tomorrowAction({ id: deed.captureId, title: deed.title, schedule: deed.due, done: deed.state === "done", mine: deed.assigner?.id === me });
+  if (tomorrow) bubble.append(tomorrow);
   const wrap = kcEl("div", "kc-bb-wrap", bubble);
   if (!(deed.forMe && deed.state === "pending")) return wrap;
   return [wrap, kcEl("div", "kc-kbd-row", kcButton("kc-kbd", t("Беру"), () => kcRespond(deed, true)), kcButton("kc-kbd", t("Не я"), () => kcRespond(deed, false)))];
@@ -9221,6 +9318,8 @@ function boardCardEl(card, { closed = false, draggable = !closed } = {}) {
   const meta = node("div", undefined, "board-meta");
   if (closed) meta.append(node("span", boardClosedWhen(card), "btag due"));
   else meta.append(...boardMetaTags(card));
+  const tomorrow = tomorrowAction({ id: card.captureId, title: card.title, schedule: card.due, occurrence: card.due?.repeat ? card.due.date : null, done: closed });
+  if (tomorrow) meta.append(tomorrow);
   if (meta.childNodes.length) body.append(meta);
   element.append(done, body);
   if (!draggable) return element;
@@ -9247,6 +9346,8 @@ function boardRowEl(card, { closed = false } = {}) {
   const right = node("span", undefined, "g-right");
   if (closed) right.append(node("span", boardClosedWhen(card), "btag due"));
   else right.append(...boardMetaTags(card), ...(card.projects || []).map((name) => node("span", name, "btag project")));
+  const tomorrow = tomorrowAction({ id: card.captureId, title: card.title, schedule: card.due, occurrence: card.due?.repeat ? card.due.date : null, done: closed });
+  if (tomorrow) right.append(tomorrow);
   row.append(boardDoneButton(card, row, closed), boardTitleButton(card, row), right);
   // Следующие строки сетки под названием: родитель подзадачи, полоска с числом.
   if (card.subtask) row.append(boardParentLabel(card));
@@ -10940,6 +11041,8 @@ function calChipEl(item, { overdue = false } = {}) {
     chip.append(box);
   } else if (item.color) chip.style.setProperty("--cal-c", item.color);
   chip.append(node("span", item.title, "cal-chip-title"));
+  const tomorrow = item.kind !== "external" ? tomorrowAction({ id: item.id, title: item.title, schedule: { date: item.date, time: item.time }, occurrence: item.recurring ? item.date : null, done: item.done }) : null;
+  if (tomorrow) chip.append(tomorrow);
   if (item.kind !== "external" && item.recurring) { const repeat = node("i", "⟳", "cal-chip-repeat"); repeat.title = item.repeat || t("Повторяется"); chip.append(repeat); }
   chip.title = item.recurring && item.repeat ? `${item.title} · ${item.repeat}` : item.title;
   chip.addEventListener("click", () => openCalendarItem(item));
@@ -11008,6 +11111,8 @@ function calEventEl(item, place = null) {
   }
   title.append(node("span", `${item.time} `, "cal-ev-time"), document.createTextNode(item.title));
   element.append(title);
+  const tomorrow = item.kind !== "external" ? tomorrowAction({ id: item.id, title: item.title, schedule: { date: item.date, time: item.time }, occurrence: item.recurring ? item.date : null, done: item.done }) : null;
+  if (tomorrow) { element.classList.add("has-tomorrow"); element.append(tomorrow); }
   const sub = item.kind === "external" ? item.calendarName || item.source : [item.project, ...(item.people || [])].filter(Boolean).join(" · ");
   if (sub) element.append(node("small", sub));
   // Повтор — значком в правом верхнем углу, как в Apple.
@@ -12498,6 +12603,8 @@ function digestBody(item) {
       title.type = "button";
       title.addEventListener("click", (event) => { event.stopPropagation(); $("#bell-menu")?.removeAttribute("open"); openCaptureById(entry.id); });
       row.append(node("span", scheduleOf(entry)?.time || "", "bell-digest-time"), tick, title);
+      const tomorrow = entryTomorrow(entry, scheduleOf(entry)?.repeat ? today : null);
+      if (tomorrow) row.append(tomorrow);
       box.append(row);
     }
   }

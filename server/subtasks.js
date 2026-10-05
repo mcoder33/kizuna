@@ -92,6 +92,7 @@ function collect(db, rootIds, userId, { today, onlySubtasks = false }) {
         done: closed || occurrenceDone,
         closed,
         occurrence,
+        schedule: classification.entities?.schedule || null,
         mine: row.user_id === userId,
         // Отметить может автор или тот, кто взял дело; читатель круга — нет.
         canComplete: row.user_id === userId || canCompleteCapture(db, row.id, userId),
