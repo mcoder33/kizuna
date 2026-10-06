@@ -447,7 +447,7 @@ test('Telegram RPC response size and body deadline apply beyond long polling', a
 });
 
 
-test('server search allowlist revokes live while public day/settings remain available',async t=>{
+test('legacy search allowlist changes no longer restrict public search/day/settings',async t=>{
  const ctx=fixture();t.after(()=>ctx.db.close());t.after(()=>{delete process.env.PAGENT_TELEGRAM_DAY_SUMMARY_USER_IDS;});
  process.env.PAGENT_TELEGRAM_DAY_SUMMARY_USER_IDS=ctx.api.user.id;
  await connect(ctx);assert.deepEqual(ctx.fake.said().at(-1).markup.keyboard,[['☀️ Сегодня','🗓 Другой день','Найти'],['⚙️ Настройки сводок']]);
@@ -456,5 +456,6 @@ test('server search allowlist revokes live while public day/settings remain avai
  assert.equal((await ctx.api.put('/api/settings').send({telegramDaySummary:'x'}).expect(400)).body.error.code,'unknown_setting');
  process.env.PAGENT_TELEGRAM_DAY_SUMMARY_USER_IDS=ctx.api.user.id+',*';
  ctx.fake.push({text:'/settings'});await deliver(ctx.app);assert.match(ctx.fake.said().at(-1).text,/Утро: выключено/);
- ctx.fake.push({text:'/find'});await deliver(ctx.app);assert.match(ctx.fake.said().at(-1).text,/Поиск пока недоступен/);assert.equal(ctx.fake.said().at(-1).markup.keyboard.flat().includes('Найти'),false);
+ ctx.fake.push({text:'/find'});await deliver(ctx.app);assert.match(ctx.fake.said().at(-1).text,/Что найти/);assert.ok(ctx.fake.said().at(-1).markup.keyboard.flat().includes('Найти'));
+ const before=count(ctx.db,'captures');ctx.fake.push({text:'Несуществующая тема'});await deliver(ctx.app);assert.match(ctx.fake.said().at(-1).text,/Найдено: 0/);assert.equal(count(ctx.db,'captures'),before);
 });
