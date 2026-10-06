@@ -95,21 +95,24 @@ function aiAppFixture(t,{planner,limit=null,aiAdmissionOptions={}}={}) {
   for(const [id,telegram] of [[owner,100],[other,200]])db.prepare('INSERT INTO telegram_links(user_id,telegram_id,chat_id,linked_at,app_url) VALUES(?,?,?,?,?)').run(id,telegram,telegram,'2026-10-03T00:00:00Z','https://fixture.invalid/');
   const message=(text,telegram=100,extra={})=>({message_id:messageId++,from:{id:telegram},chat:{id:telegram,type:'private'},text,...extra});
   const deliver=async message=>{updates.push({update_id:updateId++,message});await app.telegram.pollOnce();};
+  const deliverCallback=async(data,telegram=100)=>{updates.push({update_id:updateId++,callback_query:{id:`page-ai-${updateId}`,from:{id:telegram},message:{chat:{id:telegram,type:'private'}},data}});await app.telegram.pollOnce();};
   const add=()=>{const id=crypto.randomUUID(),interpretation=crypto.randomUUID();db.prepare('INSERT INTO captures(id,raw,created_at,occurred_at,user_id) VALUES(?,?,?,?,?)').run(id,'Нейтральная запись','2026-10-02T12:00:00Z','2026-10-02T12:00:00Z',owner);db.prepare('INSERT INTO interpretations VALUES(?,?,?,?,?,?,?,?,?,NULL)').run(interpretation,id,1,'active','manual',null,JSON.stringify({primaryType:'task',summary:'Нейтральная запись',entities:{projects:['ВойсОпс']}}),'{}','2026-10-02T12:00:00Z');return id;};
   t.after(async()=>{await Promise.allSettled([app.telegram.stop(),app.captureJobWorker.stop(),app.calendarSyncWorker.stop(),app.reminderWorker.stop()]);app.closeEventStreams();db.close();fs.rmSync(directory,{recursive:true,force:true});for(const key of keys){if(old[key]===undefined)delete process.env[key];else process.env[key]=old[key];}});
-  return {app,db,owner,other,message,deliver,updates,sent,calls,add};
+  return {app,db,owner,other,message,deliver,deliverCallback,updates,sent,calls,add};
 }
 
-test('actual app search invokes configured AI once, charges usage, keeps pages/replay model-free and denies other users',async t=>{
+test('actual app search serves every active user, scopes results/usage and keeps pages/replay model-free',async t=>{
   const f=aiAppFixture(t);for(let index=0;index<9;index++)f.add();
   await f.deliver(f.message('/find'));const query=f.message('Можешь собрать мне всё касающееся войс опса?');await f.deliver(query);
   assert.equal(f.calls.length,1);assert.equal(f.calls[0][2],'gemini');assert.match(f.sent.at(-1).text,/Найдено: 9/);
   assert.equal(JSON.stringify(f.calls[0][1]).includes('Нейтральная'),false);assert.equal(JSON.stringify(f.calls[0][1]).includes(f.owner),false);
   const page=f.sent.at(-1).reply_markup.inline_keyboard.at(-1)[0].callback_data;
-  f.updates.push({update_id:999,callback_query:{id:'page-ai',from:{id:100},message:{chat:{id:100,type:'private'}},data:page}});await f.app.telegram.pollOnce();assert.equal(f.calls.length,1);
+  await f.deliverCallback(page,200);assert.equal(f.calls.length,1);assert.doesNotMatch(f.sent.at(-1).text,/Найдено:|Нейтральная запись/,'another user cannot replay the owner page');
+  await f.deliverCallback(page);assert.equal(f.calls.length,1);assert.match(f.sent.at(-1).text,/Найдено: 9/);
   await f.deliver(query);assert.equal(f.calls.length,1);
-  await f.deliver(f.message('/find',200));assert.equal(f.calls.length,1);
-  const usage=f.db.prepare("SELECT * FROM usage_events WHERE kind='planSearch'").all();assert.equal(usage.length,1);assert.equal(usage[0].provider,'gemini');assert.equal(usage[0].input_tokens,9);assert.equal(usage[0].output_tokens,5);assert.equal(usage[0].user_id,f.owner);
+  await f.deliver(f.message('/find',200));assert.match(f.sent.at(-1).text,/Что найти/);assert.equal(f.calls.length,1);
+  await f.deliver(f.message('войсопс',200));assert.equal(f.calls.length,2);assert.match(f.sent.at(-1).text,/Найдено: 0/);
+  const usage=f.db.prepare("SELECT * FROM usage_events WHERE kind='planSearch'").all();assert.equal(usage.length,2);assert.equal(usage[0].provider,'gemini');assert.equal(usage[0].input_tokens,9);assert.equal(usage[0].output_tokens,5);assert.equal(usage[0].user_id,f.owner);assert.equal(usage[1].user_id,f.other);
 });
 
 test('actual app accounts for paid planner failure and monthly budget prevents another paid operation',async t=>{
@@ -135,12 +138,12 @@ test('actual app admission rejects a second paid search and cancellation aborts 
   assert.equal(f.db.prepare("SELECT COUNT(*) n FROM usage_events WHERE kind='planSearch'").get().n,1);
 });
 
-test('actual app discards a late AI result after owner restriction is revoked',async t=>{
+test('actual app discards a late AI result after the user is blocked',async t=>{
   let resolve;
   const f=aiAppFixture(t,{planner:async()=>new Promise(done=>{resolve=done;})});f.add();
   await f.deliver(f.message('/find'));const before=f.sent.length;
   const query=f.message('войсопс'),pending=f.app.telegram.menuRouter.routeMessage(query,{update:{message:query}});
-  await new Promise(done=>setImmediate(done));process.env.PAGENT_TELEGRAM_TASK_SEARCH_USER_IDS='';
+  await new Promise(done=>setImmediate(done));f.db.prepare("UPDATE users SET status='blocked' WHERE id=?").run(f.owner);
   resolve({plan:basePlanForIntegration([['войсопс']]),usedProvider:'gemini'});await pending;
   assert.equal(f.sent.length,before);assert.equal(f.db.prepare('SELECT COUNT(*) n FROM entry_search_traces').get().n,0);
 });
