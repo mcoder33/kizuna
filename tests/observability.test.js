@@ -82,6 +82,20 @@ test('logging sink failures cannot break capture, and handler failures retain sa
   assert.equal(app.database.prepare('SELECT COUNT(*) n FROM captures').get().n,1);
 });
 
+test('client error diagnostics retain only fixed codes and omit messages, URLs and stacks', async t => {
+  const { api, events } = await fixture(t);
+  const codes = ['resize_observer_loop','resource_load','javascript_error','unhandled_rejection'];
+  await api.post('/api/telemetry').send({events: codes.map(errorCode => ({
+    event: errorCode === 'unhandled_rejection' ? 'client_rejection' : 'client_error',
+    errorCode, errorName:'UnknownError', line:0, column:0,
+    message:'PRIVATE', filename:'https://PRIVATE', stackFrames:['PRIVATE'],
+  })).concat({event:'client_error',errorCode:'PRIVATE',errorName:'PRIVATE'})}).expect(202);
+  const errors = events.filter(e => ['client_error','client_rejection'].includes(e.event));
+  assert.deepEqual(errors.slice(0,4).map(e => e.errorCode), codes);
+  assert.equal(errors[4].errorCode, undefined);
+  assert.equal(JSON.stringify(errors).includes('PRIVATE'), false);
+});
+
 test('slow SQLite operations and runtime queue health are visible without query text or bindings', async t => {
   const directory=await fs.mkdtemp(path.join(os.tmpdir(),'kizuna-metrics-'));
   const db=openDatabase(path.join(directory,'app.sqlite')); const events=[],audit=contextualAudit(e=>events.push(e));

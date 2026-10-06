@@ -12,6 +12,7 @@ const allowedTags = {
   state: new Set(['pending','running','succeeded','failed','cancelled']),
   method: new Set(['GET','POST','PUT','PATCH','DELETE']),
   errorName: new Set(['Error','TypeError','ReferenceError','SyntaxError','RangeError','AbortError','NetworkError','UnknownError']),
+  errorCode: new Set(['resize_observer_loop','resource_load','javascript_error','unhandled_rejection']),
   reason: new Set(['network','http','aborted','invalid_response','login','account_changed','unconfirmed','other']),
 };
 const allowedNumbers = new Set(['seq','durationMs','totalMs','inputChars','inputCount','pasteCount','editCount','statusCode','line','column','count','longTaskMs','lcpMs','navigationMs','interactionMs']);

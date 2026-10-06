@@ -96,9 +96,15 @@
   window.addEventListener('hashchange', () => { emit('navigation'); flush(); });
   window.addEventListener('online', flush);
   window.addEventListener('error', event => {
-    emit('client_error', { errorName: event.error?.name || 'UnknownError', line: event.lineno || 0, column: event.colno || 0, reason: 'other' }); flush();
+    // Fixed codes keep browser-generated errors diagnosable without copying
+    // messages, URLs or stacks that may contain private text or credentials.
+    const resizeLoop = event.message === 'ResizeObserver loop completed with undelivered notifications.' || event.message === 'ResizeObserver loop limit exceeded';
+    const resource = event.target instanceof Element;
+    emit('client_error', { errorName: event.error?.name || 'UnknownError',
+      errorCode: resizeLoop ? 'resize_observer_loop' : resource ? 'resource_load' : 'javascript_error',
+      line: event.lineno || 0, column: event.colno || 0, reason: 'other' }); flush();
   }, true);
-  window.addEventListener('unhandledrejection', event => { emit('client_rejection', { errorName: event.reason?.name || 'UnknownError' }); flush(); });
+  window.addEventListener('unhandledrejection', event => { emit('client_rejection', { errorName: event.reason?.name || 'UnknownError', errorCode: 'unhandled_rejection' }); flush(); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush(); });
   window.addEventListener('pagehide', () => {
     abandon();

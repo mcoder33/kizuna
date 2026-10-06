@@ -1,6 +1,7 @@
 import { listPendingDrafts, readPendingDraft } from "./legacy-draft-recovery.bundle.js";
 import { uiStorage, receiveUiPreferences, refreshUiPreferences, startUiPreferenceSync } from "./ui-preferences.js";
 import { safeExternalUrl } from "./safe-url.js";
+import { frameResizeObserver } from "./frame-resize-observer.js";
 import { mountLanguageControls, syncLanguageControls } from "./language-control.js";
 import { normalizeTimeZone } from "./time-zone.js";
 import { getTimeZone, getDetectedTimeZone, initTimeZone, setTimeZone, announceTimeZoneSaved } from "./browser-time-zone.js";
@@ -3198,10 +3199,12 @@ function cardDiscussion(entry) {
   // содержимому от этого не должно вздрагивать, поэтому место под пузырь
   // остаётся в запасе, пока разговор развёрнут.
   let peekRoom = 0;
-  cardTalkBaseObserver = new ResizeObserver(() => {
+  cardTalkBaseObserver = frameResizeObserver(() => {
+    if (!base.isConnected) return;
     const open = dialog.classList.contains("talk-open");
     if (!open && getComputedStyle(peek).display !== "none") peekRoom = peek.offsetHeight + 10;
-    dialog.style.setProperty("--talk-base", `${Math.ceil(base.offsetHeight + (open ? peekRoom : 0))}px`);
+    const size = `${Math.ceil(base.offsetHeight + (open ? peekRoom : 0))}px`;
+    if (dialog.style.getPropertyValue("--talk-base") !== size) dialog.style.setProperty("--talk-base", size);
   });
   cardTalkBaseObserver.observe(base);
   paint();
@@ -3882,7 +3885,8 @@ function cardWorkArea(body, steps) {
     const dock = dialog.querySelector(".talk-dock");
     const talk = dock && getComputedStyle(dock).display !== "none" ? (dialog.classList.contains("talk-open") ? dock.getBoundingClientRect().height : parseFloat(getComputedStyle(dialog).getPropertyValue("--talk-base")) || 60) : 0;
     height = Math.max(174, Math.floor(budget - $("#review-top").getBoundingClientRect().height - occupied - (parseFloat(style.paddingTop) || 0) - (parseFloat(style.paddingBottom) || 0) - talk - 2));
-    workspace.style.height = `${height}px`;
+    const size = `${height}px`;
+    if (workspace.style.height !== size) workspace.style.height = size;
     apply();
   };
   const persist = () => uiStorage.setItem(CARD_NOTE_SHARE_KEY, String(Math.round(ratio)));
@@ -3918,7 +3922,7 @@ function cardWorkArea(body, steps) {
     divider.addEventListener("pointerup", stop);
     divider.addEventListener("pointercancel", stop);
   });
-  const resize = new ResizeObserver(paint);
+  const resize = frameResizeObserver(paint);
   const visibility = new MutationObserver(paint);
   visibility.observe(steps, { attributes: true, attributeFilter: ["hidden", "data-has-children"] });
   const onResize = () => paint();
