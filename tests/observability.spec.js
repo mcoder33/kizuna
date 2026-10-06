@@ -43,10 +43,27 @@ test('runtime errors omit messages and an offline event flood remains bounded', 
   const logs=await telemetry(page,{mock:true});
   await page.evaluate(()=>window.dispatchEvent(new ErrorEvent('error',{error:new TypeError('PRIVATE_ERROR_MESSAGE'),message:'PRIVATE_ERROR_MESSAGE',lineno:17,colno:3})));
   await logs.flush();expect(logs.events().some(event=>event.event==='client_error'&&event.errorName==='TypeError'&&event.line===17)).toBe(true);
+  expect(logs.events().find(event=>event.event==='client_error'&&event.line===17).errorCode).toBe('javascript_error');
   expect(JSON.stringify(logs.events())).not.toContain('PRIVATE_ERROR_MESSAGE');
   await context.setOffline(true);
   await page.evaluate(()=>{for(let n=0;n<300;n++)window.KizunaTelemetry.emit('ui_action',{action:'open',count:n});});
   await context.setOffline(false);
   await expect.poll(async()=>{await logs.flush();return logs.events().some(event=>event.event==='telemetry_dropped'&&event.count>=220);}).toBe(true);
   expect(logs.batches.every(batch=>batch.length<=40)).toBe(true);
+});
+
+test('browser diagnostics distinguish resize delivery, resource loads and promise rejections without private text', async ({ page }) => {
+  const logs=await telemetry(page,{mock:true});
+  await page.evaluate(()=>{
+    window.dispatchEvent(new ErrorEvent('error',{message:'ResizeObserver loop completed with undelivered notifications.'}));
+    window.dispatchEvent(new ErrorEvent('error',{message:'ResizeObserver loop limit exceeded'}));
+    const image=document.createElement('img');
+    image.src='/public/private-missing-image.png?PRIVATE_TOKEN';
+    document.body.append(image);
+    window.dispatchEvent(new PromiseRejectionEvent('unhandledrejection',{promise:Promise.resolve(),reason:new Error('PRIVATE_REJECTION')}));
+  });
+  await expect.poll(async()=>{await logs.flush();return logs.events().filter(event=>event.event==='client_error'&&event.errorCode==='resource_load').length;}).toBe(1);
+  expect(logs.events().filter(event=>event.event==='client_error'&&event.errorCode==='resize_observer_loop')).toHaveLength(2);
+  expect(logs.events().some(event=>event.event==='client_rejection'&&event.errorCode==='unhandled_rejection')).toBe(true);
+  expect(JSON.stringify(logs.events())).not.toContain('PRIVATE');
 });
