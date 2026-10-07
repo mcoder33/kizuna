@@ -17,7 +17,7 @@ test.beforeEach(async ({request})=>{
   expect((await request.post('/api/reset',{data:{confirmation:'СБРОСИТЬ КИЗУНА'}})).ok()).toBe(true);
 });
 
-test('01 in the day: move, undo, no duplicate late action, already tomorrow is disabled',async({page,request})=>{
+test('01 in the day: move, undo, no duplicate late action, already tomorrow has no move action',async({page,request})=>{
   const entry=await task(request,'Раздать всем карты и подписки',{date:day(-1),time:'11:00'});
   await openDay(page);
   const row=page.locator(`#todo .entry[data-capture-id="${entry.id}"]`);
@@ -32,7 +32,8 @@ test('01 in the day: move, undo, no duplicate late action, already tomorrow is d
   await row.locator('.todo-tomorrow').click();
   await expect(row).toHaveCount(0);
   await page.locator('#todo .daynav [data-step="1"]').click();
-  await expect(row.locator('.todo-tomorrow')).toBeDisabled();
+  await expect(row).toBeVisible();
+  await expect(row.locator('.todo-tomorrow')).toHaveCount(0);
 });
 
 test('card move saves the current note first and undo works inside the dialog',async({page,request})=>{
@@ -42,7 +43,7 @@ test('card move saves the current note first and undo works inside the dialog',a
   await dialog.locator('#card-body-editor').fill('Незавершённый ввод перед переносом');
   await dialog.locator('.card-chips .todo-tomorrow').click();
   await expect(dialog.locator('.card-snack')).toContainText('Перенесено на завтра');
-  await expect(dialog.locator('.card-chips .todo-tomorrow')).toBeDisabled();
+  await expect(dialog.locator('.card-chips .todo-tomorrow')).toHaveCount(0);
   expect((await read(request,entry.id)).note.body).toBe('Незавершённый ввод перед переносом');
   await dialog.locator('.card-snack-act').click();
   await expect.poll(async()=>schedule(request,entry.id)).toMatchObject({date:day(0)});
@@ -59,7 +60,8 @@ test('board columns, list and search keep the same action',async({page,request})
     const row=page.locator(`${view==='board'?'#board-columns .board-card':'#board-flat .board-row'}[data-capture-id="${entry.id}"]`);
     await row.locator('.todo-tomorrow').click();
     await expect.poll(async()=>schedule(request,entry.id)).toMatchObject({date:day(1)});
-    await expect(row.locator('.todo-tomorrow')).toBeDisabled();
+    await expect(row).toBeVisible();
+    await expect(row.locator('.todo-tomorrow')).toHaveCount(0);
     await page.locator('#toast .toast-action').click();
     await expect.poll(async()=>schedule(request,entry.id)).toMatchObject({date:day(0)});
   }
@@ -76,7 +78,8 @@ test('subtask list and map move only the selected child and refresh in place',as
     await row.locator('.todo-tomorrow').click();
     await expect.poll(async()=>schedule(request,child.id)).toMatchObject({date:day(1)});
     expect((await schedule(request,parent.id)).date).toBe(day(0));
-    await expect(row.locator('.todo-tomorrow')).toBeDisabled();
+    await expect(row).toBeVisible();
+    await expect(row.locator('.todo-tomorrow')).toHaveCount(0);
     await dialog.locator('.card-snack-act').click();
     await expect(row.locator('.todo-tomorrow')).toBeEnabled();
   }
@@ -106,11 +109,14 @@ test('recurring task moves one occurrence and keeps tomorrow regular instance',a
   expect((await schedule(request,entry.id)).skip).toContain(day(0));
   await expect(page.locator(`#todo .entry[data-capture-id="${entry.id}"]`)).toHaveCount(0);
   await page.locator('#todo .daynav [data-step="1"]').click();
-  await expect(page.locator('#todo .entry').filter({hasText:'Нужно повторить проверку'})).toHaveCount(2);
+  const tomorrowRows=page.locator('#todo .entry').filter({hasText:'Нужно повторить проверку'});
+  await expect(tomorrowRows).toHaveCount(2);
+  await expect(tomorrowRows.locator('.todo-tomorrow')).toHaveCount(0);
 });
 
 test('01 fits mobile day, task card and both themes',async({page,request})=>{
   const entry=await task(request,'Допинываем карусель с генератором фраз и проверяем длинное название');
+  const tomorrowEntry=await task(request,'Отремонтировать зеркало',{date:day(1)});
   await page.setViewportSize({width:390,height:844});
   const appearances=process.env.PAGENT_WORKSHOP_MODE==='all'?['classic','workshop']:['classic'];
   for(const appearance of appearances) for(const theme of ['light','dark']) {
@@ -124,6 +130,12 @@ test('01 fits mobile day, task card and both themes',async({page,request})=>{
     await expect(page.locator('#review-dialog .card-chips .todo-tomorrow')).toBeVisible();
     expect(await page.locator('#review-dialog').evaluate(e=>e.scrollWidth-e.clientWidth)).toBeLessThanOrEqual(1);
     await page.locator('#review-close').click();
+    await page.locator('#todo .daynav [data-step="1"]').click();
+    const tomorrowRow=page.locator(`#todo .entry[data-capture-id="${tomorrowEntry.id}"]`);
+    await expect(tomorrowRow).toBeVisible();
+    await expect(tomorrowRow.locator('.tag.due')).toHaveText('завтра');
+    await expect(tomorrowRow.locator('.todo-tomorrow')).toHaveCount(0);
+    expect(await tomorrowRow.evaluate(e=>e.scrollWidth-e.clientWidth)).toBeLessThanOrEqual(1);
   }
 });
 
