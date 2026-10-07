@@ -54,21 +54,22 @@ export function doneView(db, { userId, from, to, now = new Date(), timeZone = 'E
   // Закрытая подзадача отдельной строкой не стоит: она входит в счёт родителя («1/2»).
   for (const entry of loadEntries(db, userId, { subtasks: false })) {
     const title = entry.classification.summary || '';
+    const priority = entry.classification.priority || null;
     const meeting = entry.classification.primaryType === 'meeting_event';
     if (entry.closed && entry.closedAt) {
       const at = new Date(entry.closedAt);
       const date = dateInZone(at, timeZone);
-      if (inRange(date)) items.push({ id: entry.id, title, date, time: timeInZone(at, timeZone), kind: meeting ? 'meeting' : 'todo', column: meeting ? MEETINGS_COLUMN : columnOf(entry.id), auto: false, projectionId: entry.projectionId });
+      if (inRange(date)) items.push({ id: entry.id, title, priority, date, time: timeInZone(at, timeZone), kind: meeting ? 'meeting' : 'todo', column: meeting ? MEETINGS_COLUMN : columnOf(entry.id), auto: false, projectionId: entry.projectionId });
     } else if (entry.classification.completed === true && !entry.hasCompletable) {
       // Старый отчёт о сделанном: без проекции-дела, его день — occurred_at.
       const at = new Date(entry.occurredAt || entry.createdAt);
       const date = dateInZone(at, timeZone);
-      if (inRange(date)) items.push({ id: entry.id, title, date, time: timeInZone(at, timeZone), kind: 'todo', column: OTHER_COLUMN, auto: false, legacy: true });
+      if (inRange(date)) items.push({ id: entry.id, title, priority, date, time: timeInZone(at, timeZone), kind: 'todo', column: OTHER_COLUMN, auto: false, legacy: true });
     }
     // Экземпляр повтора, закрытый кружком, — сделанное в тот день; сама запись открыта.
     for (const item of entry.occurrences) {
       const at = new Date(item.completedAt), date = dateInZone(at, timeZone);
-      if (inRange(date)) items.push({ id: entry.id, title, date, time: timeInZone(at, timeZone), kind: 'todo', column: columnOf(entry.id), auto: false, projectionId: entry.projectionId, occurrence: item.date });
+      if (inRange(date)) items.push({ id: entry.id, title, priority, date, time: timeInZone(at, timeZone), kind: 'todo', column: columnOf(entry.id), auto: false, projectionId: entry.projectionId, occurrence: item.date });
     }
   }
   // У закрытого дела с подзадачами — их счёт; у встреч из календаря и старых отчётов их нет.

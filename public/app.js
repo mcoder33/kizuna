@@ -2,6 +2,7 @@ import { listPendingDrafts, readPendingDraft } from "./legacy-draft-recovery.bun
 import { uiStorage, receiveUiPreferences, refreshUiPreferences, startUiPreferenceSync } from "./ui-preferences.js";
 import { safeExternalUrl } from "./safe-url.js";
 import { frameResizeObserver } from "./frame-resize-observer.js";
+import { importanceOf, importanceMark, importancePicker } from "./importance.js";
 import { mountLanguageControls, syncLanguageControls } from "./language-control.js";
 import { normalizeTimeZone } from "./time-zone.js";
 import { getTimeZone, getDetectedTimeZone, initTimeZone, setTimeZone, announceTimeZoneSaved } from "./browser-time-zone.js";
@@ -79,7 +80,7 @@ async function requestResponse(url, options = {}) {
       ...(options.headers || {}),
     },
     isCorrection = /^\/api\/captures\/[0-9a-f-]{36}\/corrections$/i.test(url),
-    cacheKey = isCorrection ? `${url}\n${options.body || ""}` : null;
+    cacheKey = isCorrection ? `${url}\n${headers["Idempotency-Key"] || ""}\n${options.body || ""}` : null;
   if (cacheKey && correctionResponses.has(cacheKey))
     return correctionResponses.get(cacheKey);
   if (isCorrection && !headers["Idempotency-Key"])
@@ -695,6 +696,22 @@ function entryTomorrow(entry, occurrence = null) {
   if (!completableProjections(entry).length) return null;
   return tomorrowAction({ id: entry.id, title: titleOf(entry), schedule: scheduleOf(entry), occurrence, done: isClosed(entry), mine: entry.mine !== false && !entry.foreign });
 }
+function describeImportance(element, value) {
+  const label = t("Важность: {value}", { value: t(importanceOf(value).label) });
+  element.setAttribute("aria-description", label);
+  element.querySelector(".importance-mark")?.setAttribute("title", label);
+}
+function decorateImportance(element, value) {
+  if (importanceOf(value).value === "normal") return;
+  element.prepend(importanceMark(value));
+  describeImportance(element, value);
+}
+function decorateEntryTitle(title, value) {
+  const text = node("span", undefined, "entry-title-text");
+  text.append(...title.childNodes);
+  title.append(importanceMark(value), text);
+  describeImportance(title, value);
+}
 // «с вчера», «с 28 сен»: с какого дня дело висит открытым.
 const SHORT_MONTHS = localizedBuiltins(["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]);
 function sinceLabel(date) {
@@ -738,7 +755,7 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
     card = node(
       "div",
       undefined,
-      `entry dense${projections.length ? " completable" : ""}${completed ? " completed" : ""}${overdue ? " overdue" : ""}${projections.length && !completed && !overdue ? " waiting" : ""}`,
+      `entry dense importance-row${projections.length ? " completable" : ""}${completed ? " completed" : ""}${overdue ? " overdue" : ""}${projections.length && !completed && !overdue ? " waiting" : ""}`,
     ),
     meta = node("div", undefined, "entry-meta");
   card.dataset.captureId = entry.id;
@@ -773,6 +790,7 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
   }
   const title = markdownNode("button", c.summary, "entry-title", { inline: true, links: false, firstLine: true });
   title.type = "button";
+  decorateEntryTitle(title, c.priority);
   // subtasks — открыть на разделе «Подзадачи»: по метке «0/2» у названия.
   const openCard = ({ subtasks = false } = {}) => {
     // Карточка вытекает из той записи, по которой щёлкнули.
@@ -807,7 +825,6 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
   if (overdue && !completed) meta.append(node("span", sinceLabel(c.entities.schedule?.date), "tag due late"));
   else if (repeats && !completed) meta.append(node("span", atTime || dueToday ? repeats : due, "tag due"));
   else if (due && !atTime && !dueToday && !doneAt) meta.append(node("span", due, "tag due"));
-  if (c.priority === "high") meta.append(bindTranslation(node("span", t("важно"), "tag urgent"), "важно"));
   // Скрепка с числом: по списку видно, что к записи что-то приложено.
   if (entry.attachments?.length) meta.append(node("span", `📎 ${entry.attachments.length}`, "tag files"));
   // Люди из записи — кружками с первой буквой имени.
@@ -819,7 +836,7 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
   }
   if (doneAt != null) meta.append(node("span", hm(doneAt), "tag time"));
   const tomorrow = entryTomorrow(entry, card.dataset.occurrence || null);
-  if (tomorrow && doneAt == null) meta.append(tomorrow);
+  if (tomorrow && doneAt == null) { card.classList.add("has-tomorrow"); card.append(tomorrow); }
   card.append(meta);
   return card;
 }
@@ -1908,6 +1925,8 @@ function doneItemRow(item) {
     row.append(mark);
   }
   const title = markdownNode("button", item.title, "entry-title", { inline: true, links: false, firstLine: true });
+  row.classList.add("importance-row");
+  decorateEntryTitle(title, item.priority);
   title.type = "button";
   title.addEventListener("click", () => openCaptureById(item.id));
   const meta = node("div", undefined, "entry-meta");
@@ -3790,7 +3809,7 @@ function cardTickButton(entry, state) {
   button.setAttribute("aria-pressed", String(state.done));
   button.classList.toggle("is-done", state.done);
   button.classList.toggle("meeting", state.meeting);
-  button.classList.toggle("important", !state.done && !state.meeting && state.c.priority === "high");
+  button.classList.toggle("important", !state.done && !state.meeting && ["high", "highest"].includes(state.c.priority));
   button.classList.toggle("late", !state.done && isOverdue(entry, state.today));
   button.innerHTML = CARD_TICK_ICON + (state.meeting ? CARD_CLOCK_ICON : "");
   if (state.schedule?.repeat) {
@@ -4366,6 +4385,18 @@ function showReview(entry, review, undoGroupId, provenance) {
   titleCopy.append(cardTitle, caption);
   head.append(titleCopy);
   area.append(head);
+  const importance = importancePicker(c.priority, { t, readOnly: entry.mine === false, onChange: async value => {
+    try {
+      await flushCard();
+      const result = await request(`/api/captures/${entry.id}/corrections`, {
+        method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ patch: { priority: value } }),
+      });
+      c.priority = result.entry.interpretation.classification.priority;
+      head.querySelector(".card-tick")?.classList.toggle("important", !doneState.done && !doneState.meeting && ["high", "highest"].includes(c.priority));
+      await load().catch(error => toast(error.message));
+      refreshOtherViews();
+    } catch (error) { toast(error.message); throw error; }
+  } });
   if (hasTick && doneState.done) area.append(cardDoneBlock(entry, doneState));
   // Свойства одним взглядом: срок, напоминание, люди — чипами под названием.
   // Чип открывает панель «Параметры» на своём поле; рисуются ниже, когда
@@ -4587,6 +4618,7 @@ function showReview(entry, review, undoGroupId, provenance) {
   };
   const paintChips = () => {
     clear(chips);
+    chips.append(importance);
     if (!scheduleWrap.hidden) {
       const due = scheduleLabel({ state: "ok", date: date.value || null, time: time.value || null });
       chips.append(chip("schedule", due ? `${due}${time.value && end.value ? `–${end.value}` : ""}` : t("Назначить день"), { quiet: !due, target: date, get label() { return t("Срок"); } }));
@@ -9241,6 +9273,7 @@ function openBoardCard(card, element, { subtasks = false } = {}) {
 // Название — кнопка: открывает карточку записи.
 function boardTitleButton(card, element) {
   const title = node("button", card.title.split("\n")[0], "board-title");
+  decorateImportance(title, card.priority);
   title.type = "button";
   title.addEventListener("click", () => openBoardCard(card, element));
   return title;
@@ -10665,6 +10698,7 @@ async function reopenDoneItem(item, button) {
 function doneRowEl(item) {
   const row = node("div", undefined, `entry dense completed${item.auto ? " auto-done" : ""}`);
   const old = Boolean(item.legacy);
+  if (!item.auto) row.classList.add("importance-row");
   if (!item.auto) row.dataset.captureId = item.id;
   const mark = node(item.auto || old ? "span" : "button", undefined, `completion-button${item.auto ? " auto" : old ? " static" : ""}`);
   mark.setAttribute("aria-pressed", "true");
@@ -10685,6 +10719,7 @@ function doneRowEl(item) {
   if (item.auto) row.append(node("span", item.title, "entry-title"));
   else {
     const title = node("button", item.title, "entry-title");
+    decorateEntryTitle(title, item.priority);
     title.type = "button";
     title.addEventListener("click", () => openItem());
     row.append(title);
@@ -11071,7 +11106,9 @@ function calChipEl(item, { overdue = false } = {}) {
     if (item.kind === "meeting" && !item.done) box.innerHTML = BOARD_CLOCK;
     chip.append(box);
   } else if (item.color) chip.style.setProperty("--cal-c", item.color);
-  chip.append(node("span", item.title, "cal-chip-title"));
+  const title = node("span", item.title, "cal-chip-title");
+  decorateImportance(title, item.priority);
+  chip.append(title);
   const tomorrow = item.kind !== "external" ? tomorrowAction({ id: item.id, title: item.title, schedule: { date: item.date, time: item.time }, occurrence: item.recurring ? item.date : null, done: item.done }) : null;
   if (tomorrow) chip.append(tomorrow);
   if (item.kind !== "external" && item.recurring) { const repeat = node("i", "⟳", "cal-chip-repeat"); repeat.title = item.repeat || t("Повторяется"); chip.append(repeat); }
@@ -11141,6 +11178,7 @@ function calEventEl(item, place = null) {
     title.append(box);
   }
   title.append(node("span", `${item.time} `, "cal-ev-time"), document.createTextNode(item.title));
+  decorateImportance(title, item.priority);
   element.append(title);
   const tomorrow = item.kind !== "external" ? tomorrowAction({ id: item.id, title: item.title, schedule: { date: item.date, time: item.time }, occurrence: item.recurring ? item.date : null, done: item.done }) : null;
   if (tomorrow) { element.classList.add("has-tomorrow"); element.append(tomorrow); }
@@ -11299,6 +11337,7 @@ function calAgendaEl(date) {
     const row = node("div", undefined, `cal-row ${item.kind}${item.done ? " done" : ""}${waiting ? " unanswered" : ""}`);
     row.append(node("time", item.time));
     const text = node("span", item.title, "cal-row-title");
+    decorateImportance(text, item.priority);
     const meta = node("small", item.kind === "external" ? `${item.source}${waiting ? t(" · без ответа") : ""}` : t("до {value1}{value2}", { value1: calEndOf(item), value2: item.project ? ` · ${item.project}` : "" }));
     const body = node("span", undefined, "cal-row-body");
     body.append(text, meta);
@@ -11483,6 +11522,7 @@ function showExternalEvent(item) {
   // ── заголовок и календарь ──
   const head = popSection("pop-head");
   const title = node("b", item.title, "cal-pop-title");
+  decorateImportance(title, item.priority);
   head.append(title);
   const account = calState.data?.accounts?.find((candidate) => candidate.id === item.accountId);
   const writable = (account?.calendars || []).filter((calendar) => calendar.writable);

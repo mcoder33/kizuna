@@ -84,7 +84,7 @@ export function journalOverview(db, { userId = null, now = new Date(), timeZone 
     types.set(primaryType, (types.get(primaryType) || 0) + 1);
     if (isOpen(entry)) open += 1;
     if (entry.closed || classification.completed) done += 1;
-    if (classification.priority === 'high' && isOpen(entry)) high += 1;
+    if (['high', 'highest'].includes(classification.priority) && isOpen(entry)) high += 1;
     if (primaryType === 'idea_question') questions += 1;
     if (classification.entities?.followUp) followUps += 1;
     if (classification.unclassified || classification.ambiguity) unclear += 1;
@@ -209,4 +209,3 @@ export function listJournal(db, { userId = null, now = new Date(), timeZone = 'E
   const items = picked.slice(start, start + size);
   return { total: picked.length, offset: start, shown: items.length, items };
 }
-

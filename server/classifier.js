@@ -235,7 +235,7 @@ export function parseCaptureOverrides(body,now=new Date(),timeZone='Europe/Samar
     out.due={date,time,...(remind!==undefined&&remind!==null?{remind}:{}),...(repeat?{repeat}:{})};
   }
   if(src.priority!==undefined&&src.priority!==null){
-    if(!['low','high'].includes(src.priority))return{error:'invalid_priority'};
+    if(!['low','high','highest'].includes(src.priority))return{error:'invalid_priority'};
     out.priority=src.priority;
   }
   if(src.tags!==undefined&&src.tags!==null){

@@ -60,7 +60,7 @@ export function correctionPatchError(patch) {
   if (patch.followUp !== undefined && patch.followUp !== null && (typeof patch.followUp !== 'string' || patch.followUp.length > 500)) return 'Некорректное действие.';
   if (patch.completed !== undefined && typeof patch.completed !== 'boolean') return 'Некорректный признак выполнения.';
   if (patch.summary !== undefined && (typeof patch.summary !== 'string' || !patch.summary.trim() || patch.summary.trim().length > 500)) return 'Заголовок — от 1 до 500 символов.';
-  if (patch.priority !== undefined && !['low', 'normal', 'high'].includes(patch.priority)) return 'Некорректная важность.';
+  if (patch.priority !== undefined && !['low', 'normal', 'high', 'highest'].includes(patch.priority)) return 'Некорректная важность.';
   return null;
 }
 

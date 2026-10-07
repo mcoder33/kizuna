@@ -16983,3 +16983,16 @@ for (const [locale, phrases] of Object.entries(adminCatalogs)) Object.assign(cat
 for (const [locale, phrases] of Object.entries(workshopCatalogs)) Object.assign(catalogs[locale], phrases);
 
 for (const [locale, phrases] of Object.entries(tomorrowCatalogs)) Object.assign(catalogs[locale], phrases);
+
+const importancePhrases = ['Важность', 'Выбрать важность', 'Важность: {value}', 'Наивысшая', 'Высокая', 'Обычная', 'Низкая', 'Сделать прежде остальных', 'Важно продвинуть', 'Без особого приоритета', 'Можно отложить'];
+const importanceTranslations = {
+  ru: importancePhrases,
+  en: ['Importance', 'Choose importance', 'Importance: {value}', 'Highest', 'High', 'Normal', 'Low', 'Do before everything else', 'Important to move forward', 'No special priority', 'Can wait'],
+  es: ['Importancia', 'Elegir importancia', 'Importancia: {value}', 'Máxima', 'Alta', 'Normal', 'Baja', 'Hacer antes que lo demás', 'Importante avanzar', 'Sin prioridad especial', 'Puede esperar'],
+  'pt-BR': ['Importância', 'Escolher importância', 'Importância: {value}', 'Máxima', 'Alta', 'Normal', 'Baixa', 'Fazer antes das demais', 'Importante avançar', 'Sem prioridade especial', 'Pode esperar'],
+  de: ['Wichtigkeit', 'Wichtigkeit wählen', 'Wichtigkeit: {value}', 'Höchste', 'Hoch', 'Normal', 'Niedrig', 'Vor allem anderen erledigen', 'Wichtig voranzubringen', 'Keine besondere Priorität', 'Kann warten'],
+  fr: ['Importance', 'Choisir l’importance', 'Importance : {value}', 'Maximale', 'Élevée', 'Normale', 'Faible', 'À faire avant le reste', 'Important de faire avancer', 'Sans priorité particulière', 'Peut attendre'],
+  ja: ['重要度', '重要度を選ぶ', '重要度：{value}', '最優先', '高', '通常', '低', '他のことより先に取り組む', '進めることが重要', '特別な優先度なし', '後回しにできる'],
+};
+for (const [locale, phrases] of Object.entries(importanceTranslations))
+  Object.assign(catalogs[locale], Object.fromEntries(importancePhrases.map((key, index) => [key, phrases[index]])));
