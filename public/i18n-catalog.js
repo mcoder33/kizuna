@@ -5,6 +5,8 @@ import { tomorrowCatalogs } from './tomorrow-i18n.js';
 
 export const catalogs = {
   "ru": {
+    "Сохраняется автоматически · ⌘/Ctrl + Enter — сохранить": "Сохраняется автоматически · ⌘/Ctrl + Enter — сохранить",
+    "Markdown оформляется прямо в тексте. Введите / для команд разметки.": "Markdown оформляется прямо в тексте. Введите / для команд разметки.",
     "Размер заметки и подзадач": "Размер заметки и подзадач",
     "Всё в одном списке на сегодня: записали одной фразой, закрыли кружком, увидели в «Сделано». Кизуна сама поставит срок, время и людей. Доступ сразу после регистрации.": "Всё в одном списке на сегодня: записали одной фразой, закрыли кружком, увидели в «Сделано». Кизуна сама поставит срок, время и людей. Доступ сразу после регистрации.",
     "Напишите как думаете. Кизуна сама поставит срок, время и людей, а закрытое попадёт в «Сделано». Доступ сразу после регистрации.": "Напишите как думаете. Кизуна сама поставит срок, время и людей, а закрытое попадёт в «Сделано». Доступ сразу после регистрации.",
@@ -2429,6 +2431,8 @@ export const catalogs = {
     "Код из приложения или резервный код": "Код из приложения или резервный код"
   },
   "en": {
+    "Сохраняется автоматически · ⌘/Ctrl + Enter — сохранить": "Saves automatically · ⌘/Ctrl + Enter — save",
+    "Markdown оформляется прямо в тексте. Введите / для команд разметки.": "Format directly in the text with Markdown. Type / for formatting commands.",
     "Размер заметки и подзадач": "Note and subtasks size",
     "Всё в одном списке на сегодня: записали одной фразой, закрыли кружком, увидели в «Сделано». Кизуна сама поставит срок, время и людей. Доступ сразу после регистрации.": "Everything in one list for today: add it in a phrase, check it off, and find it in “Done.” Kizuna sets the date, time, and people for you. Access immediately after registration.",
     "Напишите как думаете. Кизуна сама поставит срок, время и людей, а закрытое попадёт в «Сделано». Доступ сразу после регистрации.": "Write as you think. Kizuna sets the date, time, and people for you, and completed tasks go to “Done.” Access immediately after registration.",
@@ -4851,6 +4855,8 @@ export const catalogs = {
     "Код из приложения или резервный код": "Authenticator code or recovery code"
   },
   "es": {
+    "Сохраняется автоматически · ⌘/Ctrl + Enter — сохранить": "Se guarda automáticamente · ⌘/Ctrl + Enter — guardar",
+    "Markdown оформляется прямо в тексте. Введите / для команд разметки.": "Da formato al texto con Markdown. Escribe / para ver los comandos de formato.",
     "Размер заметки и подзадач": "Tamaño de la nota y las subtareas",
     "Всё в одном списке на сегодня: записали одной фразой, закрыли кружком, увидели в «Сделано». Кизуна сама поставит срок, время и людей. Доступ сразу после регистрации.": "Todo en una lista para hoy: anótalo con una frase, márcalo con un círculo y encuéntralo en «Hecho». Kizuna asigna la fecha, la hora y las personas. Acceso inmediato después del registro.",
     "Напишите как думаете. Кизуна сама поставит срок, время и людей, а закрытое попадёт в «Сделано». Доступ сразу после регистрации.": "Escribe como te salga. Kizuna añadirá la fecha, la hora y las personas, y las tareas completadas aparecerán en «Hecho». Acceso inmediato después del registro.",
@@ -7274,6 +7280,8 @@ export const catalogs = {
     "Код из приложения или резервный код": "Código de autenticación o código de recuperación"
   },
   "pt-BR": {
+    "Сохраняется автоматически · ⌘/Ctrl + Enter — сохранить": "Salva automaticamente · ⌘/Ctrl + Enter — salvar",
+    "Markdown оформляется прямо в тексте. Введите / для команд разметки.": "Formate o texto com Markdown. Digite / para ver os comandos de formatação.",
     "Размер заметки и подзадач": "Tamanho da nota e das subtarefas",
     "Всё в одном списке на сегодня: записали одной фразой, закрыли кружком, увидели в «Сделано». Кизуна сама поставит срок, время и людей. Доступ сразу после регистрации.": "Tudo em uma lista para hoje: anote com uma frase, marque com um círculo e encontre em “Feito”. A Kizuna define a data, o horário e as pessoas para você. Acesso imediato após o cadastro.",
     "Напишите как думаете. Кизуна сама поставит срок, время и людей, а закрытое попадёт в «Сделано». Доступ сразу после регистрации.": "Escreva do seu jeito. Kizuna adiciona a data, o horário e as pessoas, e as tarefas concluídas vão para “Feito”. Acesso imediato após o cadastro.",
@@ -9697,6 +9705,8 @@ export const catalogs = {
     "Код из приложения или резервный код": "Código do autenticador ou código de recuperação"
   },
   "de": {
+    "Сохраняется автоматически · ⌘/Ctrl + Enter — сохранить": "Wird automatisch gespeichert · ⌘/Strg + Enter — speichern",
+    "Markdown оформляется прямо в тексте. Введите / для команд разметки.": "Formatiere direkt im Text mit Markdown. Gib / für Formatierungsbefehle ein.",
     "Размер заметки и подзадач": "Größe von Notiz und Unteraufgaben",
     "Всё в одном списке на сегодня: записали одной фразой, закрыли кружком, увидели в «Сделано». Кизуна сама поставит срок, время и людей. Доступ сразу после регистрации.": "Alles für heute in einer Liste: mit einem Satz eintragen, abhaken und unter „Erledigt“ wiederfinden. Kizuna legt Datum, Uhrzeit und Personen für dich fest. Zugang sofort nach der Registrierung.",
     "Напишите как думаете. Кизуна сама поставит срок, время и людей, а закрытое попадёт в «Сделано». Доступ сразу после регистрации.": "Schreib einfach drauflos. Kizuna ergänzt Datum, Uhrzeit und Personen. Erledigte Aufgaben landen unter „Erledigt“. Zugang sofort nach der Registrierung.",
@@ -12119,6 +12129,8 @@ export const catalogs = {
     "Код из приложения или резервный код": "Authentifizierungscode oder Wiederherstellungscode"
   },
   "fr": {
+    "Сохраняется автоматически · ⌘/Ctrl + Enter — сохранить": "Enregistrement automatique · ⌘/Ctrl + Entrée — enregistrer",
+    "Markdown оформляется прямо в тексте. Введите / для команд разметки.": "Mettez le texte en forme avec Markdown. Tapez / pour les commandes de mise en forme.",
     "Размер заметки и подзадач": "Taille de la note et des sous-tâches",
     "Всё в одном списке на сегодня: записали одной фразой, закрыли кружком, увидели в «Сделано». Кизуна сама поставит срок, время и людей. Доступ сразу после регистрации.": "Tout dans une liste pour aujourd’hui : notez-le en une phrase, cochez-le et retrouvez-le dans « Terminées ». Kizuna définit la date, l’heure et les personnes pour vous. Accès immédiat après inscription.",
     "Напишите как думаете. Кизуна сама поставит срок, время и людей, а закрытое попадёт в «Сделано». Доступ сразу после регистрации.": "Écrivez comme vous le pensez. Kizuna ajoutera la date, l’heure et les personnes. Les tâches terminées iront dans « Terminé ». Accès immédiat après inscription.",
@@ -14542,6 +14554,8 @@ export const catalogs = {
     "Код из приложения или резервный код": "Code d’authentification ou code de récupération"
   },
   "ja": {
+    "Сохраняется автоматически · ⌘/Ctrl + Enter — сохранить": "自動保存 · ⌘/Ctrl + Enter — 保存",
+    "Markdown оформляется прямо в тексте. Введите / для команд разметки.": "テキスト内でMarkdown書式を設定できます。/ を入力すると書式コマンドを表示します。",
     "Размер заметки и подзадач": "ノートとサブタスクのサイズ",
     "Всё в одном списке на сегодня: записали одной фразой, закрыли кружком, увидели в «Сделано». Кизуна сама поставит срок, время и людей. Доступ сразу после регистрации.": "今日の予定をひとつのリストに。ひとこと入力し、丸で完了にすると「完了」に表示されます。日付、時間、メンバーはキズナが設定します。登録後すぐに利用できます。",
     "Напишите как думаете. Кизуна сама поставит срок, время и людей, а закрытое попадёт в «Сделано». Доступ сразу после регистрации.": "思いつくままに入力してください。Kizunaが期限・時刻・人を設定し、完了したタスクは「完了」に入ります。登録後すぐに利用できます。",
