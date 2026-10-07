@@ -1090,7 +1090,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     const text=value=>typeof value==='string'&&value.trim()?value.trim().slice(0,200):undefined;
     const result=listJournal(db,{userId:req.user.id,now:now(),timeZone:requestTimeZone(req),
       project:text(query.project),type:text(query.type),status:['open','done','overdue','any'].includes(query.status)?query.status:'any',
-      priority:['low','high'].includes(query.priority)?query.priority:undefined,tag:text(query.tag),person:text(query.person),
+      priority:['low','high','highest'].includes(query.priority)?query.priority:undefined,tag:text(query.tag),person:text(query.person),
       from:text(query.from),to:text(query.to),query:text(query.query),limit:query.limit,offset:query.offset});
     if(result.error==='unknown_type')return res.status(400).json({error:{code:'unknown_type',message:'Неизвестный тип записи.'}});
     res.json(result);

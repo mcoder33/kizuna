@@ -199,19 +199,19 @@ test('meeting cards and real task metadata stay readable in light and dark rooms
       expect((await context.request.put('/api/settings', { data: { theme } })).ok()).toBe(true);
       await ready(page); await room(page, 'autumn', theme === 'dark' ? 'night' : 'day');
       await expect(page.locator('#todo .day-event')).toHaveCount(3);
-      await expect(page.locator('#todo .entry-meta .tag.urgent')).toBeVisible();
+      await expect(page.locator('#todo .entry-title .importance-mark[data-importance="high"]')).toBeVisible();
       await expect(page.locator('#todo .sub-badge')).toBeVisible();
       const materials = await page.locator('#todo').evaluate(el => {
         const rgb = color => color.match(/[\d.]+/g).slice(0, 3).map(Number);
         const luminance = color => rgb(color).map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4).reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
-        return [...el.querySelectorAll('.day-event-title,.day-event-cal,.day-event-meta .tag,.entry-meta .tag.urgent')].map(node => {
+        return [...el.querySelectorAll('.day-event-title,.day-event-cal,.day-event-meta .tag')].map(node => {
           let parent = node, background;
           do { background = getComputedStyle(parent).backgroundColor; parent = parent.parentElement; } while (parent && (background === 'rgba(0, 0, 0, 0)' || background === 'transparent'));
           const ink = getComputedStyle(node).color, a = luminance(ink), b = luminance(background);
           return { text: node.textContent, ink, background, contrast: (Math.max(a, b) + .05) / (Math.min(a, b) + .05) };
         });
       });
-      expect(materials.length).toBeGreaterThanOrEqual(10);
+      expect(materials.length).toBeGreaterThanOrEqual(9);
       for (const item of materials) expect(item.contrast, `${theme}/${width}: ${JSON.stringify(item)}`).toBeGreaterThanOrEqual(4.5);
       expect(await page.locator('#todo .day-row.past .day-event').first().evaluate(el => getComputedStyle(el).opacity)).toBe('1');
       expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0);
