@@ -10242,6 +10242,94 @@ main:has(> #circles:not([hidden])) { max-width: none; padding: 0 0 96px; }
 #review-dialog .card-work-divider:focus-visible { outline: 2px solid var(--nt-secondary); outline-offset: 0; }
 #review-dialog .card-work-divider[hidden] { display: none; }
 
+/* Note focus: a quiet writing surface, with space reserved in every state.
+   Two IDs also override Workshop's shared contenteditable focus outline. */
+#review-dialog .card-main .card-body,
+#review-dialog .card-workspace.has-steps > .card-body {
+  margin-inline: -12px;
+  padding-inline: 12px;
+}
+#review-dialog #card-body-editor {
+  width: calc(100% + 24px);
+  margin-inline: -12px;
+  padding: 11px 12px;
+  border-radius: 8px;
+  background: transparent;
+  outline: none;
+  box-shadow: none;
+  transition: background-color 150ms, box-shadow 150ms;
+}
+#review-dialog #card-body-editor:hover {
+  background: color-mix(in srgb, var(--nt-hover) 35%, transparent);
+}
+#review-dialog #card-body-editor:focus,
+#review-dialog #card-body-editor:focus-visible {
+  background: color-mix(in srgb, var(--nt-hover) 55%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nt-text) 3%, transparent);
+  outline: none;
+}
+#review-dialog #card-body-editor.is-keyboard-focus:focus {
+  outline: 1px solid var(--nt-secondary);
+  outline-offset: -1px;
+}
+#review-dialog .card-body-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+#review-dialog .card-body-status {
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  visibility: hidden;
+}
+#review-dialog .card-body:focus-within .card-body-status { visibility: visible; }
+#review-dialog .card-body-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+  font-size: 11px;
+}
+#review-dialog .card-body:focus-within .card-body-hint,
+#review-dialog .card-body-hint:has(.card-body-help[open]) { visibility: visible; }
+#review-dialog .card-body-help { position: relative; flex: none; }
+#review-dialog .card-body-help > summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--nt-tertiary);
+  border-radius: 50%;
+  font-size: 10px;
+  list-style: none;
+  cursor: pointer;
+}
+#review-dialog .card-body-help > summary::-webkit-details-marker { display: none; }
+#review-dialog .card-body-help > p {
+  position: absolute;
+  z-index: 2;
+  right: 0;
+  bottom: 24px;
+  width: min(265px, calc(100vw - 72px));
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--nt-divider);
+  border-radius: 8px;
+  background: var(--nt-bg);
+  color: var(--nt-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .15);
+}
+@media (prefers-reduced-motion: reduce) {
+  #review-dialog #card-body-editor { transition: none; }
+}
+
 /* Tomorrow: the approved quiet word with a small +1, on every task surface. */
 button.todo-tomorrow,
 #review-dialog button.todo-tomorrow {

@@ -3237,8 +3237,16 @@ function cardDiscussion(entry) {
 // на сервере со ссылкой supersedes.
 function cardBody(entry) {
   const wrap = node("section", undefined, "card-body"),
-    hint = bindTranslation(node("p", t("Markdown оформляется прямо в тексте · ⌘/Ctrl + Enter — сохранить · закроете карточку — сохранится само"), "card-body-hint"), "Markdown оформляется прямо в тексте · ⌘/Ctrl + Enter — сохранить · закроете карточку — сохранится само"),
-    label = bindTranslation(node("p", t("Заметка"), "prop-section"), "Заметка");
+    hint = node("div", undefined, "card-body-hint"),
+    label = bindTranslation(node("p", t("Заметка"), "prop-section"), "Заметка"),
+    heading = node("div", undefined, "card-body-heading"),
+    status = bindTranslation(node("span", undefined, "card-body-status"), "Сохранено"),
+    help = node("details", undefined, "card-body-help"),
+    helpToggle = node("summary", "?");
+  bindTranslation(helpToggle, "Оформление текста", "aria-label");
+  help.append(helpToggle, bindTranslation(node("p"), "Markdown оформляется прямо в тексте. Введите / для команд разметки."));
+  hint.append(bindTranslation(node("span"), "Сохраняется автоматически · ⌘/Ctrl + Enter — сохранить"), help);
+  heading.append(label, status);
   // Описание пишет разбор из текста записи и кладёт первой версией заметки. Нет
   // заметки — поле пустое, с подсказкой «Описание»: копия исходного текста тут
   // только дублировала бы то, что лежит в свёрнутом «Исходном тексте» ниже.
@@ -3251,6 +3259,7 @@ function cardBody(entry) {
     get ariaLabel() { return t("Описание"); },
     get placeholder() { return t("Описание"); },
     onSubmit: () => save(),
+    onInput: (value) => bindTranslation(status, value === body ? "Сохранено" : "Изменено"),
   });
   field.element.classList.add("card-markdown");
   // Разметку помнить наизусть незачем: «/» показывает, что тут вообще бывает.
@@ -3278,6 +3287,7 @@ function cardBody(entry) {
     // Обещание записывается раньше, чем поле выключится: выключение снимает
     // фокус, blur зовёт save() снова — и получает то же обещание.
     inflight = Promise.resolve().then(async () => {
+      bindTranslation(status, "Сохраняем…");
       field.setDisabled(true);
       try {
         const result = await request(`/api/captures/${entry.id}/notes`, {
@@ -3287,9 +3297,11 @@ function cardBody(entry) {
         body = result.entry.note?.body || "";
         entry.note = result.entry.note;
         field.setValue(body);
+        bindTranslation(status, "Сохранено");
         toast(t("Заметка сохранена"));
         await load();
       } catch (error) {
+        bindTranslation(status, field.getValue() === body ? "Сохранено" : "Изменено");
         toast(error.message);
       } finally {
         inflight = null;
@@ -3298,7 +3310,16 @@ function cardBody(entry) {
     });
     return inflight;
   };
+  // Contenteditable matches :focus-visible even after a click. Track pointer
+  // focus locally so Tab keeps a clear indicator without a ring while typing.
+  let pointerFocus = false;
+  field.element.addEventListener("pointerdown", () => {
+    pointerFocus = true;
+    field.element.classList.remove("is-keyboard-focus");
+  });
   field.element.addEventListener("focus", () => {
+    field.element.classList.toggle("is-keyboard-focus", !pointerFocus);
+    pointerFocus = false;
     showHint(true);
   });
   // Esc не откатывает набранное: раньше он возвращал прежний текст, и правка,
@@ -3315,11 +3336,17 @@ function cardBody(entry) {
     }
   });
   field.element.addEventListener("blur", () => {
+    pointerFocus = false;
+    field.element.classList.remove("is-keyboard-focus");
     showHint(false);
     save();
   });
+  // Keep the help button available when focus moves from the editor to it.
+  wrap.addEventListener("focusout", (event) => {
+    if (!wrap.contains(event.relatedTarget)) help.open = false;
+  });
   flushCardBody = save;
-  wrap.append(label, field.element, hint);
+  wrap.append(heading, field.element, hint);
   return wrap;
 }
 // Карточка открывается модальным окном, а не панелью внутри страницы: панель
