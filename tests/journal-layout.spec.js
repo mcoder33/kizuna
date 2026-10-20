@@ -51,11 +51,13 @@ async function expectReachable(target) {
     const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
     return hit === element || element.contains(hit);
   });
-  await target.scrollIntoViewIfNeeded();
-  if (!await centerHitsTarget()) {
-    await target.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' }));
-  }
-  await expect.poll(centerHitsTarget, 'Journal action must be reachable above the fixed dock').toBe(true);
+  await expect(async () => {
+    await target.scrollIntoViewIfNeeded();
+    if (!await centerHitsTarget()) {
+      await target.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' }));
+    }
+    expect(await centerHitsTarget(), 'Journal action must be reachable above the fixed dock').toBe(true);
+  }).toPass({ timeout: 15_000 });
 }
 
 for (const [name, device] of [
