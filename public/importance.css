@@ -52,6 +52,68 @@ html :is(#todo,#journal,#done) .entry.dense.importance-row > .todo-tomorrow {
 }
 html[data-appearance="workshop"] #todo .day-row:has(.importance-row) .day-time { padding-top: 19px; }
 
+/* The journal shares one quiet list treatment across tasks, old reports and
+   calendar entries. Keep this after the importance grid and workshop paint. */
+html #journal {
+  --journal-ink: var(--muted);
+  --journal-meta: var(--muted);
+  --journal-line: var(--line);
+  --journal-hover: var(--hairline);
+  --journal-focus: var(--focus);
+  --journal-check: var(--green);
+}
+html[data-appearance="workshop"] #journal {
+  --journal-ink: var(--ws-scene-secondary);
+  --journal-meta: var(--ws-scene-secondary);
+  --journal-line: color-mix(in srgb, var(--ws-scene-line) 24%, transparent);
+  --journal-hover: var(--ws-scene-hover);
+  --journal-focus: var(--ws-scene-link);
+  --journal-check: var(--ws-scene-positive);
+}
+/* Include the decorated selector so the earlier 44px importance grid cannot
+   move every timestamp onto a second row. Auto-calendar rows have no .dense. */
+html #journal .entry:is(.dense.importance-row,.dense,.auto-done) {
+  display: grid; grid-template-columns: 44px minmax(0,1fr) minmax(0,auto);
+  align-items: start; gap: 0 6px; min-height: 56px; padding: 6px 4px;
+  background: transparent; border: 0; border-radius: 0; box-shadow: none;
+  font-size: 13px; color: var(--journal-ink);
+}
+html #journal .entry + .entry:is(.dense.importance-row,.dense,.auto-done) { border-top: 1px solid var(--journal-line); }
+html #journal .entry:is(.dense.importance-row,.dense,.auto-done):is(:hover,:focus-within) { background: var(--journal-hover); }
+html #journal .entry:is(.dense.importance-row,.dense,.auto-done) > .entry-title {
+  grid-column: 2; grid-row: 1; min-width: 0; min-height: 44px; margin: 0; padding: 10px 0;
+  font-weight: 500; line-height: 1.5; color: var(--journal-ink); text-decoration: none;
+  white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere;
+}
+html #journal .entry > span.entry-title { cursor: default; }
+html #journal .entry > button.entry-title:hover { text-decoration: underline; text-underline-offset: 3px; }
+html #journal .entry:is(.dense.importance-row,.dense,.auto-done) > .entry-meta {
+  grid-column: 3; grid-row: 1; align-self: center; justify-content: flex-end;
+  min-width: 0; max-width: 240px; margin: 0; padding: 0;
+  flex-wrap: wrap; gap: 4px 6px; white-space: normal; font-size: 11px; line-height: 1.5;
+  color: var(--journal-meta);
+}
+html #journal .entry .entry-meta .tag { margin: 0; color: var(--journal-meta); }
+html #journal .entry .entry-meta .tag.time { padding-inline: 0; }
+html #journal .entry:is(.dense.importance-row,.dense,.auto-done) > .completion-button {
+  grid-column: 1; grid-row: 1; position: relative; display: grid; place-items: center;
+  width: 44px; height: 44px; margin: 0; padding: 0;
+  border: 0 !important; background: transparent !important; box-shadow: none; color: transparent;
+}
+html #journal .entry:is(.dense.importance-row,.dense,.auto-done) > .completion-button:is([aria-pressed="true"],.auto)::before {
+  content: "✓"; display: grid; place-items: center; width: 18px; height: 18px;
+  box-sizing: border-box; border: 1.3px solid currentColor; border-radius: 50%;
+  background: transparent; color: var(--journal-check); font-size: 11px; line-height: 1;
+}
+html #journal .entry:is(.dense.importance-row,.dense,.auto-done) > .completion-button.auto::before { border-style: dashed; }
+html #journal .entry:is(.dense.importance-row,.dense,.auto-done) > button.completion-button:hover::before { background: var(--journal-hover); }
+html #journal .entry :is(button,a):focus-visible { outline: 2px solid var(--journal-focus); outline-offset: 2px; }
+@media (max-width: 600px) {
+  html #journal .entry:is(.dense.importance-row,.dense,.auto-done):has(> .entry-meta > :not(.time)) > .entry-meta {
+    grid-column: 2 / -1; grid-row: 2; max-width: none; justify-content: flex-start; padding: 0 0 4px;
+  }
+}
+
 #review-dialog .importance-property {
   display: grid; grid-template-columns: auto auto; align-items: center; gap: 4px;
   max-width: 100%; margin: 0; padding: 0;
