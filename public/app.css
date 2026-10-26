@@ -6866,8 +6866,11 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 96px; }
 }
 /* Раскладка «завершаемой» записи сводит всех детей в одну колонку — в плотной
    строке колонок три, и каждый встаёт в свою. */
+#todo .entry.dense.completable > *,
 .drawer .entry.dense.completable > * { grid-column: auto; grid-row: auto; }
+#todo .entry.dense .completion-button,
 .drawer .entry.dense .completion-button { grid-column: 1; grid-row: 1; margin: 0; }
+#todo .entry.dense .entry-title,
 .drawer .entry.dense .entry-title {
   grid-column: 2;
   font-weight: 500;
@@ -6877,7 +6880,9 @@ main:has(> #calendar:not([hidden])) { padding-bottom: 96px; }
 }
 #todo .entry.dense:hover,
 .drawer .entry.dense:hover { background: var(--n-96); }
+#todo .entry.dense.overdue .entry-title,
 .drawer .entry.dense.overdue .entry-title { color: var(--red-66); font-weight: 650; }
+#todo .entry.dense .entry-meta,
 .drawer .entry.dense .entry-meta {
   grid-column: 3;
   margin: 0;
