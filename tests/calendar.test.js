@@ -14,6 +14,7 @@ function freshApp(options = {}) {
   return createApp({ aiService: fakeModelService(), databasePath: path.join(dir, 'test.sqlite'), calendarKey: Buffer.alloc(32, 7), securityOptions: { publicUrl: 'https://kizuna.example' }, ...options });
 }
 const today = () => dateInZone(new Date(), 'Europe/Samara');
+// Фиксированные события fakeYandex должны оставаться внутри 45-дневного окна синхронизации.
 const yandexBody = { preset: 'yandex', username: 'user@yandex.ru', password: 'app-pass' };
 
 test('календарь: свои дела и встречи в окне, просроченные отдельно, конец времени и перенос уточнением', async () => {
@@ -46,7 +47,7 @@ test('календарь: свои дела и встречи в окне, пр�
 
 test('календарь Яндекса: подключение по паролю приложения, синхронизация, наложение, режим «занято», отключение и удаление', async () => {
   const calls = [];
-  const app = freshApp({ calendarFetch: fakeYandex({ calls }) });
+  const app = freshApp({ calendarFetch: fakeYandex({ calls }), now: () => new Date('2026-09-07T00:00:00Z') });
   const api = authed(app);
   await api.post('/api/calendar/accounts').send({ ...yandexBody, password: 'wrong' }).expect(401);
   await api.post('/api/calendar/accounts').send({ preset: 'custom', serverUrl: 'http://plain', username: 'u', password: 'p' }).expect(400);
@@ -309,7 +310,7 @@ test('автосинк обратно: событие подвинули в Ян
 
 test('чужое событие из сетки: перенос и переименование уходят PUT с If-Match, удаление — DELETE; «занято» не правится, повтор — только этот экземпляр', async () => {
   const calls = [];
-  const app = freshApp({ calendarFetch: fakeYandex({ calls }) });
+  const app = freshApp({ calendarFetch: fakeYandex({ calls }), now: () => new Date('2026-09-07T00:00:00Z') });
   const api = authed(app);
   const account = (await api.post('/api/calendar/accounts').send(yandexBody).expect(201)).body.account;
   let view = (await api.get('/api/calendar?from=2026-09-07&to=2026-09-07').expect(200)).body;
@@ -375,7 +376,7 @@ test('чужое событие из сетки: перенос и переим�
 
 test('календарь: своё и чужое рядом, чужое двигается и удаляется своими руками, своё — уточнением', async () => {
   const calls = [];
-  const app = freshApp({ calendarFetch: fakeYandex({ calls }) });
+  const app = freshApp({ calendarFetch: fakeYandex({ calls }), now: () => new Date('2026-09-07T00:00:00Z') });
   const api = authed(app);
   await api.post('/api/calendar/accounts').send(yandexBody).expect(201);
   const todo = (await api.post('/api/captures').send({ raw: 'отдать ключи', primaryType: 'todo', due: { date: '2026-09-07', time: '09:30' } }).expect(201)).body.entry;
@@ -455,7 +456,7 @@ test('автосинк с Google: встреча создаётся events.inser
 
 test('приглашение из Яндекса: участники с ответами, повтор словами, ответ организатору уходит PUT с PARTSTAT и COMMENT', async () => {
   const calls = [];
-  const app = freshApp({ calendarFetch: fakeYandex({ calls }) });
+  const app = freshApp({ calendarFetch: fakeYandex({ calls }), now: () => new Date('2026-09-07T00:00:00Z') });
   const api = authed(app);
   await api.post('/api/calendar/accounts').send(yandexBody).expect(201);
   let view = (await api.get('/api/calendar?from=2026-09-10&to=2026-09-10').expect(200)).body;
@@ -669,7 +670,7 @@ test('title-only Google edits preserve late DST fold instants, recurrence identi
 
 test('calendar sanitizes old cached presentation URLs and refuses stored foreign CalDAV write targets', async () => {
   const calls = [];
-  const app = freshApp({ calendarFetch: fakeYandex({ calls }) });
+  const app = freshApp({ calendarFetch: fakeYandex({ calls }), now: () => new Date('2026-09-07T00:00:00Z') });
   const api = authed(app);
   const account = (await api.post('/api/calendar/accounts').send(yandexBody).expect(201)).body.account;
   const unsafe = 'javascript:alert(1)';
