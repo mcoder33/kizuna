@@ -142,3 +142,34 @@ html :is(#journal,#done) .entry :is(button,a):focus-visible { outline: 2px solid
 #review-dialog :is(.importance-current,.importance-choice):hover { background: var(--hairline); }
 #review-dialog :is(.importance-current,.importance-choice):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 #review-dialog :is(.importance-current,.importance-choice):disabled { cursor: wait; opacity: .65; }
+
+/* Desktop day tasks keep their labels beside the title and postpone action. */
+@media (min-width: 761px) {
+  html #todo .entry.dense.importance-row {
+    grid-template-columns: 44px minmax(0,1fr) minmax(0,auto);
+    align-items: center;
+    min-height: 44px;
+  }
+  html #todo .entry.dense.importance-row.has-tomorrow {
+    grid-template-columns: 44px minmax(0,1fr) minmax(0,auto) 62px;
+  }
+  html #todo .entry.dense.importance-row > .entry-title {
+    align-items: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  html #todo .entry.dense.importance-row .entry-title-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  html #todo .entry.dense.importance-row > .entry-meta {
+    grid-column: 3;
+    grid-row: 1;
+    padding: 0;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
+  html #todo .entry.dense.importance-row > .todo-tomorrow { grid-column: 4; }
+}
