@@ -234,6 +234,7 @@ test('oversized stored body reports incomplete coverage rather than claiming a d
 });
 
 test('private quality traces store only requester query and fixed match reasons, export current ACL and reset cross references',t=>{
+  t.mock.timers.enable({apis:['Date'],now:at});
   const f=fixture(t),entry=f.add({raw:'Неэкспортироватьэтоттекст',projects:['Логирование']});
   f.participate(entry.id,f.viewer);
   f.search('логирование',f.viewer);f.search('мой личный запрос',f.owner);

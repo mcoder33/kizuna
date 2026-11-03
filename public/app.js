@@ -771,13 +771,22 @@ function entryCard(entry, { overdue = false, atTime = false, on = null, doneAt =
     complete.setAttribute("aria-pressed", String(completed));
     // У повтора «Готово» — про этот экземпляр: он убирается из серии, а
     // остальные повторы живут дальше. Серия целиком закрывается в карточке.
-    complete.addEventListener("click", () => {
+    complete.addEventListener("click", async () => {
       const occurrence = c.entities.schedule?.repeat && !completed ? (on && scheduledOn(entry, on) ? on : scheduledOn(entry, currentDayDate) ? currentDayDate : null) : null;
       // Строка зачёркивается и гаснет сразу, а не после ответа сервера: отклик
       // на нажатие должен быть под пальцем.
       if (!completed) card.classList.add("completing");
-      if (occurrence) { complete.disabled = true; doneOccurrence({ id: entry.id, projectionId: projectionOfType(entry, "task")?.id || null }, occurrence).finally(() => { complete.disabled = false; }); return; }
-      updateCompletion(projections, !completed, complete);
+      try {
+        if (occurrence) {
+          complete.disabled = true;
+          await doneOccurrence({ id: entry.id, projectionId: projectionOfType(entry, "task")?.id || null }, occurrence);
+        } else {
+          await updateCompletion(projections, !completed, complete);
+        }
+      } finally {
+        complete.disabled = false;
+        card.classList.remove("completing");
+      }
     });
     card.append(complete);
     attachRowSwipe(card, { onRight: () => complete.click(), onLeft: (overdue || takeToday) && !completed ? () => quickDue(entry, 0) : null });

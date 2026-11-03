@@ -39,7 +39,8 @@ html :is(#todo,#journal,#done) .entry.dense.importance-row > .completion-button:
 html :is(#todo,#journal,#done) .entry.dense.importance-row > .completion-button::after { content: none; }
 html :is(#todo,#journal,#done) .entry.dense.importance-row > .completion-button:hover::before { border-color: var(--green); }
 html :is(#todo,#journal,#done) .entry.dense.importance-row.overdue > .completion-button::before { border-color: var(--ws-scene-danger, var(--red-74)); }
-html :is(#todo,#journal,#done) .entry.dense.importance-row > .completion-button[aria-pressed="true"]::before {
+html :is(#todo,#journal,#done) .entry.dense.importance-row > .completion-button[aria-pressed="true"]::before,
+html #todo .entry.dense.importance-row.completing > .completion-button::before {
   background: var(--green); border-color: var(--green); color: var(--paper);
 }
 html :is(#todo,#journal,#done) .entry.dense.importance-row > .entry-meta {
