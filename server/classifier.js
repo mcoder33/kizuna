@@ -319,3 +319,17 @@ export function applyExplicitType(classification,raw,now=new Date(),timeZone='Eu
 export function shouldMaterializeProjections(c){return primaryTypes.includes(c.primaryType)&&!c.unclassified&&!c.conflicts?.schedule&&!c.conflicts?.projects}
 export function makeProjections(captureId,c,undoGroupId){return [c.primaryType,...(c.additionalTypes||[])].map(projectionType=>({captureId,projectionType,payload:{title:c.summary,...c.entities},undoGroupId}))}
 export function validateCitations(ids,allowed){return Array.isArray(ids)&&new Set(ids).size===ids.length&&(allowed.size===0?ids.length===0:ids.length>0)&&ids.every(id=>typeof id==='string'&&allowed.has(id))}
+
+export const splitActionsOf = classification => (classification?.proposedActions || []).filter(action => action?.type === 'task' && typeof action.title === 'string');
+// Пачка дел делает родителя контейнером; отчёт «сделал X, надо Y» остаётся закрытым туду.
+// Пачка — это два дела и больше под общим заголовком. Одно отделённое дело при
+// заголовке-деле — не пачка: заголовок и есть первое дело («Уменьшить время
+// перезаливов… / Добавить упоминание в интерфейс»), и контейнер молча прятал
+// его из списков и с доски. Встреча контейнером не бывает никогда: у неё своё
+// время, и отделённое дело её не заменяет.
+export const isContainer = classification => {
+  if (classification?.completed === true) return false;
+  const actions = splitActionsOf(classification).length;
+  if (!actions || classification?.primaryType === 'meeting_event') return false;
+  return !(classification?.primaryType === 'task' && actions === 1);
+};

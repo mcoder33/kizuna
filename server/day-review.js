@@ -1,4 +1,5 @@
 import { dateInZone, dayStartInZone, shiftDate } from './reports.js';
+import { isContainer } from './classifier.js';
 import { occursOn, validIsoDate } from './repeat.js';
 import { canSeeCapture } from './circles.js';
 import { historySnapshot } from './day-summary-history.js';
@@ -88,7 +89,7 @@ export function reviewDay(db, { userId, date, timeZone = 'Europe/Samara', now = 
     // A legacy deleted row without its deletion event cannot prove earlier visibility.
     if (row.deleted_at && row.deleted_at<cutoff && !readDeletion.get(captureId,cutoff)) return;
     const classification = parse(row.classification_json), schedule = classification.entities?.schedule || null;
-    if (classification.completed !== true && classification.proposedActions?.some(action=>action.type==='task' && typeof action.title==='string')) return;
+    if (isContainer(classification)) return;
     let projections = readProjections.all(row.interpretation_id,cutoff,cutoff);
     if(!projections.length)projections=readRetiredProjections.all(row.interpretation_id,cutoff,cutoff,cutoff);
     projections=projections.filter(projection=>['task','meeting_event'].includes(projection.projection_type));

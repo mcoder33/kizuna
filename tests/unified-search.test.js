@@ -191,7 +191,7 @@ test('free keywords and related phrases combine project, people and text matches
 
 test('nonactionable records have no fake status; explicit status and task scope honor undo, subtasks and containers',t=>{
   const f=fixture(t),task=f.add({projects:['Период']}),note=f.add({type:'note',projects:['Период']});
-  const container=f.add({projects:['Период'],actions:[{type:'task',title:'Отдельное действие'}]});
+  const container=f.add({projects:['Период'],actions:[{type:'task',title:'Отдельное действие'},{type:'task',title:'Второе действие'}]});
   assert.equal(f.search('период').matchedCount,3);
   assert.equal(f.service.byId({userId:f.owner,captureId:note.id}).status,null);
   assert.equal(f.service.byId({userId:f.owner,captureId:container.id}).status,null);

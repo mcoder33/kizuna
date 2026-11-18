@@ -4428,7 +4428,21 @@ function showReview(entry, review, undoGroupId, provenance) {
   if ((entry.parent && !cardStack.length) || (deedParts.length && !wantsSubtasks)) {
     const origin = node("p", undefined, "card-origin");
     const link = (id, text) => { const button = node("button", text, "text-button"); button.type = "button"; button.addEventListener("click", () => openCaptureById(id)); return button; };
-    if (entry.parent) origin.append(document.createTextNode(outcomeOfDeed ? t("Итог дела ") : stepOfDeed ? t("Подзадача дела ") : t("Отделено от записи ")), link(entry.parent.id, `«${entry.parent.title}»`));
+    if (entry.parent) {
+      origin.append(document.createTextNode(outcomeOfDeed ? t("Итог дела ") : stepOfDeed ? t("Подзадача дела ") : t("Отделено от записи ")), link(entry.parent.id, `«${entry.parent.title}»`));
+      // Дело, которое ИИ отделил сам, можно вернуть в исходную запись: та
+      // снова станет одним делом и вернётся в списки и на доску.
+      if (entry.parent.splitSource && !outcomeOfDeed && !stepOfDeed) {
+        const merge = bindTranslation(node("button", t("Не делить"), "text-button card-unsplit"), "Не делить");
+        merge.type = "button";
+        merge.addEventListener("click", async () => {
+          merge.disabled = true;
+          try { const parentId = entry.parent.id; await unsplitCapture(parentId); openCaptureById(parentId); }
+          catch (error) { toast(error.message); merge.disabled = false; }
+        });
+        origin.append(document.createTextNode(" · "), merge);
+      }
+    }
     else {
       origin.append(document.createTextNode(t("Из этой записи {value1}: ", { value1: plural(deedParts.length, DEALS) })));
       deedParts.forEach((part, index) => {
@@ -5012,6 +5026,20 @@ function registerCapture(record) {
   persistActiveCaptures();
   return activeCapture(record);
 }
+// Отказ от разбиения записи: дела, отделённые от неё, уходят (их можно
+// вернуть, пока запись не стала контейнером снова), запись — одно дело.
+async function unsplitCapture(captureId) {
+  const result = await request(`/api/captures/${encodeURIComponent(captureId)}/unsplit`, { method: "POST" });
+  await load();
+  refreshOtherViews();
+  const removed = result.removed || [];
+  if (!removed.length) { toast(t("Запись и так одно дело")); return result; }
+  toast(t("Не делю: {value1} убрано, запись — одно дело", { value1: plural(removed.length, DEALS) }), result.undoGroupId ? undefined : { get label() { return t("Вернуть"); }, run: async () => {
+    try { for (const id of removed) await request(`/api/captures/${id}/restore`, { method: "POST" }); await load(); refreshOtherViews(); toast(t("Вернул")); }
+    catch (error) { toast(error.message); }
+  } });
+  return result;
+}
 function renderCaptureProgress(job, record) {
   const area = $("#capture-notifications");
   let card = area.querySelector(`[data-capture-job="${CSS.escape(record.jobId)}"]`);
@@ -5060,20 +5088,17 @@ function renderCaptureProgress(job, record) {
     );
   const actions = node("div", undefined, "progress-actions");
   if (job.parts?.length) {
-    const drop = node("button", job.parts.length === 1 ? t("Убрать дело") : t("Убрать дела"), "text-button");
+    // «Не делить»: разбиение делается без вопроса, поэтому отказ от него —
+    // одно движение. Отделённые дела уходят, а запись снова одно дело со
+    // своим текстом — исходное дело не теряется ни при каком исходе.
+    const drop = bindTranslation(node("button", t("Не делить"), "text-button"), "Не делить");
     drop.type = "button";
     drop.addEventListener("click", async () => {
       drop.disabled = true;
-      const removed = job.parts;
       try {
-        for (const part of removed) await request(`/api/captures/${part.id}`, { method: "DELETE" });
+        await unsplitCapture(record.captureId || job.captureId);
         job.parts = [];
         renderCaptureProgress(job, record);
-        await load();
-        toast(t("{value1} убрано из журнала", { value1: plural(removed.length, DEALS) }), { get label() { return t("Вернуть"); }, run: async () => {
-          try { for (const part of removed) await request(`/api/captures/${part.id}/restore`, { method: "POST" }); await load(); toast(t("Вернул")); }
-          catch (error) { toast(error.message); }
-        } });
       } catch (error) { toast(error.message); drop.disabled = false; }
     });
     actions.append(drop);

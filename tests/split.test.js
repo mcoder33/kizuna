@@ -161,3 +161,69 @@ test('пачка дел из очереди: родитель без туду, �
     assert.deepEqual(parent.projections, []);
   } finally { await application.captureJobWorker.stop(); }
 });
+
+// Жалоба 18.11: «Уменьшить время перезаливов… / Добавить упоминание в
+// интерфейс» — модель отделила второе дело, а первое, стоявшее в заголовке,
+// пропало со всех списков и досок: запись стала контейнером без туду.
+const TITLE_AND_ONE = ['Уменьшить время запуска перезаливов с 30 до 5 минут', '1. Добавить упоминание в интерфейс'].join('\n');
+test('одно отделённое дело при заголовке-деле: родитель остаётся делом и виден в дне', async () => {
+  const api = authed(app());
+  const created = await api.post('/api/captures').send({ raw: TITLE_AND_ONE }).expect(201);
+  assert.equal(created.body.entry.interpretation.classification.primaryType, 'task');
+  assert.deepEqual(created.body.parts.map(part => part.title), ['Добавить упоминание в интерфейс']);
+  assert.equal(created.body.entry.projections.length, 1, 'у родителя своё туду');
+  assert.equal(created.body.entry.projections[0].type, 'task');
+  const day = (await api.get('/api/day').expect(200)).body;
+  const ids = day.attention.concat(day.day, day.upcoming).map(entry => entry.id);
+  assert.ok(ids.includes(created.body.entry.id), 'основное дело в дне');
+  assert.ok(ids.includes(created.body.parts[0].id), 'отделённое дело тоже в дне');
+});
+
+test('«Не делить» пачку: дети уходят, родитель становится одним делом с туду', async () => {
+  const api = authed(app());
+  const created = await api.post('/api/captures').send({ raw: BATCH }).expect(201);
+  assert.deepEqual(created.body.entry.projections, [], 'до отказа — контейнер');
+  const result = (await api.post(`/api/captures/${created.body.entry.id}/unsplit`).expect(200)).body;
+  assert.deepEqual(result.removed.sort(), created.body.parts.map(part => part.id).sort());
+  assert.equal(result.entry.projections.length, 1, 'родитель — дело');
+  assert.equal(result.entry.raw, BATCH, 'текст записи не тронут');
+  assert.deepEqual(result.entry.parts, [], 'отделённых дел больше нет');
+  const day = (await api.get('/api/day').expect(200)).body;
+  const ids = day.attention.concat(day.day, day.upcoming).map(entry => entry.id);
+  assert.deepEqual([...new Set(ids)], [created.body.entry.id], 'в дне одна запись — сама исходная');
+  // Повтор безопасен.
+  assert.deepEqual((await api.post(`/api/captures/${created.body.entry.id}/unsplit`).expect(200)).body.removed, []);
+});
+
+test('«Не делить» одного дела: отделённое уходит, исходное дело остаётся как было', async () => {
+  const api = authed(app());
+  const created = await api.post('/api/captures').send({ raw: TITLE_AND_ONE }).expect(201);
+  const projectionId = created.body.entry.projections[0].id;
+  const result = (await api.post(`/api/captures/${created.body.entry.id}/unsplit`).expect(200)).body;
+  assert.deepEqual(result.removed, [created.body.parts[0].id]);
+  assert.equal(result.entry.projections.length, 1);
+  const entries = (await api.get('/api/entries?limit=20').expect(200)).body.entries;
+  assert.deepEqual(entries.map(entry => entry.id), [created.body.entry.id], 'отделённое дело ушло из журнала');
+  assert.equal(entries[0].projections[0].id, projectionId, 'туду исходного дела то же самое');
+});
+
+test('«Не делить» не трогает подзадачи, а несуществующая запись — 404', async () => {
+  const api = authed(app());
+  const created = await api.post('/api/captures').send({ raw: 'Подготовить релиз Кизуны к пятнице' }).expect(201);
+  const sub = await api.post(`/api/captures/${created.body.entry.id}/subtasks`).send({ title: 'Собрать заметки к релизу' });
+  const result = (await api.post(`/api/captures/${created.body.entry.id}/unsplit`).expect(200)).body;
+  assert.deepEqual(result.removed, [], 'подзадача — не отделённое дело');
+  if (sub.status < 300) assert.equal((await api.get(`/api/captures/${sub.body.captureId || sub.body.entry?.id}`)).status, 200);
+  await api.post('/api/captures/00000000-0000-0000-0000-000000000000/unsplit').expect(404);
+});
+
+test('контейнер пачки остаётся без туду и после перезапуска приложения', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'pagent-split-restart-'));
+  const databasePath = path.join(directory, 'test.sqlite');
+  const first = createApp({ aiService: fakeModelService(), databasePath });
+  const created = await authed(first).post('/api/captures').send({ raw: BATCH }).expect(201);
+  first.db?.close?.();
+  const second = createApp({ aiService: fakeModelService(), databasePath });
+  const parent = (await authed(second).get(`/api/captures/${created.body.entry.id}`).expect(200)).body.entry;
+  assert.deepEqual(parent.projections, [], 'восстановление проекций контейнер не превращает в туду');
+});

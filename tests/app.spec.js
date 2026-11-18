@@ -181,11 +181,11 @@ test("запись с намерениями дробится на дела, и 
   await page.getByRole("button", { name: "Сохранить запись" }).click();
   expect((await posted).status()).toBe(202);
 
-  // Уведомление говорит, что отделилось, и даёт это убрать.
+  // Уведомление говорит, что отделилось, и даёт отказаться от разбиения.
   const notification = page.locator("#capture-notifications .capture-notification");
   await expect(notification).toContainText("Отделил 2 дела", { timeout: 20000 });
   await expect(notification).toContainText("«Допинываем бот детектор»");
-  await expect(notification.getByRole("button", { name: "Убрать дела" })).toBeVisible();
+  await expect(notification.getByRole("button", { name: "Не делить" })).toBeVisible();
 
   // Дела живут в «Дне» обычными делами, а не строчками внутри чужой заметки.
   await openTab(page, /^День/);
@@ -198,6 +198,7 @@ test("запись с намерениями дробится на дела, и 
   const card = page.locator("#review-dialog");
   await expect(card).toBeVisible();
   await expect(card.locator(".card-origin")).toContainText("Отделено от записи");
+  await expect(card.locator(".card-origin").getByRole("button", { name: "Не делить" })).toBeVisible();
   await page.keyboard.press("Escape");
 
   // Исходная запись цела и помнит оба дела.
@@ -209,6 +210,16 @@ test("запись с намерениями дробится на дела, и 
   await expect(card.locator("#card-subtasks .subtask-count")).toHaveText("0 / 2");
   await expect(card.locator("#card-subtasks .subtask-name").filter({ hasText: "Допинываем бот детектор" })).toHaveCount(1);
   await expect(card.locator("#card-subtasks .subtask-name").filter({ hasText: "Допинываем карусель" })).toHaveCount(1);
+  await page.keyboard.press("Escape");
+
+  // «Не делить» из карточки отделённого дела: дела уходят из «Дня», а
+  // карточка переключается на исходную запись — она снова одна.
+  await openTab(page, /^День/);
+  await deal.locator(".entry-title").click();
+  await card.locator(".card-origin").getByRole("button", { name: "Не делить" }).click();
+  await expect(card.locator("#card-subtasks .subtask-name")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#todo .entry").filter({ hasText: "Допинываем" })).toHaveCount(0);
 });
 // Пустой журнал не объясняет себя сам: человек видит поле и не знает, что в
 // него писать. Двое приглашённых так и ушли, не записав ничего.

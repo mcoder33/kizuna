@@ -5,7 +5,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { makeProjections, gateClassification, shouldMaterializeProjections, actionClassification, doneOccurredAt } from './classifier.js';
+import { makeProjections, gateClassification, shouldMaterializeProjections, actionClassification, doneOccurredAt, isContainer, splitActionsOf } from './classifier.js';
 import { occursOn, nextOccurrence, normalizeSkip } from './repeat.js';
 import { occurrencesOf } from './occurrences.js';
 import { migrateNotifications } from './notifications.js';
@@ -998,9 +998,28 @@ const INSERT_CAPTURE = 'INSERT INTO captures(id,raw,modality,occurred_at,created
 // можно одним движением из уведомления о записи.
 // Запись, из которой отделились дела и у которой нет своего туду: контейнер с исходным текстом.
 export const isSplitContainer = entry => entry.projections.length === 0 && isContainer(entry.interpretation?.classification);
-const splitActionsOf = classification => (classification?.proposedActions || []).filter(action => action?.type === 'task' && typeof action.title === 'string');
-// Пачка дел делает родителя контейнером; отчёт «сделал X, надо Y» остаётся закрытым туду.
-const isContainer = classification => classification?.completed !== true && splitActionsOf(classification).length > 0;
+// «Не делить»: дела, отделённые от записи, уходят (мягко, их можно вернуть),
+// а сама запись снова одно дело со своим текстом. Разбиение приложение делает
+// без вопроса, поэтому отказ от него — одно движение, а не ручная сборка.
+export function unsplitCapture(db, captureId, { timeZone = 'Europe/Samara' } = {}) {
+  return withImmediateTransaction(db, () => {
+    const row = db.prepare("SELECT c.id, i.classification_json FROM captures c JOIN interpretations i ON i.capture_id=c.id AND i.status='active' WHERE c.id=? AND c.deleted_at IS NULL").get(captureId);
+    if (!row) return { notFound: true };
+    const classification = JSON.parse(row.classification_json);
+    const children = db.prepare(`SELECT c.id FROM captures c WHERE c.parent_capture_id=? AND c.deleted_at IS NULL AND c.subtask=0
+      AND EXISTS (SELECT 1 FROM activity_events e WHERE e.type='capture_split' AND json_extract(e.payload_json,'$.captureId')=c.id)
+      ORDER BY c.created_at, c.id`).all(captureId).map(child => child.id);
+    for (const childId of children) deleteCapture(db, childId);
+    let undoGroupId = null;
+    // Запись-дело с одним отделённым делом уже своё туду имеет: его не
+    // пересобираем, чтобы не терять отметки и историю. Пересобирается только контейнер.
+    if (isContainer(classification)) {
+      const whole = { ...classification, proposedActions: [] };
+      undoGroupId = replaceInterpretation(db, captureId, whole, 'manual', null, shouldMaterializeProjections(whole), null, { timeZone })?.undoGroupId || null;
+    }
+    return { captureId, removed: children, undoGroupId };
+  });
+}
 function splitOffActions(db, { parentId, classification, provider, model = null, userId = null, at, referenceAt = at, timeZone = 'Europe/Samara' }) {
   const actions = splitActionsOf(classification);
   const parts = [];
@@ -1235,7 +1254,9 @@ function repairMissingProjections(db) {
       let classification;
       try { classification = JSON.parse(interpretation.classification_json); }
       catch { continue; }
-      if (!shouldMaterializeProjections(classification)) continue;
+      // Контейнер пачки дел туду не получает и после перезапуска: иначе пачка
+      // становилась контейнером только до следующей выкладки.
+      if (!shouldMaterializeProjections(classification) || isContainer(classification)) continue;
       const existingTypes = new Set(db.prepare('SELECT projection_type FROM projections WHERE interpretation_id=?').all(interpretation.id).map(row => row.projection_type));
       const missing = makeProjections(interpretation.capture_id, classification, id()).filter(projection => !existingTypes.has(projection.projectionType));
       if (missing.length) insertProjections(db, interpretation.id, missing, now());

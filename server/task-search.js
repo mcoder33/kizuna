@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { isContainer } from './classifier.js';
 import { dateInZone, shiftDate } from './reports.js';
 import { validIsoDate } from './repeat.js';
 import { occurrencesOf } from './occurrences.js';
@@ -255,7 +256,7 @@ export function createTaskSearchService(db, { maxScanMs = 2000, clock = () => pe
     const type = classification.primaryType || 'unknown';
     const actionable = ['task','meeting_event'].includes(type);
     const projections = actionable ? projectionsFor.all(row.id) : [];
-    const container = !projections.length && classification.completed !== true && (classification.proposedActions || []).some(action => action.type === 'task' && typeof action.title === 'string');
+    const container = !projections.length && isContainer(classification);
     const closed = projections.length > 0 && projections.every(item => item.completion === 'completed');
     const done = closed || (!projections.length && classification.completed === true);
     const completedAt = closed ? projections.map(item => item.completed_at).filter(Boolean).sort().at(-1) || null : done ? row.occurred_at : null;

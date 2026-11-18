@@ -12,7 +12,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { openDatabase, createLedger, splitPartsOf, deleteCapture, restoreCapture, saveNote, NOTE_BODY_LIMIT, readSettings, writeSettings, recordUsage, usageSummary, attachmentsFor, addAttachment, findAttachment, removeAttachment, ATTACHMENT_SIZE_LIMIT, ATTACHMENTS_PER_CAPTURE, enqueueCaptureJob, cancelCaptureJob, retryCaptureJob, getCaptureJob, getAggregate, replaceInterpretation, completeProjection, undoProjectionCompletion, dayView, getDailyBrief, findDailyBrief, findDailyBriefSource, listEntries, undo, search, exportLedger, resetLedger, fullEntry } from './db.js';
+import { openDatabase, createLedger, splitPartsOf, deleteCapture, restoreCapture, unsplitCapture, saveNote, NOTE_BODY_LIMIT, readSettings, writeSettings, recordUsage, usageSummary, attachmentsFor, addAttachment, findAttachment, removeAttachment, ATTACHMENT_SIZE_LIMIT, ATTACHMENTS_PER_CAPTURE, enqueueCaptureJob, cancelCaptureJob, retryCaptureJob, getCaptureJob, getAggregate, replaceInterpretation, completeProjection, undoProjectionCompletion, dayView, getDailyBrief, findDailyBrief, findDailyBriefSource, listEntries, undo, search, exportLedger, resetLedger, fullEntry } from './db.js';
 import { createAiService } from './ai.js';
 import { memoryPrompt, listFacts, rememberFact, forgetFact, MEMORY_TEXT_LIMIT, MEMORY_SUBJECT_LIMIT } from './memory.js';
 import { journalOverview, listJournal } from './journal.js';
@@ -785,6 +785,8 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
     captureJobWorker.wake();notifyJournal('queued');
     res.status(201).json({captureId:queued.captureId,jobId:queued.jobId,statusUrl:jobStatusUrl(queued.jobId)});
   }catch(error){next(error);}});
+  // «Не делить»: отделённые от записи дела уходят, запись снова одно дело.
+  app.post('/api/captures/:id/unsplit',(req,res,next)=>{try{if(!ownsCapture(req,res,req.params.id))return;const result=unsplitCapture(db,req.params.id,{timeZone:requestTimeZone(req)});if(result.notFound)return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}});notifyJournal('unsplit');res.json({...result,entry:fullEntry(db,getAggregate(db,req.params.id))});}catch(error){next(error);}});
   app.post('/api/captures/:id/restore',(req,res,next)=>{try{if(!ownsCapture(req,res,req.params.id))return;const result=restoreCapture(db,req.params.id);if(result.notFound)return res.status(404).json({error:{code:'not_found',message:'Запись не найдена.'}});reportAudit(audit,{event:'capture_restored',result:'succeeded'});notifyJournal('restore');res.json(result);}catch(error){next(error);}});
   // Закрытое дело забирает с собой свои напоминания: звать к сделанному незачем.
   const dismissReminders=captureId=>{const rows=dismissNotifications(db,null,{captureId,kinds:['reminder']});for(const userId of new Set(rows.map(row=>row.user_id)))countsChanged(userId);};

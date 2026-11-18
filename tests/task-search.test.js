@@ -143,7 +143,7 @@ test('history beyond 500 and concept morphology are searched without cross-user 
   f.add({ raw: 'Отправить бумаги', owner: f.otherId });
   f.add({ raw: 'Отправить бумаги', subtask: true });
   f.add({ raw: 'Отправить бумаги', type: 'note' });
-  f.add({ raw: 'Отправить бумаги', proposedActions: [{ type: 'task', title: 'Отправить бумаги' }], projection: false });
+  f.add({ raw: 'Отправить бумаги', proposedActions: [{ type: 'task', title: 'Отправить бумаги' }, { type: 'task', title: 'Позвонить курьеру' }], projection: false });
   const result = f.search('отправить документы');
   assert.equal(result.partialCoverage, false); assert.equal(result.matchedCount, 4);
   assert.ok(result.items.some(item => item.captureId === old.id));
