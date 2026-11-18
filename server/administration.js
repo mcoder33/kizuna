@@ -135,7 +135,8 @@ export function createAdministration({ db, now = () => new Date(), sendTelegram,
     const row = db.prepare(`SELECT f.*,u.display_name AS name,u.email FROM feedback f LEFT JOIN users u ON u.id=f.user_id WHERE f.id=?${userId ? ' AND f.user_id=?' : ''}`).get(...(userId ? [id, userId] : [id]));
     return row ? feedbackView(row, { admin: !userId }) : null;
   };
-  const log = (req, event, detail = '') => logAuthEvent(db, { userId: req.user.id, email: req.user.email, event, result: 'succeeded', detail, createdAt: at() });
+  // Действие агента пожеланий в журнале админки помечено: видно, что ответил не человек.
+  const log = (req, event, detail = '') => logAuthEvent(db, { userId: req.user.id, email: req.user.email, event, result: 'succeeded', detail: req.machineActor ? `${detail} · ${req.machineActor}` : detail, createdAt: at() });
 
   function registerRoutes(app, requireAdmin) {
     const list = (req, res, userId = null) => {

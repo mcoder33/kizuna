@@ -14,6 +14,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { openDatabase, createLedger, splitPartsOf, deleteCapture, restoreCapture, unsplitCapture, saveNote, NOTE_BODY_LIMIT, readSettings, writeSettings, recordUsage, usageSummary, attachmentsFor, addAttachment, findAttachment, removeAttachment, ATTACHMENT_SIZE_LIMIT, ATTACHMENTS_PER_CAPTURE, enqueueCaptureJob, cancelCaptureJob, retryCaptureJob, getCaptureJob, getAggregate, replaceInterpretation, completeProjection, undoProjectionCompletion, dayView, getDailyBrief, findDailyBrief, findDailyBriefSource, listEntries, undo, search, exportLedger, resetLedger, fullEntry } from './db.js';
 import { createAiService } from './ai.js';
+import { feedbackAgentAuth } from './feedback-agent-auth.js';
 import { memoryPrompt, listFacts, rememberFact, forgetFact, MEMORY_TEXT_LIMIT, MEMORY_SUBJECT_LIMIT } from './memory.js';
 import { journalOverview, listJournal } from './journal.js';
 import { CaptureJobWorker } from './capture-job-worker.js';
@@ -194,7 +195,7 @@ function noteUsage(db, result, kind, userId = null) {
 // Уточнение из карточки. Правила — в server/corrections.js.
 function applyCorrection(db,req,res,next,notify=()=>{},timeZone='Europe/Samara'){try{const body=req.body||{},patch=body.patch||body,providedKey=req.get('Idempotency-Key');if(providedKey!==undefined&&!validIdempotencyKey(providedKey))return res.status(400).json({error:{code:'invalid_idempotency_key',message:'Некорректный ключ идемпотентности.'}});const result=correctCapture(db,{captureId:req.params.id,userId:req.user?.id??null,patch,operationKey:providedKey||null,timeZone});if(result.error)return res.status(result.error.status).json({error:{code:result.error.code,message:result.error.message}});notify();res.json({entry:result.entry,undoGroupId:result.undoGroupId,review:result.review,replayed:result.replayed});}catch(error){next(error);}}
 async function snapshotProvider(ai, requested) { if (requested) return requested; const status = await ai.status(); return providerIds.has(status?.selectedProvider) ? status.selectedProvider : providerIds.has(status?.defaultProvider) ? status.defaultProvider : 'fallback'; }
-export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.join(__dirname, '..', 'data', 'pagent.sqlite'), aiService, timeZone = process.env.PAGENT_TIMEZONE || 'Europe/Samara', now = () => new Date(), workerOptions, audit = () => {}, secureCookies, securityOptions = {}, authAdmissionOptions = {}, aiAdmissionOptions = {}, calendarService = null, calendarFetch = globalThis.fetch, calendarWorkerOptions = {}, calendarKey = null, pushTransport = null, reminderWorkerOptions = {}, telegramFetch = globalThis.fetch, telegramOptions = {} } = {}) {
+export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.join(__dirname, '..', 'data', 'pagent.sqlite'), feedbackAgentTokenHash = process.env.PAGENT_FEEDBACK_AGENT_TOKEN_SHA256 || '', feedbackAgentEmail = process.env.PAGENT_FEEDBACK_AGENT_EMAIL || '', aiService, timeZone = process.env.PAGENT_TIMEZONE || 'Europe/Samara', now = () => new Date(), workerOptions, audit = () => {}, secureCookies, securityOptions = {}, authAdmissionOptions = {}, aiAdmissionOptions = {}, calendarService = null, calendarFetch = globalThis.fetch, calendarWorkerOptions = {}, calendarKey = null, pushTransport = null, reminderWorkerOptions = {}, telegramFetch = globalThis.fetch, telegramOptions = {} } = {}) {
   audit = contextualAudit(audit);
   const security = createHttpSecurity({ ...securityOptions, ...(secureCookies === undefined ? {} : { secureCookies }) });
   const db = openDatabase(databasePath);
@@ -432,6 +433,8 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   // Кто перед нами — выясняется до всего остального, но никого не заворачивает:
   // страница входа и заявка на регистрацию должны работать без учётной записи.
   app.use(accounts.attachUser);
+  // Агент пожеланий входит токеном, а не кукой — и только в пожелания.
+  app.use(feedbackAgentAuth({ db, tokenHash: feedbackAgentTokenHash, email: feedbackAgentEmail, audit }));
   app.use(attachActor);
   app.get('/healthz', (req,res) => {
     try { db.prepare('SELECT 1').get(); res.json({status:'ok'}); }
