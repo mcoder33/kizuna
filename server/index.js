@@ -204,6 +204,7 @@ export function createApp({ databasePath = process.env.PAGENT_DB_PATH || path.jo
   const requestText = (req, source, params = {}) => translate(userLocale(db, req.user?.id, requestLanguages(req.get('accept-language'))), source, params);
   let administration;
   const accounts = createAccounts({ db, now, secureCookies: security.secureCookies, admissionOptions: authAdmissionOptions, audit, timeZone: () => configuredTimeZone, onPreferencesChanged: () => { stored = readSettings(db); },
+    removeAttachmentFile: id => fs.rmSync(attachmentPath(id), { force: true }),
     onSignupResolved: id => administration.resolve('signup', id), onAdminChange: () => administration.changed() });
   // Настройки читаются из базы поверх окружения: то, что человек поменял в
   // приложении, сильнее того, что лежит в .env, и применяется без перезапуска.

@@ -114,6 +114,33 @@ test("в строке человека видно активность: поло
   await expect(fresh.locator(".admin-activity")).toContainText("записей нет");
 });
 
+test("администратор подтверждает удаление заблокированного пользователя с записями", async ({ page, playwright, baseURL }) => {
+  const email = `remove-${Date.now()}@kizuna.test`;
+  const guest = await playwright.request.newContext({ baseURL });
+  try {
+    expect((await guest.post('/api/auth/register', { data: { email, password: E2E_PASSWORD } })).ok()).toBe(true);
+    expect((await guest.post('/api/captures', { data: { raw: 'Личная запись' } })).status()).toBe(201);
+  } finally { await guest.dispose(); }
+
+  await page.goto('/#admin/users');
+  const card = page.locator('#admin-users .admin-user').filter({ hasText: email });
+  await card.locator('.admin-user-management > summary').click();
+  const remove = card.getByRole('button', { name: 'Удалить учётную запись' });
+  await expect(remove).toHaveCount(0);
+  page.once('dialog', dialog => dialog.accept(''));
+  await card.getByRole('button', { name: 'Заблокировать', exact: true }).click();
+  await expect(card).toContainText('заблокирован');
+  if (!await remove.isVisible()) await card.locator('.admin-user-management > summary').click();
+  page.once('dialog', dialog => dialog.dismiss());
+  await remove.click();
+  await expect(card).toBeVisible();
+  let message;
+  page.once('dialog', dialog => { message = dialog.message(); return dialog.accept(); });
+  await remove.click();
+  await expect(card).toHaveCount(0);
+  expect(message).toContain(email);
+});
+
 test("последнего администратора не предлагают ни заблокировать, ни разжаловать", async ({ page }) => {
   await page.goto("/#admin/users");
   const self = page.locator("#admin-users .admin-user").filter({ hasText: E2E_EMAIL });
