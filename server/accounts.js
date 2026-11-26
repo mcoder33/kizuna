@@ -21,7 +21,8 @@ import express from 'express';
 import { monthlySpend, writeSettings } from './db.js';
 import { validLocaleSetting, validDetectedLocale } from './locale.js';
 import { resolveLocale, translate } from '../public/i18n.js';
-import { avatarUrl, avatarPresets, choosePreset, saveAvatarImage, avatarImage, forgetAvatar, AVATAR_IMAGE_LIMIT } from './avatars.js';
+import { removeAccount } from './account-removal.js';
+import { avatarUrl, avatarPresets, choosePreset, saveAvatarImage, avatarImage, AVATAR_IMAGE_LIMIT } from './avatars.js';
 import {
   createUser, findUserByEmail, findUserById, countUsers, listUsers, updateUser, adoptOrphanRecords,
   createSession, findSessionUser, touchSession, deleteSession, deleteUserSessions, purgeExpiredSessions, countUserSessions,
@@ -47,7 +48,7 @@ export function publicUser(row) {
 
 const fail = (res, status, code, message, extra = {}) => res.status(status).json({ error: { code, message, ...extra } });
 
-export function createAccounts({ db, now = () => new Date(), secureCookies = false, audit = () => {}, sessionTtlMs = SESSION_TTL_MS, timeZone = () => 'UTC', onPreferencesChanged = () => {}, onSignupResolved = () => {}, onAdminChange = () => {}, admissionOptions = {} } = {}) {
+export function createAccounts({ db, now = () => new Date(), secureCookies = false, audit = () => {}, sessionTtlMs = SESSION_TTL_MS, timeZone = () => 'UTC', onPreferencesChanged = () => {}, onSignupResolved = () => {}, removeAttachmentFile, onAdminChange = () => {}, admissionOptions = {} } = {}) {
   const at = () => now().toISOString();
   const requestContext = new AsyncLocalStorage();
   const admission = createAdmission({ now: () => now().getTime(), ...admissionOptions });
@@ -429,28 +430,16 @@ export function createAccounts({ db, now = () => new Date(), secureCookies = fal
 
     app.delete('/api/admin/users/:id', requireAdmin, (req, res, next) => {
       try {
-        const target = findUserById(db, req.params.id);
-        if (!target) return fail(res, 404, 'not_found', 'Пользователь не найден.');
-        if (target.id === req.user.id) return fail(res, 409, 'self_delete', 'Себя удалить нельзя.');
-        if (target.role === 'admin' && target.status === 'active' && listUsers(db).filter(user => user.role === 'admin' && user.status === 'active').length <= 1)
-          return fail(res, 409, 'last_admin', 'Это последний администратор — снимать роль некому.');
-        // Удаляется только тот, кто ничего не записал: у остальных есть журнал,
-        // и молча стереть его вместе с человеком — не то, чего от кнопки ждут.
-        const withData = listUsers(db).find(user => user.id === target.id)?.capture_count;
-        if (withData) return fail(res, 409, 'user_has_data', 'У пользователя есть записи. Сначала заблокируйте его.');
-        deleteUserSessions(db, target.id);
-        // Память помощника про этого человека уходит вместе с ним: без хозяина
-        // она никому не видна и ничего не уточняет.
-        db.prepare('DELETE FROM agent_memories WHERE user_id=?').run(target.id);
-        forgetAvatar(db, target.id);
-        db.prepare('DELETE FROM notifications WHERE user_id=?').run(target.id);
-        // Привязанный Telegram без хозяина писал бы в пустоту — отвязываем.
-        db.prepare('DELETE FROM telegram_links WHERE user_id=?').run(target.id);
-        db.prepare('DELETE FROM telegram_codes WHERE user_id=?').run(target.id);
-        db.prepare('DELETE FROM users WHERE id=?').run(target.id);
-        onSignupResolved(target.id);
+        const result = removeAccount(db, { userId: req.params.id, actorId: req.user.id,
+          actorLabel: `от ${req.user.email}`, ip: requestContext.getStore()?.ip, deleteEntries: req.body?.deleteEntries === true });
+        if (result.error) return fail(res, ...result.error);
+        for (const { id } of result.attachments) {
+          try { removeAttachmentFile(id); }
+          catch (error) { note({ event: 'attachment_cleanup_failed', attachmentId: id, errorCode: error.code }); }
+        }
+        onSignupResolved(req.params.id);
+        onPreferencesChanged();
         onAdminChange();
-        logEvent(db, { email: target.email, event: 'admin_delete', result: 'succeeded', detail: `от ${req.user.email}` });
         res.json({ ok: true });
       } catch (error) { next(error); }
     });

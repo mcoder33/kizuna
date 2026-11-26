@@ -276,7 +276,7 @@ test('последнего администратора не разжалова�
   await admin.post(`/api/admin/users/${second.user.id}/role`).send({ role: 'user' }).expect(200);
 });
 
-test('удалить можно только того, у кого нет записей', async () => {
+test('администратор удаляет личный журнал после блокировки и подтверждения', async () => {
   const application = app();
   const admin = authed(application, { email: 'admin@example.com' });
   const gost = authed(application, { email: 'gost@example.com', role: 'user' });
@@ -286,7 +286,39 @@ test('удалить можно только того, у кого нет зап
   await admin.delete(`/api/admin/users/${gost.user.id}`).expect(409);
 
   const empty = authed(application, { email: 'empty@example.com', role: 'user' });
+  await empty.get('/api/board').expect(200);
   await admin.delete(`/api/admin/users/${empty.user.id}`).expect(200);
+  await empty.get('/api/entries').expect(401);
+
+  const db = application.database;
+  const entry = (await gost.get('/api/entries')).body.entries[0];
+  const file = (await gost.post(`/api/captures/${entry.id}/attachments`)
+    .set('Content-Type', 'text/plain').set('X-Attachment-Name', 'note.txt').send(Buffer.from('hello')).expect(201)).body.attachment;
+  const diskPath = path.join(path.dirname(db.name), 'attachments', file.id);
+  const mine = (await admin.post('/api/captures').send({ raw: 'оставить' }).expect(201)).body.entry;
+  const url = `/api/admin/users/${gost.user.id}`;
+  await admin.delete(url).send({ deleteEntries: true }).expect(409);
+  await admin.post(url + '/block').expect(200);
+  await admin.delete(url).expect(409);
+  await admin.delete(url).send({ deleteEntries: true }).expect(200);
+  assert.equal(fs.existsSync(diskPath), false);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM captures WHERE user_id=?').get(gost.user.id).n, 0);
+  assert.ok(db.prepare('SELECT id FROM captures WHERE id=?').get(mine.id));
+  assert.deepEqual(db.pragma('foreign_key_check'), []);
+});
+
+test('при конфликте с общим кругом удаление откатывает и чистку личных данных', async () => {
+  const application = app();
+  const admin = authed(application);
+  const member = authed(application, { email: 'member@example.com', role: 'user' });
+  const circle = (await member.post('/api/circles').send({ name: 'Общее' }).expect(201)).body.circle;
+  await member.get('/api/board').expect(200);
+  const result = await admin.delete(`/api/admin/users/${member.user.id}`).expect(409);
+  assert.equal(result.body.error.code, 'user_has_shared_data');
+  const db = application.database;
+  assert.ok(db.prepare('SELECT id FROM board_columns WHERE user_id=?').get(member.user.id));
+  assert.ok(db.prepare('SELECT id FROM circles WHERE id=?').get(circle.id));
+  await member.get('/api/entries').expect(200);
 });
 
 // ── журнал у каждого свой ────────────────────────────────────────────────────

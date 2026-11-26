@@ -7027,9 +7027,9 @@ function userRow(user, { lastAdmin = false, days = null } = {}) {
       if (confirm(t('Закрыть все сессии этого пользователя?'))) adminAction(user.id, 'sessions-reset');
     }));
     actions.append(adminButton(t('Снять блокировку входа'), 'secondary', () => adminAction(user.id, 'unlock')));
-    if (!user.captureCount && user.id !== currentUser?.id && !lastAdmin) actions.append(adminButton(t('Удалить учётную запись'), 'danger', async () => {
-      if (!confirm(t('Удалить пустую учётную запись?'))) return;
-      try { await request(`/api/admin/users/${user.id}`, { method: 'DELETE' }); await adminArea.show(); }
+    if ((!user.captureCount || user.status === 'blocked') && user.id !== currentUser?.id && !lastAdmin) actions.append(adminButton(t('Удалить учётную запись'), 'danger', async () => {
+      if (!confirm(t('Удалить учётную запись {email} и её личные данные без возможности восстановления?', { email: user.email }))) return;
+      try { await request(`/api/admin/users/${user.id}`, { method: 'DELETE', body: JSON.stringify({ deleteEntries: Boolean(user.captureCount) }) }); await adminArea.show(); }
       catch (error) { toast(error.message); }
     }));
   }
